@@ -41,5 +41,6 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           EMAIL_FROM: "werdnamdlog01@gmail.com"
           EMAIL_TO: "dag5wd@virginia.edu"
+          STATE_PATH: "state/shortstock_state.csv"
         run: |
           python shortstockmonitor.py

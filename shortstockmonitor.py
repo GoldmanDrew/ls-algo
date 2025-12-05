@@ -16,9 +16,8 @@ FTP_USER = "shortstock"
 FTP_PASS = ""
 FTP_FILE = os.getenv("IBKR_FTP_FILE", "usa.txt")
 
-# Where to store yesterday's snapshot (mount a volume here in k8s)
-STATE_PATH = Path(os.getenv("STATE_PATH", "/data/ibkr_borrow_state.json"))
 
+STATE_PATH = Path(os.environ.get("STATE_PATH", "state/shortstock_state.csv"))
 TICKER_FILE = os.getenv("TICKER_FILE", "/config/tickers.csv")
 
 def load_ticker_list(path: str) -> List[str]:
@@ -132,10 +131,10 @@ def load_previous_state() -> Dict:
         return json.load(f)
 
 
-def save_state(state: Dict):
+def save_state(df):
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with STATE_PATH.open("w") as f:
-        json.dump(state, f, indent=2)
+    df.to_csv(STATE_PATH, index=False)
+
 
 
 # ------------- ALERT LOGIC ----------------
