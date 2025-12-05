@@ -39,7 +39,7 @@ jobs:
           SMTP_PORT: "587"
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_FROM: "werdnamdlog01@gmail.com"
+          EMAIL_TO: "dag5wd@virginia.edu"
         run: |
           python shortstockmonitor.py
