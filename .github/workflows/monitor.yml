@@ -3,7 +3,7 @@ name: Short Stock Monitor
 on:
   schedule:
     # Runs every day at 12:00 UTC (adjust if you like)
-    - cron: "0 12 * * *"
+    - cron: "0 14 * * *"
   workflow_dispatch:  # lets you run it manually from the Actions tab
 
 jobs:
@@ -29,10 +29,10 @@ jobs:
           TICKER_FILE: "config/tickers.csv"
 
           # Thresholds (tune as needed)
-          BORROW_ABS_THRESHOLD: "0.30"
-          BORROW_CHANGE_THRESHOLD: "0.05"
-          AVAIL_ABS_THRESHOLD: "10000"
-          AVAIL_CHANGE_THRESHOLD: "50000"
+          BORROW_ABS_THRESHOLD: "0.20"
+          BORROW_CHANGE_THRESHOLD: "0.03"
+          AVAIL_ABS_THRESHOLD: "5000"
+          AVAIL_CHANGE_THRESHOLD: "10000"
 
           # Email + SMTP – pulled from GitHub Secrets
           SMTP_HOST: "smtp.gmail.com"
