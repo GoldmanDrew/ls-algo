@@ -15,6 +15,15 @@ from email.mime.text import MIMEText
 #  CONFIG
 # -----------------------------
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = Path(os.getenv("GITHUB_WORKSPACE", str(SCRIPT_DIR))).resolve()
+
+# Preferred source of tickers: same screened universe used by ibkr_algo
+SCREENED_CSV = Path(
+    os.getenv("SCREENED_CSV", str(REPO_ROOT / "data" / "etf_screened_today.csv"))
+)
+
+
 FTP_HOST = "ftp2.interactivebrokers.com"
 FTP_USER = "shortstock"
 FTP_PASS = ""
@@ -32,9 +41,6 @@ SNAPSHOT_DIR = Path(os.getenv("SNAPSHOT_DIR", "data/shortstock_snapshots"))
 # Optional override for snapshot date (e.g. "20251207")
 # If not set, we use today's UTC date.
 SNAPSHOT_DATE = os.getenv("SNAPSHOT_DATE", "")
-
-# Ticker file used for watchlist alerts
-TICKER_FILE = os.getenv("TICKER_FILE", "/config/tickers.csv")
 
 # Thresholds (can tune via env vars)
 BORROW_ABS_THRESHOLD = float(os.getenv("BORROW_ABS_THRESHOLD", "0.30"))      # 30%+
@@ -55,24 +61,42 @@ SMTP_PASS = os.getenv("SMTP_PASS", "")
 #  HELPERS
 # -----------------------------
 
-def load_ticker_list(path: str) -> List[str]:
-    path = Path(path)
-    if not path.exists():
-        raise FileNotFoundError(f"Ticker list file not found: {path}")
+def load_tickers() -> list[str]:
+    """
+    Preferred: load ETF tickers from data/etf_screened_today.csv
+      - If include_for_algo exists, only include True.
+      - Otherwise, take all ETF rows.
 
-    if path.suffix == ".csv":
-        df = pd.read_csv(path)
-        return df[df.columns[0]].dropna().astype(str).str.upper().tolist()
+    Fallback: if that file is missing, read from TICKER_FALLBACK_CSV (old behaviour).
+    """
+    # Preferred: screened universe
+    if SCREENED_CSV.exists():
+        df = pd.read_csv(SCREENED_CSV)
+        if "ETF" not in df.columns:
+            raise ValueError(f"{SCREENED_CSV} must contain column 'ETF'")
 
-    if path.suffix == ".json":
-        with open(path, "r") as f:
-            lst = json.load(f)
-        return [str(x).upper() for x in lst]
+        if "include_for_algo" in df.columns:
+            df = df[df["include_for_algo"]]
 
-    raise ValueError("Ticker file must be .csv or .json")
+        tickers = (
+            df["ETF"]
+            .astype(str)
+            .str.strip()
+            .str.replace(".", "-", regex=False)
+            .str.upper()
+            .unique()
+        )
+
+        tickers = sorted(tickers)
+        print(f"[MONITOR] Loaded {len(tickers)} tickers from screened universe.")
+        return tickers
+
+    raise FileNotFoundError(
+        f"No ticker source found. Expected {SCREENED_CSV} or fallback {TICKER_FALLBACK_CSV}."
+    )
 
 
-WATCH_TICKERS = load_ticker_list(TICKER_FILE)
+WATCH_TICKERS = load_tickers()
 print("Loaded watch tickers:", WATCH_TICKERS)
 
 
