@@ -1,0 +1,30 @@
+ibkr:
+  host: "127.0.0.1"
+  port: 7497          # 7497 paper, 7496 live
+  client_id: 3
+  prefer_delayed: true
+
+strategy:
+  tag: "ETF_LS"
+  capital_usd: 100000
+  gross_leverage: 4
+  # One symbol per line.
+  # If a symbol appears as either Underlying or ETF in etf_screened_today.csv,
+  # the pair is excluded from the strategy plan.
+  blacklist:
+    - JPM
+
+paths:
+  screened_csv: "data/etf_screened_today.csv"
+  blacklist_txt: "config/strategy_blacklist.txt"
+  baseline_csv: "data/baseline_snapshot.csv"
+  proposed_trades_csv: "data/proposed_trades.csv"
+  ledger_csv: "data/strategy_ledger.csv"
+  fills_csv: "data/trade_fills.csv"
+
+execution:
+  dry_run: true
+  limit_bps: 10.0
+  timeout_sec: 90
+  short_first: true
+  max_retries: 3

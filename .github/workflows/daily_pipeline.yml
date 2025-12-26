@@ -34,10 +34,6 @@ jobs:
 
       - name: Run ETF screener
         env:
-          IBKR_FTP_HOST: ${{ secrets.IBKR_FTP_HOST }}
-          IBKR_FTP_USER: ${{ secrets.IBKR_FTP_USER }}
-          IBKR_FTP_PASS: ${{ secrets.IBKR_FTP_PASS }}
-          IBKR_FTP_FILE: ${{ env.IBKR_FTP_FILE }}
           BORROW_CAP: ${{ secrets.BORROW_CAP || '0.10' }}
           MIN_SHARES_AVAILABLE: ${{ secrets.MIN_SHARES_AVAILABLE || '1000' }}
         run: |
@@ -45,14 +41,10 @@ jobs:
 
       - name: Run short stock monitor
         env:
-          IBKR_FTP_HOST: ${{ secrets.IBKR_FTP_HOST }}
-          IBKR_FTP_USER: ${{ secrets.IBKR_FTP_USER }}
-          IBKR_FTP_PASS: ${{ secrets.IBKR_FTP_PASS }}
-          IBKR_FTP_FILE: ${{ env.IBKR_FTP_FILE }}
           SCREENED_CSV: ${{ env.SCREENED_CSV }}
           SNAPSHOT_DIR: ${{ env.SNAPSHOT_DIR }}
-          EMAIL_FROM: ${{ secrets.EMAIL_FROM || 'example@example.com' }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO || 'example@example.com' }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM || 'werdnamdlog01@gmail.com' }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO || 'dag5wd@virginia.edu' }}
           SMTP_HOST: ${{ secrets.SMTP_HOST || 'smtp.gmail.com' }}
           SMTP_PORT: ${{ secrets.SMTP_PORT || '587' }}
           SMTP_USER: ${{ secrets.SMTP_USER || '' }}
