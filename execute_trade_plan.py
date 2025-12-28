@@ -165,14 +165,39 @@ def build_limit_order(action: str, qty: int, ref_price: float, bps: float, order
     return o
 
 
-def wait_for_trade(trade: Trade, timeout: float = 90.0) -> Trade:
-    start = time.time()
-    while time.time() - start < timeout:
-        if trade.isDone():
-            break
-        time.sleep(0.25)
+import time
+
+TERMINAL = {"filled", "cancelled", "inactive", "api cancelled"}
+ACCEPTED = {"presubmitted", "submitted"}
+
+def wait_for_trade_accepted(ib: IB, trade: Trade, timeout: float = 15.0) -> bool:
+    """Wait until IB accepts/transmits the order (Submitted/PreSubmitted) or it becomes terminal."""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        status = (trade.orderStatus.status or "").lower()
+        if status in ACCEPTED:
+            return True
+        if status in TERMINAL:
+            return False
+        ib.sleep(0.2)
+    return False
+
+
+def wait_for_trade_done(ib: IB, trade: Trade, timeout: float = 90.0) -> Trade:
+    """Wait until terminal state; do not treat PendingSubmit as failure."""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        status = (trade.orderStatus.status or "").lower()
+        if status in TERMINAL:
+            return trade
+        ib.sleep(0.2)
     return trade
 
+
+
+
+from typing import Tuple, Optional, Dict
+from ib_insync import IB, Trade, MarketOrder  # ensure MarketOrder imported
 
 def execute_leg(
     ib: IB,
@@ -182,13 +207,15 @@ def execute_leg(
     ref_price: float,
     bps: float,
     order_ref: str,
+    exec_cfg: Dict,                 # <-- NEW: pass execution config dict in
     timeout: float = 90.0,
     max_retries: int = 3,
     dry_run: bool = False,
 ) -> Tuple[int, Optional[Trade]]:
     """
+    Option B: "walk the limit" (refresh price each retry + increasing aggressiveness),
+    with optional market fallback on 3rd attempt if first 2 tries fail.
     Returns filled shares (int) and last Trade.
-    Retries if not fully filled.
     """
     if qty <= 0:
         return 0, None
@@ -197,44 +224,88 @@ def execute_leg(
     ib.qualifyContracts(contract)
 
     filled_total = 0
-    last_trade = None
+    last_trade: Optional[Trade] = None
+
+    aggressive_step_bps = float(exec_cfg.get("aggressive_bps_step", 25.0))
+    market_fallback_third_try = bool(exec_cfg.get("market_fallback_third_try", True))
 
     for attempt in range(1, max_retries + 1):
         remain = qty - filled_total
         if remain <= 0:
             break
 
-        o = build_limit_order(action, remain, ref_price, bps, order_ref=f"{order_ref}|att{attempt}")
-        print(f"[LEG] {symbol} {action} qty={remain} ref={ref_price:.4f} lmt={o.lmtPrice:.4f} refTag={o.orderRef}")
+        # Always refresh reference price (live if possible)
+        ref_px_now = get_snapshot_price(ib, symbol, prefer_delayed=True)
+
+        # Attempt-specific aggressiveness
+        bps_now = bps + (attempt - 1) * aggressive_step_bps
+
+        # Decide order type: LMT (walk) vs MKT (fallback)
+        use_market = (market_fallback_third_try and attempt == 3)
+
+        if use_market:
+            o = MarketOrder(action, remain)
+            o.orderRef = f"{order_ref}|att{attempt}|MKT"
+            lmt_str = "MKT"
+        else:
+            o = build_limit_order(
+                action,
+                remain,
+                ref_px_now,
+                bps_now,
+                order_ref=f"{order_ref}|att{attempt}|LMT"
+            )
+            lmt_str = f"{o.lmtPrice:.4f}"
+
+        print(
+            f"[LEG] {symbol} {action} qty={remain} "
+            f"ref_now={ref_px_now:.4f} bps_now={bps_now:.1f} px={lmt_str} refTag={o.orderRef}"
+        )
 
         if dry_run:
-            # pretend full fill
             filled_total += remain
             continue
 
         trade = ib.placeOrder(contract, o)
-        last_trade = wait_for_trade(trade, timeout=timeout)
+        last_trade = trade
 
-        status = (last_trade.orderStatus.status or "").lower()
-        filled = int(last_trade.orderStatus.filled or 0)
-        remaining = int(last_trade.orderStatus.remaining or 0)
+        accepted = wait_for_trade_accepted(ib, trade, timeout=float(exec_cfg.get("accept_timeout_sec", 15.0)))
+
+        # If not accepted, do NOT assume "failed"; for MKT give it more time before doing anything drastic.
+        if not accepted:
+            if use_market:
+                # Give market orders extra runway to get accepted
+                accepted = wait_for_trade_accepted(ib, trade, timeout=float(exec_cfg.get("market_accept_timeout_sec", 45.0)))
+            if not accepted:
+                print(f"[LEG] {symbol} not accepted yet (status={trade.orderStatus.status}); continuing to next attempt.")
+                continue
+
+        # Once accepted, wait for fill/cancel
+        done_timeout = float(exec_cfg.get("market_done_timeout_sec" if use_market else "limit_done_timeout_sec",
+                                        180.0 if use_market else timeout))
+        trade = wait_for_trade_done(ib, trade, timeout=done_timeout)
+
+        status = (trade.orderStatus.status or "").lower()
+        filled = int(trade.orderStatus.filled or 0)
+
+        # remaining may be None; don't coerce it to 0
+        raw_remaining = trade.orderStatus.remaining
+        remaining = None if raw_remaining is None else int(raw_remaining)
+
         print(f"[LEG] status={status} filled={filled} remaining={remaining}")
 
-        # add newly filled vs attempt remain
         filled_total = min(qty, filled_total + filled)
 
-        if remaining == 0 and filled > 0:
-            # filled this attempt
-            continue
-
-        # cancel working order after timeout
-        if status in ("presubmitted", "submitted", "pendingsubmit"):
+        # Only cancel LIMIT orders that are still working after waiting
+        if (not use_market) and status in ("presubmitted", "submitted", "pendingsubmit"):
             try:
-                ib.cancelOrder(o)
+                ib.cancelOrder(trade.order)
             except Exception:
                 pass
 
+
     return int(filled_total), last_trade
+
 
 
 # ---------------------------
@@ -384,14 +455,28 @@ def main() -> None:
         # NOTE: we still keep the manual approval loop (pair-by-pair),
         # since that's core to your workflow.
         for _, row in plan.iterrows():
-            pair_id = str(row["pair_id"])
-            u = str(row["underlying"]).upper()
-            e = str(row["etf"]).upper()
-            lev_type = str(row["lev_type"]).upper()
-            sr = float(row["short_ratio"])
+            # --- New trade-plan schema support (proposed_trades.csv) ---
+            u = str(row["Underlying"]).upper()
+            e = str(row["ETF"]).upper()
 
-            tu = float(row["target_underlying_notional_usd"])
-            te = float(row["target_etf_notional_usd"])
+            # pair_id: generate deterministically if not provided
+            pair_id = str(row.get("pair_id", f"{u}__{e}"))
+
+            # notionals come directly from the plan
+            tu = float(row["long_usd"])   # target underlying (long) notional
+            te = float(row["short_usd"])  # target ETF (short) notional
+
+            # short_ratio is "short_notional / long_notional"
+            # (used later to size the long off the filled short when short_first=True)
+            sr = (te / tu) if tu else 0.0
+
+            # lev_type is optional; derive something reasonable for logging / fills
+            lev_mult = float(row.get("Leverage", 0.0) or 0.0)
+            if lev_mult <= 1.0:
+                lev_type = "CC"
+            else:
+                lev_type = f"{int(round(lev_mult))}X"
+
 
             print("\n" + "-" * 90)
             print(f"[PAIR] {pair_id}")
@@ -430,6 +515,7 @@ def main() -> None:
                     ref_price=px_e,
                     bps=limit_bps,
                     order_ref=f"{order_base_ref}|ETF_SHORT",
+                    exec_cfg=exec_cfg,
                     timeout=timeout,
                     max_retries=max_retries,
                     dry_run=dry_run,

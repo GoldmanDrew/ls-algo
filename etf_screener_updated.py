@@ -37,6 +37,7 @@ from typing import Iterable, Dict
 
 import ftplib
 import pandas as pd
+import yaml
 
 # --------------------------------------------------
 # PATHS / CONFIG
@@ -47,6 +48,21 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 # Treat this as repo root unless GITHUB_WORKSPACE overrides it
 REPO_ROOT = Path(os.getenv("GITHUB_WORKSPACE", str(SCRIPT_DIR))).resolve()
+
+# Strategy config (YAML)
+STRATEGY_CONFIG = Path(os.getenv("STRATEGY_CONFIG", str(REPO_ROOT / "strategy_config.yml")))
+if not STRATEGY_CONFIG.exists():
+    # fallback: some repos keep it under config/
+    alt = REPO_ROOT / "config" / "strategy_config.yml"
+    if alt.exists():
+        STRATEGY_CONFIG = alt
+
+def load_strategy_config(path: Path = STRATEGY_CONFIG) -> dict:
+    if not path.exists():
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
 
 # Single input file: ETF + CAGRs (+ optional metadata)
 CAGR_CSV = Path(os.getenv("CAGR_CSV", str(REPO_ROOT / "config" / "etf_cagr.csv")))
@@ -63,14 +79,15 @@ FTP_PASS = os.getenv("IBKR_FTP_PASS") or ""
 FTP_FILE = os.getenv("IBKR_FTP_FILE") or "usa.txt"
 
 # Screening thresholds
-BORROW_CAP = float(os.getenv("BORROW_CAP", "0.12"))                   # 10% "cheap" borrow cap
-MIN_SHARES_AVAILABLE = int(os.getenv("MIN_SHARES_AVAILABLE", "1000")) # minimum shortable
+BORROW_CAP_DEFAULT = 0.12  # default annualized borrow cap
+MIN_SHARES_AVAILABLE_DEFAULT = 1000  # default minimum shortable shares
 
 
 @dataclass
 class ScreeningParams:
-    borrow_cap: float = BORROW_CAP
-    min_shares_available: int = MIN_SHARES_AVAILABLE
+    borrow_cap: float = BORROW_CAP_DEFAULT
+    min_shares_available: int = MIN_SHARES_AVAILABLE_DEFAULT
+    borrow_whitelist_etfs: set = None
 
 
 # --------------------------------------------------
@@ -245,7 +262,7 @@ def screen_universe_for_algo(
     df = df.copy()
 
     # Basic flags
-    df["cagr_positive"] = df["cagr_port_hist"] > 0
+    df["cagr_positive"] = df["cagr_port_hist"] > 0  # informational only
     df["borrow_leq_cap"] = df["borrow_current"] <= params.borrow_cap
     df["borrow_gt_cap"] = ~df["borrow_leq_cap"]
 
@@ -254,22 +271,20 @@ def screen_universe_for_algo(
 
     df["shares_available"] = df["shares_available"].fillna(0).astype(int)
 
-    # Exclusions
-    df["exclude_borrow_gt_cap_and_neg_cagr"] = (
-        df["borrow_gt_cap"] & ~df["cagr_positive"]
-    )
+    # Whitelist (allow regardless of borrow cap)
+    wl = params.borrow_whitelist_etfs or set()
+    df["whitelisted"] = df["ETF"].isin(wl)
+
+    # Exclusions (CAGR is NOT an exclusion criterion anymore)
+    df["exclude_borrow_gt_cap"] = df["borrow_gt_cap"] & ~df["whitelisted"]
     df["exclude_no_shares"] = df["shares_available"] < params.min_shares_available
     df["exclude_borrow_spike"] = df["borrow_spiking"].fillna(False)
 
-    # Inclusions
-    cheap_borrow_mask = df["borrow_leq_cap"]
-    expensive_but_ok_mask = (
-        df["borrow_gt_cap"] & df["cagr_positive"] & ~df["borrow_spiking"]
-    )
-    base_inclusion = cheap_borrow_mask | expensive_but_ok_mask
+    # Inclusions: include if borrow <= cap OR whitelisted
+    base_inclusion = df["borrow_leq_cap"] | df["whitelisted"]
 
     hard_excludes = (
-        df["exclude_borrow_gt_cap_and_neg_cagr"]
+        df["exclude_borrow_gt_cap"]
         | df["exclude_no_shares"]
         | df["exclude_borrow_spike"]
     )
@@ -287,6 +302,18 @@ def main():
     print(f"Repo root: {REPO_ROOT}")
     print(f"CAGR CSV: {CAGR_CSV}")
 
+
+    # Load strategy config (borrow cap + whitelist)
+    cfg = load_strategy_config()
+    screener_cfg = (cfg or {}).get("screener", {}) or {}
+    params = ScreeningParams(
+        borrow_cap=float(screener_cfg.get("borrow_cap", BORROW_CAP_DEFAULT)),
+        min_shares_available=int(screener_cfg.get("min_shares_available", MIN_SHARES_AVAILABLE_DEFAULT)),
+        borrow_whitelist_etfs=set(screener_cfg.get("borrow_whitelist_etfs", []) or []),
+    )
+    print(f"Borrow cap: {params.borrow_cap:.2%}")
+    if params.borrow_whitelist_etfs:
+        print("Borrow whitelist ETFs:", sorted(params.borrow_whitelist_etfs))
     # 1) Load ETF + CAGR file
     if not CAGR_CSV.exists():
         raise FileNotFoundError(f"CAGR CSV not found: {CAGR_CSV}")
@@ -313,7 +340,7 @@ def main():
     print("Merged metrics sample:\n", metrics.head())
 
     # 4) Run screen
-    screened = screen_universe_for_algo(metrics)
+    screened = screen_universe_for_algo(metrics, params=params)
 
     # 5) Save output for trading algo
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -330,4 +357,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main() 
+
