@@ -959,51 +959,40 @@ def main() -> None:
                     dry_run=dry_run,
                 )
 
-            # Execute legs (short_first means: trade ETF delta first, then underlying delta)
-            if short_first:
-                # Execute ETF delta first
+            # Execute legs
+            # Rule: if we are SHORTING the ETF (delta_e < 0), ALWAYS do ETF first,
+            # then hedge the underlying proportionally to actual ETF fills.
+            short_intent = (delta_e < 0)
+
+            if short_intent:
+                # ETF first (avoid being long underlying without the hedge)
                 filled_e, trade_e = exec_delta(e, delta_e, px_e, "ETF_DELTA")
 
-                # If we intended to SHORT ETF, hedge underlying proportionally to what actually filled
-                if delta_e < 0:
-                    intended = abs(int(delta_e))
-                    got = int(filled_e or 0)
+                intended = abs(int(delta_e))
+                got = int(filled_e or 0)
 
-                    if got <= 0:
-                        st = (trade_e.orderStatus.status if trade_e else "NO_TRADE")
-                        print(f"[PAIR] Skipping underlying leg for {pair_id}: ETF short got 0/{intended} (status={st}).")
-                        filled_u, trade_u = 0, None
-                    else:
-                        fill_frac = got / float(intended)
-                        delta_u_eff = scaled_delta(delta_u, fill_frac)
-
-                        print(
-                            f"[PAIR] ETF short partial/filled: got {got}/{intended} ({fill_frac:.2%}). "
-                            f"Executing scaled underlying hedge delta_u_eff={delta_u_eff:+d} (from {delta_u:+d})."
-                        )
-                        filled_u, trade_u = exec_delta(u, delta_u_eff, px_u, "UNDER_DELTA")
-
-                else:
-                    # Not a short ETF (buy / cover / flat): proceed with full underlying delta
-                    filled_u, trade_u = exec_delta(u, delta_u, px_u, "UNDER_DELTA")
-
-                # Execute ETF delta first. If this is a SHORT leg and we cannot place/fill it cleanly,
-                # we skip the pair to avoid ending up long the underlying without the hedge.
-                filled_e, trade_e = exec_delta(e, delta_e, px_e, "ETF_DELTA")
-
-                short_intent = (delta_e < 0)
-                short_qty = abs(int(delta_e))
-                short_clean = (not short_intent) or (filled_e == short_qty)
-
-                if short_intent and not short_clean:
+                if got <= 0:
                     st = (trade_e.orderStatus.status if trade_e else "NO_TRADE")
-                    print(f"[PAIR] Skipping underlying leg for {pair_id}: ETF short not clean (filled={filled_e}/{short_qty}, status={st}).")
+                    print(f"[PAIR] Skipping underlying leg for {pair_id}: ETF short got 0/{intended} (status={st}).")
                     filled_u, trade_u = 0, None
                 else:
-                    filled_u, trade_u = exec_delta(u, delta_u, px_u, "UNDER_DELTA")
+                    fill_frac = got / float(intended)
+                    delta_u_eff = scaled_delta(delta_u, fill_frac)
+
+                    print(
+                        f"[PAIR] ETF short partial/filled: got {got}/{intended} ({fill_frac:.2%}). "
+                        f"Executing scaled underlying hedge delta_u_eff={delta_u_eff:+d} (from {delta_u:+d})."
+                    )
+                    filled_u, trade_u = exec_delta(u, delta_u_eff, px_u, "UNDER_DELTA")
+
             else:
-                filled_u, trade_u = exec_delta(u, delta_u, px_u, "UNDER_DELTA")
-                filled_e, trade_e = exec_delta(e, delta_e, px_e, "ETF_DELTA")
+                # Not shorting ETF (buy/cover/flat): respect configured ordering
+                if short_first:
+                    filled_e, trade_e = exec_delta(e, delta_e, px_e, "ETF_DELTA")
+                    filled_u, trade_u = exec_delta(u, delta_u, px_u, "UNDER_DELTA")
+                else:
+                    filled_u, trade_u = exec_delta(u, delta_u, px_u, "UNDER_DELTA")
+                    filled_e, trade_e = exec_delta(e, delta_e, px_e, "ETF_DELTA")
 
             # Record fills
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
