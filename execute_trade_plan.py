@@ -40,6 +40,76 @@ import yaml
 
 import ftplib
 import io
+import json
+
+# ---------------------------
+# Exposure logging
+# ---------------------------
+
+EXPOSURE_COLS = [
+    "ts",
+    "run_date",
+    "strategy_tag",
+    "stage",          # PRE_PAIR, POST_ETF, POST_UNDER, GROUP_END, FINAL
+    "pair_id",
+    "underlying",
+    "etf",
+    "symbol",         # symbol traded or "PORTFOLIO"
+    "delta_sh",
+    "filled_sh",
+    "fill_avg_px",
+    "mark_px",
+    "delta_notional",
+    "pos_sh",         # strategy-only shares AFTER refresh
+    "pos_notional",   # pos_sh * mark_px
+    "gross_long",
+    "gross_short",
+    "net_notional",
+]
+
+def compute_portfolio_notionals(strat_pos: Dict[str, int], prices: Dict[str, float]) -> Dict[str, float]:
+    """
+    Compute gross long/short and net notional for strategy-only positions using mark prices snapshot.
+    """
+    gross_long = 0.0
+    gross_short = 0.0
+    net = 0.0
+
+    for sym, sh in strat_pos.items():
+        px = prices.get(sym)
+        if px is None:
+            continue
+        notional = float(sh) * float(px)
+        net += notional
+        if notional >= 0:
+            gross_long += notional
+        else:
+            gross_short += abs(notional)
+
+    return {"gross_long": gross_long, "gross_short": gross_short, "net_notional": net}
+
+def append_csv_row(path: Path, row: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df = pd.DataFrame([row])
+    if path.exists():
+        df.to_csv(path, mode="a", header=False, index=False)
+    else:
+        df.to_csv(path, mode="w", header=True, index=False)
+
+def append_jsonl(path: Path, row: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, default=str) + "\n")
+
+def safe_avg_fill_price(trade: Optional[Trade]) -> Optional[float]:
+    try:
+        if trade is None:
+            return None
+        px = float(trade.orderStatus.avgFillPrice or 0)
+        return px if px > 0 else None
+    except Exception:
+        return None
+
 
 # ---------------------------
 # Short availability (IBKR FTP shortstock)
@@ -834,11 +904,32 @@ def main() -> None:
     if plan.empty:
         raise ValueError(f"No rows in {plan_path} for strategy_tag={strategy_tag}")
 
+    # ---------------------------
+    # Group rows by underlying while preserving original order within each underlying.
+    # This keeps your desired short->long->short->long pattern *as it appeared in the plan*
+    # but ensures all rows for the same underlying execute together.
+    # ---------------------------
+    plan = plan.reset_index(drop=True)
+    plan["_orig_idx"] = plan.index
+    plan["Underlying"] = plan["Underlying"].astype(str).str.upper()
+    plan["ETF"] = plan["ETF"].astype(str).str.upper()
+
+    plan = plan.sort_values(
+        by=["Underlying", "_orig_idx"],
+        kind="mergesort",  # stable sort
+    ).reset_index(drop=True)
+
+    plan = plan.drop(columns=["_orig_idx"])
+    plan = plan.reset_index(drop=True)
+
     # baseline protection
     baseline = load_baseline_qty(baseline_csv)
 
     # create execution folder
     exec_dir(run_date).mkdir(parents=True, exist_ok=True)
+    # Exposure logs
+    exposure_csv = exec_dir(run_date) / "exposure_log.csv"
+    exposure_jsonl = exec_dir(run_date) / "exposure_log.jsonl"  # optional
 
     ib = connect_ib(host, port, client_id)
     try:
@@ -866,6 +957,85 @@ def main() -> None:
         # Save execution pricing snapshot
         px_df = pd.DataFrame([{"symbol": k, "price": v} for k, v in prices.items()]).sort_values("symbol")
         write_execution_snapshot(run_date, px_df, "prices_snapshot.csv")
+        
+        # ---------------------------
+        # Skip underlyings whose TOTAL target shares would round/truncate to 0.
+        # If the underlying would be 0 shares, we also skip all ETF legs for that underlying
+        # (since we cannot / will not hold any underlying hedge).
+        # ---------------------------
+        skip_underlyings = set()
+        for u_sym, grp in plan.groupby(plan["Underlying"].astype(str).str.upper()):
+            px_u = float(prices[u_sym])
+            total_u_sh = 0
+            for _, r in grp.iterrows():
+                tu = float(r["long_usd"])  # target underlying notional (positive)
+                total_u_sh += target_shares_from_usd(tu, px_u)  # trunc toward 0
+            if total_u_sh == 0:
+                skip_underlyings.add(u_sym)
+
+        if skip_underlyings:
+            print(f"[SKIP] Underlyings with rounded-to-0 total target shares: {sorted(skip_underlyings)}")
+
+            # Save a snapshot for debugging/audit
+            df_skip = plan[plan["Underlying"].astype(str).str.upper().isin(skip_underlyings)].copy()
+            write_execution_snapshot(run_date, df_skip, "skipped_underlyings_rounded0.csv")
+
+            # Drop them from execution plan (skips ALL ETF legs for those underlyings)
+            plan = plan[~plan["Underlying"].astype(str).str.upper().isin(skip_underlyings)].copy()
+
+            if plan.empty:
+                print("[SKIP] All rows skipped due to rounded-to-0 underlying sizing. Nothing to execute.")
+                return
+        
+        def log_exposure_event(
+            *,
+            stage: str,
+            pair_id: str,
+            underlying: str,
+            etf: str,
+            symbol: str,
+            delta_sh: int,
+            filled_sh: int,
+            trade: Optional[Trade],
+        ):
+            # Refresh strategy-only positions
+            ib_pos_now = current_ib_positions(ib)
+            strat_pos_now = strategy_position_only(ib_pos_now, baseline)
+
+            port = compute_portfolio_notionals(
+                {k: int(round(float(v))) for k, v in strat_pos_now.items()},
+                prices,
+            )
+
+            mark_px = float(prices.get(symbol)) if prices.get(symbol) is not None else None
+            fill_px = safe_avg_fill_price(trade)
+            used_px = fill_px if fill_px is not None else mark_px
+
+            pos_sh = int(round(float(strat_pos_now.get(symbol, 0.0)))) if symbol != "PORTFOLIO" else 0
+            pos_notional = (pos_sh * mark_px) if (mark_px is not None and symbol != "PORTFOLIO") else None
+            delta_notional = (int(filled_sh) * float(used_px)) if (used_px is not None) else None
+
+            row = {
+                "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "run_date": run_date,
+                "strategy_tag": strategy_tag,
+                "stage": stage,
+                "pair_id": pair_id,
+                "underlying": underlying,
+                "etf": etf,
+                "symbol": symbol,
+                "delta_sh": int(delta_sh),
+                "filled_sh": int(filled_sh),
+                "fill_avg_px": fill_px,
+                "mark_px": mark_px,
+                "delta_notional": delta_notional,
+                "pos_sh": pos_sh,
+                "pos_notional": pos_notional,
+                **port,
+            }
+
+            append_csv_row(exposure_csv, row)
+            append_jsonl(exposure_jsonl, row)
 
         # --- Short availability snapshot (for ETF shorts) ---
         etf_symbols = sorted(set(plan["ETF"].astype(str).str.upper()))
@@ -880,10 +1050,200 @@ def main() -> None:
         # Cumulative desired targets (fixes repeated-underlying / repeated-ETF issues)
         desired_target_sh: Dict[str, int] = {}
 
+        # --- Leverage map (ETF -> leverage multiplier) ---
+        # Uses the plan's Leverage column (float). For inverse ETFs, Leverage should be negative.
+        if "Leverage" not in plan.columns:
+            raise ValueError("Plan missing required column: Leverage")
 
+        plan["ETF_U"] = plan["ETF"].astype(str).str.upper()
+        plan["UNDER_U"] = plan["Underlying"].astype(str).str.upper()
+
+        leverage_by_etf: Dict[str, float] = {}
+        for _, r in plan.iterrows():
+            etf = str(r["ETF_U"])
+            lev = float(r["Leverage"])
+            # last-write-wins is fine if consistent; otherwise you can assert equal
+            leverage_by_etf[etf] = lev
+
+        under_to_etfs: Dict[str, Set[str]] = {}
+        for _, r in plan.iterrows():
+            u = str(r["UNDER_U"])
+            e = str(r["ETF_U"])
+            under_to_etfs.setdefault(u, set()).add(e)
+
+
+        # Track expected underlying position per underlying group based on what the executor *intended*
+        # to hedge (scaled by ETF fill fraction).
+        expected_under_pos: Dict[str, int] = {}
+
+        def enforce_underlying_net_flat(u_sym: str):
+            """
+            End-of-bucket safety net:
+            Bring net underlying-dollar exposure to ~0 using leverage-weighted ETF notionals.
+            Guarantee: after this runs (and fills), bucket residual should be within +/- 1 underlying share.
+            """
+            def compute_bucket_resid_sh() -> float:
+                ib_pos_now = current_ib_positions(ib)
+                strat_pos_now_raw = strategy_position_only(ib_pos_now, baseline)
+                strat_pos_now = {k: int(round(float(v))) for k, v in strat_pos_now_raw.items()}
+
+                px_u = float(prices[u_sym])
+                u_sh = int(strat_pos_now.get(u_sym, 0))
+
+                bucket_etfs = under_to_etfs.get(u_sym, set())
+
+                E = u_sh * px_u
+                for etf in bucket_etfs:
+                    sh = int(strat_pos_now.get(etf, 0))
+                    if sh == 0:
+                        continue
+                    px_e = float(prices[etf])
+                    lev = float(leverage_by_etf.get(etf, 1.0))
+                    E += sh * px_e * lev
+
+                return E / px_u  # underlying-share-equivalent residual
+
+            resid_before = compute_bucket_resid_sh()
+            if abs(resid_before) <= 1.0:
+                return
+
+            px_u = float(prices[u_sym])
+            delta_fix = int(round(-resid_before))
+
+            filled_fix_abs, trade_fix = exec_delta(u_sym, delta_fix, px_u, f"{u_sym}|UNDER_SAFETY_NET|UNDER_DELTA")
+            filled_fix = filled_fix_abs if delta_fix > 0 else -filled_fix_abs
+
+            log_exposure_event(
+                stage="GROUP_END",
+                pair_id=f"{u_sym}__GROUP_NETFLAT",
+                underlying=u_sym,
+                etf="",
+                symbol=u_sym,
+                delta_sh=delta_fix,
+                filled_sh=filled_fix,
+                trade=trade_fix,
+            )
+
+            # Verify post-fix residual; if still outside band (partial fill), try a 1-share nudge once
+            resid_after = compute_bucket_resid_sh()
+            if abs(resid_after) <= 1.0:
+                print(f"[NETFLAT_OK] {u_sym}: resid_after={resid_after:+.2f}sh")
+                return
+
+            # One-shot correction by at most 1 share (prevents infinite loops)
+            nudge = -1 if resid_after > 1.0 else (+1 if resid_after < -1.0 else 0)
+            if nudge != 0:
+                filled2_abs, trade2 = exec_delta(u_sym, nudge, px_u, f"{u_sym}|UNDER_SAFETY_NET_NUDGE|UNDER_DELTA")
+                filled2 = filled2_abs if nudge > 0 else -filled2_abs
+
+                log_exposure_event(
+                    stage="GROUP_END_NUDGE",
+                    pair_id=f"{u_sym}__GROUP_NETFLAT_NUDGE",
+                    underlying=u_sym,
+                    etf="",
+                    symbol=u_sym,
+                    delta_sh=nudge,
+                    filled_sh=filled2,
+                    trade=trade2,
+                )
+
+                resid_final = compute_bucket_resid_sh()
+                print(f"[NETFLAT_CHECK] {u_sym}: resid_before={resid_before:+.2f}sh resid_final={resid_final:+.2f}sh")
+
+        def adjust_underlying_delta_for_pair_rounding(
+            *,
+            u_sym: str,
+            delta_u_raw: int,
+            etf_sym: str,
+            etf_delta_planned: int,
+        ) -> int:
+            """
+            Enforce per-PAIR rounding: after executing THIS pair's ETF leg (planned) and
+            THIS pair's underlying hedge (delta_u_raw), the residual is within +/- 1 underlying share.
+
+            IMPORTANT: This adjusts by at most +/- 1 share vs delta_u_raw.
+            """
+            if delta_u_raw == 0:
+                return 0
+
+            px_u = float(prices[u_sym])
+
+            # Leverage for this ETF
+            lev = float(leverage_by_etf.get(etf_sym, 1.0))
+            px_e = float(prices[etf_sym])
+
+            # Pair-level residual exposure in underlying-share units:
+            # Residual = delta_u + (etf_delta * px_e * lev / px_u)
+            # We want Residual in [-1, +1].
+            resid_pair_sh = float(delta_u_raw) + (float(etf_delta_planned) * px_e * lev / px_u)
+
+            if abs(resid_pair_sh) <= 1.0:
+                return delta_u_raw
+
+            # Compute the integer delta_u that would best bring resid into band
+            # Ideal delta_u is: - (etf_delta * px_e * lev / px_u)
+            ideal_u = - (float(etf_delta_planned) * px_e * lev / px_u)
+
+            # Best integer choices near the ideal
+            cand = [int(round(ideal_u)), int(round(ideal_u)) - 1, int(round(ideal_u)) + 1]
+
+            # Choose candidate that keeps residual closest to 0, but within +/-1 if possible
+            best = delta_u_raw
+            best_abs = abs(resid_pair_sh)
+
+            for du in cand:
+                resid = float(du) + (float(etf_delta_planned) * px_e * lev / px_u)
+                if abs(resid) <= 1.0 and abs(resid) < best_abs:
+                    best, best_abs = du, abs(resid)
+
+            # Enforce: never move more than 1 share from the raw delta
+            if best > delta_u_raw + 1:
+                best = delta_u_raw + 1
+            elif best < delta_u_raw - 1:
+                best = delta_u_raw - 1
+
+            # Final debug print
+            resid_after = float(best) + (float(etf_delta_planned) * px_e * lev / px_u)
+            print(
+                f"[ROUNDING_ADJ] {u_sym}/{etf_sym}: raw={delta_u_raw:+d} "
+                f"pair_resid_raw={resid_pair_sh:+.2f}sh -> adj={best:+d} "
+                f"pair_resid_adj={resid_after:+.2f}sh (lev={lev})"
+            )
+
+            return int(best)
+
+
+
+        def exec_delta(symbol: str, delta: int, px: float, order_ref: str) -> Tuple[int, Optional[Trade]]:
+            if delta == 0:
+                return 0, None
+            action = "BUY" if delta > 0 else "SELL"
+            qty = abs(delta)
+            return execute_leg(
+                ib=ib,
+                symbol=symbol,
+                action=action,
+                qty=qty,
+                ref_price=px,
+                bps=limit_bps,
+                order_ref=order_ref,
+                exec_cfg=exec_cfg,
+                timeout=timeout,
+                max_retries=max_retries,
+                dry_run=dry_run,
+            )
+
+        current_group_under: Optional[str] = None
         # Manual approval loop (pair-by-pair)
         for _, row in plan.iterrows():
             u = str(row["Underlying"]).upper()
+            # If we’re entering a new underlying group, enforce the safety net on the prior group
+            if current_group_under is None:
+                current_group_under = u
+            elif u != current_group_under:
+                enforce_underlying_net_flat(current_group_under)
+                current_group_under = u
+
             e = str(row["ETF"]).upper()
             pair_id = str(row.get("pair_id", f"{u}__{e}"))
 
@@ -924,6 +1284,17 @@ def main() -> None:
             if delta_u == 0 and delta_e == 0:
                 print("  [SKIP] Already at target (no deltas).")
                 continue
+            
+            log_exposure_event(
+                stage="PRE_PAIR",
+                pair_id=pair_id,
+                underlying=u,
+                etf=e,
+                symbol="PORTFOLIO",
+                delta_sh=0,
+                filled_sh=0,
+                trade=None,
+            )
 
             if not auto_after_first_n:
                 ans = input(f"Approve pair {pairs_approved_by_y+1}/{approve_y_required_first_n}? Type 'y' to run, anything else skips, 'q' quits: ").strip().lower()
@@ -939,61 +1310,78 @@ def main() -> None:
 
             order_base_ref = f"{strategy_tag}|{pair_id}"
 
-            # Helper to execute a delta in shares:
-            def exec_delta(symbol: str, delta: int, px: float, ref_suffix: str) -> Tuple[int, Optional[Trade]]:
-                if delta == 0:
-                    return 0, None
-                action = "BUY" if delta > 0 else "SELL"
-                qty = abs(delta)
-                return execute_leg(
-                    ib=ib,
-                    symbol=symbol,
-                    action=action,
-                    qty=qty,
-                    ref_price=px,
-                    bps=limit_bps,
-                    order_ref=f"{order_base_ref}|{ref_suffix}",
-                    exec_cfg=exec_cfg,
-                    timeout=timeout,
-                    max_retries=max_retries,
-                    dry_run=dry_run,
-                )
-
             # Execute legs
             # Rule: if we are SHORTING the ETF (delta_e < 0), ALWAYS do ETF first,
             # then hedge the underlying proportionally to actual ETF fills.
             short_intent = (delta_e < 0)
 
-            if short_intent:
-                # ETF first (avoid being long underlying without the hedge)
-                filled_e, trade_e = exec_delta(e, delta_e, px_e, "ETF_DELTA")
+            # Optional: short availability warning (you already loaded short_map)
+            sm = short_map.get(e)
+            if sm and sm.get("available") is not None and abs(delta_e) > int(sm["available"]):
+                print(f"[SHORT] WARNING: {e} wants {abs(delta_e)} shares short, but IBKR file shows only {sm['available']} available.")
 
-                intended = abs(int(delta_e))
-                got = int(filled_e or 0)
+            # ETF first
+            filled_e_abs, trade_e = exec_delta(e, delta_e, px_e, f"{order_base_ref}|ETF_DELTA")
+            filled_e = -filled_e_abs if delta_e < 0 else filled_e_abs  # signed for logging
 
-                if got <= 0:
-                    st = (trade_e.orderStatus.status if trade_e else "NO_TRADE")
-                    print(f"[PAIR] Skipping underlying leg for {pair_id}: ETF short got 0/{intended} (status={st}).")
-                    filled_u, trade_u = 0, None
-                else:
-                    fill_frac = got / float(intended)
-                    delta_u_eff = scaled_delta(delta_u, fill_frac)
+            log_exposure_event(
+                stage="POST_ETF",
+                pair_id=pair_id,
+                underlying=u,
+                etf=e,
+                symbol=e,
+                delta_sh=delta_e,
+                filled_sh=filled_e,
+                trade=trade_e,
+            )
 
-                    print(
-                        f"[PAIR] ETF short partial/filled: got {got}/{intended} ({fill_frac:.2%}). "
-                        f"Executing scaled underlying hedge delta_u_eff={delta_u_eff:+d} (from {delta_u:+d})."
-                    )
-                    filled_u, trade_u = exec_delta(u, delta_u_eff, px_u, "UNDER_DELTA")
+            intended = abs(int(delta_e))
+            got = int(filled_e_abs or 0)
 
+            if got <= 0:
+                st = (trade_e.orderStatus.status if trade_e else "NO_TRADE")
+                print(f"[PAIR] Skipping underlying leg for {pair_id}: ETF short got 0/{intended} (status={st}).")
+
+                # Expected hedge does NOT change if ETF got nothing
+                filled_u_abs, trade_u = 0, None
+                filled_u = 0
             else:
-                # Not shorting ETF (buy/cover/flat): respect configured ordering
-                if short_first:
-                    filled_e, trade_e = exec_delta(e, delta_e, px_e, "ETF_DELTA")
-                    filled_u, trade_u = exec_delta(u, delta_u, px_u, "UNDER_DELTA")
-                else:
-                    filled_u, trade_u = exec_delta(u, delta_u, px_u, "UNDER_DELTA")
-                    filled_e, trade_e = exec_delta(e, delta_e, px_e, "ETF_DELTA")
+                fill_frac = got / float(intended)
+                delta_u_eff = scaled_delta(delta_u, fill_frac)
 
+                # Per-pair rounding control (ETF already executed)
+                delta_u_eff = adjust_underlying_delta_for_pair_rounding(
+                    u_sym=u,
+                    delta_u_raw=delta_u_eff,
+                    etf_sym=e,
+                    etf_delta_planned=filled_e,
+                )
+
+                print(
+                    f"[PAIR] ETF short partial/filled: got {got}/{intended} ({fill_frac:.2%}). "
+                    f"Executing scaled underlying hedge delta_u_eff={delta_u_eff:+d} (from {delta_u:+d})."
+                )
+
+                filled_u_abs, trade_u = exec_delta(
+                    u,
+                    delta_u_eff,
+                    px_u,
+                    f"{order_base_ref}|UNDER_DELTA"
+                )
+                filled_u = filled_u_abs if delta_u_eff > 0 else -filled_u_abs
+
+                log_exposure_event(
+                    stage="POST_UNDER",
+                    pair_id=pair_id,
+                    underlying=u,
+                    etf=e,
+                    symbol=u,
+                    delta_sh=delta_u_eff,
+                    filled_sh=filled_u,
+                    trade=trade_u,
+                )
+
+            
             # Record fills
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             fills_to_append.append(
@@ -1019,6 +1407,21 @@ def main() -> None:
             # Refresh positions for next pair view (important for rebalance correctness if many pairs overlap)
             ib_pos = current_ib_positions(ib)
             strat_pos = strategy_position_only(ib_pos, baseline)
+        # Enforce safety net for the last underlying group
+        if current_group_under is not None:
+            enforce_underlying_net_flat(current_group_under)
+
+        # Final portfolio exposure snapshot
+        log_exposure_event(
+            stage="FINAL",
+            pair_id="FINAL",
+            underlying="",
+            etf="",
+            symbol="PORTFOLIO",
+            delta_sh=0,
+            filled_sh=0,
+            trade=None,
+        )
 
         if fills_to_append:
             append_fills(fills_to_append, fills_path)

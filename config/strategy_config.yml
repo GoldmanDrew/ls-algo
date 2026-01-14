@@ -6,7 +6,7 @@ ibkr:
 strategy:
   tag: ETF_LS
   capital_usd: 100000
-  gross_leverage: 2
+  gross_leverage: 4
   blacklist:
   - JPM
 paths:
@@ -39,12 +39,6 @@ execution:
   market_done_timeout_sec: 180
 
 screener:
-  borrow_cap: 0.12
+  borrow_cap: 0.10
   borrow_whitelist_etfs:
-  - MSTU
-  - MSTY
-  - COIG
-  - MSTX
-  - TSLO
-  - GLXU
   exclude_negative_cagr: false
