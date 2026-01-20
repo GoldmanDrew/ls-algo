@@ -65,6 +65,10 @@ No orders are sent at this stage.
 ### 6) Trade Execution (Optional)
 **Script:** `execute_trade_plan.py`
 
+To stop the script: 
+- Windows PowerShell: 'New-Item STOP_EXECUTION'
+- cmd: 'type nul > STOP_EXECUTION'
+
 **Purpose:** Execute the generated trade plan via Interactive Brokers.
 
 - Reads `data/proposed_trades.csv`.

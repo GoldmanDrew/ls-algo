@@ -66,11 +66,11 @@ EXPOSURE_COLS = [
     "gross_short",
     "net_notional",
 ]
-
-def compute_portfolio_notionals(strat_pos: Dict[str, int], prices: Dict[str, float]) -> Dict[str, float]:
-    """
-    Compute gross long/short and net notional for strategy-only positions using mark prices snapshot.
-    """
+def compute_portfolio_exposure_levered(
+    strat_pos: Dict[str, int],
+    prices: Dict[str, float],
+    leverage_by_etf_all: Dict[str, float],
+) -> Dict[str, float]:
     gross_long = 0.0
     gross_short = 0.0
     net = 0.0
@@ -79,7 +79,10 @@ def compute_portfolio_notionals(strat_pos: Dict[str, int], prices: Dict[str, flo
         px = prices.get(sym)
         if px is None:
             continue
-        notional = float(sh) * float(px)
+
+        lev = float(leverage_by_etf_all.get(sym, 1.0))
+        notional = float(sh) * float(px) * lev  # <-- leverage-aware
+
         net += notional
         if notional >= 0:
             gross_long += notional
@@ -282,7 +285,6 @@ def get_snapshot_price(ib: IB, symbol: str, prefer_delayed: bool = True) -> floa
     sym_u = symbol.upper()
     contract = make_stock(sym_u)
     ib.qualifyContracts(contract)
-
     def read_ticker(t) -> Optional[float]:
         bid = safe_price(getattr(t, "bid", None)) or safe_price(getattr(t, "delayedBid", None))
         ask = safe_price(getattr(t, "ask", None)) or safe_price(getattr(t, "delayedAsk", None))
@@ -298,7 +300,7 @@ def get_snapshot_price(ib: IB, symbol: str, prefer_delayed: bool = True) -> floa
         t = ib.reqMktData(contract, "", snapshot=True)
         try:
             for _ in range(12):
-                ib.sleep(0.25)
+                ib.sleep(0.05)
                 px = read_ticker(t)
                 if px is not None:
                     return px
@@ -328,7 +330,7 @@ def get_snapshot_price(ib: IB, symbol: str, prefer_delayed: bool = True) -> floa
             # If connection dropped, give TWS a moment to recover.
             if not ib.isConnected():
                 for _ in range(40):
-                    ib.sleep(0.25)
+                    ib.sleep(0.05)
                     if ib.isConnected():
                         break
             try:
@@ -348,7 +350,7 @@ def get_snapshot_price(ib: IB, symbol: str, prefer_delayed: bool = True) -> floa
                 px = safe_price(bars[-1].close)
                 if px is not None:
                     break
-            ib.sleep(0.5)
+            ib.sleep(0.05)
 
     if px is None:
         raise RuntimeError(f"No usable price for {sym_u}")
@@ -833,7 +835,6 @@ def scaled_delta(delta_u: int, fill_frac: float) -> int:
 # ---------------------------
 # Main
 # ---------------------------
-
 def main() -> None:
     approve_y_required_first_n = 5
     pairs_approved_by_y = 0
@@ -904,13 +905,11 @@ def main() -> None:
 
     # ---------------------------
     # Group rows by underlying while preserving original order within each underlying.
-    # This keeps your desired short->long->short->long pattern *as it appeared in the plan*
-    # but ensures all rows for the same underlying execute together.
     # ---------------------------
     plan = plan.reset_index(drop=True)
     plan["_orig_idx"] = plan.index
-    plan["Underlying"] = plan["Underlying"].astype(str).str.upper()
-    plan["ETF"] = plan["ETF"].astype(str).str.upper()
+    plan["Underlying"] = plan["Underlying"].astype(str).str.upper().str.strip()
+    plan["ETF"] = plan["ETF"].astype(str).str.upper().str.strip()
 
     plan = plan.sort_values(
         by=["Underlying", "_orig_idx"],
@@ -946,8 +945,107 @@ def main() -> None:
         fills_to_append: List[dict] = []
         approve_all = False
 
-        # Precompute prices once per unique symbol for this run (keeps execution consistent)
-        symbols = sorted(set(plan["Underlying"].astype(str).str.upper()) | set(plan["ETF"].astype(str).str.upper()))
+        # ---------------------------
+        # PLAN-derived maps (execution truth)
+        # ---------------------------
+        if "Leverage" not in plan.columns:
+            raise ValueError("Plan missing required column: Leverage")
+
+        plan["ETF_U"] = plan["ETF"].astype(str).str.upper().str.strip()
+        plan["UNDER_U"] = plan["Underlying"].astype(str).str.upper().str.strip()
+
+        leverage_by_etf_plan: Dict[str, float] = {}
+        under_to_etfs_planned: Dict[str, Set[str]] = {}
+
+        for _, r in plan.iterrows():
+            e = str(r["ETF_U"])
+            u = str(r["UNDER_U"])
+            lev = float(r["Leverage"])
+
+            under_to_etfs_planned.setdefault(u, set()).add(e)
+
+            if e in leverage_by_etf_plan and abs(leverage_by_etf_plan[e] - lev) > 1e-9:
+                raise ValueError(f"Leverage mismatch for {e} in plan: {leverage_by_etf_plan[e]} vs {lev}")
+            leverage_by_etf_plan[e] = lev
+
+        # ---------------------------
+        # SCREENED universe maps (hedge truth)
+        # ---------------------------
+        screened_csv = Path(paths_cfg.get("screened_csv", "data/etf_screened_today.csv"))
+        if not screened_csv.exists():
+            raise FileNotFoundError(f"Screened universe not found: {screened_csv}")
+
+        screened = pd.read_csv(screened_csv)
+        if "Underlying" not in screened.columns or "ETF" not in screened.columns or "Leverage" not in screened.columns:
+            raise ValueError(
+                f"{screened_csv} missing required columns Underlying/ETF/Leverage. "
+                f"Columns={list(screened.columns)}"
+            )
+
+        screened["Underlying"] = screened["Underlying"].astype(str).str.upper().str.strip()
+        screened["ETF"] = screened["ETF"].astype(str).str.upper().str.strip()
+
+        under_to_etfs_all: Dict[str, Set[str]] = {}
+        leverage_by_etf_all: Dict[str, float] = {}
+        for _, r in screened.iterrows():
+            u = str(r["Underlying"])
+            e = str(r["ETF"])
+            lev = float(r["Leverage"])
+            if not u or u == "NAN" or not e or e == "NAN":
+                continue
+            under_to_etfs_all.setdefault(u, set()).add(e)
+            leverage_by_etf_all[e] = lev  # last-write-wins is OK if screened is consistent
+
+        # Reverse map: ETF -> Underlying (fail if ambiguous)
+        etf_to_under_all: Dict[str, str] = {}
+        for u, etfs in under_to_etfs_all.items():
+            for e in etfs:
+                prev = etf_to_under_all.get(e)
+                if prev is not None and prev != u:
+                    raise ValueError(f"[SCREENED] ETF {e} maps to multiple underlyings: {prev} and {u}")
+                etf_to_under_all[e] = u
+
+        # Universe of ETFs in screened file
+        screened_etfs_set = set(screened["ETF"].astype(str).str.upper().str.strip().tolist())
+
+        # ETFs we actually HOLD that are in the screened universe
+        held_screened_etfs = sorted([
+            sym for sym, sh0 in strat_pos.items()
+            if int(round(float(sh0))) != 0 and sym in screened_etfs_set
+        ])
+
+        # Bucket those held ETFs by underlying using screened mapping (fail fast if mapping/leverage missing)
+        held_etfs_by_under: Dict[str, Set[str]] = {}
+        missing_map: List[str] = []
+        missing_lev: List[str] = []
+
+        for etf in held_screened_etfs:
+            u = etf_to_under_all.get(etf)
+            if u is None:
+                missing_map.append(etf)
+                continue
+            if etf not in leverage_by_etf_all:
+                missing_lev.append(etf)
+                continue
+            held_etfs_by_under.setdefault(u, set()).add(etf)
+
+        if missing_map:
+            raise ValueError(f"Held ETFs are in screened but missing ETF->Underlying mapping: {missing_map}")
+        if missing_lev:
+            raise ValueError(f"Held ETFs missing leverage in screened file: {missing_lev}")
+
+
+        # ---------------------------
+        # Precompute prices for plan symbols + held mapped ETFs
+        # ---------------------------
+        plan_symbols = set(plan["Underlying"].astype(str).str.upper().str.strip()) | set(
+            plan["ETF"].astype(str).str.upper().str.strip()
+        )
+        held_mapped_etfs = set().union(*held_etfs_by_under.values()) if held_etfs_by_under else set()
+        held_underlyings = set(held_etfs_by_under.keys())
+        symbols = sorted(plan_symbols | held_mapped_etfs | held_underlyings)
+
+
         prices: Dict[str, float] = {}
         for s in symbols:
             prices[s] = get_snapshot_price(ib, s, prefer_delayed=prefer_delayed)
@@ -955,11 +1053,10 @@ def main() -> None:
         # Save execution pricing snapshot
         px_df = pd.DataFrame([{"symbol": k, "price": v} for k, v in prices.items()]).sort_values("symbol")
         write_execution_snapshot(run_date, px_df, "prices_snapshot.csv")
-        
+
         # ---------------------------
         # Skip underlyings whose TOTAL target shares would round/truncate to 0.
-        # If the underlying would be 0 shares, we also skip all ETF legs for that underlying
-        # (since we cannot / will not hold any underlying hedge).
+        # (based on plan sizing; this is an execution filter only)
         # ---------------------------
         skip_underlyings = set()
         for u_sym, grp in plan.groupby(plan["Underlying"].astype(str).str.upper()):
@@ -974,17 +1071,17 @@ def main() -> None:
         if skip_underlyings:
             print(f"[SKIP] Underlyings with rounded-to-0 total target shares: {sorted(skip_underlyings)}")
 
-            # Save a snapshot for debugging/audit
             df_skip = plan[plan["Underlying"].astype(str).str.upper().isin(skip_underlyings)].copy()
             write_execution_snapshot(run_date, df_skip, "skipped_underlyings_rounded0.csv")
 
-            # Drop them from execution plan (skips ALL ETF legs for those underlyings)
             plan = plan[~plan["Underlying"].astype(str).str.upper().isin(skip_underlyings)].copy()
-
             if plan.empty:
                 print("[SKIP] All rows skipped due to rounded-to-0 underlying sizing. Nothing to execute.")
                 return
-        
+
+        # ---------------------------
+        # Exposure logger
+        # ---------------------------
         def log_exposure_event(
             *,
             stage: str,
@@ -996,14 +1093,15 @@ def main() -> None:
             filled_sh: int,
             trade: Optional[Trade],
         ):
-            # Refresh strategy-only positions
             ib_pos_now = current_ib_positions(ib)
             strat_pos_now = strategy_position_only(ib_pos_now, baseline)
 
-            port = compute_portfolio_notionals(
+            port = compute_portfolio_exposure_levered(
                 {k: int(round(float(v))) for k, v in strat_pos_now.items()},
                 prices,
+                leverage_by_etf_all,
             )
+
 
             mark_px = float(prices.get(symbol)) if prices.get(symbol) is not None else None
             fill_px = safe_avg_fill_price(trade)
@@ -1035,7 +1133,7 @@ def main() -> None:
             append_csv_row(exposure_csv, row)
             append_jsonl(exposure_jsonl, row)
 
-        # --- Short availability snapshot (for ETF shorts) ---
+        # --- Short availability snapshot (for ETF shorts in PLAN only) ---
         etf_symbols = sorted(set(plan["ETF"].astype(str).str.upper()))
         short_map: Dict[str, Dict[str, Optional[float]]] = {}
         try:
@@ -1045,122 +1143,9 @@ def main() -> None:
             print(f"[SHORT] WARNING: short availability precheck failed ({ex}); continuing without it.")
             short_map = {}
 
-        # Cumulative desired targets (fixes repeated-underlying / repeated-ETF issues)
-        desired_target_sh: Dict[str, int] = {}
-
-        if "Leverage" not in plan.columns:
-            raise ValueError("Plan missing required column: Leverage")
-
-        plan["ETF_U"] = plan["ETF"].astype(str).str.upper().str.strip()
-        plan["UNDER_U"] = plan["Underlying"].astype(str).str.upper().str.strip()
-
-        leverage_by_etf_plan: Dict[str, float] = {}
-        under_to_etfs_planned: Dict[str, Set[str]] = {}
-
-        for _, r in plan.iterrows():
-            e = str(r["ETF_U"])
-            u = str(r["UNDER_U"])
-            lev = float(r["Leverage"])
-
-            # Build planned under->etfs map
-            under_to_etfs_planned.setdefault(u, set()).add(e)
-
-            # Build planned leverage map (assert consistent if repeated)
-            if e in leverage_by_etf_plan and abs(leverage_by_etf_plan[e] - lev) > 1e-9:
-                raise ValueError(f"Leverage mismatch for {e} in plan: {leverage_by_etf_plan[e]} vs {lev}")
-            leverage_by_etf_plan[e] = lev
-
-
         # ---------------------------
-        # Load SCREENED universe + build ALL under->etfs map and ALL leverage map (universe truth)
+        # Helpers
         # ---------------------------
-        screened_csv = Path(paths_cfg.get("screened_csv", "data/etf_screened_today.csv"))
-        screened = pd.read_csv(screened_csv)
-
-        # Normalize
-        screened["Underlying"] = screened["Underlying"].astype(str).str.upper().str.strip()
-        screened["ETF"] = screened["ETF"].astype(str).str.upper().str.strip()
-
-        if "Leverage" not in screened.columns:
-            raise ValueError(
-                f"{screened_csv} missing required column: Leverage. "
-                "Add Leverage to screened output or provide an alternate leverage source."
-            )
-
-        # Some pipelines may name it differently; if so, adapt here:
-        # screened["Leverage"] = screened["Leverage"].astype(float)
-
-        under_to_etfs_all: Dict[str, Set[str]] = {}
-        leverage_by_etf_all: Dict[str, float] = {}
-
-        for _, r in screened.iterrows():
-            u = str(r["Underlying"])
-            e = str(r["ETF"])
-            lev = float(r["Leverage"])
-
-            under_to_etfs_all.setdefault(u, set()).add(e)
-            # last-write-wins is fine; if you want strict consistency, assert equal like above
-            leverage_by_etf_all[e] = lev
-        under_to_etfs = under_to_etfs_all
-        leverage_by_etf = leverage_by_etf_all
-
-        # Track expected underlying position per underlying group based on what the executor *intended*
-        # to hedge (scaled by ETF fill fraction).
-        expected_under_pos: Dict[str, int] = {}
-
-        def enforce_underlying_net_flat(u_sym: str):
-            """
-            End-of-bucket safety net:
-            Bring net underlying-dollar exposure to ~0 using leverage-weighted ETF notionals.
-            Guarantee: after this runs (and fills), bucket residual should be within +/- 1 underlying share.
-            """
-            def compute_bucket_resid_sh() -> float:
-                ib_pos_now = current_ib_positions(ib)
-                strat_pos_now_raw = strategy_position_only(ib_pos_now, baseline)
-                strat_pos_now = {k: int(round(float(v))) for k, v in strat_pos_now_raw.items()}
-
-                px_u = float(prices[u_sym])
-                u_sh = int(strat_pos_now.get(u_sym, 0))
-
-                bucket_etfs = under_to_etfs.get(u_sym, set())
-
-                E = u_sh * px_u
-                for etf in bucket_etfs:
-                    sh = int(strat_pos_now.get(etf, 0))
-                    if sh == 0:
-                        continue
-                    px_e = float(prices[etf])
-                    lev = float(leverage_by_etf.get(etf, 1.0))
-                    E += sh * px_e * lev
-
-                return E / px_u  # underlying-share-equivalent residual
-
-            resid_before = compute_bucket_resid_sh()
-            if abs(resid_before) <= 1.0:
-                return
-
-            px_u = float(prices[u_sym])
-            delta_fix = int(round(-resid_before))
-
-            filled_fix_abs, trade_fix = exec_delta(u_sym, delta_fix, px_u, f"{u_sym}|UNDER_SAFETY_NET|UNDER_DELTA")
-            filled_fix = filled_fix_abs if delta_fix > 0 else -filled_fix_abs
-
-            log_exposure_event(
-                stage="GROUP_END",
-                pair_id=f"{u_sym}__GROUP_NETFLAT",
-                underlying=u_sym,
-                etf="",
-                symbol=u_sym,
-                delta_sh=delta_fix,
-                filled_sh=filled_fix,
-                trade=trade_fix,
-            )
-
-            # Post-trade check (single-shot; we do not place additional hedge orders)
-            resid_after = compute_bucket_resid_sh()
-            print(f"[NETFLAT_CHECK] {u_sym}: resid_before={resid_before:+.2f}sh resid_after={resid_after:+.2f}sh")
-
-
         def exec_delta(symbol: str, delta: int, px: float, order_ref: str) -> Tuple[int, Optional[Trade]]:
             if delta == 0:
                 return 0, None
@@ -1180,24 +1165,54 @@ def main() -> None:
                 dry_run=dry_run,
             )
 
-        # ---------------------------
-        # Group execution:
-        #   1) For each underlying bucket, execute ALL ETF deltas first (short legs first)
-        #   2) After all ETF legs are executed, execute the underlying hedge ONCE to net-flat the bucket
-        # ---------------------------
+        def get_lev_or_raise(etf: str) -> float:
+            lev = leverage_by_etf_all.get(etf)
+            if lev is None:
+                raise ValueError(f"Missing leverage for ETF {etf} in screened universe; cannot hedge accurately.")
+            return float(lev)
 
-        # Validate ETF -> Underlying mapping is one-to-one within this plan.
-        etf_to_under: Dict[str, str] = {}
+        def ensure_price(sym: str) -> float:
+            px = prices.get(sym)
+            if px is None:
+                px = get_snapshot_price(ib, sym, prefer_delayed=prefer_delayed)
+                prices[sym] = float(px)
+            return float(px)
+
+        # Hedge residual in underlying-share units, using ALL HELD ETFs mapped by screened universe
+        def compute_bucket_resid_sh(u_sym: str) -> float:
+            ib_pos_now = current_ib_positions(ib)
+            strat_pos_now_raw = strategy_position_only(ib_pos_now, baseline)
+            strat_pos_now = {k: int(round(float(v))) for k, v in strat_pos_now_raw.items()}
+
+            px_u = ensure_price(u_sym)
+            u_sh = int(strat_pos_now.get(u_sym, 0))
+
+            E = u_sh * px_u
+
+            for etf in held_etfs_by_under.get(u_sym, set()):
+                sh = int(strat_pos_now.get(etf, 0))
+                if sh == 0:
+                    continue
+                px_e = ensure_price(etf)
+                lev = get_lev_or_raise(etf)
+                E += sh * px_e * lev
+
+            return E / px_u
+
+        # ---------------------------
+        # Validate ETF -> Underlying mapping is one-to-one within THIS PLAN (execution sanity)
+        # ---------------------------
+        etf_to_under_plan: Dict[str, str] = {}
         for _, r in plan.iterrows():
             uu = str(r["UNDER_U"]).upper()
             ee = str(r["ETF_U"]).upper()
-            prev = etf_to_under.get(ee)
+            prev = etf_to_under_plan.get(ee)
             if prev is not None and prev != uu:
                 raise ValueError(
                     f"ETF {ee} appears under multiple underlyings in the plan: {prev} and {uu}. "
                     "Fix the plan so each ETF maps to exactly one underlying."
                 )
-            etf_to_under[ee] = uu
+            etf_to_under_plan[ee] = uu
 
         # Preserve appearance order of underlyings (plan was stable-sorted earlier)
         underlying_order: List[str] = []
@@ -1207,7 +1222,9 @@ def main() -> None:
                 underlying_order.append(u_sym)
                 seen_u.add(u_sym)
 
+        # ---------------------------
         # Manual approval loop (bucket-by-bucket)
+        # ---------------------------
         for u_sym in underlying_order:
             grp = plan[plan["UNDER_U"].astype(str).str.upper() == u_sym].copy()
             if grp.empty:
@@ -1217,12 +1234,63 @@ def main() -> None:
             ib_pos = current_ib_positions(ib)
             strat_pos = strategy_position_only(ib_pos, baseline)
 
-            px_u = float(prices[u_sym])
+            px_u = ensure_price(u_sym)
 
-            # Aggregate absolute targets for this bucket
+            # Aggregate absolute targets for this bucket (PLAN ONLY)
             bucket_target_etf_sh: Dict[str, int] = {}
             bucket_target_under_sh: int = 0
             bucket_pair_ids: List[str] = []
+            
+            def fmt_usd(x: float) -> str:
+                s = f"{x:,.0f}"
+                return f"${s}" if x >= 0 else f"-${abs(x):,.0f}"
+
+            def print_bucket_exposure_breakdown(u_sym: str, *, title: str) -> None:
+                """
+                Print a full hedge breakdown:
+                - underlying position
+                - ALL held screened ETFs mapped to this underlying
+                - leverage-weighted exposure contribution
+                - residual in $ and in underlying shares
+                Uses current strategy-only positions (refreshed live).
+                """
+                ib_pos_now = current_ib_positions(ib)
+                strat_pos_now_raw = strategy_position_only(ib_pos_now, baseline)
+                strat_pos_now = {str(k).upper().strip(): int(round(float(v))) for k, v in strat_pos_now_raw.items()}
+
+                px_u = ensure_price(u_sym)
+                u_sh = int(strat_pos_now.get(u_sym, 0))
+                u_mv = u_sh * px_u
+
+                held_etfs = sorted(list(held_etfs_by_under.get(u_sym, set())))
+                # only include ones we actually hold (defensive)
+                held_etfs = [e for e in held_etfs if int(strat_pos_now.get(e, 0)) != 0]
+
+                print(f"\n[{title}] Exposure breakdown for {u_sym}")
+                print(f"  Underlying {u_sym}: sh={u_sh:+d} px={px_u:.4f} MV={fmt_usd(u_mv)}")
+
+                E = float(u_mv)
+
+                if not held_etfs:
+                    print("  Held screened ETFs mapped to this underlying: (none)")
+                else:
+                    print("  Held screened ETFs mapped to this underlying:")
+                    for e in held_etfs:
+                        sh_e = int(strat_pos_now.get(e, 0))
+                        px_e = ensure_price(e)
+                        mv_e = sh_e * px_e
+                        lev = get_lev_or_raise(e)
+                        contrib = mv_e * lev  # leverage-weighted contribution to underlying-dollar exposure
+                        E += contrib
+                        print(
+                            f"    {e}: sh={sh_e:+d} px={px_e:.4f} MV={fmt_usd(mv_e)} "
+                            f"lev={lev:+.2f} contrib={fmt_usd(contrib)}"
+                        )
+
+                resid_usd = E
+                resid_sh = resid_usd / px_u if px_u else 0.0
+                print(f"  Residual: {fmt_usd(resid_usd)}  ({resid_sh:+.2f} {u_sym} shares eq)\n")
+
 
             for _, row in grp.iterrows():
                 e_sym = str(row["ETF_U"]).upper()
@@ -1232,7 +1300,7 @@ def main() -> None:
                 tu = float(row["long_usd"])    # planned underlying notional (positive)
                 te = float(row["short_usd"])   # planned ETF notional (negative for short)
 
-                px_e = float(prices[e_sym])
+                px_e = ensure_price(e_sym)
 
                 row_target_u = target_shares_from_usd(tu, px_u)
                 row_target_e = target_shares_from_usd(te, px_e)  # negative for short
@@ -1240,7 +1308,7 @@ def main() -> None:
                 bucket_target_under_sh += int(row_target_u)
                 bucket_target_etf_sh[e_sym] = int(bucket_target_etf_sh.get(e_sym, 0) + int(row_target_e))
 
-            # Compute bucket deltas vs current strategy-only positions
+            # Compute bucket deltas vs current strategy-only positions (PLAN ONLY)
             cur_u_sh = int(round(float(strat_pos.get(u_sym, 0.0))))
             target_u_sh = int(bucket_target_under_sh)
 
@@ -1253,19 +1321,24 @@ def main() -> None:
 
             print("\n" + "=" * 110)
             print(f"[GROUP] Underlying bucket: {u_sym}")
-            print(f"  Mark px: {u_sym}={px_u:.4f}")
-            print(f"  Bucket pairs: {len(bucket_pair_ids)}")
-            print(f"  Planned target underlying shares (sum of rows): {target_u_sh:+d}")
-            print(f"  Current strategy-only underlying shares: {cur_u_sh:+d}")
-            print(f"  Naive underlying delta to planned target: {delta_under_naive:+d}")
+            # print(f"  Mark px: {u_sym}={px_u:.4f}")
+            # print(f"  Bucket pairs: {len(bucket_pair_ids)}")
+            # print(f"  Planned target underlying shares (sum of rows): {target_u_sh:+d}")
+            # print(f"  Current strategy-only underlying shares: {cur_u_sh:+d}")
+            # print(f"  Naive underlying delta to planned target: {delta_under_naive:+d}")
 
-            # ETF summary
+            # ETF summary (PLAN ONLY)
             for e_sym in sorted(bucket_target_etf_sh.keys()):
-                px_e = float(prices[e_sym])
+                px_e = ensure_price(e_sym)
                 cur_e_sh = int(round(float(strat_pos.get(e_sym, 0.0))))
                 tgt_e_sh = int(bucket_target_etf_sh[e_sym])
                 d_e = int(bucket_delta_etf[e_sym])
-                lev = float(leverage_by_etf.get(e_sym, 1.0))
+
+                lev = leverage_by_etf_plan.get(e_sym)
+                if lev is None:
+                    raise ValueError(f"Missing leverage for planned ETF {e_sym} in plan columns.")
+                lev = float(lev)
+
                 print(
                     f"  ETF {e_sym}: px={px_e:.4f} lev={lev:+.2f} "
                     f"cur={cur_e_sh:+d} tgt={tgt_e_sh:+d} delta={d_e:+d}"
@@ -1299,15 +1372,16 @@ def main() -> None:
                 filled_sh=0,
                 trade=None,
             )
+            print_bucket_exposure_breakdown(u_sym, title="PRE_GROUP_HEDGE_TRUTH")
+
 
             if not nothing_to_trade:
-                # Execute ETF legs first (short legs first if configured)
+                # Execute ETF legs first (PLAN ONLY)
                 etf_items = list(bucket_delta_etf.items())
 
                 def _etf_sort_key(item):
                     sym, d = item
-                    # shorts (d<0) first, then covers/longs
-                    return (0 if d < 0 else 1, sym)
+                    return (0 if d < 0 else 1, sym)  # shorts first
 
                 if short_first:
                     etf_items.sort(key=_etf_sort_key)
@@ -1325,7 +1399,7 @@ def main() -> None:
                             f"but IBKR file shows only {sm['available']} available."
                         )
 
-                    px_e = float(prices[e_sym])
+                    px_e = ensure_price(e_sym)
                     order_ref = f"{strategy_tag}|{u_sym}__GROUP|{e_sym}|ETF_DELTA"
 
                     filled_e_abs, trade_e = exec_delta(e_sym, d_e, px_e, order_ref)
@@ -1342,7 +1416,6 @@ def main() -> None:
                         trade=trade_e,
                     )
 
-                    # Record fills row (per-ETF)
                     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     fills_to_append.append(
                         {
@@ -1364,35 +1437,42 @@ def main() -> None:
                         }
                     )
 
-                # Refresh positions after all ETF legs for accurate hedge calc
+                # Refresh positions after ETF legs and rebuild held_etfs_by_under (since holdings changed)
+                # Refresh positions after ETF legs
                 ib_pos = current_ib_positions(ib)
                 strat_pos = strategy_position_only(ib_pos, baseline)
+                strat_pos = {str(k).upper().strip(): float(v) for k, v in strat_pos.items()}
+
+                # Recompute held_screened_etfs based on updated holdings
+                held_screened_etfs = sorted([
+                    sym for sym, sh0 in strat_pos.items()
+                    if int(round(float(sh0))) != 0 and sym in screened_etfs_set
+                ])
+
+                # Recompute held_etfs_by_under based on updated holdings
+                held_etfs_by_under = {}
+                missing_map = []
+                missing_lev = []
+
+                for etf in held_screened_etfs:
+                    u = etf_to_under_all.get(etf)
+                    if u is None:
+                        missing_map.append(etf)
+                        continue
+                    if etf not in leverage_by_etf_all:
+                        missing_lev.append(etf)
+                        continue
+                    held_etfs_by_under.setdefault(u, set()).add(etf)
+                print_bucket_exposure_breakdown(u_sym, title="POST_ETFS_HEDGE_TRUTH")
+
+                if missing_map:
+                    raise ValueError(f"Held ETFs are in screened but missing ETF->Underlying mapping: {missing_map}")
+                if missing_lev:
+                    raise ValueError(f"Held ETFs missing leverage in screened file: {missing_lev}")
 
             # --- Execute underlying hedge ONCE AFTER all ETF legs are executed ---
-            # We intentionally net-flat the bucket using ACTUAL post-ETF positions & leverage.
-            # This ensures hedging even if some ETF legs partially filled.
-            def compute_bucket_resid_sh() -> float:
-                ib_pos_now = current_ib_positions(ib)
-                strat_pos_now_raw = strategy_position_only(ib_pos_now, baseline)
-                strat_pos_now = {k: int(round(float(v))) for k, v in strat_pos_now_raw.items()}
-
-                u_sh_now = int(strat_pos_now.get(u_sym, 0))
-
-                # Underlying dollar exposure
-                E = u_sh_now * px_u
-
-                # Add leverage-weighted ETF exposures in this bucket
-                for e_sym in under_to_etfs.get(u_sym, set()):
-                    sh = int(strat_pos_now.get(e_sym, 0))
-                    if sh == 0:
-                        continue
-                    px_e = float(prices[e_sym])
-                    lev = float(leverage_by_etf.get(e_sym, 1.0))
-                    E += sh * px_e * lev
-
-                return E / px_u
-
-            resid_before = compute_bucket_resid_sh()
+            resid_before = compute_bucket_resid_sh(u_sym)
+            print(f"[HEDGE] {u_sym}: resid_before={resid_before:+.2f}sh -> delta_under_hedge={int(round(-resid_before)):+d} sh")
             delta_under_hedge = int(round(-resid_before))
 
             if delta_under_hedge != 0:
@@ -1434,11 +1514,10 @@ def main() -> None:
             else:
                 print(f"[GROUP] {u_sym}: already net-flat within rounding (resid_before={resid_before:+.2f}sh).")
 
-            # Final safety net check (no additional orders; informational only)
-            resid_after = compute_bucket_resid_sh()
+            print_bucket_exposure_breakdown(u_sym, title="POST_UNDER_HEDGE_TRUTH")
+
+            resid_after = compute_bucket_resid_sh(u_sym)
             print(f"[GROUP_NET] {u_sym}: resid_before={resid_before:+.2f}sh resid_after={resid_after:+.2f}sh")
-
-
 
         # Final portfolio exposure snapshot
         log_exposure_event(
@@ -1458,6 +1537,7 @@ def main() -> None:
         print("[DONE] Execution pass complete.")
     finally:
         ib.disconnect()
+
 
 
 if __name__ == "__main__":

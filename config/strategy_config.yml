@@ -1,8 +1,8 @@
 ibkr:
   host: 127.0.0.1
-  port: 7496
-  client_id: 41 #change to 41 for live
-  prefer_delayed: false
+  port: 7497
+  client_id: 31 #change to 41 for live
+  prefer_delayed: true
 strategy:
   tag: ETF_LS
   capital_usd: 175000
@@ -17,24 +17,21 @@ paths:
   ledger_csv: data/strategy_ledger.csv
   fills_csv: data/trade_fills.csv
 execution:
+  # Parallelism
+  parallel_n: 10        # 1 = serial, 5-10 = parallel buckets
+  auto_approve: true   # must be true for parallel execution (no interactive prompts)
+
   # Use no-price orders
   order_style: ADAPTIVE_MKT   # options: ADAPTIVE_MKT, MKT, LMT
-
   dry_run: false
-
-  # Still used for sizing + logging elsewhere; limit-specific knobs only matter if order_style: LMT
   limit_bps: 25.0
   aggressive_bps_step: 50.0
   market_fallback_third_try: true
-
-  # Workflow
   short_first: true
   max_retries: 3
   timeout_sec: 90
-
-  # Timeouts
-  accept_timeout_sec: 20            # for LMT (when you use it)
-  market_accept_timeout_sec: 90     # for ADAPTIVE_MKT / MKT (IB can sit PendingSubmit)
+  accept_timeout_sec: 20
+  market_accept_timeout_sec: 90
   limit_done_timeout_sec: 90
   market_done_timeout_sec: 180
 
