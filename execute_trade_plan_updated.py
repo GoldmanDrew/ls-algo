@@ -1136,7 +1136,10 @@ def main() -> None:
         # Use these for execution loop / sizing (only planned legs):
         #   under_to_etfs_planned
         #   leverage_by_etf_plan
-
+        under_to_etfs = under_to_etfs_planned
+        leverage_by_etf = leverage_by_etf_plan
+        under_to_etfs_universe = under_to_etfs_all
+        leverage_by_etf_universe = leverage_by_etf_all
 
         # Track expected underlying position per underlying group based on what the executor *intended*
         # to hedge (scaled by ETF fill fraction).
