@@ -5,7 +5,7 @@ ibkr:
   prefer_delayed: true
 strategy:
   tag: ETF_LS
-  capital_usd: 200000
+  capital_usd: 250000
   gross_leverage: 4
   blacklist:
   - JPM
