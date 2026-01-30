@@ -1,0 +1,9 @@
+<FlexQueryResponse queryName="Realized PNL" type="AF">
+<FlexStatements count="1">
+<FlexStatement accountId="U805366" fromDate="20260129" toDate="20260129" period="LastNCalendarDays" whenGenerated="20260130;163707">
+<Trades>
+</Trades><UnbundledCommissionDetails>
+</UnbundledCommissionDetails>
+</FlexStatement>
+</FlexStatements>
+</FlexQueryResponse>

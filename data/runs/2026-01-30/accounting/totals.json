@@ -1,0 +1,18 @@
+{
+  "run_date": "2026-01-30",
+  "net_pnl": 888.565065999999,
+  "realized_pnl": 0.0,
+  "unrealized_pnl": 888.565065999999,
+  "cash_pnl": 0.0,
+  "dividends": 0.0,
+  "borrow_fees": 0.0,
+  "commissions": 0.0,
+  "n_symbols": 199,
+  "n_underlyings": 71,
+  "pairs_used": 299,
+  "blacklist_count": 1,
+  "blacklist_symbols": [
+    "JPM"
+  ],
+  "etf_cagr_path": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\config\\etf_cagr.csv"
+}

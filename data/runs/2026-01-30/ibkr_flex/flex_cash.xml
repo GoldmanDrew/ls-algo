@@ -1,0 +1,15 @@
+<FlexQueryResponse queryName="Cash Transactions" type="AF">
+<FlexStatements count="1">
+<FlexStatement accountId="U805366" fromDate="20260129" toDate="20260129" period="LastNCalendarDays" whenGenerated="20260130;163711">
+<CorporateActions>
+</CorporateActions><CashTransactions>
+</CashTransactions><InterestAccruals>
+<InterestAccrualsCurrency accountId="U805366" acctAlias="Traditional" model="" currency="BASE_SUMMARY" fromDate="20260129" toDate="20260129" startingAccrualBalance="-31.8555015" interestAccrued="-69.6338342" accrualReversal="0" fxTranslation="-0.0074247" endingAccrualBalance="-101.4967604" />
+<InterestAccrualsCurrency accountId="U805366" acctAlias="Traditional" model="" currency="EUR" fromDate="20260129" toDate="20260129" startingAccrualBalance="-96.63" interestAccrued="-3.63" accrualReversal="0" fxTranslation="0" endingAccrualBalance="-100.26" />
+<InterestAccrualsCurrency accountId="U805366" acctAlias="Traditional" model="" currency="JPY" fromDate="20260129" toDate="20260129" startingAccrualBalance="11973" interestAccrued="-407" accrualReversal="0" fxTranslation="0" endingAccrualBalance="11566" />
+<InterestAccrualsCurrency accountId="U805366" acctAlias="Traditional" model="" currency="USD" fromDate="20260129" toDate="20260129" startingAccrualBalance="5.61" interestAccrued="-62.63" accrualReversal="0" fxTranslation="0" endingAccrualBalance="-57.02" />
+</InterestAccruals>
+
+</FlexStatement>
+</FlexStatements>
+</FlexQueryResponse>
