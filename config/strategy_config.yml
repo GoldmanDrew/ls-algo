@@ -9,6 +9,9 @@ strategy:
   gross_leverage: 4
   blacklist:
   - JPM
+  - BRK-B
+  beta_cutoff: 1.5          # new: cutoff for |Beta|
+  beta_split_high: 1.0     # new: within leveraged sleeve, fraction to |Beta| > cutoff
 paths:
   screened_csv: data/etf_screened_today.csv
   blacklist_txt: config/strategy_blacklist.txt
@@ -18,7 +21,7 @@ paths:
   fills_csv: data/trade_fills.csv
 execution:
   # Parallelism
-  parallel_n: 10        # 1 = serial, 5-10 = parallel buckets
+  parallel_n: 25       # 1 = serial, 5-20 = parallel buckets
   auto_approve: true   # must be true for parallel execution (no interactive prompts)
 
   # Use no-price orders
@@ -36,6 +39,7 @@ execution:
   market_done_timeout_sec: 180
 
 screener:
-  borrow_cap: 0.10
-  borrow_whitelist_etfs:
+  borrow_low: 0.08           # 8% low-end threshold (decimal)
+  purgatory_margin: 0.04     # +4% band above BORROW_LOW (decimal)
+  whitelist_etfs:
   exclude_negative_cagr: false

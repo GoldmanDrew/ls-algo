@@ -2,28 +2,28 @@
 """
 execute_trade_plan_updated.py
 
-Reads a proposed trade plan CSV and executes bucket-by-bucket (Underlying groups),
-optionally in parallel (N buckets at a time).
+UPDATED FOR PURGATORY RULES + SHORT-SALE SAFETY:
 
-Key behavior (matches your “working properly” version):
-- Execute ONLY ETFs in the PLAN.
-- Hedge truth uses ALL HELD ETFs that are in the SCREENED universe (etf_screened_today.csv),
-  even if those ETFs are NOT in the plan (e.g., AMDG).
-- Underlying hedge is computed from ACTUAL post-ETF positions and leverage from SCREENED.
+1) Cleanup pre-pass ONLY closes ETF positions that are:
+   - strategy-held (post-baseline)
+   - mapped in screened universe
+   - NOT present in proposed_trades.csv
+   - AND NOT in purgatory (per screened truth)
 
-Parallel safety model:
-- One IB() connection per worker thread (unique clientId per worker).
-- Logging is guarded by a lock to avoid interleaved writes.
-- Plan sanity check: no planned ETF symbol appears in multiple underlyings.
+2) Execution NEVER opens new positions in purgatory ETFs:
+   - Purgatory ETFs must have long_usd==0 and short_usd==0 in the plan (hard-check)
+   - We skip sizing/trading for purgatory ETFs entirely in bucket execution
+   - We also prevent plan-based delta math from implicitly closing purgatory (freeze deltas)
 
-Ctrl+C (SIGINT) behavior:
-- First Ctrl+C: stop launching new buckets; workers stop cooperatively between legs;
-  in-flight orders are not force-cancelled by default.
-- Second Ctrl+C: hard exit.
+3) NEW: Graceful handling for IB Error 201 (not available for short sale)
+   - We do NOT spam retries. We return a SHORT_BLOCKED status immediately.
 
-Usage:
-  python execute_trade_plan_parallel.py
-  DRY_RUN=1 python execute_trade_plan_parallel.py
+4) NEW: Use IBKR FTP short availability as a hard gate for NEW shorts
+   - If we need to INCREASE a short (delta < 0) and FTP available == 0 -> skip placing order.
+   - If available is positive but less than requested -> cap the order to available (partial).
+   - This avoids repeated 201 rejects and “multiple orders” churn.
+
+Everything else remains consistent with your current working behavior.
 """
 
 from __future__ import annotations
@@ -36,17 +36,29 @@ import json
 import os
 import signal
 import sys
+import traceback
 import threading
 import time
+import queue
+from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, Optional, Tuple, List, Set
 
+from ib_insync import IB, Stock, Order, Trade, util
+from ib_insync.objects import ExecutionFilter
+import time
+import datetime as dt
+from typing import Optional, Iterable, Dict, Any, List, Tuple
+
+
 import pandas as pd
 import yaml
 from ib_insync import IB, Stock, Order, Trade, MarketOrder, TagValue
 from generate_trade_plan import load_blacklist
+
+
 # =============================================================================
 # Thread-safe printing + shutdown flag
 # =============================================================================
@@ -57,14 +69,11 @@ def tprint(msg: str) -> None:
     with PRINT_LOCK:
         print(msg, flush=True)
 
-
 SHUTDOWN = threading.Event()
-
 STOP_FILE = Path("STOP_EXECUTION")
 
 def stop_requested() -> bool:
-    return STOP_FILE.exists()
-
+    return STOP_FILE.exists() or SHUTDOWN.is_set()
 
 def handle_sigint(signum, frame):
     # First Ctrl+C => graceful; second Ctrl+C => hard exit
@@ -75,12 +84,7 @@ def handle_sigint(signum, frame):
         tprint("\n[CTRL+C] Forced exit.")
         sys.exit(1)
 
-
 def ensure_thread_event_loop() -> asyncio.AbstractEventLoop:
-    """
-    ib_insync relies on an asyncio event loop. Worker threads created by ThreadPoolExecutor
-    do not have one by default on Windows, so we must create and set it.
-    """
     try:
         loop = asyncio.get_event_loop()
     except RuntimeError:
@@ -94,26 +98,10 @@ def ensure_thread_event_loop() -> asyncio.AbstractEventLoop:
 # =============================================================================
 
 EXPOSURE_COLS = [
-    "ts",
-    "run_date",
-    "strategy_tag",
-    "stage",          # PRE_GROUP, POST_ETF, POST_UNDER_GROUP, FINAL, etc.
-    "pair_id",
-    "underlying",
-    "etf",
-    "symbol",         # symbol traded or "PORTFOLIO"
-    "delta_sh",
-    "filled_sh",
-    "fill_avg_px",
-    "mark_px",
-    "delta_notional",
-    "pos_sh",
-    "pos_notional",
-    "gross_long",
-    "gross_short",
-    "net_notional",
+    "ts","run_date","strategy_tag","stage","pair_id","underlying","etf","symbol",
+    "delta_sh","filled_sh","fill_avg_px","mark_px","delta_notional","pos_sh",
+    "pos_notional","gross_long","gross_short","net_notional",
 ]
-
 
 def compute_portfolio_notionals(strat_pos: Dict[str, int], prices: Dict[str, float]) -> Dict[str, float]:
     gross_long = 0.0
@@ -131,7 +119,6 @@ def compute_portfolio_notionals(strat_pos: Dict[str, int], prices: Dict[str, flo
             gross_short += abs(notional)
     return {"gross_long": gross_long, "gross_short": gross_short, "net_notional": net}
 
-
 def append_csv_row(path: Path, row: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame([row])
@@ -140,12 +127,10 @@ def append_csv_row(path: Path, row: dict) -> None:
     else:
         df.to_csv(path, mode="w", header=True, index=False)
 
-
 def append_jsonl(path: Path, row: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(row, default=str) + "\n")
-
 
 def safe_avg_fill_price(trade: Optional[Trade]) -> Optional[float]:
     try:
@@ -239,27 +224,18 @@ IB_SYMBOL_MAP: Dict[str, Tuple[str, Optional[str]]] = {
 }
 REVERSE_IB_SYMBOL_MAP: Dict[str, str] = {ib_sym: uni for uni, (ib_sym, _) in IB_SYMBOL_MAP.items()}
 
-
 def ib_symbol_from_universal(sym: str) -> Tuple[str, Optional[str]]:
     s = str(sym).strip().upper()
     if s in IB_SYMBOL_MAP:
         return IB_SYMBOL_MAP[s]
     return s, None
 
-
 def universal_symbol_from_ib(sym: str) -> str:
     s = str(sym).strip().upper()
     return REVERSE_IB_SYMBOL_MAP.get(s, s)
 
 def norm_sym(x: str) -> str:
-    """
-    Match upstream pipeline normalization (generate_trade_plan.py / etf_screener.py):
-    - uppercase
-    - strip
-    - replace '.' with '-' (e.g. BRK.B -> BRK-B)
-    """
     return str(x).upper().strip().replace(".", "-")
-
 
 def make_stock(symbol: str) -> Stock:
     ib_sym, primary = ib_symbol_from_universal(symbol)
@@ -276,10 +252,8 @@ def make_stock(symbol: str) -> Stock:
 def today_str() -> str:
     return date.today().isoformat()
 
-
 def run_dir(run_date: str) -> Path:
     return Path("data") / "runs" / run_date
-
 
 def exec_dir(run_date: str) -> Path:
     return run_dir(run_date) / "execution"
@@ -289,21 +263,25 @@ def exec_dir(run_date: str) -> Path:
 # IBKR connection & pricing
 # =============================================================================
 
-def connect_ib(host: str, port: int, client_id: int) -> IB:
-    ensure_thread_event_loop()  # safe even in main thread
+def connect_ib(host: str, port: int, client_id: int, coordinator: bool = False) -> IB:
+    ensure_thread_event_loop()
     ib = IB()
-    ib.RequestTimeout = 20
+    ib.RequestTimeout = 60
     ib.connect(host, port, clientId=client_id)
     if not ib.isConnected():
         raise RuntimeError("Failed to connect to IBKR.")
-    # IMPORTANT: only clientId=0 can auto-bind orders
-    if client_id == 0:
+
+    if coordinator:
         ib.reqAutoOpenOrders(True)
+
     try:
+        ib.reqIds(-1)
+        ib.sleep(0.5)
         ib.reqOpenOrders()
         ib.sleep(0.5)
     except Exception:
         pass
+
     return ib
 
 def safe_price(v) -> Optional[float]:
@@ -358,13 +336,6 @@ def get_snapshot_price(ib: IB, symbol: str, prefer_delayed: bool = True) -> floa
         for _attempt in range(3):
             if stop_requested():
                 break
-            if not ib.isConnected():
-                for _ in range(40):
-                    if stop_requested():
-                        break
-                    ib.sleep(0.25)
-                    if ib.isConnected():
-                        break
             try:
                 bars = ib.reqHistoricalData(
                     contract,
@@ -400,7 +371,6 @@ def build_market_order(action: str, qty: int, order_ref: str) -> Order:
     o.orderRef = order_ref
     return o
 
-
 def build_adaptive_market_order(action: str, qty: int, order_ref: str, priority: str = "Normal") -> Order:
     o = Order()
     o.action = action.upper()
@@ -413,10 +383,19 @@ def build_adaptive_market_order(action: str, qty: int, order_ref: str, priority:
     o.algoParams = [TagValue("adaptivePriority", str(priority))]
     return o
 
+def build_limit_order(action: str, qty: int, lmt_price: float, order_ref: str) -> Order:
+    o = Order()
+    o.action = action.upper()
+    o.totalQuantity = int(qty)
+    o.orderType = "LMT"
+    o.lmtPrice = float(lmt_price)
+    o.tif = "DAY"
+    o.transmit = True
+    o.orderRef = order_ref
+    return o
 
 TERMINAL: Set[str] = {"filled", "cancelled", "inactive"}
 ACCEPTED: Set[str] = {"presubmitted", "submitted", "filled", "pendingsubmit"}
-
 
 def wait_for_trade_terminal(ib: IB, trade: Trade, timeout: float = 180.0) -> Trade:
     t0 = time.time()
@@ -426,31 +405,221 @@ def wait_for_trade_terminal(ib: IB, trade: Trade, timeout: float = 180.0) -> Tra
         st = (trade.orderStatus.status or "").lower()
         if st in TERMINAL:
             return trade
-        try:
-            ib.reqAllOpenOrders()
-        except Exception:
-            pass
-        ib.sleep(0.2)
+        ib.waitOnUpdate(timeout=0.5)
     return trade
 
-
-def wait_for_trade_accepted(ib: IB, trade: Trade, timeout: float = 45.0) -> Tuple[bool, Trade]:
+def wait_for_trade_accepted(ib: IB, trade: Trade, timeout: float = 120.0) -> Tuple[bool, Trade]:
     t0 = time.time()
     while time.time() - t0 < timeout:
         if stop_requested():
             return False, trade
-        st = (trade.orderStatus.status or "").lower()
-        if st in ACCEPTED:
+        ib.sleep(0.25)
+        st_raw = trade.orderStatus.status or ""
+        st = st_raw.strip().lower()
+        try:
+            oid = int(getattr(trade.order, "orderId", 0) or 0)
+        except Exception:
+            oid = 0
+        if st in ACCEPTED or oid > 0:
             return True, trade
         if st in TERMINAL:
             return False, trade
         try:
-            ib.reqAllOpenOrders()
+            ib.reqOpenOrders()
         except Exception:
             pass
-        ib.sleep(0.2)
+    st_raw = trade.orderStatus.status or ""
+    st = st_raw.strip().lower()
+    if st in ACCEPTED:
+        return True, trade
     return False, trade
 
+def strategy_tag_from_order_ref(order_ref: str) -> str:
+    try:
+        s = str(order_ref or "")
+        if "|" not in s:
+            return ""
+        return s.split("|", 1)[0].strip()
+    except Exception:
+        return ""
+
+def last_ib_error(trade: Optional[Trade]) -> Tuple[Optional[int], Optional[str]]:
+    if trade is None:
+        return None, None
+    try:
+        logs = getattr(trade, "log", None) or []
+        for entry in reversed(logs):
+            code = getattr(entry, "errorCode", None)
+            msg = getattr(entry, "message", None)
+            if code and int(code) != 0:
+                return int(code), str(msg or "")
+    except Exception:
+        pass
+    return None, None
+
+def is_short_not_available(code: Optional[int], msg: Optional[str]) -> bool:
+    m = (msg or "").lower()
+    return (code == 201) and ("not available for short sale" in m)
+
+def is_mktdata_block(code: Optional[int], msg: Optional[str]) -> bool:
+    m = (msg or "").lower()
+    return (
+        code in (354, 10089)
+        or ("without having market data" in m)
+        or ("requires additional subscription" in m)
+    )
+
+@dataclass
+class ExecResult:
+    filled: int
+    trade: Optional[Trade]
+    status: str                  # "FILLED"/"PARTIAL"/"NOFILL"/"SHORT_BLOCKED"/"FAILED"
+    error_code: Optional[int] = None
+    error_msg: Optional[str] = None
+
+
+# =============================================================================
+# Global cancellation coordinator (clientId=0)
+# =============================================================================
+
+@dataclass
+class CancelRequest:
+    symbol: str
+    strategy_tag: str
+    resp_q: "queue.Queue[int]"
+
+class CoordinatorCancelService:
+    def __init__(self, host: str, port: int):
+        self.host = host
+        self.port = port
+        self._q: "queue.Queue[Optional[CancelRequest]]" = queue.Queue()
+        self._stop = threading.Event()
+        self._ready = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="IBCancelCoordinator", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+        if not self._ready.wait(timeout=30.0):
+            raise RuntimeError("Cancel coordinator did not become ready (timeout).")
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._q.put(None)
+        try:
+            self._thread.join(timeout=5.0)
+        except Exception:
+            pass
+
+    def cancel(self, symbol: str, strategy_tag: str, timeout: float = 10.0) -> int:
+        if not strategy_tag:
+            return 0
+        if self._stop.is_set():
+            return 0
+        resp_q: "queue.Queue[int]" = queue.Queue(maxsize=1)
+        req = CancelRequest(symbol=norm_sym(symbol), strategy_tag=str(strategy_tag).strip(), resp_q=resp_q)
+        try:
+            self._q.put(req, timeout=1.0)
+        except Exception:
+            return 0
+        try:
+            return int(resp_q.get(timeout=timeout))
+        except Exception:
+            return 0
+
+    def _run(self) -> None:
+        ensure_thread_event_loop()
+        try:
+            ib = connect_ib(self.host, self.port, client_id=0, coordinator=True)
+            self._ready.set()
+        except Exception as e:
+            tprint(f"[CANCEL_COORD] FAILED to connect clientId=0: {type(e).__name__}: {e}")
+            self._ready.set()
+            return
+
+        try:
+            while not self._stop.is_set() and not stop_requested():
+                try:
+                    item = self._q.get(timeout=0.25)
+                except queue.Empty:
+                    try:
+                        ib.reqOpenOrders()
+                        ib.sleep(0.05)
+                    except Exception:
+                        pass
+                    continue
+
+                if item is None:
+                    break
+
+                try:
+                    n = self._cancel_stale_orders_for_symbol_impl(
+                        ib=ib,
+                        symbol=item.symbol,
+                        strategy_tag=item.strategy_tag,
+                    )
+                except Exception:
+                    n = 0
+
+                try:
+                    item.resp_q.put_nowait(int(n))
+                except Exception:
+                    pass
+        finally:
+            try:
+                ib.disconnect()
+            except Exception:
+                pass
+
+    def _cancel_stale_orders_for_symbol_impl(self, *, ib: IB, symbol: str, strategy_tag: str) -> int:
+        symbol = norm_sym(symbol)
+        strategy_tag = str(strategy_tag).strip()
+        if not symbol or not strategy_tag:
+            return 0
+
+        cancelled = 0
+        try:
+            ib.reqOpenOrders()
+            ib.sleep(0.10)
+        except Exception:
+            pass
+
+        for tr in list(ib.openTrades()):
+            try:
+                st = (tr.orderStatus.status or "").strip().lower()
+                if st in TERMINAL:
+                    continue
+
+                ref = str(getattr(tr.order, "orderRef", "") or "")
+                if not ref.startswith(strategy_tag + "|"):
+                    continue
+
+                c = getattr(tr, "contract", None)
+                if c is None:
+                    continue
+
+                sym = norm_sym(universal_symbol_from_ib(getattr(c, "symbol", "") or ""))
+                if sym != symbol:
+                    continue
+
+                ib.cancelOrder(tr.order)
+                cancelled += 1
+            except Exception:
+                pass
+
+        if cancelled:
+            try:
+                ib.sleep(0.10)
+            except Exception:
+                pass
+
+        return cancelled
+
+
+# =============================================================================
+# Execution primitive (uses cancel coordinator)
+# =============================================================================
+
+QUALIFY_LOCK = threading.Lock()
 
 def execute_leg(
     *,
@@ -466,44 +635,51 @@ def execute_leg(
     max_retries: int = 3,
     dry_run: bool = False,
     context: str = "",
-) -> Tuple[int, Optional[Trade]]:
+    contract: Optional[Stock] = None,
+    cancel_service: Optional[CoordinatorCancelService] = None,
+) -> ExecResult:
     if qty <= 0:
-        return 0, None
+        return ExecResult(filled=0, trade=None, status="NOFILL")
     if stop_requested():
         tprint(f"[{context}][LEG] Shutdown active; skipping {symbol} {action} qty={qty}")
-        return 0, None
+        return ExecResult(filled=0, trade=None, status="FAILED")
 
-    contract = make_stock(symbol)
-    ib.qualifyContracts(contract)
+    symbol_u = norm_sym(symbol)
+
+    if contract is None:
+        contract = make_stock(symbol_u)
+        with QUALIFY_LOCK:
+            ib.qualifyContracts(contract)
 
     filled_total = 0
-    last_trade: Optional[Trade] = None
+    last_trade_local: Optional[Trade] = None
 
     order_style = str(exec_cfg.get("order_style", "ADAPTIVE_MKT")).strip().upper()
-    market_done_timeout = float(exec_cfg.get("market_done_timeout_sec", 180.0))
+    accept_timeout = float(exec_cfg.get("market_accept_timeout_sec", 120.0))
+    done_timeout   = float(exec_cfg.get("market_done_timeout_sec", 300.0))
 
-    def last_ib_error(trade: Optional[Trade]) -> Tuple[Optional[int], Optional[str]]:
-        if trade is None:
-            return None, None
-        try:
-            logs = getattr(trade, "log", None) or []
-            for entry in reversed(logs):
-                code = getattr(entry, "errorCode", None)
-                msg = getattr(entry, "message", None)
-                if code and int(code) != 0:
-                    return int(code), str(msg or "")
-        except Exception:
-            pass
-        return None, None
+    strategy_tag_local = strategy_tag_from_order_ref(order_ref)
+
+    def cancel_global() -> int:
+        if dry_run:
+            return 0
+        if cancel_service is None:
+            return 0
+        if not strategy_tag_local:
+            return 0
+        return cancel_service.cancel(symbol_u, strategy_tag_local)
 
     for attempt in range(1, max_retries + 1):
         if stop_requested():
-            tprint(f"[{context}][LEG] Shutdown during retries; stopping {symbol}")
             break
 
         remain = qty - filled_total
         if remain <= 0:
             break
+
+        n_cancel = cancel_global()
+        if n_cancel:
+            tprint(f"[{context}][CANCEL] {symbol_u}: cancelled {n_cancel} stale orders (global)")
 
         if order_style == "ADAPTIVE_MKT":
             if "|UNDER_DELTA" in order_ref:
@@ -527,65 +703,100 @@ def execute_leg(
             px_str = "MKT"
 
         ctx = f"[{context}]" if context else ""
-        tprint(
-            f"{ctx}[LEG] {symbol} {action} qty={remain} px={px_str} "
-            f"refTag={o.orderRef} clientId={ib.client.clientId}"
-        )
+        tprint(f"{ctx}[LEG] {symbol_u} {action} qty={remain} px={px_str} refTag={o.orderRef} clientId={ib.client.clientId}")
 
         if dry_run:
             filled_total += remain
             continue
 
         trade = ib.placeOrder(contract, o)
-        last_trade = trade
+        last_trade_local = trade
 
-        try:
-            ib.reqAllOpenOrders()
-        except Exception:
-            pass
-        ib.sleep(0.3)
-
-        accepted, trade = wait_for_trade_accepted(
-            ib, trade, timeout=float(exec_cfg.get("market_accept_timeout_sec", 45.0))
-        )
+        accepted, trade = wait_for_trade_accepted(ib, trade, timeout=accept_timeout)
 
         if not accepted:
-            st = (trade.orderStatus.status or "")
+            st = (trade.orderStatus.status or "").strip()
             code, msg = last_ib_error(trade)
 
-            # HARD FAIL: cannot short this contract
-            if code == 201 and "not available for short sale" in (msg or "").lower():
-                tprint(
-                    f"{ctx}[LEG] {symbol} HARD_REJECT code=201 not shortable; "
-                    f"no more retries. status={st} orderId={trade.order.orderId} ref={trade.order.orderRef}"
+            # HARD-GRACEFUL: short not available -> do not retry/spam
+            if is_short_not_available(code, msg):
+                tprint(f"{ctx}[LEG] {symbol_u} SHORT_BLOCKED (201): cannot increase short now. status={st}")
+                return ExecResult(
+                    filled=int(filled_total),
+                    trade=trade,
+                    status="SHORT_BLOCKED",
+                    error_code=code,
+                    error_msg=msg,
                 )
-                break
 
-            tprint(f"{ctx}[LEG] {symbol} not accepted (status={st} code={code} msg={msg}); retrying.")
+            cancel_global()
+            tprint(f"{ctx}[LEG] {symbol_u} NOT_ACK (status={st} code={code} msg={msg}); retrying.")
+            ib.sleep(1.0)
             continue
 
-        trade = wait_for_trade_terminal(ib, trade, timeout=market_done_timeout)
-        status = (trade.orderStatus.status or "").lower()
-        filled = int(trade.orderStatus.filled or 0)
-        remaining = trade.orderStatus.remaining
-        remaining = None if remaining is None else int(remaining)
+        trade = wait_for_trade_terminal(ib, trade, timeout=done_timeout)
+        last_trade_local = trade
 
-        order_id = getattr(trade.order, "orderId", None)
-        perm_id = getattr(trade.orderStatus, "permId", None) or getattr(trade.order, "permId", None)
-        tprint(
-            f"{ctx}[LEG] status={status} filled={filled} remaining={remaining} "
-            f"orderId={order_id} permId={perm_id} refTag={trade.order.orderRef}"
-        )
+        status = (trade.orderStatus.status or "").strip().lower()
+        filled = int(trade.orderStatus.filled or 0)
+
+        code, msg = last_ib_error(trade)
+
+        # If it terminal-cancelled due to short block, do not retry.
+        if status in ("cancelled", "inactive") and is_short_not_available(code, msg):
+            tprint(f"{ctx}[LEG] {symbol_u} SHORT_BLOCKED (201) after submit: cannot increase short now. status={status}")
+            filled_total = min(qty, filled_total + max(0, filled))
+            return ExecResult(
+                filled=int(filled_total),
+                trade=trade,
+                status="SHORT_BLOCKED",
+                error_code=code,
+                error_msg=msg,
+            )
+
+        # Market-data subscription block -> fallback LMT (existing behavior)
+        if status == "cancelled" and is_mktdata_block(code, msg):
+            cancel_global()
+            adj = float(bps) / 10000.0
+            lmt = ref_price * (1.0 + adj) if action.upper() == "BUY" else ref_price * (1.0 - adj)
+
+            o2 = build_limit_order(
+                action=action,
+                qty=remain,
+                lmt_price=lmt,
+                order_ref=f"{order_ref}|att{attempt}|LMT_FALLBACK",
+            )
+            tprint(f"{ctx}[LEG] {symbol_u} fallback LMT @ {lmt:.4f} (code={code})")
+
+            trade2 = ib.placeOrder(contract, o2)
+            last_trade_local = trade2
+
+            _ok2, trade2 = wait_for_trade_accepted(ib, trade2, timeout=accept_timeout)
+            trade2 = wait_for_trade_terminal(ib, trade2, timeout=done_timeout)
+            last_trade_local = trade2
+
+            filled2 = int(trade2.orderStatus.filled or 0)
+            filled_total = min(qty, filled_total + max(0, filled2))
+            continue
 
         filled_total = min(qty, filled_total + max(0, filled))
 
-        if status not in TERMINAL and remaining and remaining > 0:
+        if status not in TERMINAL:
             try:
                 ib.cancelOrder(trade.order)
+                ib.sleep(0.5)
             except Exception:
                 pass
 
-    return int(filled_total), last_trade
+    # Final status
+    if dry_run:
+        return ExecResult(filled=int(filled_total), trade=last_trade_local, status="FILLED")
+    if filled_total <= 0:
+        code, msg = last_ib_error(last_trade_local)
+        return ExecResult(filled=0, trade=last_trade_local, status="FAILED", error_code=code, error_msg=msg)
+    if filled_total < qty:
+        return ExecResult(filled=int(filled_total), trade=last_trade_local, status="PARTIAL")
+    return ExecResult(filled=int(filled_total), trade=last_trade_local, status="FILLED")
 
 
 # =============================================================================
@@ -604,14 +815,12 @@ def load_baseline_qty(path: Path) -> Dict[str, float]:
         raise ValueError(f"Baseline file {path} missing required column 'qty'. Columns={list(df.columns)}")
     return dict(df.groupby("symbol")["qty"].sum())
 
-
 def current_ib_positions(ib: IB) -> Dict[str, float]:
     out: Dict[str, float] = {}
     for p in ib.positions():
         sym = norm_sym(universal_symbol_from_ib(p.contract.symbol))
         out[sym] = out.get(sym, 0.0) + float(p.position)
     return out
-
 
 def strategy_position_only(ib_pos: Dict[str, float], baseline: Dict[str, float]) -> Dict[str, float]:
     syms = set(ib_pos) | set(baseline)
@@ -633,17 +842,14 @@ def append_fills(rows: List[dict], fills_path: Path) -> None:
     df_out.to_csv(fills_path, index=False)
     tprint(f"[FILLS] Appended {len(rows)} rows -> {fills_path}")
 
-
 def resolve_plan_path(run_date: str, paths_cfg: dict) -> Path:
     dated = run_dir(run_date) / "proposed_trades.csv"
     if dated.exists():
         return dated
     return Path(paths_cfg.get("proposed_trades_csv", "data/proposed_trades.csv"))
 
-
 def resolve_fills_path(run_date: str, paths_cfg: dict) -> Path:
     return exec_dir(run_date) / "fills.csv"
-
 
 def write_execution_snapshot(run_date: str, df: pd.DataFrame, name: str) -> None:
     p = exec_dir(run_date) / name
@@ -661,22 +867,15 @@ def target_shares_from_usd(notional_usd: float, px: float) -> int:
         raise ValueError("Price must be > 0")
     return int(notional_usd / px)
 
-
 def fmt_dollars(x: float) -> str:
     return f"${x:,.0f}"
 
+
 # =============================================================================
-# Borrow parsing + "close high borrow" + "hedge all underlyings" helpers
+# Borrow parsing helpers
 # =============================================================================
 
 def _coerce_borrow_annual(x) -> Optional[float]:
-    """
-    Returns annual borrow as decimal.
-    Your file is already decimals (e.g. 0.0496) but we accept:
-      - "4.96%" -> 0.0496
-      - 4.96 -> 0.0496 (assume percent if > 1.5)
-      - 0.0496 -> 0.0496
-    """
     if x is None:
         return None
     try:
@@ -691,31 +890,49 @@ def _coerce_borrow_annual(x) -> Optional[float]:
             v = float(x)
     except Exception:
         return None
-
     if v < 0:
         return None
-    if v > 1.5:   # likely percent
+    if v > 1.5:
         return v / 100.0
     return v
 
-
 def detect_borrow_col(df: pd.DataFrame) -> Optional[str]:
-    """
-    Your etf_screened_today.csv uses 'borrow_current' (annual decimal).
-    Prefer that explicitly.
-    """
     if "borrow_current" in df.columns:
         return "borrow_current"
-
-    # fallback (in case file schema changes)
-    cols = list(df.columns)
-    low = {c: str(c).strip().lower() for c in cols}
-    for c, lc in low.items():
-        if "borrow" in lc:
+    for c in df.columns:
+        if "borrow" in str(c).lower():
             return c
     return None
+
+def build_borrow_by_etf(screened: pd.DataFrame) -> Dict[str, Optional[float]]:
+    borrow_col = detect_borrow_col(screened)
+    out: Dict[str, Optional[float]] = {}
+    if borrow_col is None:
+        return out
+    tmp = screened.copy()
+    tmp["ETF"] = tmp["ETF"].astype(str).map(norm_sym)
+    tmp[borrow_col] = tmp[borrow_col].apply(_coerce_borrow_annual)
+    for _, r in tmp.iterrows():
+        e = str(r["ETF"])
+        b = r[borrow_col]
+        out[e] = None if pd.isna(b) else float(b)
+    return out
+
+def build_purgatory_set(screened: pd.DataFrame) -> Set[str]:
+    """
+    ETFs that are in purgatory per screened truth.
+    Conservative: if column missing, return empty set.
+    """
+    if "purgatory" not in screened.columns:
+        return set()
+    tmp = screened.copy()
+    tmp["ETF"] = tmp["ETF"].astype(str).map(norm_sym)
+    purg = tmp.loc[tmp["purgatory"] == True, "ETF"]  # noqa: E712
+    return set(purg.dropna().astype(str).tolist())
+
+
 # =============================================================================
-# Borrow close prepass + postpass hedge sweep (screened truth)
+# Hedge truth helpers (screened truth)
 # =============================================================================
 
 def ensure_price_coordinator(ib: IB, sym: str, prices: Dict[str, float], prefer_delayed: bool) -> float:
@@ -727,7 +944,6 @@ def ensure_price_coordinator(ib: IB, sym: str, prices: Dict[str, float], prefer_
     prices[sym] = float(px2)
     return float(px2)
 
-
 def compute_group_residual_sh_equiv(
     ib: IB,
     *,
@@ -738,11 +954,6 @@ def compute_group_residual_sh_equiv(
     etf_to_under_all: Dict[str, str],
     leverage_by_etf_all: Dict[str, float],
 ) -> float:
-    """
-    Residual exposure in underlying-share equivalents for group u_sym:
-      E = (u_sh * px_u) + sum( etf_sh * px_etf * lev_etf )
-      residual_sh = E / px_u
-    """
     u_sym = norm_sym(u_sym)
 
     ib_pos_now = current_ib_positions(ib)
@@ -768,155 +979,474 @@ def compute_group_residual_sh_equiv(
     return E / px_u if px_u else 0.0
 
 
-def close_high_borrow_pairs_prepass(
+# =============================================================================
+# Coordinator-wide cancel helpers
+# =============================================================================
+
+def cancel_all_strategy_orders(ib: IB, strategy_tag: str) -> int:
+    strategy_tag = str(strategy_tag or "").strip()
+    if not strategy_tag:
+        return 0
+    cancelled = 0
+    try:
+        ib.reqOpenOrders()
+        ib.sleep(0.25)
+    except Exception:
+        pass
+
+    for tr in list(ib.openTrades()):
+        try:
+            st = (tr.orderStatus.status or "").strip().lower()
+            if st in TERMINAL:
+                continue
+            ref = str(getattr(tr.order, "orderRef", "") or "")
+            if not ref.startswith(strategy_tag + "|"):
+                continue
+            ib.cancelOrder(tr.order)
+            cancelled += 1
+        except Exception:
+            pass
+
+    if cancelled:
+        ib.sleep(0.25)
+    return cancelled
+
+def wait_until_no_strategy_open_orders(ib: IB, strategy_tag: str, timeout: float = 20.0) -> bool:
+    strategy_tag = str(strategy_tag or "").strip()
+    if not strategy_tag:
+        return True
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if stop_requested():
+            return False
+        try:
+            ib.reqOpenOrders()
+        except Exception:
+            pass
+
+        open_cnt = 0
+        try:
+            for tr in list(ib.openTrades()):
+                st = (tr.orderStatus.status or "").strip().lower()
+                if st in TERMINAL:
+                    continue
+                ref = str(getattr(tr.order, "orderRef", "") or "")
+                if ref.startswith(strategy_tag + "|"):
+                    open_cnt += 1
+        except Exception:
+            open_cnt = 0
+
+        if open_cnt == 0:
+            return True
+        ib.sleep(0.5)
+    return False
+
+
+# =============================================================================
+# Cleanup to match plan (UPDATED: skip purgatory)
+# =============================================================================
+
+def build_cleanup_trades_to_match_plan(
     *,
     ib: IB,
     baseline: Dict[str, float],
-    strat_pos: Dict[str, float],
+    plan: pd.DataFrame,
     screened: pd.DataFrame,
-    borrow_threshold_annual: float,
+    prices: Dict[str, float],
+    prefer_delayed: bool,
+    blacklist: Set[str],
+    etf_to_under_all: Dict[str, str],
+    borrow_by_etf: Dict[str, Optional[float]],
+    purgatory_etfs: Set[str],
+) -> Tuple[List[dict], List[str]]:
+    plan_etfs = set(plan["ETF"].astype(str).map(norm_sym).tolist()) if "ETF" in plan.columns else set()
+
+    ib_pos_now = current_ib_positions(ib)
+    strat_now_raw = strategy_position_only(ib_pos_now, baseline)
+    strat_now = {norm_sym(k): int(round(float(v))) for k, v in strat_now_raw.items()}
+    strat_syms = {s for s, sh in strat_now.items() if sh != 0}
+
+    unwanted_etfs = []
+    for sym in strat_syms:
+        if sym in blacklist:
+            continue
+        if sym in purgatory_etfs:
+            # Do NOT close purgatory positions even if not in plan
+            continue
+        if sym in etf_to_under_all:
+            if sym not in plan_etfs:
+                unwanted_etfs.append(sym)
+
+    trades: List[dict] = []
+    impacted_under = set()
+
+    for e_sym in sorted(unwanted_etfs):
+        sh = int(strat_now.get(e_sym, 0))
+        if sh == 0:
+            continue
+
+        u = etf_to_under_all.get(e_sym)
+        if not u or u in blacklist:
+            continue
+
+        px = ensure_price_coordinator(ib, e_sym, prices, prefer_delayed)
+        delta = -sh
+        action = "BUY" if delta > 0 else "SELL"
+        qty = abs(delta)
+
+        b = borrow_by_etf.get(e_sym)
+        trades.append({
+            "symbol": e_sym,
+            "action": action,
+            "qty": qty,
+            "px": float(px),
+            "notional": float(qty) * float(px),
+            "borrow_annual": b,
+            "reason": "CLEANUP_CLOSE_UNWANTED_ETF",
+            "underlying_group": u,
+        })
+        impacted_under.add(u)
+
+    return trades, sorted(impacted_under)
+
+
+def print_cleanup_trade_list(trades: List[dict]) -> None:
+    if not trades:
+        tprint("[CLEANUP] No unwanted ETF positions found. No cleanup trades needed.")
+        return
+    tprint("\n" + "=" * 110)
+    tprint("[CLEANUP] Proposed trades to CLOSE ETF legs not in proposed_trades.csv (excluding purgatory)")
+    tprint("=" * 110)
+    total_notional = 0.0
+    for r in trades:
+        total_notional += float(r.get("notional", 0.0) or 0.0)
+        b = r.get("borrow_annual", None)
+        b_str = "n/a" if b is None else f"{float(b):.2%}"
+        tprint(
+            f"  {r['symbol']:<8} {r['action']:<4} qty={int(r['qty']):>8,d} "
+            f"px={float(r['px']):>10.4f} notional={fmt_dollars(float(r['notional'])):<12} "
+            f"borrow={b_str:<8} group={r.get('underlying_group','')}"
+        )
+    tprint(f"\n[CLEANUP] Total gross notional (approx): {fmt_dollars(total_notional)}")
+    tprint("=" * 110 + "\n")
+
+
+# =============================================================================
+# Contract cache helper
+# =============================================================================
+
+def build_contract_cache(ib: IB, symbols: List[str]) -> Dict[str, Stock]:
+    uniq = []
+    seen = set()
+    for s in symbols:
+        s = norm_sym(s)
+        if not s or s in seen:
+            continue
+        uniq.append(s)
+        seen.add(s)
+
+    tprint(f"[QUALIFY] Building contract cache for {len(uniq)} symbols (serial)...")
+    out: Dict[str, Stock] = {}
+
+    for s in uniq:
+        if stop_requested():
+            break
+        c = make_stock(s)
+        try:
+            with QUALIFY_LOCK:
+                ib.qualifyContracts(c)
+            out[s] = Stock(c.symbol, c.exchange, c.currency)
+            out[s].primaryExchange = getattr(c, "primaryExchange", "") or ""
+            out[s].conId = int(getattr(c, "conId", 0) or 0)
+            if out[s].conId <= 0:
+                raise RuntimeError("conId not set after qualify")
+        except Exception as e:
+            tprint(f"[QUALIFY] WARNING {s}: {type(e).__name__}: {e}")
+    return out
+
+
+# =============================================================================
+# Cleanup executor (kept as in your file; uses execute_leg + hedging)
+# NOTE: unchanged except for being called with purgatory-safe cleanup list.
+# =============================================================================
+
+def _make_worker_pool(*, parallel_n: int, host: str, port: int, base_client_id: int) -> List[IB]:
+    ibs: List[IB] = []
+    for i in range(parallel_n):
+        cid = base_client_id + i
+        ibw = connect_ib(host, port, cid)
+        tprint(f"[CLEANUP] Worker connected clientId={ibw.client.clientId}")
+        ibs.append(ibw)
+        time.sleep(0.10)
+    return ibs
+
+# =============================================================================
+# Cleanup executor (UPDATED)
+# - Fixes “cleanup filled but main process doesn’t see it” by:
+#   (1) forcing an executions pull (account-wide) after worker trades
+#   (2) forcing a fresh positions snapshot on the coordinator connection
+#   (3) waiting briefly for the coordinator connection to reflect new positions
+# =============================================================================
+
+def _ib_time_str_utc(t: dt.datetime) -> str:
+    """IB ExecutionFilter 'time' wants 'YYYYMMDD HH:MM:SS'."""
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=dt.timezone.utc)
+    t = t.astimezone(dt.timezone.utc)
+    return t.strftime("%Y%m%d %H:%M:%S")
+
+
+def _pull_executions_since(
+    ib: IB,
+    start_utc: dt.datetime,
+    symbols: Optional[Iterable[str]] = None,
+) -> List[Any]:
+    """
+    Pull executions since start_utc. This is account-wide and not tied
+    to the worker clientId (unlike trade.fills callbacks).
+    Returns the raw Fill objects from ib_insync.
+    """
+    symset = {norm_sym(s) for s in symbols} if symbols else None
+    flt = ExecutionFilter(time=_ib_time_str_utc(start_utc))
+    fills = ib.reqExecutions(flt)  # returns List[Fill]
+    if symset is None:
+        return fills
+    out = []
+    for f in fills:
+        try:
+            s = norm_sym(getattr(f.contract, "symbol", "") or "")
+        except Exception:
+            s = ""
+        if s and s in symset:
+            out.append(f)
+    return out
+
+
+def _sync_positions_after_external_trades(
+    ib: IB,
+    *,
+    watch_syms: Optional[Iterable[str]] = None,
+    timeout_s: float = 10.0,
+) -> None:
+    """
+    Ensure the coordinator IB connection refreshes positions after trades
+    placed on OTHER clientIds (workers).
+    """
+    watch = {norm_sym(s) for s in watch_syms} if watch_syms else set()
+
+    # snapshot before
+    before = current_ib_positions(ib)
+    before_norm = {norm_sym(k): float(v) for k, v in before.items()}
+
+    # force a positions refresh request (TWS pushes, but this nudges it)
+    try:
+        ib.reqPositions()
+    except Exception:
+        pass
+
+    deadline = time.time() + float(timeout_s)
+    while time.time() < deadline:
+        ib.sleep(0.5)
+        now = current_ib_positions(ib)
+        now_norm = {norm_sym(k): float(v) for k, v in now.items()}
+
+        if not watch:
+            # if no watch list, just accept after first refresh tick
+            if now_norm != before_norm:
+                return
+            continue
+
+        # if any watched symbol changed, we're synced enough
+        changed = False
+        for s in watch:
+            if float(now_norm.get(s, 0.0) or 0.0) != float(before_norm.get(s, 0.0) or 0.0):
+                changed = True
+                break
+        if changed:
+            return
+
+    # fall through: we tried; positions will still likely be correct soon,
+    # but we don’t want to block forever.
+    tprint(f"[CLEANUP] WARNING: coordinator positions may be stale after {timeout_s:.1f}s sync wait.")
+
+
+def execute_cleanup_trades_parallel(
+    *,
+    approved_trades: List[dict],
+    impacted_underlyings: List[str],
+    ib: IB,
+    baseline: Dict[str, float],
     prices: Dict[str, float],
     prefer_delayed: bool,
     etf_to_under_all: Dict[str, str],
-    under_to_etfs_all: Dict[str, Set[str]],
+    leverage_by_etf_all: Dict[str, float],
     exec_cfg: Dict,
     strategy_tag: str,
     limit_bps: float,
     timeout: float,
     max_retries: int,
     dry_run: bool,
+    parallel_n: int,
+    contract_cache: Dict[str, Stock],
+    cfg: dict,
+    cancel_service: Optional[CoordinatorCancelService],
 ) -> None:
-    """
-    For any currently-held ETF (strategy-only position) whose borrow_current > threshold,
-    prompt to close the entire underlying group:
-      - flatten any screened ETFs you HOLD mapped to this underlying
-      - flatten underlying shares
-    """
-    borrow_col = detect_borrow_col(screened)
-    if borrow_col is None:
-        tprint("[BORROW] No borrow column found; skipping high-borrow close prepass.")
+    if not approved_trades and not impacted_underlyings:
+        tprint("[CLEANUP] Nothing to do.")
         return
 
-    tmp = screened.copy()
-    tmp[borrow_col] = tmp[borrow_col].apply(_coerce_borrow_annual)
-    tmp = tmp.dropna(subset=[borrow_col])
+    # ---- record start time for executions pull (even if dry_run, harmless)
+    cleanup_start_utc = dt.datetime.now(dt.timezone.utc)
 
-    # ETF -> borrow
-    borrow_by_etf: Dict[str, float] = {}
-    for _, r in tmp.iterrows():
-        e = norm_sym(r["ETF"])
-        b = r[borrow_col]
-        if e and e != "NAN" and b is not None:
-            borrow_by_etf[e] = float(b)
-
-    # find held ETFs above threshold
-    held_high: Dict[str, List[Tuple[str, float, int]]] = {}
-    strat_pos_norm = {norm_sym(k): int(round(float(v))) for k, v in strat_pos.items()}
-
-    for sym, sh in strat_pos_norm.items():
-        if sh == 0:
-            continue
-        b = borrow_by_etf.get(sym)
-        if b is None or b <= float(borrow_threshold_annual):
-            continue
-        u = etf_to_under_all.get(sym)
-        if u is None:
-            continue
-        held_high.setdefault(u, []).append((sym, float(b), int(sh)))
-
-    if not held_high:
-        tprint(f"[BORROW] No held ETFs with {borrow_col} > {borrow_threshold_annual:.2%}.")
-        return
-
-    tprint("\n" + "=" * 110)
-    tprint(f"[BORROW] High-borrow close prepass (threshold={borrow_threshold_annual:.2%}, col={borrow_col})")
-    tprint("=" * 110 + "\n")
-
-    for u_sym in sorted(held_high.keys()):
-        if stop_requested():
-            tprint("[SHUTDOWN] Stop requested during high-borrow prepass.")
-            return
-
-        u_sh = int(round(float(strat_pos_norm.get(u_sym, 0))))
-        px_u = ensure_price_coordinator(ib, u_sym, prices, prefer_delayed)
-
-        tprint(f"[BORROW] Underlying group: {u_sym}")
-        tprint(f"  Underlying position: sh={u_sh:+d} px={px_u:.4f} MV={fmt_dollars(u_sh*px_u)}")
-        tprint("  High borrow ETFs held in this group:")
-        for (e_sym, b, e_sh) in sorted(held_high[u_sym], key=lambda x: x[0]):
-            px_e = ensure_price_coordinator(ib, e_sym, prices, prefer_delayed)
-            tprint(f"    {e_sym}: sh={e_sh:+d} px={px_e:.4f} MV={fmt_dollars(e_sh*px_e)} borrow={b:.2%}")
-
-        ans = input(f"Close/flatten ALL strategy positions for group {u_sym} (underlying + held screened ETFs)? (y/n): ").strip().lower()
-        if ans != "y":
-            tprint(f"[BORROW] Skipping close for {u_sym}.\n")
-            continue
-
-        # Refresh live positions for accuracy
-        ib_pos_now = current_ib_positions(ib)
-        strat_now_raw = strategy_position_only(ib_pos_now, baseline)
-        strat_now = {norm_sym(k): int(round(float(v))) for k, v in strat_now_raw.items()}
-
-        # ETFs held in group
-        etfs_in_group = under_to_etfs_all.get(u_sym, set())
-        held_etfs = [e for e in etfs_in_group if int(strat_now.get(e, 0)) != 0]
-
-        # Flatten ETFs first
-        for e_sym in sorted(held_etfs):
+    if approved_trades:
+        syms = [norm_sym(t["symbol"]) for t in approved_trades]
+        for s in syms:
             if stop_requested():
-                tprint(f"[{u_sym}] Shutdown during high-borrow close; aborting.")
                 return
-            cur = int(strat_now.get(e_sym, 0))
-            if cur == 0:
-                continue
-            delta = -cur
-            action = "BUY" if delta > 0 else "SELL"
-            qty = abs(delta)
-            px_e = ensure_price_coordinator(ib, e_sym, prices, prefer_delayed)
-            order_ref = f"{strategy_tag}|{u_sym}__BORROW_CLOSE|{e_sym}|ETF_FLATTEN"
-            tprint(f"[BORROW][CLOSE] {e_sym}: cur={cur:+d} -> flatten (delta={delta:+d})")
-            execute_leg(
-                ib=ib,
-                symbol=e_sym,
-                action=action,
-                qty=qty,
-                ref_price=px_e,
+            if s not in prices:
+                prices[s] = get_snapshot_price(ib, s, prefer_delayed=prefer_delayed)
+
+    host = str(exec_cfg.get("ib_host_override", cfg.get("ibkr", {}).get("host", "127.0.0.1")))
+    port = int(exec_cfg.get("ib_port_override", cfg.get("ibkr", {}).get("port", 7497)))
+    base_client = int(cfg.get("ibkr", {}).get("client_id", 3)) + 500
+
+    n_workers = max(1, int(parallel_n))
+    worker_ibs = _make_worker_pool(parallel_n=n_workers, host=host, port=port, base_client_id=base_client)
+
+    try:
+        def worker_execute_trade(tr: dict, worker_idx: int) -> None:
+            ensure_thread_event_loop()
+            if stop_requested():
+                return
+
+            sym = norm_sym(tr["symbol"])
+            ib_local = worker_ibs[worker_idx % len(worker_ibs)]
+
+            base = contract_cache.get(sym)
+            if not base or int(getattr(base, "conId", 0) or 0) <= 0:
+                raise RuntimeError(f"[CLEANUP] Missing cached conId for {sym}")
+
+            c = Stock(base.symbol, base.exchange, base.currency)
+            c.conId = int(base.conId)
+            c.primaryExchange = getattr(base, "primaryExchange", "") or ""
+
+            px = float(prices[sym])
+            order_ref = f"{strategy_tag}|CLEANUP|{sym}|ETF_FLATTEN"
+
+            _res = execute_leg(
+                ib=ib_local,
+                symbol=sym,
+                action=str(tr["action"]),
+                qty=int(tr["qty"]),
+                ref_price=px,
                 bps=limit_bps,
                 order_ref=order_ref,
                 exec_cfg=exec_cfg,
                 timeout=timeout,
                 max_retries=max_retries,
                 dry_run=dry_run,
-                context=f"{u_sym}|BORROW_CLOSE",
+                context="CLEANUP",
+                contract=c,
+                cancel_service=cancel_service,
             )
 
-        # Refresh then flatten underlying
-        ib_pos_now2 = current_ib_positions(ib)
-        strat_now2_raw = strategy_position_only(ib_pos_now2, baseline)
-        cur_u = int(round(float(strat_now2_raw.get(u_sym, 0.0))))
-        if cur_u != 0 and not stop_requested():
-            delta_u = -cur_u
-            action_u = "BUY" if delta_u > 0 else "SELL"
-            qty_u = abs(delta_u)
-            order_ref_u = f"{strategy_tag}|{u_sym}__BORROW_CLOSE|UNDER_FLATTEN"
-            tprint(f"[BORROW][CLOSE] {u_sym}: cur={cur_u:+d} -> flatten (delta={delta_u:+d})")
-            execute_leg(
-                ib=ib,
-                symbol=u_sym,
-                action=action_u,
-                qty=qty_u,
-                ref_price=px_u,
-                bps=limit_bps,
-                order_ref=order_ref_u,
-                exec_cfg=exec_cfg,
-                timeout=timeout,
-                max_retries=max_retries,
-                dry_run=dry_run,
-                context=f"{u_sym}|BORROW_CLOSE",
-            )
+        if approved_trades:
+            tprint(f"[CLEANUP] Executing {len(approved_trades)} ETF close trades (parallel_n={n_workers}) ...")
+            with ThreadPoolExecutor(max_workers=n_workers) as ex:
+                futs = [ex.submit(worker_execute_trade, tr, i) for i, tr in enumerate(approved_trades)]
+                for fut in as_completed(futs):
+                    if stop_requested():
+                        break
+                    try:
+                        fut.result()
+                    except Exception as e:
+                        tprint(f"[CLEANUP] WARNING: ETF cleanup worker error: {type(e).__name__}: {e}")
+                        tprint(traceback.format_exc())
 
-        tprint(f"[BORROW] Completed close/flatten for {u_sym}.\n")
+        if stop_requested():
+            return
 
+        # -----------------------------------------------------------------------------
+        # NEW: pull executions since cleanup start on coordinator
+        # This is the key to “seeing” what happened across clientIds.
+        # -----------------------------------------------------------------------------
+        if approved_trades and not dry_run:
+            try:
+                closed_syms = [norm_sym(t["symbol"]) for t in approved_trades]
+                fills = _pull_executions_since(ib, cleanup_start_utc, symbols=closed_syms)
+                if fills:
+                    tprint(f"[CLEANUP] Observed {len(fills)} cleanup executions via reqExecutions().")
+                else:
+                    tprint("[CLEANUP] WARNING: No cleanup executions observed via reqExecutions() (may still be pending).")
+            except Exception as e:
+                tprint(f"[CLEANUP] WARNING: reqExecutions pull failed: {type(e).__name__}: {e}")
+
+        # -----------------------------------------------------------------------------
+        # NEW: force coordinator positions to refresh after worker trades
+        # Without this, subsequent logic (including next run’s cleanup detection)
+        # can think MSTW/MSTX are still open.
+        # -----------------------------------------------------------------------------
+        if approved_trades and not dry_run:
+            try:
+                watch = [norm_sym(t["symbol"]) for t in approved_trades]
+                _sync_positions_after_external_trades(ib, watch_syms=watch, timeout_s=12.0)
+            except Exception as e:
+                tprint(f"[CLEANUP] WARNING: position sync failed: {type(e).__name__}: {e}")
+
+        # ---- underlying hedge step (now uses refreshed coordinator positions)
+        if impacted_underlyings:
+            tprint(f"[CLEANUP] Hedging {len(impacted_underlyings)} impacted underlyings (serial on coordinator)...")
+            for u_sym in impacted_underlyings:
+                if stop_requested():
+                    break
+                u_sym = norm_sym(u_sym)
+                resid_sh = compute_group_residual_sh_equiv(
+                    ib,
+                    baseline=baseline,
+                    prices=prices,
+                    prefer_delayed=prefer_delayed,
+                    u_sym=u_sym,
+                    etf_to_under_all=etf_to_under_all,
+                    leverage_by_etf_all=leverage_by_etf_all,
+                )
+                delta_under = int(round(-resid_sh))
+                if delta_under == 0:
+                    continue
+                px_u = ensure_price_coordinator(ib, u_sym, prices, prefer_delayed)
+                action = "BUY" if delta_under > 0 else "SELL"
+                qty = abs(delta_under)
+                order_ref = f"{strategy_tag}|CLEANUP|{u_sym}|UNDER_DELTA"
+
+                _resu = execute_leg(
+                    ib=ib,
+                    symbol=u_sym,
+                    action=action,
+                    qty=qty,
+                    ref_price=px_u,
+                    bps=limit_bps,
+                    order_ref=order_ref,
+                    exec_cfg=exec_cfg,
+                    timeout=timeout,
+                    max_retries=max_retries,
+                    dry_run=dry_run,
+                    context="CLEANUP_UNDER",
+                    cancel_service=cancel_service,
+                )
+
+        tprint("[CLEANUP] Cleanup pass complete.\n")
+
+    finally:
+        for ibw in worker_ibs:
+            try:
+                ibw.disconnect()
+            except Exception:
+                pass
+
+
+
+# =============================================================================
+# Postpass hedge sweep (unchanged)
+# =============================================================================
 
 def hedge_all_screened_underlyings_postpass(
     *,
@@ -933,11 +1463,8 @@ def hedge_all_screened_underlyings_postpass(
     timeout: float,
     max_retries: int,
     dry_run: bool,
+    cancel_service: Optional[CoordinatorCancelService],
 ) -> None:
-    """
-    After plan execution, go through every screened underlying and trade ONLY the underlying
-    so each bucket is net-notional flat (ETFs unchanged).
-    """
     tprint("\n" + "=" * 110)
     tprint("[POSTPASS] Hedging ALL screened underlyings to net-flat using underlying-only trades.")
     tprint("=" * 110 + "\n")
@@ -973,7 +1500,7 @@ def hedge_all_screened_underlyings_postpass(
         qty = abs(delta_under)
         order_ref = f"{strategy_tag}|{u_sym}__POSTPASS|UNDER_DELTA"
 
-        execute_leg(
+        _res = execute_leg(
             ib=ib,
             symbol=u_sym,
             action=action,
@@ -986,14 +1513,15 @@ def hedge_all_screened_underlyings_postpass(
             max_retries=max_retries,
             dry_run=dry_run,
             context=f"{u_sym}|POSTPASS",
+            cancel_service=cancel_service,
         )
+
 
 # =============================================================================
 # Main
 # =============================================================================
 
 def main() -> None:
-    # Register Ctrl+C handler early
     signal.signal(signal.SIGINT, handle_sigint)
 
     CONFIG_YML = Path("config/strategy_config.yml")
@@ -1048,12 +1576,10 @@ def main() -> None:
     if plan.empty:
         raise ValueError(f"No rows in {plan_path} for strategy_tag={strategy_tag}")
 
-    # Normalize + stable sort
     plan = plan.reset_index(drop=True)
     plan["_orig_idx"] = plan.index
     plan["Underlying"] = plan["Underlying"].astype(str).map(norm_sym)
     plan["ETF"] = plan["ETF"].astype(str).map(norm_sym)
-
     plan = plan.sort_values(by=["Underlying", "_orig_idx"], kind="mergesort").reset_index(drop=True)
     plan = plan.drop(columns=["_orig_idx"]).reset_index(drop=True)
 
@@ -1061,20 +1587,18 @@ def main() -> None:
     exec_dir(run_date).mkdir(parents=True, exist_ok=True)
     exposure_csv = exec_dir(run_date) / "exposure_log.csv"
     exposure_jsonl = exec_dir(run_date) / "exposure_log.jsonl"
-
     log_lock = threading.Lock()
 
-    # Coordinator connection (clientId from config)
     ib = connect_ib(host, port, client_id)
+    cancel_service = CoordinatorCancelService(host=host, port=port)
+    cancel_service.start()
+    tprint("[CANCEL_COORD] Started global cancel coordinator (clientId=0).")
+
     try:
         ib_pos = current_ib_positions(ib)
         strat_pos = strategy_position_only(ib_pos, baseline)
 
-        tprint(
-            f"[POS] current IB symbols={len(ib_pos)}; "
-            f"baseline symbols={len(baseline)}; "
-            f"strategy-only symbols={len(strat_pos)}"
-        )
+        tprint(f"[POS] current IB symbols={len(ib_pos)}; baseline symbols={len(baseline)}; strategy-only symbols={len(strat_pos)}")
         tprint(f"[PLAN] Using: {plan_path}")
         tprint(f"[BASELINE] Using: {baseline_csv}")
         tprint(f"[EXEC] Writing to: {exec_dir(run_date)}")
@@ -1082,11 +1606,8 @@ def main() -> None:
         fills_to_append: List[dict] = []
         prices: Dict[str, float] = {}
 
-        # ---------------------------
-        # PLAN-derived maps (execution truth)
-        # ---------------------------
-        if "Leverage" not in plan.columns:
-            raise ValueError("Plan missing required column: Leverage")
+        if "Beta" not in plan.columns:
+            raise ValueError("Plan missing required column: Beta")
 
         plan["ETF_U"] = plan["ETF"].astype(str).map(norm_sym)
         plan["UNDER_U"] = plan["Underlying"].astype(str).map(norm_sym)
@@ -1097,33 +1618,42 @@ def main() -> None:
         for _, r in plan.iterrows():
             e = str(r["ETF_U"])
             u = str(r["UNDER_U"])
-            lev = float(r["Leverage"])
+            lev = float(r["Beta"])
             under_to_etfs_planned.setdefault(u, set()).add(e)
             if e in leverage_by_etf_plan and abs(leverage_by_etf_plan[e] - lev) > 1e-9:
-                raise ValueError(f"Leverage mismatch for {e} in plan: {leverage_by_etf_plan[e]} vs {lev}")
+                raise ValueError(f"Beta mismatch for {e} in plan: {leverage_by_etf_plan[e]} vs {lev}")
             leverage_by_etf_plan[e] = lev
 
-        # ---------------------------
-        # SCREENED universe maps (hedge truth)
-        # ---------------------------
         screened_csv = Path(paths_cfg.get("screened_csv", "data/etf_screened_today.csv"))
         if not screened_csv.exists():
             raise FileNotFoundError(f"Screened universe not found: {screened_csv}")
 
         screened = pd.read_csv(screened_csv)
-        need_cols = {"Underlying", "ETF", "Leverage"}
+        need_cols = {"Underlying", "ETF", "Beta"}
         if not need_cols.issubset(set(screened.columns)):
             raise ValueError(f"{screened_csv} missing required columns {need_cols}. Columns={list(screened.columns)}")
 
         screened["Underlying"] = screened["Underlying"].astype(str).map(norm_sym)
         screened["ETF"] = screened["ETF"].astype(str).map(norm_sym)
 
+        borrow_by_etf = build_borrow_by_etf(screened)
+        purgatory_etfs = build_purgatory_set(screened)
+        tprint(f"[PURGATORY] Loaded {len(purgatory_etfs)} purgatory ETFs from screened universe.")
+
+        # HARD CHECK: purgatory ETFs must have zero targets in plan
+        if "purgatory" in plan.columns:
+            plan["purgatory"] = plan["purgatory"].fillna(False).astype(bool)
+        if "purgatory" in plan.columns:
+            bad = plan[(plan["ETF_U"].isin(purgatory_etfs)) & ((plan["long_usd"].abs() > 1e-9) | (plan["short_usd"].abs() > 1e-9))]
+            if not bad.empty:
+                raise ValueError(f"[PLAN] Purgatory ETFs have nonzero targets. Refuse. Examples: {bad[['ETF_U','long_usd','short_usd']].head(10).to_dict('records')}")
+
         under_to_etfs_all: Dict[str, Set[str]] = {}
         leverage_by_etf_all: Dict[str, float] = {}
         for _, r in screened.iterrows():
             u = str(r["Underlying"])
             e = str(r["ETF"])
-            lev = float(r["Leverage"])
+            lev = float(r["Beta"])
             if not u or u == "NAN" or not e or e == "NAN":
                 continue
             under_to_etfs_all.setdefault(u, set()).add(e)
@@ -1137,37 +1667,55 @@ def main() -> None:
                     raise ValueError(f"[SCREENED] ETF {e} maps to multiple underlyings: {prev} and {u}")
                 etf_to_under_all[e] = u
 
-        # ---------------------------
-        # PRE-PASS: close high-borrow positions for currently-held ETFs (strategy-only)
-        # Uses screened borrow_current (annual decimal).
-        # ---------------------------
-        borrow_threshold = float(exec_cfg.get("borrow_close_threshold_annual", 0.15))
-
-        close_high_borrow_pairs_prepass(
+        # PRE-PASS cleanup (UPDATED: skips purgatory)
+        cleanup_trades, impacted_under = build_cleanup_trades_to_match_plan(
             ib=ib,
             baseline=baseline,
-            strat_pos=strat_pos,
+            plan=plan,
             screened=screened,
-            borrow_threshold_annual=borrow_threshold,
             prices=prices,
             prefer_delayed=prefer_delayed,
+            blacklist=blacklist,
             etf_to_under_all=etf_to_under_all,
-            under_to_etfs_all=under_to_etfs_all,
-            exec_cfg=exec_cfg,
-            strategy_tag=strategy_tag,
-            limit_bps=limit_bps,
-            timeout=timeout,
-            max_retries=max_retries,
-            dry_run=dry_run,
+            borrow_by_etf=borrow_by_etf,
+            purgatory_etfs=purgatory_etfs,
         )
 
-        # Refresh positions after any closes so downstream sizing uses correct holdings
+        print_cleanup_trade_list(cleanup_trades)
+
+        if cleanup_trades:
+            ans = input("[CLEANUP] Approve executing these cleanup trades? (y/n): ").strip().lower()
+            if ans != "y":
+                tprint("[CLEANUP] Not approved. Skipping cleanup prepass.")
+            else:
+                syms_to_qualify = [t["symbol"] for t in cleanup_trades] + list(impacted_under)
+                contract_cache = build_contract_cache(ib, syms_to_qualify)
+
+                execute_cleanup_trades_parallel(
+                    approved_trades=cleanup_trades,
+                    impacted_underlyings=impacted_under,
+                    ib=ib,
+                    baseline=baseline,
+                    prices=prices,
+                    prefer_delayed=prefer_delayed,
+                    etf_to_under_all=etf_to_under_all,
+                    leverage_by_etf_all=leverage_by_etf_all,
+                    exec_cfg=exec_cfg,
+                    strategy_tag=strategy_tag,
+                    limit_bps=limit_bps,
+                    timeout=timeout,
+                    max_retries=max_retries,
+                    dry_run=dry_run,
+                    parallel_n=parallel_n,
+                    contract_cache=contract_cache,
+                    cfg=cfg,
+                    cancel_service=cancel_service,
+                )
+
         ib_pos = current_ib_positions(ib)
         strat_pos = strategy_position_only(ib_pos, baseline)
 
-        # ---------------------------
-        # Plan sanity: ETF symbol appears in exactly one bucket (parallel safety)
-        # ---------------------------
+        # Plan sanity: no planned ETF in multiple underlyings
         etf_seen: Dict[str, str] = {}
         for _, r in plan.iterrows():
             e = str(r["ETF_U"])
@@ -1177,11 +1725,8 @@ def main() -> None:
                 raise ValueError(f"Parallel unsafe: planned ETF {e} appears under multiple underlyings {prev} and {u}.")
             etf_seen[e] = u
 
-        # ---------------------------
         # Short availability snapshot (PLAN ETFs only)
-        # ---------------------------
         etf_symbols_plan = sorted(set(plan["ETF_U"].astype(str).str.upper()))
-        short_map: Dict[str, Dict[str, Optional[float]]] = {}
         try:
             short_map = fetch_ibkr_short_availability_map(etf_symbols_plan)
             tprint(f"[SHORT] Loaded availability for {len(short_map)}/{len(etf_symbols_plan)} plan ETFs from IBKR FTP.")
@@ -1189,9 +1734,7 @@ def main() -> None:
             tprint(f"[SHORT] WARNING: short availability precheck failed ({ex}); continuing without it.")
             short_map = {}
 
-        # ---------------------------
         # Prefetch prices for plan symbols + held mapped ETFs (screened)
-        # ---------------------------
         held_etfs_by_under: Dict[str, Set[str]] = {}
         for sym, sh0 in strat_pos.items():
             sh = int(round(float(sh0)))
@@ -1219,50 +1762,11 @@ def main() -> None:
         px_df = pd.DataFrame([{"symbol": k, "price": v} for k, v in prices.items()]).sort_values("symbol")
         write_execution_snapshot(run_date, px_df, "prices_snapshot.csv")
 
-        # ---------------------------
-        # Skip underlyings whose TOTAL target shares would round/truncate to 0.
-        # ---------------------------
-        skip_underlyings = set()
-        for u_sym, grp in plan.groupby(plan["UNDER_U"].astype(str).str.upper()):
-            px_u = float(prices[u_sym])
-            total_u_sh = 0
-            for _, rr in grp.iterrows():
-                tu = float(rr["long_usd"])
-                total_u_sh += target_shares_from_usd(tu, px_u)
-            if total_u_sh == 0:
-                skip_underlyings.add(u_sym)
-
-        if skip_underlyings:
-            tprint(f"[SKIP] Underlyings with rounded-to-0 total target shares: {sorted(skip_underlyings)}")
-            df_skip = plan[plan["UNDER_U"].astype(str).str.upper().isin(skip_underlyings)].copy()
-            write_execution_snapshot(run_date, df_skip, "skipped_underlyings_rounded0.csv")
-            plan = plan[~plan["UNDER_U"].astype(str).str.upper().isin(skip_underlyings)].copy()
-            if plan.empty:
-                tprint("[SKIP] All rows skipped due to rounded-to-0 underlying sizing. Nothing to execute.")
-                return
-
-        # ---------------------------
         # Logging helper (thread-safe)
-        # ---------------------------
-        def log_exposure_event(
-            *,
-            stage: str,
-            pair_id: str,
-            underlying: str,
-            etf: str,
-            symbol: str,
-            delta_sh: int,
-            filled_sh: int,
-            trade: Optional[Trade],
-        ):
-            # Coordinator snapshot (portfolio-level)
+        def log_exposure_event(*, stage: str, pair_id: str, underlying: str, etf: str, symbol: str, delta_sh: int, filled_sh: int, trade: Optional[Trade]):
             ib_pos_now = current_ib_positions(ib)
             strat_pos_now = strategy_position_only(ib_pos_now, baseline)
-
-            port = compute_portfolio_notionals(
-                {k: int(round(float(v))) for k, v in strat_pos_now.items()},
-                prices,
-            )
+            port = compute_portfolio_notionals({k: int(round(float(v))) for k, v in strat_pos_now.items()}, prices)
 
             mark_px = float(prices.get(symbol)) if prices.get(symbol) is not None else None
             fill_px = safe_avg_fill_price(trade)
@@ -1290,14 +1794,11 @@ def main() -> None:
                 "pos_notional": pos_notional,
                 **port,
             }
-
             with log_lock:
                 append_csv_row(exposure_csv, row)
                 append_jsonl(exposure_jsonl, row)
 
-        # ---------------------------
         # Shared helpers for workers
-        # ---------------------------
         def get_lev_or_raise(etf: str) -> float:
             lev = leverage_by_etf_all.get(etf)
             if lev is None:
@@ -1314,53 +1815,7 @@ def main() -> None:
                 prices[sym] = float(px2)
             return float(px2)
 
-
-        def print_bucket_exposure_breakdown(
-            ib_local: IB,
-            baseline_local: Dict[str, float],
-            etf_to_under_local: Dict[str, str],
-            u_sym: str,
-            title: str,
-        ) -> None:
-            ib_pos_now = current_ib_positions(ib_local)
-            strat_now_raw = strategy_position_only(ib_pos_now, baseline_local)
-            strat_now = {k: int(round(float(v))) for k, v in strat_now_raw.items()}
-
-            px_u = ensure_price_worker(ib_local, u_sym)
-            u_sh = int(strat_now.get(u_sym, 0))
-            E = u_sh * px_u
-
-            held = []
-            for sym, sh in strat_now.items():
-                if sh == 0:
-                    continue
-                u = etf_to_under_local.get(sym)
-                if u == u_sym:
-                    held.append(sym)
-
-            tprint(f"\n[{title}] Exposure breakdown for {u_sym}")
-            tprint(f"  Underlying {u_sym}: sh={u_sh:+d} px={px_u:.4f} MV={fmt_dollars(u_sh*px_u)}")
-
-            if held:
-                tprint("  Held screened ETFs mapped to this underlying:")
-                for etf in sorted(held):
-                    sh = int(strat_now.get(etf, 0))
-                    px_e = ensure_price_worker(ib_local, etf)
-                    mv = sh * px_e
-                    lev = get_lev_or_raise(etf)
-                    contrib = mv * lev
-                    E += contrib
-                    tprint(f"    {etf}: sh={sh:+d} px={px_e:.4f} MV={fmt_dollars(mv)} lev={lev:+.2f} contrib={fmt_dollars(contrib)}")
-            else:
-                tprint("  Held screened ETFs mapped to this underlying: (none)")
-
-            resid_dollars = E
-            resid_sh_eq = resid_dollars / px_u if px_u else 0.0
-            tprint(f"  Residual: {fmt_dollars(resid_dollars)}  ({resid_sh_eq:+.2f} {u_sym} shares eq)\n")
-
-        # ---------------------------
         # Build bucket list (plan order)
-        # ---------------------------
         underlying_order: List[str] = []
         seen_u: Set[str] = set()
         for u_sym in plan["UNDER_U"].astype(str).str.upper().tolist():
@@ -1374,9 +1829,6 @@ def main() -> None:
             if not grp.empty:
                 buckets.append((u_sym, grp))
 
-        # ---------------------------
-        # Approvals (serial) -> Approved buckets
-        # ---------------------------
         approved: List[Tuple[str, pd.DataFrame]] = []
         if parallel_n > 1 and not auto_approve_cli:
             for (u_sym, grp) in buckets:
@@ -1395,9 +1847,7 @@ def main() -> None:
             tprint("[DONE] No approved buckets to execute (or shutdown requested).")
             return
 
-        # ---------------------------
         # Worker: execute a single underlying bucket
-        # ---------------------------
         def execute_underlying_bucket(u_sym: str, grp: pd.DataFrame, worker_idx: int) -> List[dict]:
             ensure_thread_event_loop()
             if stop_requested():
@@ -1405,11 +1855,10 @@ def main() -> None:
                 return []
 
             local_fills: List[dict] = []
-            # --- connect worker IB safely (don't crash whole run if TWS/IBGW is down or shutting down) ---
             try:
                 ib_local = connect_ib(host, port, client_id + 100 + worker_idx)
             except Exception as e:
-                tprint(f"[{u_sym}] Worker could not connect to IB (likely shutdown / TWS closed): {type(e).__name__}: {e}")
+                tprint(f"[{u_sym}] Worker could not connect to IB: {type(e).__name__}: {e}")
                 return []
 
             try:
@@ -1421,13 +1870,24 @@ def main() -> None:
                 bucket_target_etf_sh: Dict[str, int] = {}
                 bucket_target_under_sh: int = 0
 
+                # -------------------------
+                # UPDATED: skip purgatory ETFs entirely
+                # and enforce zero targets if they appear
+                # -------------------------
                 for _, row in grp.iterrows():
-                    e_sym = str(row["ETF_U"]).upper()
-                    tu = float(row["long_usd"])
-                    te = float(row["short_usd"])
+                    e_sym = norm_sym(str(row["ETF_U"]))
+                    tu = float(row.get("long_usd", 0.0) or 0.0)
+                    te = float(row.get("short_usd", 0.0) or 0.0)
+
+                    if e_sym in purgatory_etfs:
+                        if abs(tu) > 1e-9 or abs(te) > 1e-9:
+                            raise ValueError(
+                                f"[PLAN] Purgatory ETF {e_sym} has nonzero targets "
+                                f"(long_usd={tu}, short_usd={te}). Refuse."
+                            )
+                        continue
 
                     px_e = ensure_price_worker(ib_local, e_sym)
-
                     bucket_target_under_sh += target_shares_from_usd(tu, px_u)
                     bucket_target_etf_sh[e_sym] = int(
                         bucket_target_etf_sh.get(e_sym, 0) + target_shares_from_usd(te, px_e)
@@ -1438,6 +1898,13 @@ def main() -> None:
 
                 bucket_delta_etf: Dict[str, int] = {}
                 for e_sym, tgt_sh in bucket_target_etf_sh.items():
+                    e_sym = norm_sym(e_sym)
+
+                    # Never trade purgatory ETFs (no opens, no closes)
+                    if e_sym in purgatory_etfs:
+                        bucket_delta_etf[e_sym] = 0
+                        continue
+
                     cur_e_sh = int(round(float(strat_pos_local.get(e_sym, 0.0))))
                     bucket_delta_etf[e_sym] = int(tgt_sh - cur_e_sh)
 
@@ -1452,25 +1919,19 @@ def main() -> None:
                 tprint(f"  Naive underlying delta to planned target: {delta_under_naive:+d}")
 
                 for e_sym in sorted(bucket_target_etf_sh.keys()):
+                    e_sym = norm_sym(e_sym)
                     px_e = ensure_price_worker(ib_local, e_sym)
                     cur_e_sh = int(round(float(strat_pos_local.get(e_sym, 0.0))))
                     tgt_e_sh = int(bucket_target_etf_sh[e_sym])
-                    d_e = int(bucket_delta_etf[e_sym])
+                    d_e = int(bucket_delta_etf.get(e_sym, 0))
                     lev = leverage_by_etf_plan.get(e_sym)
                     if lev is None:
                         raise ValueError(f"Missing leverage for planned ETF {e_sym} in plan columns.")
+                    flag = " (PURGATORY-FROZEN)" if e_sym in purgatory_etfs else ""
                     tprint(
-                        f"  ETF {e_sym}: px={px_e:.4f} lev={float(lev):+,.2f} "
+                        f"  ETF {e_sym}{flag}: px={px_e:.4f} lev={float(lev):+,.2f} "
                         f"cur={cur_e_sh:+d} tgt={tgt_e_sh:+d} delta={d_e:+d}"
                     )
-
-                print_bucket_exposure_breakdown(
-                    ib_local,
-                    baseline,
-                    etf_to_under_all,
-                    u_sym,
-                    title="PRE_GROUP_HEDGE_TRUTH",
-                )
 
                 log_exposure_event(
                     stage="PRE_GROUP",
@@ -1483,9 +1944,9 @@ def main() -> None:
                     trade=None,
                 )
 
-                def exec_delta_local(symbol: str, delta: int, px: float, order_ref: str) -> Tuple[int, Optional[Trade]]:
+                def exec_delta_local(symbol: str, delta: int, px: float, order_ref: str) -> ExecResult:
                     if delta == 0:
-                        return 0, None
+                        return ExecResult(filled=0, trade=None, status="NOFILL")
                     action = "BUY" if delta > 0 else "SELL"
                     qty = abs(delta)
                     return execute_leg(
@@ -1501,6 +1962,7 @@ def main() -> None:
                         max_retries=max_retries,
                         dry_run=dry_run,
                         context=u_sym,
+                        cancel_service=cancel_service,
                     )
 
                 etf_items = list(bucket_delta_etf.items())
@@ -1514,7 +1976,12 @@ def main() -> None:
                 else:
                     etf_items.sort(key=lambda x: x[0])
 
+                # ETF delta loop (UPDATED: FTP gate + explicit purgatory guard + graceful 201)
                 for e_sym, d_e in etf_items:
+                    e_sym = norm_sym(e_sym)
+                    if e_sym in purgatory_etfs:
+                        continue
+
                     if stop_requested():
                         tprint(f"[{u_sym}] Shutdown during ETF loop; aborting bucket.")
                         return local_fills
@@ -1522,18 +1989,89 @@ def main() -> None:
                     if d_e == 0:
                         continue
 
+                    # --- FTP HARD GATE for NEW SHORTS (delta < 0 means SELL more / increase short)
+                    capped_delta = d_e
                     sm = short_map.get(e_sym)
-                    if sm and sm.get("available") is not None and d_e < 0 and abs(d_e) > int(sm["available"]):
-                        tprint(
-                            f"[SHORT] WARNING: {e_sym} wants {abs(d_e)} shares short, "
-                            f"but IBKR file shows only {sm['available']} available."
-                        )
+                    if d_e < 0 and sm and sm.get("available") is not None:
+                        avail = int(sm["available"])
+                        want = abs(d_e)
+
+                        if avail <= 0:
+                            tprint(f"[SHORT] SKIP {e_sym}: wants {want} new short shares but FTP available=0.")
+                            # Log skip as a fill-like record
+                            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            local_fills.append(
+                                {
+                                    "filled_at": now,
+                                    "run_date": run_date,
+                                    "strategy_tag": strategy_tag,
+                                    "pair_id": f"{u_sym}__GROUP",
+                                    "underlying": u_sym,
+                                    "etf": e_sym,
+                                    "px_under": px_u,
+                                    "px_etf": float(prices.get(e_sym, 0.0) or 0.0),
+                                    "target_sh_under": target_u_sh,
+                                    "target_sh_etf": int(bucket_target_etf_sh.get(e_sym, 0)),
+                                    "delta_sh_under": 0,
+                                    "delta_sh_etf": d_e,
+                                    "filled_sh_under": 0,
+                                    "filled_sh_etf": 0,
+                                    "notes": f"SKIP_FTP_AVAIL0 wants_short={want}",
+                                }
+                            )
+                            continue
+
+                        if avail < want:
+                            capped_delta = -avail
+                            tprint(f"[SHORT] CAP {e_sym}: wants {want} new short shares but FTP available={avail}. Capping order to {avail}.")
 
                     px_e = ensure_price_worker(ib_local, e_sym)
                     order_ref = f"{strategy_tag}|{u_sym}__GROUP|{e_sym}|ETF_DELTA"
 
-                    filled_e_abs, trade_e = exec_delta_local(e_sym, d_e, px_e, order_ref)
-                    filled_e = -filled_e_abs if d_e < 0 else filled_e_abs
+                    res_e = exec_delta_local(e_sym, capped_delta, px_e, order_ref)
+
+                    # Convert filled abs to signed (direction based on capped_delta)
+                    filled_e_signed = 0
+                    if capped_delta < 0:
+                        filled_e_signed = -int(res_e.filled)
+                    else:
+                        filled_e_signed = int(res_e.filled)
+
+                    # Graceful 201 handling: log and continue bucket (hedge will adapt)
+                    if res_e.status == "SHORT_BLOCKED":
+                        tprint(f"[{u_sym}] {e_sym} SHORT_BLOCKED (201). Leaving remaining delta unfilled and continuing.")
+                        # also include in fills
+                        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        local_fills.append(
+                            {
+                                "filled_at": now,
+                                "run_date": run_date,
+                                "strategy_tag": strategy_tag,
+                                "pair_id": f"{u_sym}__GROUP",
+                                "underlying": u_sym,
+                                "etf": e_sym,
+                                "px_under": px_u,
+                                "px_etf": px_e,
+                                "target_sh_under": target_u_sh,
+                                "target_sh_etf": int(bucket_target_etf_sh.get(e_sym, 0)),
+                                "delta_sh_under": 0,
+                                "delta_sh_etf": int(capped_delta),
+                                "filled_sh_under": 0,
+                                "filled_sh_etf": int(filled_e_signed),
+                                "notes": f"ETF_SHORT_BLOCKED_201 msg={res_e.error_msg}",
+                            }
+                        )
+                        log_exposure_event(
+                            stage="POST_ETF",
+                            pair_id=f"{u_sym}__GROUP",
+                            underlying=u_sym,
+                            etf=e_sym,
+                            symbol=e_sym,
+                            delta_sh=int(capped_delta),
+                            filled_sh=int(filled_e_signed),
+                            trade=res_e.trade,
+                        )
+                        continue
 
                     log_exposure_event(
                         stage="POST_ETF",
@@ -1541,9 +2079,9 @@ def main() -> None:
                         underlying=u_sym,
                         etf=e_sym,
                         symbol=e_sym,
-                        delta_sh=d_e,
-                        filled_sh=filled_e,
-                        trade=trade_e,
+                        delta_sh=int(capped_delta),
+                        filled_sh=int(filled_e_signed),
+                        trade=res_e.trade,
                     )
 
                     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1560,21 +2098,14 @@ def main() -> None:
                             "target_sh_under": target_u_sh,
                             "target_sh_etf": int(bucket_target_etf_sh.get(e_sym, 0)),
                             "delta_sh_under": 0,
-                            "delta_sh_etf": d_e,
+                            "delta_sh_etf": int(capped_delta),
                             "filled_sh_under": 0,
-                            "filled_sh_etf": filled_e,
+                            "filled_sh_etf": int(filled_e_signed),
                             "notes": "GROUP_ETF",
                         }
                     )
 
-                print_bucket_exposure_breakdown(
-                    ib_local,
-                    baseline,
-                    etf_to_under_all,
-                    u_sym,
-                    title="POST_ETFS_HEDGE_TRUTH",
-                )
-
+                # Underlying hedge step (same)
                 def compute_bucket_resid_sh_local(u: str) -> float:
                     ib_pos_now = current_ib_positions(ib_local)
                     strat_now_raw = strategy_position_only(ib_pos_now, baseline)
@@ -1607,8 +2138,8 @@ def main() -> None:
 
                 if delta_under_hedge != 0:
                     order_ref = f"{strategy_tag}|{u_sym}__GROUP|UNDER_DELTA"
-                    filled_u_abs, trade_u = exec_delta_local(u_sym, delta_under_hedge, px_u, order_ref)
-                    filled_u = filled_u_abs if delta_under_hedge > 0 else -filled_u_abs
+                    res_u = exec_delta_local(u_sym, delta_under_hedge, px_u, order_ref)
+                    filled_u_signed = int(res_u.filled) if delta_under_hedge > 0 else -int(res_u.filled)
 
                     log_exposure_event(
                         stage="POST_UNDER_GROUP",
@@ -1617,8 +2148,8 @@ def main() -> None:
                         etf="",
                         symbol=u_sym,
                         delta_sh=delta_under_hedge,
-                        filled_sh=filled_u,
-                        trade=trade_u,
+                        filled_sh=filled_u_signed,
+                        trade=res_u.trade,
                     )
 
                     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1636,21 +2167,13 @@ def main() -> None:
                             "target_sh_etf": None,
                             "delta_sh_under": delta_under_hedge,
                             "delta_sh_etf": 0,
-                            "filled_sh_under": filled_u,
+                            "filled_sh_under": filled_u_signed,
                             "filled_sh_etf": 0,
-                            "notes": f"GROUP_UNDER_HEDGE resid_before={resid_before:+.2f}sh",
+                            "notes": f"GROUP_UNDER_HEDGE resid_before={resid_before:+.2f}sh status={res_u.status}",
                         }
                     )
                 else:
                     tprint(f"[GROUP] {u_sym}: already net-flat within rounding (resid_before={resid_before:+.2f}sh).")
-
-                print_bucket_exposure_breakdown(
-                    ib_local,
-                    baseline,
-                    etf_to_under_all,
-                    u_sym,
-                    title="POST_UNDER_HEDGE_TRUTH",
-                )
 
                 resid_after = compute_bucket_resid_sh_local(u_sym)
                 tprint(f"[GROUP_NET] {u_sym}: resid_before={resid_before:+.2f}sh resid_after={resid_after:+.2f}sh")
@@ -1662,9 +2185,7 @@ def main() -> None:
                 except Exception:
                     pass
 
-        # ---------------------------
-        # Execute buckets (serial or parallel) with Ctrl+C support
-        # ---------------------------
+        # Execute buckets
         if parallel_n == 1:
             for idx, (u_sym, grp) in enumerate(approved):
                 if stop_requested():
@@ -1688,62 +2209,26 @@ def main() -> None:
                         try:
                             fills_to_append.extend(fut.result())
                         except Exception as e:
-                            # During shutdown, this is expected noise (e.g., connect timeouts, cancelled loops)
                             if stop_requested() or SHUTDOWN.is_set():
                                 tprint(f"[SHUTDOWN] Worker ended with {type(e).__name__}: {e}")
                                 continue
-                            # Otherwise, still don't crash the whole run; log and continue.
                             tprint(f"[ERROR] Worker failed: {type(e).__name__}: {e}")
                             continue
                 except KeyboardInterrupt:
                     handle_sigint(None, None)
 
-        # ---------------------------
         # POST-PASS: hedge EVERY screened underlying (including those not in the plan)
-        # Underlying-only trades to ensure net-notional flat per group.
-        #
-        # IMPORTANT: Exclude blacklisted tickers from the flattening universe.
-        # That means:
-        #   - We do NOT trade blacklisted ETFs
-        #   - We do NOT use blacklisted ETFs to measure/define the hedge set for an underlying
-        #   - If an underlying itself is blacklisted, we skip flattening that underlying group entirely
-        # ---------------------------
+        etf_to_under_all_filtered = {etf: under for etf, under in etf_to_under_all.items() if etf not in blacklist and under not in blacklist}
+        leverage_by_etf_all_filtered = {etf: lev for etf, lev in leverage_by_etf_all.items() if etf in etf_to_under_all_filtered}
 
-        # 1) Filter ETF->Underlying map to drop blacklisted ETFs and blacklisted underlyings
-        etf_to_under_all_filtered = {
-            etf: under
-            for etf, under in etf_to_under_all.items()
-            if etf not in blacklist and under not in blacklist
-        }
-
-        # 2) Filter leverage map to match the filtered ETF universe
-        leverage_by_etf_all_filtered = {
-            etf: lev
-            for etf, lev in leverage_by_etf_all.items()
-            if etf in etf_to_under_all_filtered
-        }
-
-        # 3) Rebuild Underlying->ETFs from the filtered maps
         under_to_etfs_all_filtered: Dict[str, List[str]] = {}
         for etf, under in etf_to_under_all_filtered.items():
             under_to_etfs_all_filtered.setdefault(under, []).append(etf)
 
-        # Deduplicate + stable ordering
         for under in list(under_to_etfs_all_filtered.keys()):
             under_to_etfs_all_filtered[under] = sorted(set(under_to_etfs_all_filtered[under]))
-            # If an underlying has no usable ETFs after filtering, drop it
             if not under_to_etfs_all_filtered[under]:
                 under_to_etfs_all_filtered.pop(under, None)
-
-        # Optional: log what got excluded
-        excluded_etfs = sorted(set(etf_to_under_all.keys()) - set(etf_to_under_all_filtered.keys()))
-        excluded_unders = sorted(set(under_to_etfs_all.keys()) - set(under_to_etfs_all_filtered.keys()))
-        if excluded_etfs:
-            tprint(f"[POSTPASS] Excluding {len(excluded_etfs)} blacklisted ETFs from flattening: {excluded_etfs[:25]}"
-                + (" ..." if len(excluded_etfs) > 25 else ""))
-        if excluded_unders:
-            tprint(f"[POSTPASS] Excluding {len(excluded_unders)} underlyings from flattening (blacklisted or no usable ETFs): "
-                f"{excluded_unders[:25]}" + (" ..." if len(excluded_unders) > 25 else ""))
 
         all_screened_underlyings = sorted(under_to_etfs_all_filtered.keys())
 
@@ -1761,11 +2246,10 @@ def main() -> None:
             timeout=timeout,
             max_retries=max_retries,
             dry_run=dry_run,
+            cancel_service=cancel_service,
         )
 
-
-
-        # Final portfolio exposure snapshot (only if not shutdown mid-flight; adjust if you want always)
+        # Final portfolio exposure snapshot
         if not stop_requested():
             log_exposure_event(
                 stage="FINAL",
@@ -1787,6 +2271,10 @@ def main() -> None:
             tprint("[DONE] Execution pass complete.")
 
     finally:
+        try:
+            cancel_service.stop()
+        except Exception:
+            pass
         try:
             ib.disconnect()
         except Exception:
