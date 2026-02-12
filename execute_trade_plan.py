@@ -45,7 +45,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, Optional, Tuple, List, Set
-
+import numpy as np
 from ib_insync import IB, Stock, Order, Trade, util
 from ib_insync.objects import ExecutionFilter
 import time
