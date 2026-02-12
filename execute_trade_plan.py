@@ -870,7 +870,6 @@ def target_shares_from_usd(notional_usd: float, px: float) -> int:
 def fmt_dollars(x: float) -> str:
     return f"${x:,.0f}"
 
-
 # =============================================================================
 # Borrow parsing helpers
 # =============================================================================
@@ -1041,9 +1040,11 @@ def wait_until_no_strategy_open_orders(ib: IB, strategy_tag: str, timeout: float
         ib.sleep(0.5)
     return False
 
-
 # =============================================================================
 # Cleanup to match plan (UPDATED: skip purgatory)
+# =============================================================================
+# =============================================================================
+# Cleanup to match plan (UPDATED: skip purgatory)  [UPDATED AGAIN: NO UNDERLYING HEDGING]
 # =============================================================================
 
 def build_cleanup_trades_to_match_plan(
@@ -1059,6 +1060,11 @@ def build_cleanup_trades_to_match_plan(
     borrow_by_etf: Dict[str, Optional[float]],
     purgatory_etfs: Set[str],
 ) -> Tuple[List[dict], List[str]]:
+    """
+    Returns:
+      trades: list of ETF close trades (flatten unwanted ETF positions)
+      impacted_underlyings: ALWAYS [] (cleanup no longer hedges underlying)
+    """
     plan_etfs = set(plan["ETF"].astype(str).map(norm_sym).tolist()) if "ETF" in plan.columns else set()
 
     ib_pos_now = current_ib_positions(ib)
@@ -1078,7 +1084,6 @@ def build_cleanup_trades_to_match_plan(
                 unwanted_etfs.append(sym)
 
     trades: List[dict] = []
-    impacted_under = set()
 
     for e_sym in sorted(unwanted_etfs):
         sh = int(strat_now.get(e_sym, 0))
@@ -1105,9 +1110,10 @@ def build_cleanup_trades_to_match_plan(
             "reason": "CLEANUP_CLOSE_UNWANTED_ETF",
             "underlying_group": u,
         })
-        impacted_under.add(u)
 
-    return trades, sorted(impacted_under)
+    # IMPORTANT: no underlying hedging during cleanup
+    return trades, []
+
 
 
 def print_cleanup_trade_list(trades: List[dict]) -> None:
@@ -1270,6 +1276,23 @@ def _sync_positions_after_external_trades(
     tprint(f"[CLEANUP] WARNING: coordinator positions may be stale after {timeout_s:.1f}s sync wait.")
 
 
+# =============================================================================
+# Cleanup executor (UPDATED)
+# - Keeps retrying until we can CONFIRM the ETF position is FLAT (strategy-only, post-baseline)
+# - Cancels stale orders before retrying (via CoordinatorCancelService called inside execute_leg)
+# - NO underlying hedging during cleanup
+# =============================================================================
+
+def _get_strategy_only_shares(ib: IB, sym: str, baseline: Dict[str, float]) -> int:
+    """
+    Strategy-only (post-baseline) shares for sym.
+    """
+    sym = norm_sym(sym)
+    ib_pos_now = current_ib_positions(ib)
+    strat_now_raw = strategy_position_only(ib_pos_now, baseline)
+    return int(round(float(strat_now_raw.get(sym, 0.0) or 0.0)))
+
+
 def execute_cleanup_trades_parallel(
     *,
     approved_trades: List[dict],
@@ -1291,20 +1314,21 @@ def execute_cleanup_trades_parallel(
     cfg: dict,
     cancel_service: Optional[CoordinatorCancelService],
 ) -> None:
-    if not approved_trades and not impacted_underlyings:
+    # NOTE: we ignore impacted_underlyings now (cleanup hedging disabled)
+    if not approved_trades:
         tprint("[CLEANUP] Nothing to do.")
         return
 
     # ---- record start time for executions pull (even if dry_run, harmless)
     cleanup_start_utc = dt.datetime.now(dt.timezone.utc)
 
-    if approved_trades:
-        syms = [norm_sym(t["symbol"]) for t in approved_trades]
-        for s in syms:
-            if stop_requested():
-                return
-            if s not in prices:
-                prices[s] = get_snapshot_price(ib, s, prefer_delayed=prefer_delayed)
+    # Ensure we have prices for approved symbols
+    syms = [norm_sym(t["symbol"]) for t in approved_trades]
+    for s in syms:
+        if stop_requested():
+            return
+        if s not in prices:
+            prices[s] = get_snapshot_price(ib, s, prefer_delayed=prefer_delayed)
 
     host = str(exec_cfg.get("ib_host_override", cfg.get("ibkr", {}).get("host", "127.0.0.1")))
     port = int(exec_cfg.get("ib_port_override", cfg.get("ibkr", {}).get("port", 7497)))
@@ -1350,27 +1374,28 @@ def execute_cleanup_trades_parallel(
                 cancel_service=cancel_service,
             )
 
-        if approved_trades:
-            tprint(f"[CLEANUP] Executing {len(approved_trades)} ETF close trades (parallel_n={n_workers}) ...")
-            with ThreadPoolExecutor(max_workers=n_workers) as ex:
-                futs = [ex.submit(worker_execute_trade, tr, i) for i, tr in enumerate(approved_trades)]
-                for fut in as_completed(futs):
-                    if stop_requested():
-                        break
-                    try:
-                        fut.result()
-                    except Exception as e:
-                        tprint(f"[CLEANUP] WARNING: ETF cleanup worker error: {type(e).__name__}: {e}")
-                        tprint(traceback.format_exc())
+        # ---------------------------------------------------------------------
+        # First attempt: parallel submit (fast)
+        # ---------------------------------------------------------------------
+        tprint(f"[CLEANUP] Executing {len(approved_trades)} ETF close trades (parallel_n={n_workers}) ...")
+        with ThreadPoolExecutor(max_workers=n_workers) as ex:
+            futs = [ex.submit(worker_execute_trade, tr, i) for i, tr in enumerate(approved_trades)]
+            for fut in as_completed(futs):
+                if stop_requested():
+                    break
+                try:
+                    fut.result()
+                except Exception as e:
+                    tprint(f"[CLEANUP] WARNING: ETF cleanup worker error: {type(e).__name__}: {e}")
+                    tprint(traceback.format_exc())
 
         if stop_requested():
             return
 
-        # -----------------------------------------------------------------------------
-        # NEW: pull executions since cleanup start on coordinator
-        # This is the key to “seeing” what happened across clientIds.
-        # -----------------------------------------------------------------------------
-        if approved_trades and not dry_run:
+        # ---------------------------------------------------------------------
+        # Visibility: pull executions since cleanup start (account-wide)
+        # ---------------------------------------------------------------------
+        if not dry_run:
             try:
                 closed_syms = [norm_sym(t["symbol"]) for t in approved_trades]
                 fills = _pull_executions_since(ib, cleanup_start_utc, symbols=closed_syms)
@@ -1381,57 +1406,118 @@ def execute_cleanup_trades_parallel(
             except Exception as e:
                 tprint(f"[CLEANUP] WARNING: reqExecutions pull failed: {type(e).__name__}: {e}")
 
-        # -----------------------------------------------------------------------------
-        # NEW: force coordinator positions to refresh after worker trades
-        # Without this, subsequent logic (including next run’s cleanup detection)
-        # can think MSTW/MSTX are still open.
-        # -----------------------------------------------------------------------------
-        if approved_trades and not dry_run:
+        # ---------------------------------------------------------------------
+        # Sync coordinator positions after worker trades
+        # ---------------------------------------------------------------------
+        if not dry_run:
             try:
                 watch = [norm_sym(t["symbol"]) for t in approved_trades]
-                _sync_positions_after_external_trades(ib, watch_syms=watch, timeout_s=12.0)
+                _sync_positions_after_external_trades(ib, watch_syms=watch, timeout_s=15.0)
             except Exception as e:
                 tprint(f"[CLEANUP] WARNING: position sync failed: {type(e).__name__}: {e}")
 
-        # ---- underlying hedge step (now uses refreshed coordinator positions)
-        if impacted_underlyings:
-            tprint(f"[CLEANUP] Hedging {len(impacted_underlyings)} impacted underlyings (serial on coordinator)...")
-            for u_sym in impacted_underlyings:
-                if stop_requested():
-                    break
-                u_sym = norm_sym(u_sym)
-                resid_sh = compute_group_residual_sh_equiv(
-                    ib,
-                    baseline=baseline,
-                    prices=prices,
-                    prefer_delayed=prefer_delayed,
-                    u_sym=u_sym,
-                    etf_to_under_all=etf_to_under_all,
-                    leverage_by_etf_all=leverage_by_etf_all,
-                )
-                delta_under = int(round(-resid_sh))
-                if delta_under == 0:
-                    continue
-                px_u = ensure_price_coordinator(ib, u_sym, prices, prefer_delayed)
-                action = "BUY" if delta_under > 0 else "SELL"
-                qty = abs(delta_under)
-                order_ref = f"{strategy_tag}|CLEANUP|{u_sym}|UNDER_DELTA"
+        # ---------------------------------------------------------------------
+        # NEW: Confirm + retry until FLAT (serial on coordinator)
+        # - Recomputes remaining shares each attempt (handles partial fills)
+        # - Uses execute_leg() which cancels stale orders via cancel_service
+        # ---------------------------------------------------------------------
+        if not dry_run:
+            max_confirm_retries = int(exec_cfg.get("cleanup_confirm_retries", 3))
+            confirm_sync_timeout = float(exec_cfg.get("cleanup_confirm_sync_timeout_s", 10.0))
 
-                _resu = execute_leg(
-                    ib=ib,
-                    symbol=u_sym,
-                    action=action,
-                    qty=qty,
-                    ref_price=px_u,
-                    bps=limit_bps,
-                    order_ref=order_ref,
-                    exec_cfg=exec_cfg,
-                    timeout=timeout,
-                    max_retries=max_retries,
-                    dry_run=dry_run,
-                    context="CLEANUP_UNDER",
-                    cancel_service=cancel_service,
-                )
+            # We may have multiple dicts for same symbol; de-dup by symbol
+            seen_syms: Set[str] = set()
+            ordered = []
+            for tr in approved_trades:
+                s = norm_sym(tr["symbol"])
+                if s in seen_syms:
+                    continue
+                seen_syms.add(s)
+                ordered.append(tr)
+
+            for tr in ordered:
+                if stop_requested():
+                    return
+
+                sym = norm_sym(tr["symbol"])
+
+                # Quick check: already flat?
+                sh0 = _get_strategy_only_shares(ib, sym, baseline)
+                if sh0 == 0:
+                    tprint(f"[CLEANUP] {sym} confirmed flat after initial submits.")
+                    continue
+
+                for att in range(1, max_confirm_retries + 1):
+                    if stop_requested():
+                        return
+
+                    # refresh coordinator view
+                    try:
+                        _sync_positions_after_external_trades(ib, watch_syms=[sym], timeout_s=confirm_sync_timeout)
+                    except Exception:
+                        pass
+
+                    sh_now = _get_strategy_only_shares(ib, sym, baseline)
+                    if sh_now == 0:
+                        tprint(f"[CLEANUP] {sym} confirmed flat after retry att{att-1}.")
+                        break
+
+                    # Flatten remaining shares (IMPORTANT: recompute qty each retry)
+                    delta = -int(sh_now)
+                    action = "BUY" if delta > 0 else "SELL"
+                    qty = abs(delta)
+
+                    # Ensure we have a price
+                    px = ensure_price_coordinator(ib, sym, prices, prefer_delayed)
+
+                    # Contract from cache
+                    base = contract_cache.get(sym)
+                    if not base or int(getattr(base, "conId", 0) or 0) <= 0:
+                        raise RuntimeError(f"[CLEANUP] Missing cached conId for {sym}")
+
+                    c = Stock(base.symbol, base.exchange, base.currency)
+                    c.conId = int(base.conId)
+                    c.primaryExchange = getattr(base, "primaryExchange", "") or ""
+
+                    order_ref = f"{strategy_tag}|CLEANUP|{sym}|ETF_FLATTEN"
+                    tprint(f"[CLEANUP] Retry att{att}: {sym} still open (sh={sh_now}); flatten {action} qty={qty} ...")
+
+                    _res = execute_leg(
+                        ib=ib,  # coordinator only for retries
+                        symbol=sym,
+                        action=action,
+                        qty=qty,
+                        ref_price=float(px),
+                        bps=limit_bps,
+                        order_ref=order_ref,
+                        exec_cfg=exec_cfg,
+                        timeout=timeout,
+                        max_retries=max_retries,
+                        dry_run=dry_run,
+                        context="CLEANUP",
+                        contract=c,
+                        cancel_service=cancel_service,
+                    )
+
+                    # After attempt, sync + check again
+                    try:
+                        _sync_positions_after_external_trades(ib, watch_syms=[sym], timeout_s=confirm_sync_timeout)
+                    except Exception:
+                        pass
+
+                    sh_after = _get_strategy_only_shares(ib, sym, baseline)
+                    if sh_after == 0:
+                        tprint(f"[CLEANUP] {sym} confirmed flat after retry att{att}.")
+                        break
+
+                    if att == max_confirm_retries:
+                        tprint(f"[CLEANUP] ERROR: {sym} still not flat after {max_confirm_retries} confirm retries (sh={sh_after}).")
+
+        # ---------------------------------------------------------------------
+        # NO UNDERLYING HEDGING DURING CLEANUP
+        # ---------------------------------------------------------------------
+        if impacted_underlyings:
+            tprint(f"[CLEANUP] NOTE: impacted_underlyings passed ({len(impacted_underlyings)}), but cleanup hedging is disabled.")
 
         tprint("[CLEANUP] Cleanup pass complete.\n")
 
@@ -1441,8 +1527,6 @@ def execute_cleanup_trades_parallel(
                 ibw.disconnect()
             except Exception:
                 pass
-
-
 
 # =============================================================================
 # Postpass hedge sweep (unchanged)
@@ -1515,6 +1599,64 @@ def hedge_all_screened_underlyings_postpass(
             context=f"{u_sym}|POSTPASS",
             cancel_service=cancel_service,
         )
+
+from datetime import date
+
+def load_flow_targets(path: str) -> pd.DataFrame:
+    df = pd.read_csv(path)
+    df["ticker"] = df["ticker"].astype(str).str.upper()
+    return df
+
+def load_flow_ledger(path: str) -> pd.DataFrame:
+    if not os.path.exists(path):
+        return pd.DataFrame(columns=["date", "ticker", "delta_usd", "cum_usd"])
+    df = pd.read_csv(path)
+    df["ticker"] = df["ticker"].astype(str).str.upper()
+    return df
+
+def compute_flow_overlay_usd(
+    flow_targets: pd.DataFrame,
+    *,
+    run_date: str,
+) -> pd.DataFrame:
+    """
+    Returns per-ticker USD to apply *this run* (positive means 'add more short USD').
+    We use flow_targets.delta_usd for the run_date row(s).
+    """
+    ft = flow_targets.copy()
+    ft["date"] = ft["date"].astype(str)
+    todays = ft[ft["date"] == str(run_date)].copy()
+
+    if todays.empty:
+        return pd.DataFrame(columns=["ticker", "delta_usd"])
+
+    out = todays.groupby("ticker", as_index=False)["delta_usd"].sum()
+    out["delta_usd"] = out["delta_usd"].astype(float)
+    return out
+
+def append_to_flow_ledger(
+    ledger_path: str,
+    ledger_df: pd.DataFrame,
+    overlay: pd.DataFrame,
+    *,
+    run_date: str,
+) -> pd.DataFrame:
+    """
+    Appends new rows and recomputes cum_usd per ticker.
+    """
+    if overlay.empty:
+        return ledger_df
+
+    new_rows = overlay.copy()
+    new_rows["date"] = str(run_date)
+    new_rows = new_rows[["date", "ticker", "delta_usd"]]
+
+    df = pd.concat([ledger_df, new_rows], ignore_index=True)
+    df["delta_usd"] = df["delta_usd"].astype(float)
+    df = df.sort_values(["ticker", "date"]).reset_index(drop=True)
+    df["cum_usd"] = df.groupby("ticker")["delta_usd"].cumsum()
+    df.to_csv(ledger_path, index=False)
+    return df
 
 
 # =============================================================================
@@ -2269,6 +2411,75 @@ def main() -> None:
             tprint("[DONE] Exiting due to shutdown request.")
         else:
             tprint("[DONE] Execution pass complete.")
+
+        # ============================================================
+        # APPLY WEEKLY FLOW OVERLAY (SHORT DRIP)
+        # ============================================================
+
+        RUN_DATE = run_date  # or however you track run date
+
+        flow_targets_path = cfg["paths"]["flow_targets_csv"]
+        flow_ledger_path  = cfg["paths"]["flow_ledger_csv"]
+
+        flow_targets = load_flow_targets(flow_targets_path)
+        flow_ledger  = load_flow_ledger(flow_ledger_path)
+
+        overlay = compute_flow_overlay_usd(flow_targets, run_date=RUN_DATE)
+
+        if not overlay.empty:
+            overlay_rows = []
+
+            for _, r in overlay.iterrows():
+                sym = str(r["ticker"]).upper()
+                px = float(prices.get(sym, np.nan))
+                if np.isnan(px) or px <= 0:
+                    continue
+
+                # positive delta_usd means "add more short"
+                sh = -abs(usd_to_shares(float(r["delta_usd"]), px))
+
+                overlay_rows.append({
+                    "symbol": sym,
+                    "target_shares": sh,
+                })
+
+            overlay_df = (
+                pd.DataFrame(overlay_rows)
+                .groupby("symbol", as_index=False)["target_shares"]
+                .sum()
+            )
+
+            # merge into targets
+            targets_df = targets_df.merge(
+                overlay_df,
+                on="symbol",
+                how="left",
+                suffixes=("", "_flow"),
+            )
+
+            targets_df["target_shares_flow"] = (
+                targets_df["target_shares_flow"]
+                .fillna(0)
+                .astype(int)
+            )
+
+            targets_df["target_shares"] = (
+                targets_df["target_shares"].astype(int)
+                + targets_df["target_shares_flow"]
+            )
+
+            targets_df = targets_df.drop(columns=["target_shares_flow"])
+
+            # update ledger AFTER applying
+            flow_ledger = append_to_flow_ledger(
+                flow_ledger_path,
+                flow_ledger,
+                overlay,
+                run_date=RUN_DATE,
+            )
+
+            tprint(f"[FLOW] Applied overlay to {len(overlay)} symbols.")
+            tprint(f"[FLOW] Total overlay USD this run: {overlay['delta_usd'].sum():,.0f}")
 
     finally:
         try:

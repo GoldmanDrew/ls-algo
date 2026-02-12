@@ -19,6 +19,10 @@ paths:
   proposed_trades_csv: data/proposed_trades.csv
   ledger_csv: data/strategy_ledger.csv
   fills_csv: data/trade_fills.csv
+
+  # NEW: weekly flow overlay
+  flow_targets_csv: data/flow_targets.csv
+  flow_ledger_csv: data/flow_ledger.csv
 execution:
   # Parallelism
   parallel_n: 25       # 1 = serial, 5-20 = parallel buckets
@@ -41,5 +45,63 @@ execution:
 screener:
   borrow_low: 0.08           # 8% low-end threshold (decimal)
   purgatory_margin: 0.04     # +4% band above BORROW_LOW (decimal)
-  whitelist_etfs:
-  exclude_negative_cagr: false
+  whitelist_hard_borrow_cap: 0.25
+  flow_hard_borrow_cap: 0.25i
+portfolio:
+  sleeves:
+    core_leveraged:
+      allocation_type: "stock"
+      target_weight: 0.85
+      rules:
+        min_beta_used: 1.50
+      weighting:
+        method: "equal"
+        max_name_weight: 0.05
+        min_names: 10
+    whitelist_stock:
+      allocation_type: "stock"
+      target_weight: 0.15
+      universe:
+        etfs:
+          - MTYY
+          - MAAY
+          - FBYY
+          - XBTY
+          - HOOW
+          - MARO
+          - MSFW
+          - PLTW
+          - MSTW
+      weighting:
+        method: "zipf"
+        zipf_exponent: 1.0
+        rank_order: "as_listed"
+        caps:
+          max_name_weight: 0.20
+    flow_program:
+      allocation_type: "flow"
+      annual_deployment_rate: 0.05
+      frequency: "W"
+      deployment_base: "current_equity"
+      universe:
+        shorts:
+          - SDS
+          - EWV
+          - SQQQ
+          - TQQY
+          - DUST
+          - TSLQ
+          - TSYY
+
+      weighting:
+        method: "fixed"
+        normalize: true
+        weights:
+          SDS: 0.30
+          EWV: 0.25
+          SQQQ: 0.16
+          TQQY: 0.14
+          DUST: 0.10
+          TSLQ: 0.03
+          TSYY: 0.02
+

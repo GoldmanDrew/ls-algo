@@ -2,18 +2,30 @@
 """
 etf_screener.py (FTP version) — uses notebooks/all_pairs_with_betas.csv
 
+UPDATE (protected ETF logic):
 - Preserves all columns from all_pairs_with_betas.csv
 - Pulls IBKR shortstock (usa.txt) via FTP and maps:
     borrow_current (decimal, e.g. 0.12 = 12%)
     shares_available (int)
     borrow_spiking (bool placeholder)
     borrow_missing_from_ftp (bool)
-- Screening:
-    include_for_algo = (borrow_current <= borrow_low) OR whitelisted
-    purgatory = borrow_low < borrow_current <= borrow_low + purgatory_margin  (and not whitelisted)
+
+- Adds "protected" ETF concept = (whitelist sleeve ETFs) + (flow program shorts)
+  These are treated specially:
+    * If borrow_current is known and <= hard_borrow_cap (default 0.25), then:
+        include_for_algo = True
+        purgatory = False
+    * If borrow_current is missing OR > hard_borrow_cap, then:
+        include_for_algo = False
+        purgatory = True
+
+- Standard screening for the rest of the universe:
+    include_for_algo = (borrow_current <= borrow_low)
+    purgatory = borrow_low < borrow_current <= borrow_low + purgatory_margin
+
 - Optional:
     exclude_negative_cagr: if true and cagr_port_hist exists, requires cagr_port_hist > 0 for include_for_algo.
-- Diagnostics columns are kept; shares/spike do NOT gate inclusion.
+  (Applied to both standard and protected include decisions.)
 
 Outputs:
 - data/runs/YYYY-MM-DD/etf_screened_today.csv
@@ -29,7 +41,7 @@ import os
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Set
 
 import numpy as np
 import pandas as pd
@@ -59,10 +71,11 @@ FTP_PASS = os.getenv("IBKR_FTP_PASS") or ""
 FTP_FILE = os.getenv("IBKR_FTP_FILE") or "usa.txt"
 
 # Defaults (used if config missing)
-BORROW_LOW_DEFAULT = 0.10
-PURGATORY_MARGIN_DEFAULT = 0.01
+BORROW_LOW_DEFAULT = 0.08
+PURGATORY_MARGIN_DEFAULT = 0.04
 MIN_SHARES_AVAILABLE_DEFAULT = 1000
 EXCLUDE_NEGATIVE_CAGR_DEFAULT = False
+HARD_BORROW_CAP_DEFAULT = 0.25  # <-- new default hard cap for protected ETFs
 
 
 def load_strategy_config(path: Path = STRATEGY_CONFIG) -> dict:
@@ -89,8 +102,11 @@ class ScreeningParams:
     borrow_low: float = BORROW_LOW_DEFAULT
     purgatory_margin: float = PURGATORY_MARGIN_DEFAULT
     min_shares_available: int = MIN_SHARES_AVAILABLE_DEFAULT
-    whitelist_etfs: set | None = None
     exclude_negative_cagr: bool = EXCLUDE_NEGATIVE_CAGR_DEFAULT
+
+    # "protected" = whitelist sleeve ETFs + flow shorts (must be in output universe)
+    protected_etfs: Set[str] | None = None
+    hard_borrow_cap: float = HARD_BORROW_CAP_DEFAULT
 
 
 # -----------------------------
@@ -223,8 +239,8 @@ def screen_universe_for_algo(df: pd.DataFrame, params: ScreeningParams) -> pd.Da
     if "borrow_missing_from_ftp" not in df.columns:
         df["borrow_missing_from_ftp"] = False
 
-    wl = params.whitelist_etfs or set()
-    df["whitelisted"] = df["ETF"].isin(wl)
+    protected = params.protected_etfs or set()
+    df["protected"] = df["ETF"].isin(protected)
 
     # Optional CAGR filter (only if column exists)
     if "cagr_port_hist" in df.columns:
@@ -233,28 +249,49 @@ def screen_universe_for_algo(df: pd.DataFrame, params: ScreeningParams) -> pd.Da
     else:
         df["cagr_positive"] = pd.NA
 
-    # Borrow thresholding
+    # Borrow thresholding (standard universe logic)
     df["borrow_leq_low"] = df["borrow_current"].notna() & (df["borrow_current"] <= params.borrow_low)
     df["borrow_gt_low"] = ~df["borrow_leq_low"]
 
-    # Inclusion rule
-    include_base = df["borrow_leq_low"] | df["whitelisted"]
+    # -----------------------------
+    # Protected hard-cap logic
+    # -----------------------------
+    hard_cap = float(params.hard_borrow_cap)
+
+    df["protected_ok"] = (
+        df["protected"]
+        & df["borrow_current"].notna()
+        & (~df["borrow_missing_from_ftp"])
+        & (df["borrow_current"] <= hard_cap)
+    )
+    df["protected_bad"] = df["protected"] & (~df["protected_ok"])
+
+    # -----------------------------
+    # include_for_algo
+    # -----------------------------
+    include_base = df["borrow_leq_low"] | df["protected_ok"]
+
     if params.exclude_negative_cagr and "cagr_port_hist" in df.columns:
         include_base = include_base & (df["cagr_positive"] == True)  # noqa: E712
 
     df["include_for_algo"] = include_base
 
-    # Purgatory: just above borrow_low, within margin; never whitelisted
-    df["purgatory"] = (
+    # -----------------------------
+    # purgatory
+    # -----------------------------
+    normal_purg = (
         df["borrow_current"].notna()
         & (~df["borrow_missing_from_ftp"])
         & (df["borrow_current"] > params.borrow_low)
         & (df["borrow_current"] <= (params.borrow_low + params.purgatory_margin))
-        & (~df["whitelisted"])
+        & (~df["protected"])
     )
 
+    # Protected: if above hard cap OR missing borrow -> force purgatory
+    df["purgatory"] = normal_purg | df["protected_bad"]
+
     # Diagnostics (not gating inclusion)
-    df["exclude_borrow_gt_low"] = df["borrow_gt_low"] & ~df["whitelisted"]
+    df["exclude_borrow_gt_low"] = df["borrow_gt_low"] & (~df["protected_ok"])
     df["exclude_no_shares"] = df["shares_available"] < params.min_shares_available
     df["exclude_borrow_spike"] = df["borrow_spiking"].fillna(False)
 
@@ -284,29 +321,37 @@ def main() -> int:
 
     cfg = load_strategy_config()
     screener_cfg = (cfg or {}).get("screener", {}) or {}
+    sleeves_cfg = (cfg or {}).get("portfolio", {}).get("sleeves", {}) or {}
 
-    # Map your new config keys
+    # Standard thresholds
     borrow_low = float(screener_cfg.get("borrow_low", BORROW_LOW_DEFAULT))
     purg_margin = float(screener_cfg.get("purgatory_margin", PURGATORY_MARGIN_DEFAULT))
     min_shares_available = int(screener_cfg.get("min_shares_available", MIN_SHARES_AVAILABLE_DEFAULT))
     exclude_negative_cagr = bool(screener_cfg.get("exclude_negative_cagr", EXCLUDE_NEGATIVE_CAGR_DEFAULT))
 
-    wl_raw = screener_cfg.get("whitelist_etfs", []) or []
-    whitelist = {_norm_sym(x) for x in wl_raw if str(x).strip()}
+    # Protected ETFs = whitelist sleeve ETFs + flow shorts
+    wl_list = sleeves_cfg.get("whitelist_stock", {}).get("universe", {}).get("etfs", []) or []
+    flow_list = sleeves_cfg.get("flow_program", {}).get("universe", {}).get("shorts", []) or []
+    protected = {_norm_sym(x) for x in (list(wl_list) + list(flow_list)) if str(x).strip()}
+
+    # Hard cap for protected
+    hard_cap = float(screener_cfg.get("hard_borrow_cap", HARD_BORROW_CAP_DEFAULT))
 
     params = ScreeningParams(
         borrow_low=borrow_low,
         purgatory_margin=purg_margin,
         min_shares_available=min_shares_available,
-        whitelist_etfs=whitelist,
         exclude_negative_cagr=exclude_negative_cagr,
+        protected_etfs=protected,
+        hard_borrow_cap=hard_cap,
     )
 
     print(f"Borrow low: {params.borrow_low:.2%}")
     print(f"Purgatory margin: {params.purgatory_margin:.2%}")
     print(f"Min shares available: {params.min_shares_available}")
     print(f"Exclude negative CAGR: {params.exclude_negative_cagr}")
-    print(f"Whitelist size: {len(whitelist)}")
+    print(f"Protected ETF count (whitelist+flow): {len(protected)}")
+    print(f"Protected hard borrow cap: {params.hard_borrow_cap:.2%}")
 
     if not PAIRS_CSV.exists():
         raise FileNotFoundError(f"Pairs CSV not found: {PAIRS_CSV}")
@@ -321,7 +366,17 @@ def main() -> int:
     if "Underlying" in pairs_df.columns:
         pairs_df["Underlying"] = pairs_df["Underlying"].astype(str).map(_norm_sym)
 
+    # Drop duplicates
     pairs_df = pairs_df.drop_duplicates(subset=["ETF"]).reset_index(drop=True)
+
+    # Ensure protected ETFs are present in the universe (so they show up in output)
+    missing_protected = sorted([t for t in protected if t not in set(pairs_df["ETF"].values)])
+    if missing_protected:
+        # Add minimal rows so they get borrow/shares populated; keep other columns as NaN
+        add_rows = pd.DataFrame({"ETF": missing_protected})
+        pairs_df = pd.concat([pairs_df, add_rows], ignore_index=True)
+        pairs_df = pairs_df.drop_duplicates(subset=["ETF"]).reset_index(drop=True)
+        print(f"[INFO] Added {len(missing_protected)} protected ETFs missing from pairs CSV: {missing_protected[:20]}{'...' if len(missing_protected)>20 else ''}")
 
     borrow_df = get_ibkr_borrow_snapshot_from_ftp(pairs_df["ETF"].unique())
     metrics = pairs_df.merge(borrow_df, on="ETF", how="left")
@@ -341,7 +396,13 @@ def main() -> int:
 
     included = int(screened["include_for_algo"].sum())
     purg = int(screened["purgatory"].sum())
-    print(f"[SCREENER] Included for algo: {included} | Purgatory: {purg} | Total: {len(screened)}")
+    prot_included = int((screened["protected"] & screened["include_for_algo"]).sum())
+    prot_purg = int((screened["protected"] & screened["purgatory"]).sum())
+
+    print(
+        f"[SCREENER] Included for algo: {included} | Purgatory: {purg} | Total: {len(screened)} | "
+        f"Protected included: {prot_included} | Protected purgatory: {prot_purg}"
+    )
 
     return 0
 
