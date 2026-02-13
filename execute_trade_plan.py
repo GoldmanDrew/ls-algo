@@ -934,14 +934,19 @@ def build_purgatory_set(screened: pd.DataFrame) -> Set[str]:
 # Hedge truth helpers (screened truth)
 # =============================================================================
 
-def ensure_price_coordinator(ib: IB, sym: str, prices: Dict[str, float], prefer_delayed: bool) -> float:
+def ensure_price_coordinator(ib: IB, sym: str, prices: Dict[str, float], prefer_delayed: bool) -> Optional[float]:
     sym = norm_sym(sym)
     px = prices.get(sym)
-    if px is not None:
+    if px is not None and float(px) > 0:
         return float(px)
+
     px2 = get_snapshot_price(ib, sym, prefer_delayed=prefer_delayed)
+    if px2 is None or not np.isfinite(px2) or px2 <= 0:
+        return None
+
     prices[sym] = float(px2)
     return float(px2)
+
 
 def compute_group_residual_sh_equiv(
     ib: IB,
@@ -1095,6 +1100,10 @@ def build_cleanup_trades_to_match_plan(
             continue
 
         px = ensure_price_coordinator(ib, e_sym, prices, prefer_delayed)
+        if px is None:
+            tprint(f"[CLEANUP] WARNING: No usable price for {e_sym}; skipping cleanup close for this symbol.")
+            continue
+
         delta = -sh
         action = "BUY" if delta > 0 else "SELL"
         qty = abs(delta)
