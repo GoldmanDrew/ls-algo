@@ -384,10 +384,6 @@ def execute_sell(ib: IB, sym: str, qty: int, order_ref: str) -> None:
     # Give IB a moment to accept/submit (optional)
     ib.sleep(0.5)
 
-
-# -----------------------------
-# Core: compute daily flow orders
-# -----------------------------
 def compute_daily_flow_allocations_usd(cfg: dict, equity_usd: float) -> pd.DataFrame:
     flow_cfg = cfg.get("portfolio", {}).get("sleeves", {}).get("flow_program", {}) or {}
 
@@ -395,20 +391,32 @@ def compute_daily_flow_allocations_usd(cfg: dict, equity_usd: float) -> pd.DataF
     if freq != "D":
         raise ValueError(f"flow_program.frequency must be 'D' for this script. Got: {freq}")
 
-    annual_rate = float(flow_cfg.get("annual_deployment_rate", 0.0) or 0.0)
-    if annual_rate <= 0:
-        return pd.DataFrame(columns=["ticker", "delta_usd"])
-
     deployment_base = str(flow_cfg.get("deployment_base", "current_equity")).lower().strip()
-    if deployment_base != "current_equity":
-        raise ValueError(f"Only deployment_base='current_equity' supported here. Got: {deployment_base}")
 
+    # --- Determine daily_budget ---
+    if deployment_base in ("fixed_usd_per_day", "fixed"):
+        daily_budget = float(flow_cfg.get("fixed_usd_per_day", 0.0) or 0.0)
+        if daily_budget <= 0:
+            return pd.DataFrame(columns=["ticker", "delta_usd"])
+    elif deployment_base == "current_equity":
+        annual_rate = float(flow_cfg.get("annual_deployment_rate", 0.0) or 0.0)
+        if annual_rate <= 0:
+            return pd.DataFrame(columns=["ticker", "delta_usd"])
+        daily_budget = float(equity_usd) * float(annual_rate) / float(TRADING_DAYS)
+    else:
+        raise ValueError(
+            f"Unsupported flow_program.deployment_base={deployment_base}. "
+            f"Use 'fixed_usd_per_day' or 'current_equity'."
+        )
+
+    # --- Universe ---
     univ = (flow_cfg.get("universe", {}) or {}).get("shorts", []) or []
     tickers = [norm_sym(x) for x in univ if str(x).strip()]
     tickers = sorted(set(tickers))
     if not tickers:
         return pd.DataFrame(columns=["ticker", "delta_usd"])
 
+    # --- Weights ---
     wcfg = (flow_cfg.get("weighting", {}) or {})
     method = str(wcfg.get("method", "fixed")).lower().strip()
     if method != "fixed":
@@ -417,7 +425,6 @@ def compute_daily_flow_allocations_usd(cfg: dict, equity_usd: float) -> pd.DataF
     weights_raw = (wcfg.get("weights", {}) or {})
     weights = {norm_sym(k): float(v) for k, v in weights_raw.items() if norm_sym(k) in tickers}
 
-    # Any missing weights default to 0 (effectively excluded)
     w = np.array([weights.get(t, 0.0) for t in tickers], dtype=float)
 
     normalize = bool(wcfg.get("normalize", True))
@@ -427,10 +434,8 @@ def compute_daily_flow_allocations_usd(cfg: dict, equity_usd: float) -> pd.DataF
             raise ValueError("flow_program.weighting.normalize=true but weights sum to 0.")
         w = w / s
 
-    daily_budget = float(equity_usd) * float(annual_rate) / float(TRADING_DAYS)
-
     out = pd.DataFrame({"ticker": tickers, "weight": w})
-    out["delta_usd"] = out["weight"] * daily_budget
+    out["delta_usd"] = out["weight"] * float(daily_budget)
 
     # Convention: positive delta_usd => add more short USD
     out = out[out["delta_usd"].abs() > 1e-6].reset_index(drop=True)

@@ -1,7 +1,7 @@
 ibkr:
   host: 127.0.0.1
-  port: 7496
-  client_id: 41 #change to 41 for live
+  port: 7497
+  client_id: 31 #change to 41 for live
   prefer_delayed: true
 strategy:
   tag: ETF_LS
@@ -80,9 +80,9 @@ portfolio:
           max_name_weight: 0.20
     flow_program:
       allocation_type: "flow"
-      annual_deployment_rate: 0.25
       frequency: "D"
-      deployment_base: "current_equity"
+      deployment_base: "fixed_usd_per_day"
+      fixed_usd_per_day: 1000
       universe:
         shorts:
           - SDS
@@ -103,4 +103,3 @@ portfolio:
           DUST: 0.10
           TSLQ: 0.03
           TSYY: 0.02
-
