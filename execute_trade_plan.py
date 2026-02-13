@@ -2412,11 +2412,28 @@ def main() -> None:
         else:
             tprint("[DONE] Execution pass complete.")
 
-        # ============================================================
-        # APPLY WEEKLY FLOW OVERLAY (SHORT DRIP)
-        # ============================================================
+        # Put this helper somewhere near your other sizing helpers (once):
+        def usd_to_shares(delta_usd: float, px: float) -> int:
+            """
+            Convert a USD notional delta into a share count (rounded toward zero).
+            Example: delta_usd=+10_000, px=50 -> 200 shares.
+            """
+            if px is None:
+                return 0
+            try:
+                px = float(px)
+                delta_usd = float(delta_usd)
+            except Exception:
+                return 0
+            if not np.isfinite(px) or px <= 0 or (not np.isfinite(delta_usd)):
+                return 0
+            return int(delta_usd / px)
 
-        RUN_DATE = run_date  # or however you track run date
+        # =============================================================================
+        # FLOW PROGRAM OVERLAY (apply to targets_df AFTER it is created)
+        # =============================================================================
+
+        RUN_DATE = run_date
 
         flow_targets_path = cfg["paths"]["flow_targets_csv"]
         flow_ledger_path  = cfg["paths"]["flow_ledger_csv"]
@@ -2427,59 +2444,61 @@ def main() -> None:
         overlay = compute_flow_overlay_usd(flow_targets, run_date=RUN_DATE)
 
         if not overlay.empty:
+
             overlay_rows = []
 
             for _, r in overlay.iterrows():
-                sym = str(r["ticker"]).upper()
+                sym = str(r["ticker"]).upper().replace(".", "-")
+
                 px = float(prices.get(sym, np.nan))
-                if np.isnan(px) or px <= 0:
+                if not np.isfinite(px) or px <= 0:
                     continue
 
                 # positive delta_usd means "add more short"
-                sh = -abs(usd_to_shares(float(r["delta_usd"]), px))
+                sh = -abs(int(float(r["delta_usd"]) / px))
 
                 overlay_rows.append({
                     "symbol": sym,
                     "target_shares": sh,
                 })
 
-            overlay_df = (
-                pd.DataFrame(overlay_rows)
-                .groupby("symbol", as_index=False)["target_shares"]
-                .sum()
-            )
+            if overlay_rows:
+                overlay_df = (
+                    pd.DataFrame(overlay_rows)
+                    .groupby("symbol", as_index=False)["target_shares"]
+                    .sum()
+                )
 
-            # merge into targets
-            targets_df = targets_df.merge(
-                overlay_df,
-                on="symbol",
-                how="left",
-                suffixes=("", "_flow"),
-            )
+                targets_df = targets_df.merge(
+                    overlay_df,
+                    on="symbol",
+                    how="left",
+                    suffixes=("", "_flow"),
+                )
 
-            targets_df["target_shares_flow"] = (
-                targets_df["target_shares_flow"]
-                .fillna(0)
-                .astype(int)
-            )
+                targets_df["target_shares_flow"] = (
+                    targets_df["target_shares_flow"]
+                    .fillna(0)
+                    .astype(int)
+                )
 
-            targets_df["target_shares"] = (
-                targets_df["target_shares"].astype(int)
-                + targets_df["target_shares_flow"]
-            )
+                targets_df["target_shares"] = (
+                    targets_df["target_shares"].astype(int)
+                    + targets_df["target_shares_flow"]
+                )
 
-            targets_df = targets_df.drop(columns=["target_shares_flow"])
+                targets_df = targets_df.drop(columns=["target_shares_flow"])
 
-            # update ledger AFTER applying
-            flow_ledger = append_to_flow_ledger(
-                flow_ledger_path,
-                flow_ledger,
-                overlay,
-                run_date=RUN_DATE,
-            )
+                # Update ledger AFTER applying
+                append_to_flow_ledger(
+                    flow_ledger_path,
+                    flow_ledger,
+                    overlay,
+                    run_date=RUN_DATE,
+                )
 
-            tprint(f"[FLOW] Applied overlay to {len(overlay)} symbols.")
-            tprint(f"[FLOW] Total overlay USD this run: {overlay['delta_usd'].sum():,.0f}")
+        tprint(f"[FLOW] Applied overlay to {len(overlay)} symbols.")
+        tprint(f"[FLOW] Total overlay USD this run: {overlay['delta_usd'].sum():,.0f}")
 
     finally:
         try:
