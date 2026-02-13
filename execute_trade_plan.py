@@ -1046,7 +1046,6 @@ def wait_until_no_strategy_open_orders(ib: IB, strategy_tag: str, timeout: float
 # =============================================================================
 # Cleanup to match plan (UPDATED: skip purgatory)  [UPDATED AGAIN: NO UNDERLYING HEDGING]
 # =============================================================================
-
 def build_cleanup_trades_to_match_plan(
     *,
     ib: IB,
@@ -1059,12 +1058,8 @@ def build_cleanup_trades_to_match_plan(
     etf_to_under_all: Dict[str, str],
     borrow_by_etf: Dict[str, Optional[float]],
     purgatory_etfs: Set[str],
+    flow_short_etfs: Set[str],   # <-- NEW
 ) -> Tuple[List[dict], List[str]]:
-    """
-    Returns:
-      trades: list of ETF close trades (flatten unwanted ETF positions)
-      impacted_underlyings: ALWAYS [] (cleanup no longer hedges underlying)
-    """
     plan_etfs = set(plan["ETF"].astype(str).map(norm_sym).tolist()) if "ETF" in plan.columns else set()
 
     ib_pos_now = current_ib_positions(ib)
@@ -1076,6 +1071,9 @@ def build_cleanup_trades_to_match_plan(
     for sym in strat_syms:
         if sym in blacklist:
             continue
+        if sym in flow_short_etfs:
+            # Do NOT close flow-program shorts in cleanup
+            continue
         if sym in purgatory_etfs:
             # Do NOT close purgatory positions even if not in plan
             continue
@@ -1084,6 +1082,7 @@ def build_cleanup_trades_to_match_plan(
                 unwanted_etfs.append(sym)
 
     trades: List[dict] = []
+    impacted_under = set()
 
     for e_sym in sorted(unwanted_etfs):
         sh = int(strat_now.get(e_sym, 0))
@@ -1094,26 +1093,34 @@ def build_cleanup_trades_to_match_plan(
         if not u or u in blacklist:
             continue
 
+        # SAFETY: if borrow is missing (n/a), do not close in cleanup
+        b = borrow_by_etf.get(e_sym, None)
+        if b is None:
+            tprint(f"[CLEANUP] SKIP {e_sym}: borrow is n/a (missing). Leaving position untouched.")
+            continue
+
         px = ensure_price_coordinator(ib, e_sym, prices, prefer_delayed)
+        if px is None:
+            tprint(f"[CLEANUP] WARNING: No usable price for {e_sym}; skipping cleanup close for this symbol.")
+            continue
+
         delta = -sh
         action = "BUY" if delta > 0 else "SELL"
         qty = abs(delta)
 
-        b = borrow_by_etf.get(e_sym)
         trades.append({
             "symbol": e_sym,
             "action": action,
             "qty": qty,
             "px": float(px),
             "notional": float(qty) * float(px),
-            "borrow_annual": b,
+            "borrow_annual": float(b),
             "reason": "CLEANUP_CLOSE_UNWANTED_ETF",
             "underlying_group": u,
         })
+        impacted_under.add(u)
 
-    # IMPORTANT: no underlying hedging during cleanup
-    return trades, []
-
+    return trades, sorted(impacted_under)
 
 
 def print_cleanup_trade_list(trades: List[dict]) -> None:
@@ -1600,65 +1607,6 @@ def hedge_all_screened_underlyings_postpass(
             cancel_service=cancel_service,
         )
 
-from datetime import date
-
-def load_flow_targets(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    df["ticker"] = df["ticker"].astype(str).str.upper()
-    return df
-
-def load_flow_ledger(path: str) -> pd.DataFrame:
-    if not os.path.exists(path):
-        return pd.DataFrame(columns=["date", "ticker", "delta_usd", "cum_usd"])
-    df = pd.read_csv(path)
-    df["ticker"] = df["ticker"].astype(str).str.upper()
-    return df
-
-def compute_flow_overlay_usd(
-    flow_targets: pd.DataFrame,
-    *,
-    run_date: str,
-) -> pd.DataFrame:
-    """
-    Returns per-ticker USD to apply *this run* (positive means 'add more short USD').
-    We use flow_targets.delta_usd for the run_date row(s).
-    """
-    ft = flow_targets.copy()
-    ft["date"] = ft["date"].astype(str)
-    todays = ft[ft["date"] == str(run_date)].copy()
-
-    if todays.empty:
-        return pd.DataFrame(columns=["ticker", "delta_usd"])
-
-    out = todays.groupby("ticker", as_index=False)["delta_usd"].sum()
-    out["delta_usd"] = out["delta_usd"].astype(float)
-    return out
-
-def append_to_flow_ledger(
-    ledger_path: str,
-    ledger_df: pd.DataFrame,
-    overlay: pd.DataFrame,
-    *,
-    run_date: str,
-) -> pd.DataFrame:
-    """
-    Appends new rows and recomputes cum_usd per ticker.
-    """
-    if overlay.empty:
-        return ledger_df
-
-    new_rows = overlay.copy()
-    new_rows["date"] = str(run_date)
-    new_rows = new_rows[["date", "ticker", "delta_usd"]]
-
-    df = pd.concat([ledger_df, new_rows], ignore_index=True)
-    df["delta_usd"] = df["delta_usd"].astype(float)
-    df = df.sort_values(["ticker", "date"]).reset_index(drop=True)
-    df["cum_usd"] = df.groupby("ticker")["delta_usd"].cumsum()
-    df.to_csv(ledger_path, index=False)
-    return df
-
-
 # =============================================================================
 # Main
 # =============================================================================
@@ -1729,6 +1677,21 @@ def main() -> None:
     exec_dir(run_date).mkdir(parents=True, exist_ok=True)
     exposure_csv = exec_dir(run_date) / "exposure_log.csv"
     exposure_jsonl = exec_dir(run_date) / "exposure_log.jsonl"
+
+    flow_short_etfs = set(
+        norm_sym(x)
+        for x in (
+            cfg.get("portfolio", {})
+            .get("sleeves", {})
+            .get("flow_program", {})
+            .get("universe", {})
+            .get("shorts", [])
+            or []
+        )
+    )
+    tprint(f"[FLOW] Loaded {len(flow_short_etfs)} flow-program short tickers.")
+
+
     log_lock = threading.Lock()
 
     ib = connect_ib(host, port, client_id)
@@ -1821,6 +1784,7 @@ def main() -> None:
             etf_to_under_all=etf_to_under_all,
             borrow_by_etf=borrow_by_etf,
             purgatory_etfs=purgatory_etfs,
+            flow_short_etfs=flow_short_etfs,
         )
 
         print_cleanup_trade_list(cleanup_trades)
@@ -2411,94 +2375,6 @@ def main() -> None:
             tprint("[DONE] Exiting due to shutdown request.")
         else:
             tprint("[DONE] Execution pass complete.")
-
-        # Put this helper somewhere near your other sizing helpers (once):
-        def usd_to_shares(delta_usd: float, px: float) -> int:
-            """
-            Convert a USD notional delta into a share count (rounded toward zero).
-            Example: delta_usd=+10_000, px=50 -> 200 shares.
-            """
-            if px is None:
-                return 0
-            try:
-                px = float(px)
-                delta_usd = float(delta_usd)
-            except Exception:
-                return 0
-            if not np.isfinite(px) or px <= 0 or (not np.isfinite(delta_usd)):
-                return 0
-            return int(delta_usd / px)
-
-        # =============================================================================
-        # FLOW PROGRAM OVERLAY (apply to targets_df AFTER it is created)
-        # =============================================================================
-
-        RUN_DATE = run_date
-
-        flow_targets_path = cfg["paths"]["flow_targets_csv"]
-        flow_ledger_path  = cfg["paths"]["flow_ledger_csv"]
-
-        flow_targets = load_flow_targets(flow_targets_path)
-        flow_ledger  = load_flow_ledger(flow_ledger_path)
-
-        overlay = compute_flow_overlay_usd(flow_targets, run_date=RUN_DATE)
-
-        if not overlay.empty:
-
-            overlay_rows = []
-
-            for _, r in overlay.iterrows():
-                sym = str(r["ticker"]).upper().replace(".", "-")
-
-                px = float(prices.get(sym, np.nan))
-                if not np.isfinite(px) or px <= 0:
-                    continue
-
-                # positive delta_usd means "add more short"
-                sh = -abs(int(float(r["delta_usd"]) / px))
-
-                overlay_rows.append({
-                    "symbol": sym,
-                    "target_shares": sh,
-                })
-
-            if overlay_rows:
-                overlay_df = (
-                    pd.DataFrame(overlay_rows)
-                    .groupby("symbol", as_index=False)["target_shares"]
-                    .sum()
-                )
-
-                targets_df = targets_df.merge(
-                    overlay_df,
-                    on="symbol",
-                    how="left",
-                    suffixes=("", "_flow"),
-                )
-
-                targets_df["target_shares_flow"] = (
-                    targets_df["target_shares_flow"]
-                    .fillna(0)
-                    .astype(int)
-                )
-
-                targets_df["target_shares"] = (
-                    targets_df["target_shares"].astype(int)
-                    + targets_df["target_shares_flow"]
-                )
-
-                targets_df = targets_df.drop(columns=["target_shares_flow"])
-
-                # Update ledger AFTER applying
-                append_to_flow_ledger(
-                    flow_ledger_path,
-                    flow_ledger,
-                    overlay,
-                    run_date=RUN_DATE,
-                )
-
-        tprint(f"[FLOW] Applied overlay to {len(overlay)} symbols.")
-        tprint(f"[FLOW] Total overlay USD this run: {overlay['delta_usd'].sum():,.0f}")
 
     finally:
         try:

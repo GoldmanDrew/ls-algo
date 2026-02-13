@@ -46,7 +46,7 @@ screener:
   borrow_low: 0.08           # 8% low-end threshold (decimal)
   purgatory_margin: 0.04     # +4% band above BORROW_LOW (decimal)
   whitelist_hard_borrow_cap: 0.25
-  flow_hard_borrow_cap: 0.25i
+  flow_hard_borrow_cap: 0.25
 portfolio:
   sleeves:
     core_leveraged:
@@ -80,8 +80,8 @@ portfolio:
           max_name_weight: 0.20
     flow_program:
       allocation_type: "flow"
-      annual_deployment_rate: 0.05
-      frequency: "W"
+      annual_deployment_rate: 0.25
+      frequency: "D"
       deployment_base: "current_equity"
       universe:
         shorts:
@@ -92,7 +92,6 @@ portfolio:
           - DUST
           - TSLQ
           - TSYY
-
       weighting:
         method: "fixed"
         normalize: true
