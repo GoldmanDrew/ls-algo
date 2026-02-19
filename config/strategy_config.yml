@@ -5,11 +5,12 @@ ibkr:
   prefer_delayed: true
 strategy:
   tag: ETF_LS
-  capital_usd: 250000
-  gross_leverage: 4
+  capital_usd: 175000
+  gross_leverage: 3
   blacklist:
   - JPM
   - BRK-B
+  - AXP
   beta_cutoff: 1.5          # new: cutoff for |Beta|
   beta_split_high: 1.0     # new: within leveraged sleeve, fraction to |Beta| > cutoff
 paths:
@@ -67,6 +68,7 @@ portfolio:
           - MAAY
           - FBYY
           - XBTY
+          - NFLW
           - HOOW
           - MARO
           - MSFW
@@ -82,24 +84,36 @@ portfolio:
       allocation_type: "flow"
       frequency: "D"
       deployment_base: "fixed_usd_per_day"
-      fixed_usd_per_day: 1000
+      fixed_usd_per_day: 650
       universe:
         shorts:
           - SDS
           - EWV
           - SQQQ
           - TQQY
+          - LABD
+          - SOXS
+          - FAZ
           - DUST
+          - ZSL
           - TSLQ
           - TSYY
+          - NVDQ
+          - NVYY
       weighting:
         method: "fixed"
         normalize: true
         weights:
-          SDS: 0.30
-          EWV: 0.25
-          SQQQ: 0.16
-          TQQY: 0.14
-          DUST: 0.10
-          TSLQ: 0.03
+          SDS: 0.22
+          EWV: 0.18
+          SQQQ: 0.15
+          TQQY: 0.07
+          LABD: 0.08
+          SOXS: 0.05
+          FAZ: 0.08
+          DUST: 0.03
+          ZSL: 0.01
+          TSLQ: 0.04
           TSYY: 0.02
+          NVDQ: 0.04
+          NVYY: 0.03

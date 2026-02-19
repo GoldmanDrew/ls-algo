@@ -284,8 +284,8 @@ def main() -> int:
 
     # REQUIRED: use env vars correctly
     #token = _env_required("IBKR_FLEX_TOKEN")
-    token = "195413602443563105417466" # MICHAEL TOKEN
-    token = "195413602443563105417466" # DREW TOKEN
+    token = "605237565772720861934459" # MICHAEL TOKEN
+    #token = "195413602443563105417466" # DREW TOKEN
     base_url = os.getenv("IBKR_FLEX_BASE_URL", DEFAULT_BASE_URL).strip()
 
     # You can override these via env vars if you prefer
@@ -297,13 +297,13 @@ def main() -> int:
     # but DO NOT hardcode the token in code.
     if not q_trades:
         q_trades = "1376360" # MICHAEL
-        q_trades = "1374436" # DREW
+        #q_trades = "1374436" # DREW
     if not q_cash:
         q_cash = "1376356" # MICHAEL
-        q_cash = "1374451" # DREW
+        #q_cash = "1374451" # DREW
     if not q_positions:
         q_positions = "1376362" # MICHAEL
-        q_positions = "1374454" # DREW
+        #q_positions = "1374454" # DREW
         
 
     queries = [
