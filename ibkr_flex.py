@@ -13,6 +13,7 @@ Required env vars:
   IBKR_FLEX_Q_TRADES=123456         # query id for Trades+Commissions
   IBKR_FLEX_Q_CASH=234567           # query id for Cash Transactions (dividends, fees, borrow)
   IBKR_FLEX_Q_POSITIONS=345678      # query id for Positions / NAV / open positions snapshot
+  IBKR_FLEX_Q_BORROW_DETAILS=456789 # query id for Borrow Fee Details (daily)
 
 Optional env vars:
   IBKR_FLEX_BASE_URL=https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
@@ -66,10 +67,7 @@ def _env_required(key: str) -> str:
 
 
 def _extract_tag(xml_text: str, tag: str) -> Optional[str]:
-    """
-    Minimal tag extractor for <Tag>value</Tag>.
-    Works for the simple XML IBKR returns from SendRequest/GetStatement error envelopes.
-    """
+    """Minimal tag extractor for <Tag>value</Tag>."""
     open_t = f"<{tag}>"
     close_t = f"</{tag}>"
     a = xml_text.find(open_t)
@@ -104,11 +102,9 @@ def _is_processing(body: str) -> bool:
     code = (_get_error_code(body) or "").strip()
     msg = (_extract_tag(body, "ErrorMessage") or "").lower()
 
-    # The key case you reported:
     if status.lower() == "warn" and code == "1019":
         return True
 
-    # Some accounts get "Fail" while still processing
     if status.lower() == "fail":
         if code in {"1019"}:
             return True
@@ -119,10 +115,7 @@ def _is_processing(body: str) -> bool:
 
 
 def _detect_extension(body: str) -> str:
-    """
-    Best-effort output type detection.
-    If user configured Flex output as CSV/TXT/XML, body will reflect it.
-    """
+    """Best-effort output type detection."""
     b = body.lstrip()
     if b.startswith("<?xml") or b.startswith("<FlexQueryResponse") or b.startswith("<FlexStatementResponse"):
         return "xml"
@@ -135,10 +128,7 @@ def _detect_extension(body: str) -> str:
 
 
 def _requests_get_with_1018_backoff(url: str, params: dict, timeout: float, max_attempts: int = 8, base_sleep: float = 2.0) -> str:
-    """
-    Wrapper for requests.get that retries on IBKR throttling (1018) and transient HTTP issues.
-    Returns response.text.
-    """
+    """Wrapper for requests.get that retries on IBKR throttling (1018) and transient HTTP issues."""
     last_err = None
     for attempt in range(1, max_attempts + 1):
         try:
@@ -146,7 +136,6 @@ def _requests_get_with_1018_backoff(url: str, params: dict, timeout: float, max_
             r.raise_for_status()
             text = r.text
 
-            # IBKR sometimes returns 200 with FlexStatementResponse containing throttling
             if _is_flex_envelope(text):
                 code = _get_error_code(text)
                 if code == "1018":
@@ -167,9 +156,7 @@ def _requests_get_with_1018_backoff(url: str, params: dict, timeout: float, max_
 
 
 def send_request(base_url: str, token: str, query_id: str, version: int = 3) -> str:
-    """
-    Returns ReferenceCode string if Success, else raises FlexError.
-    """
+    """Returns ReferenceCode string if Success, else raises FlexError."""
     url = f"{base_url}/SendRequest"
     params = {"t": token, "q": query_id, "v": str(version)}
 
@@ -194,11 +181,7 @@ def send_request_with_backoff(
     max_attempts: int = 8,
     base_sleep: float = 5.0,
 ) -> str:
-    """
-    Retains your explicit SendRequest backoff behavior.
-    (send_request already handles 1018 via _requests_get_with_1018_backoff, but we keep this
-     wrapper so your existing structure stays intact and you can tune separately if desired.)
-    """
+    """Retains explicit SendRequest backoff behavior."""
     last_err = None
     for attempt in range(1, max_attempts + 1):
         try:
@@ -221,10 +204,7 @@ def send_request_with_backoff(
 
 
 def get_statement(base_url: str, token: str, reference_code: str, version: int = 3) -> str:
-    """
-    Returns statement content as text.
-    If not ready, IBKR returns an XML response with Status Warn/Fail and error codes (e.g., 1019).
-    """
+    """Returns statement content as text."""
     url = f"{base_url}/GetStatement"
     params = {"t": token, "q": reference_code, "v": str(version)}
     return _requests_get_with_1018_backoff(url, params=params, timeout=60)
@@ -239,35 +219,26 @@ def fetch_and_save(
     poll_every_sec: float = 5.0,
     max_wait_sec: float = 180.0,
 ) -> Path:
-    """
-    SendRequest -> poll GetStatement -> save to disk.
-    """
+    """SendRequest -> poll GetStatement -> save to disk."""
     ref = send_request_with_backoff(base_url, token, q.query_id)
     t0 = time.time()
-    last_body = None
 
     while True:
         body = get_statement(base_url, token, ref)
-        last_body = body
 
-        # Correct handling for 1019 (generation in progress) and similar "not ready" envelopes
         if _is_processing(body):
             if time.time() - t0 > max_wait_sec:
                 code = _get_error_code(body) or "UNKNOWN"
                 msg = _extract_tag(body, "ErrorMessage") or "Timed out waiting for report"
-                raise FlexError(
-                    f"Timed out fetching {q.name} (q={q.query_id}, ref={ref}): {code} {msg}"
-                )
+                raise FlexError(f"Timed out fetching {q.name} (q={q.query_id}, ref={ref}): {code} {msg}")
             time.sleep(poll_every_sec)
             continue
 
-        # If we still got a Flex envelope but it's NOT processing, treat as real error
         if _is_flex_envelope(body) and "<Status>Success</Status>" not in body:
             code = _get_error_code(body) or "UNKNOWN"
             msg = _extract_tag(body, "ErrorMessage") or body[:400]
             raise FlexError(f"GetStatement failed for {q.name} (ref={ref}): {code} {msg}")
 
-        # Otherwise: it's report content
         ext = _detect_extension(body)
         out_path = out_dir / f"{q.name}.{ext}"
         out_path.write_text(body, encoding="utf-8", errors="ignore")
@@ -283,7 +254,7 @@ def main() -> int:
     args = ap.parse_args()
 
     # REQUIRED: use env vars correctly
-    #token = _env_required("IBKR_FLEX_TOKEN")
+    # token = _env_required("IBKR_FLEX_TOKEN")
     token = "605237565772720861934459" # MICHAEL TOKEN
     #token = "195413602443563105417466" # DREW TOKEN
     base_url = os.getenv("IBKR_FLEX_BASE_URL", DEFAULT_BASE_URL).strip()
@@ -292,6 +263,7 @@ def main() -> int:
     q_trades = os.getenv("IBKR_FLEX_Q_TRADES", "").strip()
     q_cash = os.getenv("IBKR_FLEX_Q_CASH", "").strip()
     q_positions = os.getenv("IBKR_FLEX_Q_POSITIONS", "").strip()
+    q_borrow_details = os.getenv("IBKR_FLEX_Q_BORROW_DETAILS", "").strip()
 
     # If you want to hardcode IDs while testing, you can set them here,
     # but DO NOT hardcode the token in code.
@@ -304,12 +276,14 @@ def main() -> int:
     if not q_positions:
         q_positions = "1376362" # MICHAEL
         #q_positions = "1374454" # DREW
-        
-
+    if not q_borrow_details:
+        q_borrow_details = "1408970" # MICHAEL
+        #q_borrow_details = "1408916" # DREW
     queries = [
         FlexQuery("flex_trades", q_trades),
         FlexQuery("flex_cash", q_cash),
         FlexQuery("flex_positions", q_positions),
+        FlexQuery("flex_borrow_fee_details", q_borrow_details),  # NEW 4th flex
     ]
 
     out_dir = Path(args.out_root) / args.run_date / "ibkr_flex"
@@ -319,10 +293,11 @@ def main() -> int:
     print(f"[FLEX] writing to {out_dir}")
 
     for q in queries:
-        # Trades can take longer—give it extra time without requiring user to change global timeout
         timeout = args.timeout
         if q.name == "flex_trades":
-            timeout = max(timeout, 600.0)  # 10 minutes (adjust as needed)
+            timeout = max(timeout, 600.0)  # trades can take longer
+        if q.name == "flex_borrow_fee_details":
+            timeout = max(timeout, 300.0)  # borrow details sometimes slower than cash/positions
 
         print(f"[FLEX] fetching {q.name} (query_id={q.query_id}) ...")
         p = fetch_and_save(
