@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import date, datetime
 import smtplib
 from email.message import EmailMessage
+from email.utils import getaddresses
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -18,7 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent  # adjust if needed
 IBKR_FLEX_SCRIPT = PROJECT_ROOT / "ibkr_flex.py"
 IBKR_ACCT_SCRIPT = PROJECT_ROOT / "ibkr_accounting.py"
 
-# New: history / plot outputs
+# History / plot outputs
 LEDGER_DIR = PROJECT_ROOT / "data" / "ledger"
 PNL_HISTORY_CSV = LEDGER_DIR / "pnl_history.csv"
 PLOT_PNG = LEDGER_DIR / "pnl_since_2026-02-19.png"
@@ -58,25 +59,20 @@ def format_underlying_table(pnl_under_csv: Path) -> tuple[str, float]:
     if "total_pnl" not in df.columns:
         raise ValueError("pnl_by_underlying.csv missing 'total_pnl' column")
 
-    # Keep just what we need for the email
     tbl = df[["underlying", "total_pnl"]].copy()
     tbl["total_pnl"] = pd.to_numeric(tbl["total_pnl"], errors="coerce").fillna(0.0)
-
-    # Sort biggest contributors first
     tbl = tbl.sort_values("total_pnl", ascending=False)
 
     total = float(tbl["total_pnl"].sum())
 
-    # Add TOTAL row
     total_row = pd.DataFrame([{"underlying": "TOTAL", "total_pnl": total}])
     tbl2 = pd.concat([tbl, total_row], ignore_index=True)
 
-    # Format to fixed-width text table
     tbl2["total_pnl"] = tbl2["total_pnl"].map(lambda x: f"{x:,.2f}")
     underlying_width = max(10, int(tbl2["underlying"].astype(str).map(len).max()))
     pnl_width = max(12, int(tbl2["total_pnl"].astype(str).map(len).max()))
 
-    lines = []
+    lines: list[str] = []
     header = f"{'UNDERLYING'.ljust(underlying_width)}  {'TOTAL_PNL'.rjust(pnl_width)}"
     lines.append(header)
     lines.append("-" * (underlying_width + 2 + pnl_width))
@@ -105,27 +101,22 @@ def update_pnl_history(run_date: str, total_pnl: float) -> pd.DataFrame:
     if PNL_HISTORY_CSV.exists():
         hist = pd.read_csv(PNL_HISTORY_CSV)
         if "date" not in hist.columns or "total_pnl" not in hist.columns:
-            # If schema changed or file corrupted, start fresh
             hist = row
         else:
-            # Drop existing same-date row, then append
             hist["date"] = hist["date"].astype(str)
             hist = hist[hist["date"] != run_date]
             hist = pd.concat([hist, row], ignore_index=True)
     else:
         hist = row
 
-    # Normalize/sort
     hist["date"] = pd.to_datetime(hist["date"], errors="coerce")
     hist = hist.dropna(subset=["date"]).sort_values("date")
     hist["total_pnl"] = pd.to_numeric(hist["total_pnl"], errors="coerce").fillna(0.0)
 
-    # Save back
     hist_out = hist.copy()
     hist_out["date"] = hist_out["date"].dt.strftime("%Y-%m-%d")
     hist_out.to_csv(PNL_HISTORY_CSV, index=False)
 
-    # Return filtered history from START_DATE onward
     start_dt = pd.to_datetime(START_DATE)
     hist = hist[hist["date"] >= start_dt].copy()
     return hist
@@ -133,13 +124,12 @@ def update_pnl_history(run_date: str, total_pnl: float) -> pd.DataFrame:
 
 def make_pnl_plot(history: pd.DataFrame) -> Path:
     """
-    Creates a PNG plot showing daily PnL and cumulative PnL since START_DATE.
+    Creates a PNG plot showing cumulative PnL since START_DATE.
     Saves to PLOT_PNG and returns that Path.
     """
     ensure_ledger_dir()
 
     if history.empty:
-        # Create an empty placeholder plot
         plt.figure()
         plt.title(f"PnL since {START_DATE} (no data yet)")
         plt.xlabel("Date")
@@ -153,7 +143,6 @@ def make_pnl_plot(history: pd.DataFrame) -> Path:
     daily = history["total_pnl"]
     cum = daily.cumsum()
 
-    # Plot cumulative (primary)
     plt.figure()
     plt.plot(x, cum)
     plt.title(f"Cumulative PnL since {START_DATE}")
@@ -164,19 +153,28 @@ def make_pnl_plot(history: pd.DataFrame) -> Path:
     plt.savefig(PLOT_PNG, dpi=150)
     plt.close()
 
-    # If you also want a daily plot, uncomment and attach a second PNG:
-    # daily_png = LEDGER_DIR / f"daily_pnl_since_{START_DATE}.png"
-    # plt.figure()
-    # plt.plot(x, daily)
-    # plt.title(f"Daily PnL since {START_DATE}")
-    # plt.xlabel("Date")
-    # plt.ylabel("Daily PnL (base)")
-    # plt.xticks(rotation=30, ha="right")
-    # plt.tight_layout()
-    # plt.savefig(daily_png, dpi=150)
-    # plt.close()
-
     return PLOT_PNG
+
+
+def parse_recipients(raw: str) -> list[str]:
+    """
+    Robust parsing for PNL_RECIPIENTS.
+
+    Supports:
+      - "a@x.com,b@y.com"
+      - "a@x.com, b@y.com"
+      - "Name <a@x.com>, b@y.com"
+      - newline/semicolon separated lists
+    Returns a list of email addresses suitable for SMTP envelope recipients.
+    """
+    if not raw:
+        return []
+    normalized = raw.replace(";", ",").replace("\n", ",")
+    pairs = getaddresses([normalized])  # handles "Name <email>"
+    emails = [addr.strip() for _, addr in pairs if addr and addr.strip()]
+    # Light sanity filter (avoid passing "a@b.com, c@d.com" as one token)
+    emails = [e for e in emails if "@" in e and " " not in e]
+    return emails
 
 
 def send_email(
@@ -192,9 +190,13 @@ def send_email(
     smtp_pass = os.environ["SMTP_PASS"]
     from_addr = os.environ.get("FROM_EMAIL", smtp_user)
 
+    if not recipients:
+        raise ValueError("No valid recipients. Check PNL_RECIPIENTS.")
+
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = from_addr
+    # Header can be a single string; envelope recipients must be a list (handled below)
     msg["To"] = ", ".join(recipients)
     msg.set_content(body)
 
@@ -216,7 +218,8 @@ def send_email(
     with smtplib.SMTP(smtp_host, smtp_port) as s:
         s.starttls()
         s.login(smtp_user, smtp_pass)
-        s.send_message(msg)
+        # IMPORTANT: pass explicit envelope recipients list
+        s.send_message(msg, to_addrs=recipients)
 
 
 def main() -> int:
@@ -237,16 +240,25 @@ def main() -> int:
     # 4) Create underlying breakdown table
     underlying_table, underlying_total = format_underlying_table(pnl_under_csv)
 
-    # 5) Update history + plot since 2026-02-19
+    # 5) Update history + plot since START_DATE
     hist = update_pnl_history(run_date, total_pnl=underlying_total)
     plot_path = make_pnl_plot(hist)
 
     # 6) Compose email
-    recipients = [r.strip() for r in os.environ["PNL_RECIPIENTS"].split(",") if r.strip()]
-    asof = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    recipients_raw = os.environ.get("PNL_RECIPIENTS", "")
+    recipients = parse_recipients(recipients_raw)
+    if not recipients:
+        raise ValueError(f"PNL_RECIPIENTS parsed to empty list. Raw={recipients_raw!r}")
+
+    # Use NY time in the email "As of"
+    try:
+        import pytz  # optional; already in your requirements
+        asof = datetime.now(pytz.timezone("America/New_York")).strftime("%Y-%m-%d %H:%M:%S %Z")
+    except Exception:
+        asof = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     subject = f"EOD PnL by Underlying — {run_date} — Total: {underlying_total:,.2f}"
 
-    # Include a short summary of the plotted series
     cum_total = float(hist["total_pnl"].cumsum().iloc[-1]) if not hist.empty else 0.0
     n_days = int(hist.shape[0])
 
