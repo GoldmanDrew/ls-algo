@@ -2,8 +2,8 @@ name: EOD PnL Email
 
 on:
   schedule:
-    # Run hourly Mon–Fri (UTC). The script will gate to 5:00pm America/New_York.
-    - cron: "0 18-23 * * 1-5"
+    # 22:00 UTC = 5pm EST (winter) / 6pm EDT (summer)
+    - cron: "0 22 * * 1-5"
   workflow_dispatch:
 
 jobs:
@@ -25,35 +25,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas pytz pandas-market-calendars
 
-      - name: Gate to 5pm NY + trading day
-        id: gate
-        run: |
-          python - <<'PY'
-          from datetime import datetime
-          import pytz
-          import pandas_market_calendars as mcal
-
-          tz = pytz.timezone("America/New_York")
-          now = datetime.now(tz)
-
-          # Only at 5:00pm NY
-          if not (now.hour == 17 and now.minute == 0):
-              print("run=false")
-              exit(0)
-
-          # Only on NYSE trading days
-          nyse = mcal.get_calendar("NYSE")
-          sched = nyse.schedule(start_date=now.date(), end_date=now.date())
-          if sched.empty:
-              print("run=false")
-              exit(0)
-
-          print("run=true")
-          PY | tee gate.txt
-          echo "run=$(grep -o 'run=.*' gate.txt | cut -d= -f2)" >> $GITHUB_OUTPUT
-
       - name: Run EOD pipeline + email
-        if: steps.gate.outputs.run == 'true'
         env:
           # IBKR Flex
           IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
@@ -79,11 +51,11 @@ jobs:
 
           export RUN_DATE="$(cat run_date.txt)"
 
-          # 1) Pull Flex (you may need to add CLI support; see note below)
+          # 1) Pull Flex
           python ibkr_flex.py --run-date "$RUN_DATE"
 
           # 2) Build accounting
           python ibkr_accounting.py "$RUN_DATE"
 
-          # 3) Email (use your wrapper script)
+          # 3) Email
           python run_eod_pnl_email.py
