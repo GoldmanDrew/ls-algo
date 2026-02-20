@@ -41,21 +41,21 @@ jobs:
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
 
         run: |
-          # pick run date in New York
-          python - <<'PY'
-          from datetime import datetime
-          import pytz
-          tz = pytz.timezone("America/New_York")
-          print(datetime.now(tz).date().isoformat())
-          PY > run_date.txt
+            # pick run date in New York
+            python - <<'PY' > run_date.txt
+            from datetime import datetime
+            import pytz
+            tz = pytz.timezone("America/New_York")
+            print(datetime.now(tz).date().isoformat())
+            PY
 
-          export RUN_DATE="$(cat run_date.txt)"
+            export RUN_DATE="$(cat run_date.txt)"
 
-          # 1) Pull Flex
-          python ibkr_flex.py --run-date "$RUN_DATE"
+            # 1) Pull Flex
+            python ibkr_flex.py --run-date "$RUN_DATE"
 
-          # 2) Build accounting
-          python ibkr_accounting.py "$RUN_DATE"
+            # 2) Build accounting
+            python ibkr_accounting.py "$RUN_DATE"
 
-          # 3) Email
-          python run_eod_pnl_email.py
+            # 3) Email
+            python run_eod_pnl_email.py
