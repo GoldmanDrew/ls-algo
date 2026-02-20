@@ -46,6 +46,7 @@ from typing import Iterable, Set
 import numpy as np
 import pandas as pd
 import yaml
+from etf_analytics import enrich_with_decay_and_vol
 
 # -----------------------------
 # Paths / Config
@@ -75,7 +76,11 @@ BORROW_LOW_DEFAULT = 0.08
 PURGATORY_MARGIN_DEFAULT = 0.04
 MIN_SHARES_AVAILABLE_DEFAULT = 1000
 EXCLUDE_NEGATIVE_CAGR_DEFAULT = False
-HARD_BORROW_CAP_DEFAULT = 0.25  # <-- new default hard cap for protected ETFs
+HARD_BORROW_CAP_DEFAULT = 0.25
+
+
+# Columns to drop from final CSV output
+DROP_COLUMNS = ["Leverage", "ExpectedLeverage"]
 
 
 def load_strategy_config(path: Path = STRATEGY_CONFIG) -> dict:
@@ -372,7 +377,6 @@ def main() -> int:
     # Ensure protected ETFs are present in the universe (so they show up in output)
     missing_protected = sorted([t for t in protected if t not in set(pairs_df["ETF"].values)])
     if missing_protected:
-        # Add minimal rows so they get borrow/shares populated; keep other columns as NaN
         add_rows = pd.DataFrame({"ETF": missing_protected})
         pairs_df = pd.concat([pairs_df, add_rows], ignore_index=True)
         pairs_df = pairs_df.drop_duplicates(subset=["ETF"]).reset_index(drop=True)
@@ -382,6 +386,12 @@ def main() -> int:
     metrics = pairs_df.merge(borrow_df, on="ETF", how="left")
 
     screened = screen_universe_for_algo(metrics, params=params)
+
+    # Enrich with decay + volatility (uses Beta for 1/|Beta| hedge)
+    screened = enrich_with_decay_and_vol(screened)
+
+    # Drop Leverage columns from output — Beta is the only hedge ratio
+    screened = screened.drop(columns=[c for c in DROP_COLUMNS if c in screened.columns])
 
     # Write outputs
     screened.to_csv(dated_output, index=False)
