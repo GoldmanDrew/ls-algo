@@ -2,6 +2,10 @@
 """
 etf_screener.py (FTP version) — uses notebooks/all_pairs_with_betas.csv
 
+Buckets:
+  A/B: Bull leveraged ETFs (from all_pairs_with_betas.csv)
+  C:   Inverse leveraged ETFs (built-in universe below)
+
 UPDATE (protected ETF logic):
 - Preserves all columns from all_pairs_with_betas.csv
 - Pulls IBKR shortstock (usa.txt) via FTP and maps:
@@ -81,6 +85,109 @@ HARD_BORROW_CAP_DEFAULT = 0.25
 
 # Columns to drop from final CSV output
 DROP_COLUMNS = ["Leverage", "ExpectedLeverage"]
+
+
+# ─────────────────────────────────────────────────
+# Inverse ETF Universe (Bucket C)
+# ─────────────────────────────────────────────────
+# Maps group name → liquid benchmark ETF used as the underlying
+BENCHMARK_MAP = {
+    "SPX":     "SPY",
+    "NDX":     "QQQ",
+    "DJIA":    "DIA",
+    "RUT":     "IWM",
+    "SOX":     "SOXX",
+    "FIN":     "XLF",
+    "BIOTECH": "XBI",
+    "TECH":    "XLK",
+    "WTI":     "USO",
+    "TSLA":    "TSLA",
+    "MSTR":    "MSTR",
+    "NVDA":    "NVDA",
+    "BTC":     "IBIT",
+    "ETH":     "ETHA",
+    "CRCL":    "CRCL",
+    "CRWV":    "CRWV",
+    "GDX":     "GDX",
+    "SLV":     "SLV",
+    "XLE":     "XLE",
+    "XOP":     "XOP",
+    "TLT":     "TLT",
+}
+
+# (InverseETF, nominal_abs_leverage, group_key)
+# Beta will be computed via OLS regression (expected ≈ −leverage)
+INVERSE_ETF_UNIVERSE = [
+    # ── 2x inverse (from pairs) ──
+    ("SDS",  2, "SPX"),
+    ("QID",  2, "NDX"),
+    ("DXD",  2, "DJIA"),
+    ("TWM",  2, "RUT"),
+    ("SCO",  2, "WTI"),
+    ("MSTZ", 2, "MSTR"),
+    ("NVDQ", 2, "NVDA"),
+    ("BTCZ", 2, "BTC"),
+    ("ETHD", 2, "ETH"),
+    ("CRCD", 2, "CRCL"),
+    ("CORD", 2, "CRWV"),
+    ("TSLQ", 2, "TSLA"),
+    ("ZSL",  2, "SLV"),
+    # ── 3x inverse (from pairs) ──
+    ("SQQQ", 3, "NDX"),
+    ("SPXS", 3, "SPX"),
+    ("TZA",  3, "RUT"),
+    ("SOXS", 3, "SOX"),
+    ("FAZ",  3, "FIN"),
+    ("LABD", 3, "BIOTECH"),
+    ("TECS", 3, "TECH"),
+    ("SDOW", 3, "DJIA"),
+    ("DUST", 3, "GDX"),
+    # ── Extra inverse-only ──
+    ("TTXD", 2, "TECH"),
+    ("TSXD", 2, "SOX"),
+    ("WEBS", 3, "TECH"),
+    ("FNGD", 3, "TECH"),
+    ("REW",  2, "TECH"),
+    ("SKF",  2, "FIN"),
+    ("SPXU", 3, "SPX"),
+    ("DUG",  2, "XLE"),
+    ("DRIP", 2, "XOP"),
+    ("TMV",  3, "TLT"),
+    ("TBT",  2, "TLT"),
+    ("TBX",  2, "TLT"),
+    ("NVDS", 1.5, "NVDA"),
+]
+
+
+def build_inverse_universe() -> pd.DataFrame:
+    """
+    Build a DataFrame of inverse ETFs with their underlying benchmark.
+
+    Columns: ETF, Underlying, NominalLeverage
+    Beta is left NaN — etf_analytics will compute it via OLS regression.
+    """
+    rows = []
+    seen = set()
+    for etf, lev, group in INVERSE_ETF_UNIVERSE:
+        etf_n = _norm_sym(etf)
+        if etf_n in seen:
+            continue
+        seen.add(etf_n)
+        benchmark = BENCHMARK_MAP.get(group)
+        if benchmark is None:
+            continue
+        rows.append({
+            "ETF": etf_n,
+            "Underlying": _norm_sym(benchmark),
+            "NominalLeverage": lev,
+            "Beta": np.nan,         # Will be computed from OLS
+            "Beta_n_obs": 0,
+            "Beta_source": "ols_regression",
+        })
+    return pd.DataFrame(rows)
+
+
+# ─────────────────────────────────────────────────
 
 
 def load_strategy_config(path: Path = STRATEGY_CONFIG) -> dict:
@@ -311,6 +418,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-date", default=os.getenv("RUN_DATE") or today_str(), help="YYYY-MM-DD (default: today).")
     ap.add_argument("--no-write-latest", action="store_true", help="Skip writing data/etf_screened_today.csv.")
+    ap.add_argument("--skip-inverse", action="store_true", help="Skip inverse ETF universe (bucket C).")
     args = ap.parse_args()
 
     run_date = args.run_date
@@ -374,6 +482,25 @@ def main() -> int:
     # Drop duplicates
     pairs_df = pairs_df.drop_duplicates(subset=["ETF"]).reset_index(drop=True)
 
+    # ─────────────────────────────────────────────
+    # Build inverse ETF universe (bucket C) and merge
+    # ─────────────────────────────────────────────
+    existing_etfs = set(pairs_df["ETF"].values)
+
+    if not args.skip_inverse:
+        inv_df = build_inverse_universe()
+        # Only add inverse ETFs not already in the pairs CSV
+        inv_df = inv_df[~inv_df["ETF"].isin(existing_etfs)].reset_index(drop=True)
+        inv_df = inv_df.drop(columns=["NominalLeverage"], errors="ignore")
+
+        if len(inv_df) > 0:
+            pairs_df = pd.concat([pairs_df, inv_df], ignore_index=True)
+            pairs_df = pairs_df.drop_duplicates(subset=["ETF"], keep="first").reset_index(drop=True)
+            print(f"[SCREENER] Added {len(inv_df)} inverse ETFs (bucket C): "
+                  f"{sorted(inv_df['ETF'].tolist())[:15]}{'...' if len(inv_df) > 15 else ''}")
+    else:
+        print("[SCREENER] Skipped inverse ETF universe (--skip-inverse).")
+
     # Ensure protected ETFs are present in the universe (so they show up in output)
     missing_protected = sorted([t for t in protected if t not in set(pairs_df["ETF"].values)])
     if missing_protected:
@@ -382,12 +509,19 @@ def main() -> int:
         pairs_df = pairs_df.drop_duplicates(subset=["ETF"]).reset_index(drop=True)
         print(f"[INFO] Added {len(missing_protected)} protected ETFs missing from pairs CSV: {missing_protected[:20]}{'...' if len(missing_protected)>20 else ''}")
 
+    # ─────────────────────────────────────────────
+    # Fetch borrow data for the full universe (bull + inverse)
+    # ─────────────────────────────────────────────
     borrow_df = get_ibkr_borrow_snapshot_from_ftp(pairs_df["ETF"].unique())
     metrics = pairs_df.merge(borrow_df, on="ETF", how="left")
 
     screened = screen_universe_for_algo(metrics, params=params)
 
-    # Enrich with decay + volatility (uses Beta for 1/|Beta| hedge)
+    # ─────────────────────────────────────────────
+    # Enrich with decay + volatility
+    # (computes Beta via OLS when missing, handles negative beta for inverse ETFs,
+    #  also computes borrow_drag_annual and net_decay_annual)
+    # ─────────────────────────────────────────────
     screened = enrich_with_decay_and_vol(screened)
 
     # Drop Leverage columns from output — Beta is the only hedge ratio
@@ -409,9 +543,14 @@ def main() -> int:
     prot_included = int((screened["protected"] & screened["include_for_algo"]).sum())
     prot_purg = int((screened["protected"] & screened["purgatory"]).sum())
 
+    # Count inverse ETFs in output
+    inv_set = {_norm_sym(e) for e, _, _ in INVERSE_ETF_UNIVERSE}
+    n_inverse = int(screened["ETF"].isin(inv_set).sum())
+
     print(
         f"[SCREENER] Included for algo: {included} | Purgatory: {purg} | Total: {len(screened)} | "
-        f"Protected included: {prot_included} | Protected purgatory: {prot_purg}"
+        f"Protected included: {prot_included} | Protected purgatory: {prot_purg} | "
+        f"Inverse ETFs: {n_inverse}"
     )
 
     return 0
