@@ -10,25 +10,20 @@ Adds columns to the screened DataFrame:
 All decay numbers are PER $1 OF ETF SHORT NOTIONAL.
 Borrow is also per $1 ETF short. So: net = gross − borrow. No scaling needed.
 
-Decay measurement — TWO formulas, both per $1 ETF short:
+Decay measurement — single formula, per $1 ETF short:
 
-  ── Bull ETFs (Beta > 0) ──────────────────────────────────
-  Hedged pair: short $1 ETF + long |β| × $1 underlying.
+    daily_pnl = β × r_underlying − r_etf     (signed beta)
 
-    daily_pnl = |β| × r_underlying − r_etf
+  ── Bull ETFs (β = +2) ───────────────────────────────────
+    daily_pnl = +2 × r_und − r_etf
+    Perfect tracker: +2·r_und − (+2·r_und) = 0 ✓
 
-  For a perfect β× daily tracker: daily_pnl = 0.
-  Vol drag / fees / tracking error → daily_pnl > 0 → positive decay.
+  ── Inverse ETFs (β = −2) ────────────────────────────────
+    daily_pnl = −2 × r_und − r_etf
+    Perfect tracker: −2·r_und − (−2·r_und) = 0 ✓
 
-  ── Inverse ETFs (Beta < 0) ───────────────────────────────
-  Unhedged short: short $1 of the inverse ETF only (no underlying leg).
+  Both: daily_pnl = 0 for perfect tracker. Positive = pure vol drag + fees.
 
-    daily_pnl = −r_etf
-
-  For a perfect −|β|× tracker: daily_pnl = |β| × r_und.
-  Vol drag makes the inverse ETF lose more → −r_etf > |β|×r_und → excess is decay.
-
-  ── Common ────────────────────────────────────────────────
   gross_decay_annual = mean(daily_pnl) × 252   (simple linear rate)
   net_decay_annual   = gross_decay_annual − borrow_net_annual
 
@@ -190,23 +185,20 @@ def _compute_gross_decay(
     Gross annualized decay per $1 of ETF short notional.
     Returns a SIMPLE (linear) annual rate, same units as borrow.
 
-    ── Bull ETFs (beta > 0) ────────────────────────
-    Short $1 ETF + long |β| × $1 underlying.
+    Uses SIGNED beta for both bull and inverse ETFs:
 
-      daily_pnl = |β| × r_und − r_etf
+      daily_pnl = β × r_und − r_etf
 
-    For a perfect β× tracker: daily_pnl = 0.
-    Positive = vol drag + fees → profitable to short.
+    ── Bull ETFs (β = +2) ──────────────────────────
+      daily_pnl = +2 × r_und − r_etf
+      Perfect tracker: +2·r_und − (+2·r_und) = 0 ✓
 
-    ── Inverse ETFs (beta < 0) ─────────────────────
-    Short $1 inverse ETF only (no underlying leg).
+    ── Inverse ETFs (β = −2) ───────────────────────
+      daily_pnl = −2 × r_und − r_etf
+      Perfect tracker: −2·r_und − (−2·r_und) = 0 ✓
 
-      daily_pnl = −r_etf
-
-    For a perfect −|β|× tracker: daily_pnl = |β| × r_und.
-    Vol drag makes −r_etf > |β|×r_und → excess is decay.
-
-    Both formulas give P&L per $1 ETF short.
+    Both cases: daily_pnl = 0 for a perfect tracker.
+    Positive decay = vol drag + fees → profitable to short.
     net_decay = gross_decay − borrow_net_annual (no scaling needed).
     """
     df = pd.concat([etf_tr.rename("etf"), und_tr.rename("und")], axis=1).dropna()
@@ -223,16 +215,11 @@ def _compute_gross_decay(
     if len(r_etf) < min_days:
         return None
 
-    abs_beta = abs(float(beta))
-    if abs_beta < 0.1:
+    if abs(float(beta)) < 0.1:
         return None
 
-    if beta > 0:
-        # Bull ETF: short $1 ETF + long |β| underlying
-        daily_pnl = abs_beta * r_und - r_etf
-    else:
-        # Inverse ETF: short $1 ETF only (no underlying leg)
-        daily_pnl = -r_etf
+    # Signed beta: hedges underlying exposure for both bull and inverse
+    daily_pnl = float(beta) * r_und - r_etf
 
     # Simple (linear) annualized rate
     gross_decay = float(daily_pnl.mean()) * TRADING_DAYS
@@ -258,8 +245,7 @@ def enrich_with_decay_and_vol(
       vol_underlying_annual - annualized realized vol of underlying (total return)
       vol_etf_annual        - annualized realized vol of ETF (total return)
       gross_decay_annual    - per $1 ETF short, simple annualized
-                              Bull:    |β|×r_und − r_etf  (0 for perfect tracker)
-                              Inverse: −r_etf             (|β|×r_und for perfect tracker)
+                              β×r_und − r_etf (signed beta, 0 for perfect tracker)
       net_decay_annual      - gross_decay_annual − borrow_net_annual
 
     No borrow_drag_annual column — borrow is already per $1 ETF short,
