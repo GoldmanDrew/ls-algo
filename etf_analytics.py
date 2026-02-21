@@ -10,21 +10,27 @@ Adds columns to the screened DataFrame:
 All decay numbers are PER $1 OF ETF SHORT NOTIONAL.
 Borrow is also per $1 ETF short. So: net = gross − borrow. No scaling needed.
 
-Decay measurement — single formula, per $1 ETF short:
+Decay measurement — two methods, both per $1 ETF short:
 
-    daily_pnl = β × r_underlying − r_etf     (signed beta)
+  ── Bull ETFs (Beta > 0) — SIMPLE RETURNS ─────────────────
+  Hedged pair: short $1 ETF + long |β| underlying.
 
-  ── Bull ETFs (β = +2) ───────────────────────────────────
-    daily_pnl = +2 × r_und − r_etf
-    Perfect tracker: +2·r_und − (+2·r_und) = 0 ✓
+    daily_pnl = |β| × r_underlying − r_etf
 
-  ── Inverse ETFs (β = −2) ────────────────────────────────
-    daily_pnl = −2 × r_und − r_etf
-    Perfect tracker: −2·r_und − (−2·r_und) = 0 ✓
+  For a perfect β× tracker: daily_pnl = 0.
+  Captures fees + tracking error.
 
-  Both: daily_pnl = 0 for perfect tracker. Positive = pure vol drag + fees.
+  ── Inverse ETFs (Beta < 0) — LOG RETURNS ─────────────────
+  Hedged pair using signed beta in log space:
 
-  gross_decay_annual = mean(daily_pnl) × 252   (simple linear rate)
+    daily_pnl = β × ln(1+r_und) − ln(1+r_etf)
+
+  For a perfect −|β|× tracker: ≈ 0.5 × β(β−1) × r² > 0.
+  Log returns capture compounding vol drag that simple returns miss.
+  β(β−1) is always positive for |β| > 1.
+
+  ── Common ────────────────────────────────────────────────
+  gross_decay_annual = mean(daily_pnl) × 252
   net_decay_annual   = gross_decay_annual − borrow_net_annual
 
 Both legs use explicit total-return price series:
@@ -185,41 +191,58 @@ def _compute_gross_decay(
     Gross annualized decay per $1 of ETF short notional.
     Returns a SIMPLE (linear) annual rate, same units as borrow.
 
-    Uses SIGNED beta for both bull and inverse ETFs:
+    ── Bull ETFs (beta > 0) ────────────────────────
+    Simple returns, hedged pair: short $1 ETF + long |β| underlying.
 
-      daily_pnl = β × r_und − r_etf
+      daily_pnl = |β| × r_und − r_etf
 
-    ── Bull ETFs (β = +2) ──────────────────────────
-      daily_pnl = +2 × r_und − r_etf
-      Perfect tracker: +2·r_und − (+2·r_und) = 0 ✓
+    For a perfect β× tracker: daily_pnl = 0.
+    Positive = fees + tracking error → profitable to short.
 
-    ── Inverse ETFs (β = −2) ───────────────────────
-      daily_pnl = −2 × r_und − r_etf
-      Perfect tracker: −2·r_und − (−2·r_und) = 0 ✓
+    ── Inverse ETFs (beta < 0) ─────────────────────
+    Log returns with signed beta to isolate pure vol drag:
 
-    Both cases: daily_pnl = 0 for a perfect tracker.
-    Positive decay = vol drag + fees → profitable to short.
+      daily_pnl = β × ln(1+r_und) − ln(1+r_etf)
+
+    For a perfect −|β|× tracker: ≈ 0.5×β(β−1)×r² > 0.
+    Log returns capture compounding vol drag that simple returns miss.
+
     net_decay = gross_decay − borrow_net_annual (no scaling needed).
     """
     df = pd.concat([etf_tr.rename("etf"), und_tr.rename("und")], axis=1).dropna()
     if len(df) < min_days + 1:
         return None
 
-    r_etf = df["etf"].pct_change()
-    r_und = df["und"].pct_change()
-
-    valid = r_etf.notna() & r_und.notna()
-    r_etf = r_etf[valid]
-    r_und = r_und[valid]
-
-    if len(r_etf) < min_days:
+    abs_beta = abs(float(beta))
+    if abs_beta < 0.1:
         return None
 
-    if abs(float(beta)) < 0.1:
-        return None
+    if beta > 0:
+        # Bull ETF: simple returns, hedged pair
+        r_etf = df["etf"].pct_change()
+        r_und = df["und"].pct_change()
 
-    # Signed beta: hedges underlying exposure for both bull and inverse
-    daily_pnl = float(beta) * r_und - r_etf
+        valid = r_etf.notna() & r_und.notna()
+        r_etf = r_etf[valid]
+        r_und = r_und[valid]
+
+        if len(r_etf) < min_days:
+            return None
+
+        daily_pnl = abs_beta * r_und - r_etf
+    else:
+        # Inverse ETF: log returns to capture vol drag
+        r_etf = np.log(df["etf"] / df["etf"].shift(1))
+        r_und = np.log(df["und"] / df["und"].shift(1))
+
+        valid = r_etf.notna() & r_und.notna() & np.isfinite(r_etf) & np.isfinite(r_und)
+        r_etf = r_etf[valid]
+        r_und = r_und[valid]
+
+        if len(r_etf) < min_days:
+            return None
+
+        daily_pnl = float(beta) * r_und - r_etf
 
     # Simple (linear) annualized rate
     gross_decay = float(daily_pnl.mean()) * TRADING_DAYS
@@ -244,8 +267,9 @@ def enrich_with_decay_and_vol(
       Beta_n_obs            - observation count for OLS beta
       vol_underlying_annual - annualized realized vol of underlying (total return)
       vol_etf_annual        - annualized realized vol of ETF (total return)
-      gross_decay_annual    - per $1 ETF short, simple annualized
-                              β×r_und − r_etf (signed beta, 0 for perfect tracker)
+      gross_decay_annual    - per $1 ETF short
+                              Bull: simple returns |β|×r_und − r_etf
+                              Inverse: log returns β×ln(1+r_und) − ln(1+r_etf)
       net_decay_annual      - gross_decay_annual − borrow_net_annual
 
     No borrow_drag_annual column — borrow is already per $1 ETF short,
