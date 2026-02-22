@@ -322,35 +322,43 @@ def update_pnl_history(run_date: str, total_pnl: float) -> pd.DataFrame:
 
 def make_pnl_plot(history: pd.DataFrame) -> Path:
     """
-    Creates a PNG plot showing cumulative PnL since START_DATE.
-    Saves to PLOT_PNG and returns that Path.
+    Creates a PNG plot showing YTD PnL since START_DATE.
+    Each row in history already contains the YTD cumulative total_pnl,
+    so we plot it directly (no cumsum).
     """
     ensure_ledger_dir()
 
     if history.empty:
-        plt.figure()
-        plt.title(f"PnL since {START_DATE} (no data yet)")
-        plt.xlabel("Date")
-        plt.ylabel("PnL")
-        plt.tight_layout()
-        plt.savefig(PLOT_PNG, dpi=150)
-        plt.close()
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.set_title(f"PnL since {START_DATE} (no data yet)")
+        ax.set_xlabel("Date")
+        ax.set_ylabel("PnL (base)")
+        fig.tight_layout()
+        fig.savefig(PLOT_PNG, dpi=150)
+        plt.close(fig)
         return PLOT_PNG
 
     x = history["date"]
-    daily = history["total_pnl"]
-    cum = daily.cumsum()
+    y = history["total_pnl"]
 
-    plt.figure()
-    plt.plot(x, cum)
-    plt.title(f"Cumulative PnL since {START_DATE}")
-    plt.xlabel("Date")
-    plt.ylabel("Cumulative PnL (base)")
-    plt.xticks(rotation=30, ha="right")
-    plt.tight_layout()
-    plt.savefig(PLOT_PNG, dpi=150)
-    plt.close()
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(x, y, marker="o", linewidth=2, markersize=6)
+    ax.axhline(0, color="grey", linewidth=0.5, linestyle="--")
+    ax.set_title(f"YTD PnL since {START_DATE}")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("YTD PnL (base)")
+    ax.grid(True, alpha=0.3)
+    ax.tick_params(axis="x", rotation=30)
 
+    # Annotate each point with its value
+    for xi, yi in zip(x, y):
+        label = f"${yi:,.0f}"
+        ax.annotate(label, (xi, yi), textcoords="offset points",
+                    xytext=(0, 10), ha="center", fontsize=8)
+
+    fig.tight_layout()
+    fig.savefig(PLOT_PNG, dpi=150)
+    plt.close(fig)
     return PLOT_PNG
 
 
