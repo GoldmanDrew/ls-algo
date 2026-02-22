@@ -5,8 +5,12 @@ ibkr_accounting.py
 Rebuild an accounting-grade PnL report from IBKR Flex XML exports.
 
 UPDATED:
-- Uses flex_borrow_fee_details.xml (Borrow Fee Details) as authoritative borrow fees BY SYMBOL (daily),
-  filtered to RUN_DATE, and grouped by symbol.
+- Borrow fees from flex_borrow_fee_details.xml are now CUMULATIVE (all dates up
+  to run_date) to match the YTD scope of FIFO PnL and cash transactions.
+  Previously filtered to a single day, which understated borrow by ~100%.
+- Universe filter simplified: any symbol whose resolved underlying is in
+  allowed_underlyings is included (catches spot, ETF, and closed positions).
+- Bond interest (e.g. bond coupons) is now categorized and included in PnL.
 - Robust parsing: FIFO performance summary node varies by Flex query configuration.
   We try:
     1) FIFOPerformanceSummaryInBase
@@ -14,6 +18,17 @@ UPDATED:
   If neither is present, trading PnL is set to 0 and the script still runs.
 - Universe + ETF->Underlying mapping comes from: data/etf_screened_today.csv
   (NOT config/etf_cagr.csv)
+
+PnL vectors per symbol:
+  realized_pnl           FIFO performance summary (YTD cumulative)
+  unrealized_pnl         FIFO performance summary (YTD cumulative)
+  dividends              Cash transactions
+  withholding_tax        Cash transactions
+  pil_dividends          Cash transactions (Payment In Lieu - short positions)
+  borrow_fees            Borrow Fee Details (cumulative) or cash fallback
+  short_credit_interest  Cash transactions (allocated pro-rata to shorts)
+  other_fees             Cash transactions
+  bond_interest          Cash transactions (bond coupon payments)
 
 Outputs (written to: data/runs/<RUN_DATE>/accounting/):
 - pnl_by_symbol.csv
@@ -298,12 +313,16 @@ def parse_cash_transactions(cash_xml: Path) -> pd.DataFrame:
 
 def parse_borrow_fee_details(borrow_xml: Path, run_date: str) -> pd.DataFrame:
     """
-    Parse Borrow Fee Details for RUN_DATE.
-    Works with nodes commonly seen:
-      - HardToBorrowDetail
+    Parse Borrow Fee Details CUMULATIVE up to (and including) run_date.
+
+    IMPORTANT: FIFO PnL and cash transactions are YTD cumulative across the
+    flex query period, so borrow fees must also be cumulative to stay consistent.
+    Filtering to a single day would massively understate borrow costs.
+
     Returns guaranteed columns even if empty.
+    Rows are aggregated by symbol (summed across all dates).
     """
-    cols = ["date", "symbol", "underlyingSymbol", "borrowFeeRate", "borrowFee_base"]
+    cols = ["symbol", "underlyingSymbol", "borrowFeeRate", "borrowFee_base"]
     if not borrow_xml.exists():
         return pd.DataFrame(columns=cols)
 
@@ -318,7 +337,9 @@ def parse_borrow_fee_details(borrow_xml: Path, run_date: str) -> pd.DataFrame:
     for node in nodes:
         a = node.attrib
         vd = (a.get("valueDate", "") or "").strip()
-        if vd != target:
+
+        # Include all dates up to and including run_date (cumulative YTD)
+        if vd > target:
             continue
 
         sym = canonical_symbol(a.get("symbol", "") or "")
@@ -337,7 +358,6 @@ def parse_borrow_fee_details(borrow_xml: Path, run_date: str) -> pd.DataFrame:
 
         rows.append(
             {
-                "date": vd,
                 "symbol": sym,
                 "underlyingSymbol": canonical_symbol(a.get("underlyingSymbol", "") or ""),
                 "borrowFeeRate": borrow_rate,
@@ -349,8 +369,9 @@ def parse_borrow_fee_details(borrow_xml: Path, run_date: str) -> pd.DataFrame:
     if out.empty:
         return out
 
+    # Aggregate by symbol across all dates (cumulative)
     out = (
-        out.groupby(["date", "symbol"], as_index=False)
+        out.groupby("symbol", as_index=False)
         .agg(
             underlyingSymbol=("underlyingSymbol", "first"),
             borrowFeeRate=("borrowFeeRate", "max"),
@@ -382,6 +403,9 @@ def categorize_cash_row(row: pd.Series) -> str:
         if "SHORT CREDIT INTEREST" in desc:
             return "short_credit_interest"
         return "exclude_interest"
+
+    if t == "Bond Interest Received":
+        return "bond_interest"
 
     return "other"
 
@@ -498,7 +522,7 @@ def main() -> int:
     df["description"] = df.get("description", "").fillna("")
 
     # Cash flows per symbol
-    cash_sym = cash[cash["category"].isin(["dividends", "withholding_tax", "pil_dividends", "other_fees"])].copy()
+    cash_sym = cash[cash["category"].isin(["dividends", "withholding_tax", "pil_dividends", "other_fees", "bond_interest"])].copy()
     cash_pivot = (
         cash_sym.pivot_table(index="symbol", columns="category", values="amount_base", aggfunc="sum", fill_value=0).reset_index()
         if not cash_sym.empty
@@ -507,7 +531,7 @@ def main() -> int:
     cash_pivot.columns.name = None
 
     df = df.merge(cash_pivot, on="symbol", how="left")
-    for c in ["dividends", "withholding_tax", "pil_dividends", "other_fees"]:
+    for c in ["dividends", "withholding_tax", "pil_dividends", "other_fees", "bond_interest"]:
         if c not in df.columns:
             df[c] = 0.0
         df[c] = df[c].fillna(0.0)
@@ -533,12 +557,13 @@ def main() -> int:
     df = df[~df["underlying"].isin(blacklist)].copy()
 
     # Universe filter (source: data/etf_screened_today.csv)
+    # Include ANY symbol whose resolved underlying is in allowed_underlyings.
+    # This is simpler and more correct than the old dual spot/ETF check because:
+    #   - Spot holdings of allowed underlyings pass (symbol == underlying, underlying allowed)
+    #   - ETFs mapped to allowed underlyings pass (etf_to_under resolved, underlying allowed)
+    #   - Closed ETF positions with realized PnL still pass if their underlying is tracked
     allowed_etfs, allowed_underlyings = load_universe_from_screened(ETF_SCREENED_PATH)
-
-    is_spot = (df["symbol"] == df["underlying"])
-    is_allowed_spot = is_spot & df["underlying"].isin(allowed_underlyings)
-    is_allowed_etf = (~is_spot) & df["symbol"].isin(allowed_etfs)
-    df = df[is_allowed_spot | is_allowed_etf].copy()
+    df = df[df["underlying"].isin(allowed_underlyings)].copy()
 
     # Rebuild pair labels post-filter
     df["pair"] = np.where(
@@ -566,7 +591,7 @@ def main() -> int:
     if not borrow_details_kept.empty:
         bfd_map = borrow_details_kept.set_index("symbol")["borrowFee_base"].to_dict()
         df["borrow_fees"] = df["symbol"].map(bfd_map).fillna(0.0)
-        borrow_mode = "borrow_fee_details_by_symbol"
+        borrow_mode = "borrow_fee_details_cumulative_by_symbol"
         borrow_total_account_source = float(borrow_details_kept["borrowFee_base"].sum())
     else:
         borrow_rows = cash[cash["category"] == "borrow_fees"].copy()
@@ -586,6 +611,7 @@ def main() -> int:
         + df["borrow_fees"]
         + df["short_credit_interest"]
         + df["other_fees"]
+        + df["bond_interest"]
     )
 
     base_cols = [
@@ -597,6 +623,7 @@ def main() -> int:
         "borrow_fees",
         "short_credit_interest",
         "other_fees",
+        "bond_interest",
         "total_pnl",
     ]
 
@@ -619,12 +646,13 @@ def main() -> int:
         "total_borrow_fees": float(df["borrow_fees"].sum()),
         "total_short_credit_interest": float(df["short_credit_interest"].sum()),
         "total_other_fees": float(df["other_fees"].sum()),
+        "total_bond_interest": float(df["bond_interest"].sum()),
         "total_pnl": float(df["total_pnl"].sum()),
         "excluded_cash_interest_base": float(cash.loc[cash["category"] == "exclude_interest", "amount_base"].sum()),
         "borrow_mode": borrow_mode,
         "borrow_total_account_source": float(borrow_total_account_source),
         "borrow_details_file_present": bool(FLEX_BORROW_DETAILS_PATH.exists()),
-        "borrow_details_rows_for_day": int(borrow_details_kept.shape[0]) if isinstance(borrow_details_kept, pd.DataFrame) else 0,
+        "borrow_details_rows_cumulative": int(borrow_details_kept.shape[0]) if isinstance(borrow_details_kept, pd.DataFrame) else 0,
         "universe_source": str(ETF_SCREENED_PATH),
         "universe_allowed_etfs": int(len(load_universe_from_screened(ETF_SCREENED_PATH)[0])),
         "universe_allowed_underlyings": int(len(load_universe_from_screened(ETF_SCREENED_PATH)[1])),

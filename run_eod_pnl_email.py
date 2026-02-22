@@ -10,6 +10,10 @@ import smtplib
 from email.message import EmailMessage
 from email.utils import getaddresses
 
+import re
+import xml.etree.ElementTree as ET
+
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -87,6 +91,200 @@ def format_underlying_table(pnl_under_csv: Path) -> tuple[str, float]:
 
 def ensure_ledger_dir() -> None:
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# ---------------------------------------------------------------
+# Net Exposure helpers (beta-normalized)
+# ---------------------------------------------------------------
+def canonical_symbol(sym: str) -> str:
+    """Mirror the normalization used in ibkr_accounting.py."""
+    if sym is None:
+        return ""
+    s = str(sym).strip().upper()
+    m = re.match(r"^([A-Z]{1,5})[ \-\.]([A-Z])$", s)
+    if m:
+        return f"{m.group(1)}.{m.group(2)}"
+    return s
+
+
+def parse_positions_for_exposure(pos_xml: Path) -> pd.DataFrame:
+    """
+    Parse flex_positions.xml to extract fields needed for exposure calc:
+    symbol, position, markPrice, fxRateToBase, positionValue.
+    """
+    r = ET.parse(pos_xml).getroot()
+    op = r.find(".//OpenPositions")
+    if op is None:
+        return pd.DataFrame(columns=["symbol", "position", "markPrice", "fxRateToBase"])
+    rows = []
+    for node in op:
+        a = node.attrib
+        sym = canonical_symbol(a.get("symbol", ""))
+        if not sym:
+            continue
+        rows.append({
+            "symbol": sym,
+            "position": float(a.get("position", "0") or 0),
+            "markPrice": float(a.get("markPrice", "0") or 0),
+            "fxRateToBase": float(a.get("fxRateToBase", "1") or 1),
+        })
+    return pd.DataFrame(rows)
+
+
+def load_etf_beta_map(screened_csv: Path) -> tuple[dict, dict]:
+    """
+    Load ETF -> Underlying mapping and ETF -> Beta from etf_screened_today.csv.
+    Returns (etf_to_under, etf_to_beta) dicts keyed by canonical symbol.
+
+    Beta represents the ETF's sensitivity to its underlying (e.g. 2.0 for a
+    2× levered ETF, -1.0 for an inverse, 1.0 for a plain wrapper).
+    """
+    u = pd.read_csv(screened_csv)
+    cols_lc = {c.lower(): c for c in u.columns}
+
+    # Find columns flexibly
+    etf_col = None
+    for cand in ["etf", "symbol", "ticker", "etf_symbol"]:
+        if cand in cols_lc:
+            etf_col = cols_lc[cand]
+            break
+    under_col = None
+    for cand in ["underlying", "underlyingsymbol", "underlying_symbol", "root"]:
+        if cand in cols_lc:
+            under_col = cols_lc[cand]
+            break
+    beta_col = None
+    for cand in ["beta", "leverage", "lev"]:
+        if cand in cols_lc:
+            beta_col = cols_lc[cand]
+            break
+
+    if etf_col is None or under_col is None:
+        return {}, {}
+
+    u = u[[etf_col, under_col] + ([beta_col] if beta_col else [])].dropna(subset=[etf_col, under_col])
+    u[etf_col] = u[etf_col].astype(str).str.upper().map(canonical_symbol)
+    u[under_col] = u[under_col].astype(str).str.upper().map(canonical_symbol)
+
+    etf_to_under = dict(zip(u[etf_col], u[under_col]))
+
+    if beta_col:
+        u[beta_col] = pd.to_numeric(u[beta_col], errors="coerce").fillna(1.0)
+        etf_to_beta = dict(zip(u[etf_col], u[beta_col]))
+    else:
+        etf_to_beta = {k: 1.0 for k in etf_to_under}
+
+    return etf_to_under, etf_to_beta
+
+
+def compute_net_exposure(
+    pos_xml: Path,
+    screened_csv: Path,
+    pnl_underlyings: set[str] | None = None,
+) -> pd.DataFrame:
+    """
+    Compute beta-normalized net exposure by underlying.
+
+    For each position:
+      mv_base = position × beta × markPrice × fxRateToBase
+
+    Beta is the ETF's sensitivity to its underlying (e.g. 2.0 for a 2×
+    levered ETF).  Spot / 1× holdings have beta = 1.0.
+
+    Then group by underlying to get net_notional_usd and gross_notional_usd.
+
+    If pnl_underlyings is provided, only include underlyings in that set
+    (to keep the same universe as the PnL report).
+
+    Returns DataFrame with columns:
+      underlying, net_notional_usd, gross_notional_usd, n_legs
+    """
+    pos = parse_positions_for_exposure(pos_xml)
+    if pos.empty:
+        return pd.DataFrame(columns=["underlying", "net_notional_usd", "gross_notional_usd", "n_legs"])
+
+    etf_to_under, etf_to_beta = load_etf_beta_map(screened_csv)
+
+    # Map each position to its underlying and beta
+    pos["is_etf"] = pos["symbol"].isin(etf_to_under)
+    pos["underlying"] = np.where(
+        pos["is_etf"],
+        pos["symbol"].map(etf_to_under),
+        pos["symbol"],
+    )
+    pos["beta"] = np.where(
+        pos["is_etf"],
+        pos["symbol"].map(etf_to_beta).astype(float),
+        1.0,
+    )
+    pos["beta"] = pd.to_numeric(pos["beta"], errors="coerce").fillna(1.0)
+
+    # Beta-adjusted signed market value in base currency
+    pos["mv_base"] = pos["position"] * pos["beta"] * pos["markPrice"] * pos["fxRateToBase"]
+    pos["gross_mv_base"] = pos["mv_base"].abs()
+
+    # Filter to PnL universe if provided
+    if pnl_underlyings is not None:
+        pos = pos[pos["underlying"].isin(pnl_underlyings)].copy()
+
+    if pos.empty:
+        return pd.DataFrame(columns=["underlying", "net_notional_usd", "gross_notional_usd", "n_legs"])
+
+    exposure = (
+        pos.groupby("underlying", as_index=False)
+        .agg(
+            net_notional_usd=("mv_base", "sum"),
+            gross_notional_usd=("gross_mv_base", "sum"),
+            n_legs=("symbol", "nunique"),
+        )
+        .sort_values("net_notional_usd", ascending=False)
+    )
+
+    return exposure
+
+
+def format_exposure_table(exposure_df: pd.DataFrame) -> tuple[str, float, float]:
+    """
+    Format net exposure by underlying as a plain-text table.
+    Returns (table_str, total_net, total_gross).
+    """
+    if exposure_df.empty:
+        return "(no exposure data)", 0.0, 0.0
+
+    tbl = exposure_df[["underlying", "net_notional_usd", "gross_notional_usd"]].copy()
+    total_net = float(tbl["net_notional_usd"].sum())
+    total_gross = float(tbl["gross_notional_usd"].sum())
+
+    total_row = pd.DataFrame([{
+        "underlying": "TOTAL",
+        "net_notional_usd": total_net,
+        "gross_notional_usd": total_gross,
+    }])
+    tbl2 = pd.concat([tbl, total_row], ignore_index=True)
+
+    tbl2["net_notional_usd"] = tbl2["net_notional_usd"].map(lambda x: f"{x:,.2f}")
+    tbl2["gross_notional_usd"] = tbl2["gross_notional_usd"].map(lambda x: f"{x:,.2f}")
+
+    u_w = max(10, int(tbl2["underlying"].astype(str).map(len).max()))
+    net_w = max(14, int(tbl2["net_notional_usd"].astype(str).map(len).max()))
+    gross_w = max(16, int(tbl2["gross_notional_usd"].astype(str).map(len).max()))
+
+    lines: list[str] = []
+    header = (
+        f"{'UNDERLYING'.ljust(u_w)}  "
+        f"{'NET_NOTIONAL'.rjust(net_w)}  "
+        f"{'GROSS_NOTIONAL'.rjust(gross_w)}"
+    )
+    lines.append(header)
+    lines.append("-" * (u_w + 2 + net_w + 2 + gross_w))
+
+    for _, r in tbl2.iterrows():
+        u = str(r["underlying"]).ljust(u_w)
+        n = str(r["net_notional_usd"]).rjust(net_w)
+        g = str(r["gross_notional_usd"]).rjust(gross_w)
+        lines.append(f"{u}  {n}  {g}")
+
+    return "\n".join(lines), total_net, total_gross
 
 
 def update_pnl_history(run_date: str, total_pnl: float) -> pd.DataFrame:
@@ -240,6 +438,37 @@ def main() -> int:
     # 4) Create underlying breakdown table
     underlying_table, underlying_total = format_underlying_table(pnl_under_csv)
 
+    # 4b) Compute beta-normalized net exposure by underlying
+    flex_dir = PROJECT_ROOT / "data" / "runs" / run_date / "ibkr_flex"
+    pos_xml = flex_dir / "flex_positions.xml"
+    screened_csv = PROJECT_ROOT / "data" / "etf_screened_today.csv"
+
+    pnl_underlyings: set[str] | None = None
+    try:
+        pnl_df = pd.read_csv(pnl_under_csv)
+        if "underlying" in pnl_df.columns:
+            pnl_underlyings = set(pnl_df["underlying"].dropna().astype(str))
+    except Exception:
+        pass
+
+    exposure_df = pd.DataFrame()
+    exposure_table_str = "(exposure data unavailable)"
+    total_net = 0.0
+    total_gross = 0.0
+    exposure_csv_path: Path | None = None
+
+    if pos_xml.exists() and screened_csv.exists():
+        try:
+            exposure_df = compute_net_exposure(pos_xml, screened_csv, pnl_underlyings)
+            exposure_table_str, total_net, total_gross = format_exposure_table(exposure_df)
+
+            # Save exposure CSV alongside the other accounting outputs
+            outdir = PROJECT_ROOT / "data" / "runs" / run_date / "accounting"
+            exposure_csv_path = outdir / "net_exposure_by_underlying.csv"
+            exposure_df.to_csv(exposure_csv_path, index=False)
+        except Exception as e:
+            exposure_table_str = f"(exposure calculation error: {e})"
+
     # 5) Update history + plot since START_DATE
     hist = update_pnl_history(run_date, total_pnl=underlying_total)
     plot_path = make_pnl_plot(hist)
@@ -259,7 +488,7 @@ def main() -> int:
 
     subject = f"EOD PnL by Underlying — {run_date} — Total: {underlying_total:,.2f}"
 
-    cum_total = float(hist["total_pnl"].cumsum().iloc[-1]) if not hist.empty else 0.0
+    cum_total = float(hist["total_pnl"].iloc[-1]) if not hist.empty else 0.0
     n_days = int(hist.shape[0])
 
     body = (
@@ -270,18 +499,29 @@ def main() -> int:
         "----------------------------------------\n"
         f"{underlying_table}\n"
         "----------------------------------------\n\n"
+        f"NET EXPOSURE by underlying (beta-normalized):\n"
+        f"  Net notional:   {total_net:,.2f}\n"
+        f"  Gross notional: {total_gross:,.2f}\n"
+        "----------------------------------------\n"
+        f"{exposure_table_str}\n"
+        "----------------------------------------\n\n"
         f"Since {START_DATE}: {n_days} day(s) logged | Cumulative PnL: {cum_total:,.2f}\n\n"
         "Attachments:\n"
         "- pnl_by_underlying.csv\n"
         "- totals.json\n"
         f"- {plot_path.name}\n"
+        "- net_exposure_by_underlying.csv\n"
     )
 
-    # 7) Send (attach CSV + totals + plot)
+    # 7) Send (attach CSV + totals + plot + exposure)
+    attachments = [pnl_under_csv, totals_json_path, plot_path]
+    if exposure_csv_path is not None and exposure_csv_path.exists():
+        attachments.append(exposure_csv_path)
+
     send_email(
         subject=subject,
         body=body,
-        attachments=[pnl_under_csv, totals_json_path, plot_path],
+        attachments=attachments,
         recipients=recipients,
     )
 
