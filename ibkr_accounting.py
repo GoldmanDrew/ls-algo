@@ -123,6 +123,15 @@ if not ETF_SCREENED_PATH.exists():
 # -----------------------------
 EXCLUDE_SYMBOLS = {canonical_symbol("BRK.B"), canonical_symbol("BRKB")}
 
+# Supplemental ETF→Underlying mappings for securities that were traded as part
+# of the algo but are no longer in etf_screened_today.csv (e.g. closed positions
+# from rotations).  These get merged into the CSV-based map so their realized
+# PnL rolls up under the correct underlying.
+SUPPLEMENTAL_ETF_MAP: dict[str, str] = {
+    canonical_symbol("XRP"):  canonical_symbol("XRPZ"),   # Teucrium XRP – closed 2/13, rotated into XRPZ
+    canonical_symbol("GXRP"): canonical_symbol("XRPZ"),   # Grayscale XRP Trust – closed 2/13, rotated into XRPZ
+}
+
 
 def load_blacklist(config_yml: Path) -> set[str]:
     cfg = yaml.safe_load(config_yml.read_text(encoding="utf-8")) or {}
@@ -538,6 +547,9 @@ def main() -> int:
 
     # Underlying mapping (source of truth: data/etf_screened_today.csv)
     etf_to_under = load_etf_to_under_map(ETF_SCREENED_PATH)
+    # Merge supplemental mappings (closed positions not in CSV anymore)
+    for sym, und in SUPPLEMENTAL_ETF_MAP.items():
+        etf_to_under.setdefault(sym, und)
     df["underlying"] = df["symbol"].map(etf_to_under)
     df["underlying"] = df["underlying"].fillna(df["underlyingSymbol"]).fillna(df["symbol"])
 
