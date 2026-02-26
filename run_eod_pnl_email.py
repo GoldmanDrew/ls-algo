@@ -26,8 +26,8 @@ IBKR_ACCT_SCRIPT = PROJECT_ROOT / "ibkr_accounting.py"
 # History / plot outputs
 LEDGER_DIR = PROJECT_ROOT / "data" / "ledger"
 PNL_HISTORY_CSV = LEDGER_DIR / "pnl_history.csv"
-PLOT_PNG = LEDGER_DIR / "pnl_since_2026-02-19.png"
-START_DATE = "2026-02-19"
+PLOT_PNG = LEDGER_DIR / "pnl_since_2026-02-23.png"
+START_DATE = "2026-02-23"
 
 
 def run_cmd(cmd: list[str], env: dict[str, str] | None = None) -> None:

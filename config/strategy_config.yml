@@ -48,6 +48,7 @@ screener:
   purgatory_margin: 0.04     # +4% band above BORROW_LOW (decimal)
   whitelist_hard_borrow_cap: 0.25
   flow_hard_borrow_cap: 0.25
+  min_beta_days: 5
 portfolio:
   sleeves:
     core_leveraged:

@@ -1,19 +1,90 @@
-name: EOD PnL Email
+name: EOD PnL Email + Daily Screener
 
 on:
   schedule:
-    # 22:00 UTC = 5pm EST (winter) / 6pm EDT (summer)
+    # 15:00 UTC = 10am EST (winter) / 11am EDT (summer) — daily screener
+    - cron: "0 15 * * 1-5"
+    # 22:00 UTC = 5pm EST (winter) / 6pm EDT (summer) — EOD PnL email
     - cron: "0 22 * * 1-5"
   workflow_dispatch:
+    inputs:
+      job:
+        description: "Which job to run"
+        required: false
+        default: "both"
+        type: choice
+        options:
+          - both
+          - screener
+          - eod
 
 jobs:
+  # ────────────────────────────────────────────────────────
+  # Daily screener — runs at 10am EST on weekdays
+  # ────────────────────────────────────────────────────────
+  screener:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'screener' || inputs.job == 'both'))
+      || (github.event_name == 'schedule' && github.event.schedule == '0 15 * * 1-5')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run daily screener
+        env:
+          IBKR_FTP_USER: ${{ secrets.IBKR_FTP_USER }}
+          IBKR_FTP_PASS: ${{ secrets.IBKR_FTP_PASS }}
+        run: |
+          RUN_DATE=$(python -c "
+          from datetime import datetime
+          import pytz
+          print(datetime.now(pytz.timezone('America/New_York')).date().isoformat())
+          ")
+          echo "RUN_DATE=$RUN_DATE"
+          python daily_screener.py --run-date "$RUN_DATE"
+
+      - name: Commit screener outputs
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/etf_screened_today.csv data/runs/ || true
+          if git diff --cached --quiet; then
+            echo "No screener changes to commit"
+          else
+            git commit -m "screener: $(date -u +%Y-%m-%d) run"
+            git push
+          fi
+
+  # ────────────────────────────────────────────────────────
+  # EOD PnL email — runs at 5pm EST on weekdays
+  # ────────────────────────────────────────────────────────
   eod:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && (inputs.job == 'eod' || inputs.job == 'both'))
+      || (github.event_name == 'schedule' && github.event.schedule == '0 22 * * 1-5')
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || github.token }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -34,28 +105,38 @@ jobs:
           IBKR_FLEX_Q_POSITIONS: ${{ secrets.IBKR_FLEX_Q_POSITIONS }}
 
           # Email
-          PNL_RECIPIENTS: ${{ secrets.PNL_RECIPIENTS }} # "a@x.com,b@y.com"
+          PNL_RECIPIENTS: ${{ secrets.PNL_RECIPIENTS }}
           SMTP_HOST: ${{ secrets.SMTP_HOST || 'smtp.gmail.com' }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT || 587 }} # "587"
+          SMTP_PORT: ${{ secrets.SMTP_PORT || 587 }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
 
         run: |
-            # pick run date in New York
-            python - <<'PY' > run_date.txt
-            from datetime import datetime
-            import pytz
-            tz = pytz.timezone("America/New_York")
-            print(datetime.now(tz).date().isoformat())
-            PY
+          RUN_DATE=$(python -c "
+          from datetime import datetime
+          import pytz
+          print(datetime.now(pytz.timezone('America/New_York')).date().isoformat())
+          ")
+          export RUN_DATE
 
-            export RUN_DATE="$(cat run_date.txt)"
+          # 1) Pull Flex
+          python ibkr_flex.py --run-date "$RUN_DATE"
 
-            # 1) Pull Flex
-            python ibkr_flex.py --run-date "$RUN_DATE"
+          # 2) Build accounting
+          python ibkr_accounting.py "$RUN_DATE"
 
-            # 2) Build accounting
-            python ibkr_accounting.py "$RUN_DATE"
+          # 3) Email
+          python run_eod_pnl_email.py
 
-            # 3) Email
-            python run_eod_pnl_email.py
+      - name: Commit PnL history + plot back to repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/ledger/pnl_history.csv data/ledger/*.png || true
+          git add data/runs/ || true
+          if git diff --cached --quiet; then
+            echo "No PnL changes to commit"
+          else
+            git commit -m "eod: $(date -u +%Y-%m-%d) pnl history update"
+            git push
+          fi
