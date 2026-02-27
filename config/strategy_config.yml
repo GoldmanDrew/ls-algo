@@ -5,12 +5,13 @@ ibkr:
   prefer_delayed: true
 strategy:
   tag: ETF_LS
-  capital_usd: 275000
+  capital_usd: 330000
   gross_leverage: 4
   blacklist:
   - JPM
   - BRK-B
   - AXP
+  - APLD
   beta_cutoff: 1.5          # new: cutoff for |Beta|
   beta_split_high: 1.0     # new: within leveraged sleeve, fraction to |Beta| > cutoff
 paths:
@@ -53,7 +54,7 @@ portfolio:
   sleeves:
     core_leveraged:
       allocation_type: "stock"
-      target_weight: 0.85
+      target_weight: 0.88
       rules:
         min_beta_used: 1.50
       weighting:
@@ -62,7 +63,7 @@ portfolio:
         min_names: 10
     whitelist_stock:
       allocation_type: "stock"
-      target_weight: 0.15
+      target_weight: 0.12
       universe:
         etfs:
           - MTYY
