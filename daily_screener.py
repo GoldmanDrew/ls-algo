@@ -62,7 +62,7 @@ leverage_pairs = [
     ("TSLL", "TSLA"), ("TSMX", "TSM"),  ("XOMX", "XOM"),
     # --- 3X Equity ---
     ("YINN", "FXI"),  ("MEXX", "EWW"),  ("KORU", "EWY"),  ("HIBL", "SPY"),
-    ("HIBS", "SPY"),  ("LABU", "XBI"),  ("LABD", "XBI"),  ("SOXL", "SOXX"),
+    ("LABU", "XBI"),  ("SOXL", "SOXX"),
     # --- 2X Thematic / Equity --
     ("CHAU", "ASHR"), ("CWEB", "KWEB"), ("ERX",  "XLE"),  ("NUGT", "GDX"),
     ("JNUG", "GDXJ"), ("GUSH", "XOP"), ("URAA", "URA"),
@@ -114,7 +114,7 @@ new_pairs = [
     ("UUUG", "UUUU"), ("HUTG", "HUT"),  ("XPEG", "XPEV"), ("ORLG", "ORLY"),
     ("LUNL", "LUNR"), ("RKTL", "RKT"),  ("EOSU", "EOSE"), ("BTFL", "BITF"),
     ("FGRU", "FIGR"), ("APHU", "APH"),  ("COPZ", "COPX"), ("LEUX", "LEU"),
-    ("COHX", "COHR"), ("CLSZ", "CLSK"), ("AXPG", "AXP"),  ("FCXG", "FCX"),
+    ("COHX", "COHR"), ("AXPG", "AXP"),  ("FCXG", "FCX"),
     ("BITX", "IBIT"), ("ETHU", "ETHA"), ("XXRP", "XRPZ"),
 ]
 
@@ -160,21 +160,22 @@ BENCHMARK_MAP = {
     "WTI": "USO",  "TSLA": "TSLA", "MSTR": "MSTR", "NVDA": "NVDA",
     "BTC": "IBIT", "ETH": "ETHA",  "CRCL": "CRCL", "CRWV": "CRWV",
     "GDX": "GDX",  "SLV": "SLV",   "XLE": "XLE",   "XOP": "XOP",
-    "TLT": "TLT",  "MSCIJP": "EWJ","APLD": "APLD",
+    "TLT": "TLT",  "MSCIJP": "EWJ","APLD": "APLD", "CLSK": "CLSK",
 }
 
 INVERSE_ETF_UNIVERSE = [
-    ("SDS",  2, "SPX"),  ("QID",  2, "NDX"),  ("DXD",  2, "DJIA"), ("TWM",  2, "RUT"),
-    ("SCO",  2, "WTI"),  ("MSTZ", 2, "MSTR"), ("NVDQ", 2, "NVDA"), ("BTCZ", 2, "BTC"),
-    ("ETHD", 2, "ETH"),  ("CRCD", 2, "CRCL"), ("CORD", 2, "CRWV"), ("TSLQ", 2, "TSLA"),
-    ("ZSL",  2, "SLV"),  ("SQQQ", 3, "NDX"),  ("SPXS", 3, "SPX"),  ("TZA",  3, "RUT"),
-    ("SOXS", 3, "SOX"),  ("FAZ",  3, "FIN"),   ("LABD", 3, "BIOTECH"),
-    ("TECS", 3, "TECH"), ("SDOW", 3, "DJIA"), ("DUST", 3, "GDX"),
-    ("TTXD", 2, "TECH"), ("TSXD", 2, "SOX"),  ("WEBS", 3, "TECH"), ("FNGD", 3, "TECH"),
-    ("REW",  2, "TECH"), ("SKF",  2, "FIN"),   ("SPXU", 3, "SPX"),
-    ("DUG",  2, "XLE"),  ("DRIP", 2, "XOP"),  ("TMV",  3, "TLT"),
-    ("TBT",  2, "TLT"),  ("TBX",  2, "TLT"),  ("NVDS", 1.5, "NVDA"),
-    ("EWV",  2, "MSCIJP"), ("APLZ", 2, "APLD"),
+    ("SDS",  -2, "SPX"),  ("QID",  -2, "NDX"),  ("DXD",  -2, "DJIA"), ("TWM",  -2, "RUT"),
+    ("SCO",  -2, "WTI"),  ("MSTZ", -2, "MSTR"), ("NVDQ", -2, "NVDA"), ("BTCZ", -2, "BTC"),
+    ("ETHD", -2, "ETH"),  ("CRCD", -2, "CRCL"), ("CORD", -2, "CRWV"), ("TSLQ", -2, "TSLA"),
+    ("ZSL",  -2, "SLV"),  ("SQQQ", -3, "NDX"),  ("SPXS", -3, "SPX"),  ("TZA",  -3, "RUT"),
+    ("SOXS", -3, "SOX"),  ("FAZ",  -3, "FIN"),   ("LABD", -3, "BIOTECH"),
+    ("TECS", -3, "TECH"), ("SDOW", -3, "DJIA"), ("DUST", -3, "GDX"),
+    ("TTXD", -2, "TECH"), ("TSXD", -2, "SOX"),  ("WEBS", -3, "TECH"), ("FNGD", -3, "TECH"),
+    ("REW",  -2, "TECH"), ("SKF",  -2, "FIN"),   ("SPXU", -3, "SPX"),
+    ("DUG",  -2, "XLE"),  ("DRIP", -2, "XOP"),  ("TMV",  -3, "TLT"),
+    ("TBT",  -2, "TLT"),  ("TBX",  -2, "TLT"),  ("NVDS", -1.5, "NVDA"),
+    ("EWV",  -2, "MSCIJP"), ("APLZ", -2, "APLD"),
+    ("HIBS", -3, "SPX"),  ("CLSZ", -2, "CLSK"),
 ]
 
 
@@ -426,6 +427,13 @@ def add_betas(universe_df: pd.DataFrame, tr_map: dict[str, pd.Series],
             betas.append(exp_lev)
             nobs.append(n)
             sources.append("imputed_no_overlap")
+        elif exp_lev != 0 and abs(b) > 0.3 and (b > 0) != (exp_lev > 0):
+            # OLS beta sign disagrees with expected leverage direction
+            print(f"  [BETA] WARNING: {etf} OLS β={b:.4f} sign disagrees with "
+                  f"expected leverage={exp_lev:.1f}; using expected. Likely bad data.")
+            betas.append(exp_lev)
+            nobs.append(n)
+            sources.append("imputed_sign_mismatch")
         else:
             betas.append(b)
             nobs.append(n)
