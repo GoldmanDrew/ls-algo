@@ -2,44 +2,60 @@
 """
 execute_flow_program.py
 
-Automatic daily "flow sleeve" allocator:
-- Deploys annual_deployment_rate * deployment_base each year
-- Converts to DAILY deployment using 252 trading days
-- Allocates by weights (fixed) across configured short tickers
-- Trades only the incremental deployment for *today* (SELL shares)
-- Updates a flow ledger CSV tracking cumulative deployed USD per ticker
+Flow sleeve allocator with daily or weekly scheduling.
+
+Modes:
+  frequency=D  — immediate execution (SELL today, same as before)
+  frequency=W  — schedule Adaptive MKT orders via IBKR goodAfterTime
+                  for each configured weekday (e.g. Mon + Thu)
 
 Designed to run independently of generate_trade_plan.py / execute_trade_plan.py.
-Schedule it daily (cron / Task Scheduler) after your main execution pass.
 """
 
 from __future__ import annotations
 
-import os
+import argparse
 import math
+import os
 import signal
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from datetime import datetime
+from typing import List, Tuple
 
 import numpy as np
 import pandas as pd
 import yaml
+from zoneinfo import ZoneInfo
 
-from ib_insync import IB, Stock  # type: ignore
+from ib_insync import IB, MarketOrder, Stock, Order
 
 
 TRADING_DAYS = 252
+ET = ZoneInfo("America/New_York")
 
 
-import math
-import numpy as np
-from datetime import datetime, timezone
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
 
-from ib_insync import IB, Stock, util
+def tprint(msg: str) -> None:
+    print(msg, flush=True)
 
-# -----------------------------
-# Robust price helpers (NO live mkt data required)
-# -----------------------------
+
+def today_str() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def norm_sym(x: str) -> str:
+    return str(x).upper().replace(".", "-")
+
+
+def safe_float(x, default=np.nan) -> float:
+    try:
+        return float(x)
+    except Exception:
+        return float(default)
+
 
 def _as_float(x):
     try:
@@ -47,6 +63,11 @@ def _as_float(x):
     except Exception:
         return np.nan
     return x if np.isfinite(x) else np.nan
+
+
+# ---------------------------------------------------------------------------
+# Pricing
+# ---------------------------------------------------------------------------
 
 def get_price_fallback_ib(
     ib: IB,
@@ -61,8 +82,6 @@ def get_price_fallback_ib(
     """
     sym = str(sym).upper().replace(".", "-")
     c = Stock(sym, "SMART", "USD")
-
-    # qualify first (fast, deterministic)
     ib.qualifyContracts(c)
 
     # 1) intraday 1-min bars (last close)
@@ -105,22 +124,21 @@ def get_price_fallback_ib(
 
     raise RuntimeError(f"No usable historical price for {sym} (bars empty).")
 
-# -----------------------------
-# Safe sizing
-# -----------------------------
-def usd_to_shares_floor(delta_usd: float, px: float) -> int:
-    """
-    Convert USD notional to shares, rounding toward zero but ensuring non-trivial.
-    """
-    px = _as_float(px)
-    delta_usd = _as_float(delta_usd)
-    if not np.isfinite(px) or px <= 0 or not np.isfinite(delta_usd):
-        return 0
-    return int(delta_usd / px)  # toward zero
 
-# -----------------------------
-# Order execution that doesn't require market data
-# -----------------------------
+# ---------------------------------------------------------------------------
+# Sizing
+# ---------------------------------------------------------------------------
+
+def usd_to_shares_floor(abs_usd: float, px: float) -> int:
+    if px <= 0 or (not np.isfinite(px)) or (not np.isfinite(abs_usd)):
+        return 0
+    return int(math.floor(abs_usd / px))
+
+
+# ---------------------------------------------------------------------------
+# Order execution
+# ---------------------------------------------------------------------------
+
 def place_adaptive_mkt(
     ib: IB,
     sym: str,
@@ -129,13 +147,12 @@ def place_adaptive_mkt(
     qty: int,
     order_ref: str,
     priority: str = "Patient",
+    good_after_time: str | None = None,
 ):
     """
-    Places Adaptive Market order (your existing style) which can work even without
-    quote subscriptions, as long as IB allows blind trading / precautionary settings.
+    Places Adaptive Market order.  If good_after_time is set (IBKR format
+    "YYYYMMDD HH:MM:SS" in exchange tz), the order activates at that time.
     """
-    from ib_insync import Order
-
     sym = str(sym).upper().replace(".", "-")
     c = Stock(sym, "SMART", "USD")
     ib.qualifyContracts(c)
@@ -149,152 +166,53 @@ def place_adaptive_mkt(
         algoStrategy="Adaptive",
         algoParams=[("adaptivePriority", priority)],
     )
+
+    if good_after_time:
+        o.goodAfterTime = good_after_time
+
     return ib.placeOrder(c, o)
 
-def place_collared_limit_using_prev_close(
-    ib: IB,
-    sym: str,
-    *,
-    action: str,
-    qty: int,
-    prev_close: float,
-    collar_bps: float = 300.0,  # 3%
-    order_ref: str,
-):
-    """
-    If you want to AVOID blind market orders, use last close and a wide collar.
-    BUY: limit = close*(1+collar), SELL: limit = close*(1-collar)
-    """
-    from ib_insync import LimitOrder
 
-    sym = str(sym).upper().replace(".", "-")
+def execute_sell(ib: IB, sym: str, qty: int, order_ref: str) -> None:
+    if qty <= 0:
+        return
+    sym = norm_sym(sym)
     c = Stock(sym, "SMART", "USD")
     ib.qualifyContracts(c)
-
-    collar = float(collar_bps) / 1e4
-    if action.upper() == "BUY":
-        lmt = float(prev_close) * (1.0 + collar)
-    else:
-        lmt = float(prev_close) * (1.0 - collar)
-
-    o = LimitOrder(
-        action=action.upper(),
-        totalQuantity=int(qty),
-        lmtPrice=round(lmt, 4),
-        tif="DAY",
-        orderRef=order_ref,
-    )
-    return ib.placeOrder(c, o)
-
-# -----------------------------
-# FLOW daily execution snippet
-# -----------------------------
-def execute_flow_daily(
-    ib: IB,
-    *,
-    flow_targets: pd.DataFrame,
-    run_date: str,
-    weights: dict[str, float],
-    annual_deployment_rate: float,
-    net_liq_usd: float,
-    prefer_delayed: bool,
-    dry_run: bool,
-    strategy_tag: str,
-    use_collared_limits: bool = False,
-    collar_bps: float = 300.0,
-):
-    """
-    Example:
-    - Determine daily USD deployment = net_liq * annual_rate / 252
-    - Allocate across tickers by weights
-    - SELL that many shares (short more) each day
-    """
-    # daily budget
-    daily_budget = float(net_liq_usd) * float(annual_deployment_rate) / 252.0
-
-    # normalize weights
-    w = {k.upper().replace(".", "-"): float(v) for k, v in weights.items()}
-    wsum = sum(abs(v) for v in w.values())
-    if wsum <= 0:
-        print("[FLOW_DAILY] No weights; skipping.")
-        return
-    w = {k: v / wsum for k, v in w.items()}
-
-    print(f"[FLOW_DAILY] daily_budget_usd={daily_budget:,.2f}")
-
-    for sym, ww in w.items():
-        sym = sym.upper().replace(".", "-")
-        delta_usd = daily_budget * ww  # positive means add more short USD
-        if abs(delta_usd) < 1.0:
-            continue
-
-        try:
-            px = get_price_fallback_ib(ib, sym, prefer_delayed=prefer_delayed)
-        except Exception as e:
-            print(f"[FLOW_DAILY] SKIP {sym}: cannot get historical px ({type(e).__name__}: {e})")
-            continue
-
-        sh = -abs(usd_to_shares_floor(delta_usd, px))
-        if sh == 0:
-            continue
-
-        action = "SELL"  # increasing short
-        qty = abs(int(sh))
-        order_ref = f"{strategy_tag}|FLOW_DAILY|{sym}|DEPLOY"
-
-        print(f"[FLOW_DAILY] {sym}: px≈{px:.4f} deploy_usd={delta_usd:,.0f} -> {action} {qty} (short more)")
-
-        if dry_run:
-            continue
-
-        try:
-            if use_collared_limits:
-                place_collared_limit_using_prev_close(
-                    ib,
-                    sym,
-                    action=action,
-                    qty=qty,
-                    prev_close=px,
-                    collar_bps=collar_bps,
-                    order_ref=order_ref,
-                )
-            else:
-                # Adaptive MKT path
-                place_adaptive_mkt(
-                    ib,
-                    sym,
-                    action=action,
-                    qty=qty,
-                    order_ref=order_ref,
-                    priority="Patient",
-                )
-        except Exception as e:
-            print(f"[FLOW_DAILY] ORDER FAIL {sym}: {type(e).__name__}: {e}")
-            continue
+    o = MarketOrder("SELL", int(qty))
+    o.orderRef = str(order_ref)
+    ib.placeOrder(c, o)
+    ib.sleep(0.5)
 
 
-# -----------------------------
-# Small utilities
-# -----------------------------
-def tprint(msg: str) -> None:
-    print(msg, flush=True)
+# ---------------------------------------------------------------------------
+# IB connection + account
+# ---------------------------------------------------------------------------
+
+def connect_ib(host: str, port: int, client_id: int) -> IB:
+    ib = IB()
+    ib.connect(host, port, clientId=client_id)
+    return ib
 
 
-def today_str() -> str:
-    return datetime.now().strftime("%Y-%m-%d")
+def get_account_equity(ib: IB) -> float:
+    summ = ib.accountSummary()
+    for av in summ:
+        if av.tag == "NetLiquidation" and av.currency == "USD":
+            v = safe_float(av.value, np.nan)
+            if np.isfinite(v) and v > 0:
+                return float(v)
+    for av in summ:
+        if av.tag == "NetLiquidation":
+            v = safe_float(av.value, np.nan)
+            if np.isfinite(v) and v > 0:
+                return float(v)
+    raise RuntimeError("Could not read NetLiquidation from IB accountSummary().")
 
 
-def norm_sym(x: str) -> str:
-    return str(x).upper().replace(".", "-")
-
-
-def safe_float(x, default=np.nan) -> float:
-    try:
-        v = float(x)
-        return v
-    except Exception:
-        return float(default)
-
+# ---------------------------------------------------------------------------
+# Ledger
+# ---------------------------------------------------------------------------
 
 def load_ledger(path: str) -> pd.DataFrame:
     if not path or not os.path.exists(path):
@@ -329,94 +247,57 @@ def append_ledger(ledger_path: str, ledger_df: pd.DataFrame, rows: list[dict]) -
     return df
 
 
-def connect_ib(host: str, port: int, client_id: int) -> IB:
-    ib = IB()
-    ib.connect(host, port, clientId=client_id)
-    return ib
+# ---------------------------------------------------------------------------
+# Weekly scheduling helpers
+# ---------------------------------------------------------------------------
 
-
-def get_account_equity(ib: IB) -> float:
+def next_schedule_dates(
+    schedule_days: list[int],
+    schedule_time_et: str,
+) -> list[tuple[str, str]]:
     """
-    Uses NetLiquidation as deployment base for 'current_equity'.
+    Compute the next occurrence of each scheduled weekday from today.
+
+    Args:
+        schedule_days: list of Python weekday ints (0=Mon .. 6=Sun)
+        schedule_time_et: time string "HH:MM:SS" in US/Eastern
+
+    Returns:
+        List of (date_str "YYYY-MM-DD", gat_str "YYYYMMDD HH:MM:SS") tuples,
+        sorted by date.  Only includes future dates (skips if already past).
     """
-    # ib.accountSummary() returns list of AccountValue items
-    summ = ib.accountSummary()
-    for av in summ:
-        if av.tag == "NetLiquidation" and av.currency == "USD":
-            v = safe_float(av.value, np.nan)
-            if np.isfinite(v) and v > 0:
-                return float(v)
-    # fallback: first NetLiquidation regardless currency
-    for av in summ:
-        if av.tag == "NetLiquidation":
-            v = safe_float(av.value, np.nan)
-            if np.isfinite(v) and v > 0:
-                return float(v)
-    raise RuntimeError("Could not read NetLiquidation from IB accountSummary().")
+    now_et = datetime.now(ET)
+    h, m, s = (int(x) for x in schedule_time_et.split(":"))
+
+    results: list[tuple[str, str]] = []
+    for wd in schedule_days:
+        # Days until next occurrence of this weekday
+        diff = (wd - now_et.weekday()) % 7
+        if diff == 0:
+            # Today is the target weekday — include only if time hasn't passed
+            target = now_et.replace(hour=h, minute=m, second=s, microsecond=0)
+            if target <= now_et:
+                diff = 7  # already past, schedule next week
+        target_date = (now_et + timedelta(days=diff)).date()
+        date_str = target_date.strftime("%Y-%m-%d")
+        gat_str = target_date.strftime("%Y%m%d") + f" {schedule_time_et}"
+        results.append((date_str, gat_str))
+
+    results.sort(key=lambda x: x[0])
+    return results
 
 
-def usd_to_shares_floor(abs_usd: float, px: float) -> int:
-    """
-    Convert USD notional to shares, rounding DOWN in absolute value (conservative).
-    """
-    if px <= 0 or (not np.isfinite(px)) or (not np.isfinite(abs_usd)):
-        return 0
-    return int(math.floor(abs_usd / px))
+# ---------------------------------------------------------------------------
+# Allocation computation
+# ---------------------------------------------------------------------------
 
-from ib_insync import Stock, MarketOrder  # add MarketOrder import at top
-
-def execute_sell(ib: IB, sym: str, qty: int, order_ref: str) -> None:
-    """
-    Place a simple market SELL (increase short). Uses ib_insync MarketOrder.
-    """
-    if qty <= 0:
-        return
-
-    sym = norm_sym(sym)
-    c = Stock(sym, "SMART", "USD")
-    ib.qualifyContracts(c)
-
-    o = MarketOrder("SELL", int(qty))
-    o.orderRef = str(order_ref)
-
-    tr = ib.placeOrder(c, o)
-
-    # Give IB a moment to accept/submit (optional)
-    ib.sleep(0.5)
-
-def compute_daily_flow_allocations_usd(cfg: dict, equity_usd: float) -> pd.DataFrame:
-    flow_cfg = cfg.get("portfolio", {}).get("sleeves", {}).get("flow_program", {}) or {}
-
-    freq = str(flow_cfg.get("frequency", "W")).upper().strip()
-    if freq != "D":
-        raise ValueError(f"flow_program.frequency must be 'D' for this script. Got: {freq}")
-
-    deployment_base = str(flow_cfg.get("deployment_base", "current_equity")).lower().strip()
-
-    # --- Determine daily_budget ---
-    if deployment_base in ("fixed_usd_per_day", "fixed"):
-        daily_budget = float(flow_cfg.get("fixed_usd_per_day", 0.0) or 0.0)
-        if daily_budget <= 0:
-            return pd.DataFrame(columns=["ticker", "delta_usd"])
-    elif deployment_base == "current_equity":
-        annual_rate = float(flow_cfg.get("annual_deployment_rate", 0.0) or 0.0)
-        if annual_rate <= 0:
-            return pd.DataFrame(columns=["ticker", "delta_usd"])
-        daily_budget = float(equity_usd) * float(annual_rate) / float(TRADING_DAYS)
-    else:
-        raise ValueError(
-            f"Unsupported flow_program.deployment_base={deployment_base}. "
-            f"Use 'fixed_usd_per_day' or 'current_equity'."
-        )
-
-    # --- Universe ---
+def _parse_universe_and_weights(flow_cfg: dict) -> tuple[list[str], np.ndarray]:
+    """Parse tickers and normalized weights from flow config."""
     univ = (flow_cfg.get("universe", {}) or {}).get("shorts", []) or []
-    tickers = [norm_sym(x) for x in univ if str(x).strip()]
-    tickers = sorted(set(tickers))
+    tickers = sorted({norm_sym(x) for x in univ if str(x).strip()})
     if not tickers:
-        return pd.DataFrame(columns=["ticker", "delta_usd"])
+        return [], np.array([])
 
-    # --- Weights ---
     wcfg = (flow_cfg.get("weighting", {}) or {})
     method = str(wcfg.get("method", "fixed")).lower().strip()
     if method != "fixed":
@@ -424,26 +305,95 @@ def compute_daily_flow_allocations_usd(cfg: dict, equity_usd: float) -> pd.DataF
 
     weights_raw = (wcfg.get("weights", {}) or {})
     weights = {norm_sym(k): float(v) for k, v in weights_raw.items() if norm_sym(k) in tickers}
-
     w = np.array([weights.get(t, 0.0) for t in tickers], dtype=float)
 
-    normalize = bool(wcfg.get("normalize", True))
-    if normalize:
+    if bool(wcfg.get("normalize", True)):
         s = float(np.sum(np.abs(w)))
         if s <= 0:
             raise ValueError("flow_program.weighting.normalize=true but weights sum to 0.")
         w = w / s
 
+    return tickers, w
+
+
+def compute_flow_allocations_usd(
+    cfg: dict,
+    equity_usd: float,
+) -> tuple[pd.DataFrame, str, list[int], str]:
+    """
+    Compute per-day flow allocations from config.
+
+    Returns:
+        (alloc_df, frequency, schedule_days, schedule_time_et)
+
+    alloc_df has columns: ticker, delta_usd  (per-day budget)
+    """
+    flow_cfg = cfg.get("portfolio", {}).get("sleeves", {}).get("flow_program", {}) or {}
+    freq = str(flow_cfg.get("frequency", "D")).upper().strip()
+    deployment_base = str(flow_cfg.get("deployment_base", "current_equity")).lower().strip()
+
+    # Determine per-day budget
+    if freq == "D":
+        if deployment_base in ("fixed_usd_per_day", "fixed"):
+            per_day = float(flow_cfg.get("fixed_usd_per_day", 0.0) or 0.0)
+        elif deployment_base == "current_equity":
+            annual_rate = float(flow_cfg.get("annual_deployment_rate", 0.0) or 0.0)
+            per_day = float(equity_usd) * annual_rate / float(TRADING_DAYS)
+        else:
+            raise ValueError(f"Unsupported deployment_base={deployment_base} for freq=D")
+        schedule_days = []
+        schedule_time = ""
+
+    elif freq == "W":
+        schedule_days = list(flow_cfg.get("schedule_days", [0, 3]))
+        schedule_time = str(flow_cfg.get("schedule_time_et", "10:00:00"))
+        n_days = len(schedule_days)
+        if n_days <= 0:
+            raise ValueError("flow_program.schedule_days must be non-empty for freq=W")
+
+        if deployment_base in ("fixed_usd_per_week", "fixed"):
+            weekly = float(flow_cfg.get("fixed_usd_per_week", 0.0) or 0.0)
+            per_day = weekly / n_days
+        elif deployment_base == "current_equity":
+            annual_rate = float(flow_cfg.get("annual_deployment_rate", 0.0) or 0.0)
+            weekly = float(equity_usd) * annual_rate / 52.0
+            per_day = weekly / n_days
+        else:
+            raise ValueError(f"Unsupported deployment_base={deployment_base} for freq=W")
+    else:
+        raise ValueError(f"Unsupported flow_program.frequency={freq}. Use 'D' or 'W'.")
+
+    if per_day <= 0:
+        empty = pd.DataFrame(columns=["ticker", "delta_usd"])
+        return empty, freq, schedule_days, schedule_time
+
+    tickers, w = _parse_universe_and_weights(flow_cfg)
+    if not tickers:
+        empty = pd.DataFrame(columns=["ticker", "delta_usd"])
+        return empty, freq, schedule_days, schedule_time
+
     out = pd.DataFrame({"ticker": tickers, "weight": w})
-    out["delta_usd"] = out["weight"] * float(daily_budget)
-
-    # Convention: positive delta_usd => add more short USD
+    out["delta_usd"] = out["weight"] * per_day
     out = out[out["delta_usd"].abs() > 1e-6].reset_index(drop=True)
-    return out[["ticker", "delta_usd"]]
+    return out[["ticker", "delta_usd"]], freq, schedule_days, schedule_time
 
+
+# Keep old name for backward compat (used by other modules)
+def compute_daily_flow_allocations_usd(cfg: dict, equity_usd: float) -> pd.DataFrame:
+    alloc, freq, _, _ = compute_flow_allocations_usd(cfg, equity_usd)
+    return alloc
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main() -> None:
     signal.signal(signal.SIGINT, lambda *_: tprint("[SIGINT] Requested stop (Ctrl+C)."))
+
+    parser = argparse.ArgumentParser(description="Flow sleeve allocator (daily or weekly GAT).")
+    parser.add_argument("--dry-run", action="store_true", help="No orders placed.")
+    args = parser.parse_args()
 
     CONFIG_YML = Path("config/strategy_config.yml")
     if not CONFIG_YML.exists():
@@ -457,33 +407,33 @@ def main() -> None:
 
     host = str(ibkr_cfg.get("host", "127.0.0.1"))
     port = int(ibkr_cfg.get("port", 7497))
-    client_id = int(ibkr_cfg.get("client_id", 77))  # pick a different id than your main runner
+    client_id = int(ibkr_cfg.get("client_id", 77))
     prefer_delayed = bool(ibkr_cfg.get("prefer_delayed", True))
 
     strategy_tag = str(strat_cfg.get("tag", "")).strip() or "FLOW"
-    dry_run = bool(exec_cfg.get("dry_run", False))
+    dry_run = args.dry_run or bool(exec_cfg.get("dry_run", False))
 
     ledger_path = str(paths_cfg.get("flow_ledger_csv", "data/flow_ledger.csv"))
 
     tprint("\n" + "=" * 110)
-    tprint("[FLOW_DAILY] Automatic daily flow sleeve runner")
+    tprint("[FLOW] Flow sleeve runner")
     tprint("=" * 110 + "\n")
-    tprint(f"[FLOW_DAILY] dry_run={dry_run} ledger={ledger_path}")
+    tprint(f"[FLOW] dry_run={dry_run} ledger={ledger_path}")
 
     ib = connect_ib(host, port, client_id)
 
     try:
         equity = get_account_equity(ib)
-        tprint(f"[FLOW_DAILY] NetLiquidation (USD): {equity:,.2f}")
+        tprint(f"[FLOW] NetLiquidation (USD): {equity:,.2f}")
 
-        alloc = compute_daily_flow_allocations_usd(cfg, equity_usd=equity)
+        alloc, freq, schedule_days, schedule_time = compute_flow_allocations_usd(cfg, equity)
         if alloc.empty:
-            tprint("[FLOW_DAILY] No allocation for today (empty or annual_deployment_rate=0).")
+            tprint("[FLOW] No allocation (empty config or zero budget).")
             return
 
-        # Price + share sizing
+        # Price + share sizing (done once, reused for all scheduled days)
         prices: dict[str, float] = {}
-        orders: list[dict] = []
+        sized: list[dict] = []
 
         for _, r in alloc.iterrows():
             sym = norm_sym(r["ticker"])
@@ -493,64 +443,92 @@ def main() -> None:
                 px = get_price_fallback_ib(ib, sym, prefer_delayed=prefer_delayed)
                 prices[sym] = px
             except Exception as e:
-                tprint(f"[FLOW_DAILY] SKIP {sym}: hist price unavailable ({type(e).__name__}: {e})")
+                tprint(f"[FLOW] SKIP {sym}: hist price unavailable ({type(e).__name__}: {e})")
                 continue
 
-
-            # positive delta_usd means "add short"
-            abs_usd = abs(delta_usd)
-            sh = usd_to_shares_floor(abs_usd, px)
-
+            sh = usd_to_shares_floor(abs(delta_usd), px)
             if sh <= 0:
-                tprint(f"[FLOW_DAILY] SKIP {sym}: delta_usd={delta_usd:,.0f} too small vs px={px:.2f}")
+                tprint(f"[FLOW] SKIP {sym}: delta_usd={delta_usd:,.0f} too small vs px={px:.2f}")
                 continue
 
-            orders.append(
-                {
-                    "ticker": sym,
-                    "delta_usd": float(delta_usd),
-                    "px": float(px),
-                    "shares": int(sh),
-                }
-            )
+            sized.append({
+                "ticker": sym,
+                "delta_usd": float(delta_usd),
+                "px": float(px),
+                "shares": int(sh),
+            })
 
-        if not orders:
-            tprint("[FLOW_DAILY] No actionable orders after pricing/sizing.")
+        if not sized:
+            tprint("[FLOW] No actionable orders after pricing/sizing.")
             return
 
-        # Execute sells
-        run_date = today_str()
+        # ---------------------------------------------------------------
+        # Determine execution schedule
+        # ---------------------------------------------------------------
+        if freq == "W":
+            schedule = next_schedule_dates(schedule_days, schedule_time)
+            tprint(f"[FLOW] Weekly mode: scheduling {len(schedule)} days")
+            for date_str, gat_str in schedule:
+                tprint(f"  -> {date_str}  GAT={gat_str}")
+        else:
+            # Daily: single immediate execution (no GAT)
+            schedule = [(today_str(), "")]
+
+        per_day_total = float(sum(o["delta_usd"] for o in sized))
+        tprint(f"[FLOW] Per-day budget: ${per_day_total:,.2f}  x {len(schedule)} day(s)")
+
+        # ---------------------------------------------------------------
+        # Submit orders for each scheduled day
+        # ---------------------------------------------------------------
         ledger_rows: list[dict] = []
 
-        tprint("\n" + "-" * 110)
-        tprint("[FLOW_DAILY] Orders")
-        tprint("-" * 110)
-        for o in orders:
-            tprint(f"  {o['ticker']}: SELL {o['shares']} sh  (~${o['delta_usd']:,.0f} @ {o['px']:.2f})")
+        for target_date, gat_str in schedule:
+            tprint(f"\n{'─'*110}")
+            label = f"GAT={gat_str}" if gat_str else "IMMEDIATE"
+            tprint(f"[FLOW] {target_date}  ({label})")
+            tprint(f"{'─'*110}")
 
-        for o in orders:
-            sym = o["ticker"]
-            qty = int(o["shares"])
-            delta_usd = float(o["delta_usd"])
-            order_ref = f"{strategy_tag}|FLOW_DAILY|{sym}|{run_date}"
+            for o in sized:
+                sym = o["ticker"]
+                qty = int(o["shares"])
+                delta_usd = float(o["delta_usd"])
+                px = float(o["px"])
+                order_ref = f"{strategy_tag}|FLOW|{sym}|{target_date}"
 
-            if dry_run:
-                tprint(f"[FLOW_DAILY][DRY_RUN] Would SELL {sym} qty={qty} ref={order_ref}")
-            else:
-                execute_sell(ib, sym, qty, order_ref=order_ref)
+                tprint(f"  {sym}: SELL {qty} sh  (~${delta_usd:,.0f} @ {px:.2f})")
 
-            ledger_rows.append({"date": run_date, "ticker": sym, "delta_usd": float(delta_usd)})
+                if dry_run:
+                    tprint(f"  [DRY_RUN] Would SELL {sym} qty={qty} ref={order_ref}")
+                else:
+                    try:
+                        place_adaptive_mkt(
+                            ib, sym,
+                            action="SELL",
+                            qty=qty,
+                            order_ref=order_ref,
+                            priority="Patient",
+                            good_after_time=gat_str or None,
+                        )
+                    except Exception as e:
+                        tprint(f"  ORDER FAIL {sym}: {type(e).__name__}: {e}")
+                        continue
 
-        # Update ledger AFTER attempting orders
+                ledger_rows.append({
+                    "date": target_date,
+                    "ticker": sym,
+                    "delta_usd": float(delta_usd),
+                })
+
+        # Update ledger
         try:
             ledger_df = load_ledger(ledger_path)
             append_ledger(ledger_path, ledger_df, ledger_rows)
-            tprint(f"\n[FLOW_DAILY] Ledger updated: {ledger_path}")
+            tprint(f"\n[FLOW] Ledger updated: {ledger_path}")
         except Exception as e:
-            tprint(f"\n[FLOW_DAILY] WARNING: ledger update failed ({type(e).__name__}: {e})")
+            tprint(f"\n[FLOW] WARNING: ledger update failed ({type(e).__name__}: {e})")
 
-        total = float(sum(o["delta_usd"] for o in orders))
-        tprint(f"\n[FLOW_DAILY] Done. Total deployed today (USD): {total:,.2f}")
+        grand_total = per_day_total * len(schedule)
+        tprint(f"\n[FLOW] Done. Total scheduled (USD): ${grand_total:,.2f} across {len(schedule)} day(s).")
 
     finally:
         try:

@@ -1,7 +1,7 @@
 ibkr:
   host: 127.0.0.1
-  port: 7496
-  client_id: 41                # change to 41 for live
+  port: 7497
+  client_id: 31                # change to 41 for live
   prefer_delayed: true
 
 accounting:
@@ -9,7 +9,7 @@ accounting:
 
 strategy:
   tag: ETF_LS
-  capital_usd: 350000          # fallback if equity_source=static
+  capital_usd: 175000          # fallback if equity_source=static
   gross_leverage: 4
   equity_source: "ibkr"      # "ibkr" | "static" | "file"
   blacklist:
@@ -57,9 +57,11 @@ screener:
 portfolio:
   # Rebalance thresholds — skip small trades to reduce costs
   rebalance:
-    drift_trigger_pct: 0.15    # rebalance if name drifts >15% from target
+    drift_trigger_pct: 0.15    # rebalance if name drifts >15% from target (execute_trade_plan)
     min_trade_usd: 500         # skip deltas below $500
     min_days_between: 1
+    net_exposure_band: 0.10    # rebalance_strategy: trigger if |net| > 10% of target_gross per underlying
+    establish_threshold_usd: 100.0  # rebalance_strategy: skip Phase 2 if position already > $100
 
   # Shared weighting defaults — overridden per-sleeve below
   _weighting_defaults: &weighting_defaults
@@ -104,9 +106,11 @@ portfolio:
 
     flow_program:
       allocation_type: "flow"
-      frequency: "D"
-      deployment_base: "fixed_usd_per_day"
-      fixed_usd_per_day: 650
+      frequency: "W"
+      deployment_base: "fixed_usd_per_week"
+      fixed_usd_per_week: 1300
+      schedule_days: [0, 3]            # Monday=0, Thursday=3 (Python weekday)
+      schedule_time_et: "10:00:00"     # US/Eastern activation time
       universe:
         shorts:
           - SDS
