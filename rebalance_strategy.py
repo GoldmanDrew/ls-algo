@@ -485,6 +485,7 @@ def resolve_hedge_leg(
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
     plan: pd.DataFrame,
+    short_map: Optional[Dict[str, dict]] = None,
 ) -> Tuple[Optional[str], str, int, float]:
     """
     Resolve which symbol/leg to trade to achieve the correction.
@@ -527,6 +528,18 @@ def resolve_hedge_leg(
             qty = int(math.floor(abs(correction_usd) / (px * beta)))
             if qty <= 0:
                 continue
+            # Cap to FTP available shares so we don't attempt more than
+            # the borrow desk can supply.  The remaining imbalance will be
+            # caught on the next hedge pass.
+            if short_map:
+                avail = (short_map.get(etf) or {}).get("available")
+                if avail is not None and avail > 0:
+                    qty = min(qty, int(avail))
+                elif avail is not None and avail <= 0:
+                    tprint(f"[HEDGE][{underlying}] {etf} FTP available=0; skipping.")
+                    continue
+            if qty <= 0:
+                continue
             return etf, "SELL", qty, px
 
         tprint(f"[HEDGE][{underlying}] No valid ETF price available for short hedge.")
@@ -555,6 +568,7 @@ def build_hedge_trades(
     min_trade_usd: float,
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
+    short_map: Optional[Dict[str, dict]] = None,
 ) -> List[dict]:
     """
     Iterate over all underlyings in hedgeable_plan. For each:
@@ -573,7 +587,7 @@ def build_hedge_trades(
         if stop_requested():
             break
 
-        net_notional, _ = compute_beta_adjusted_net_notional(
+        net_notional, actual_gross = compute_beta_adjusted_net_notional(
             strat_pos=strat_pos, prices=prices, underlying=under,
             etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
         )
@@ -581,13 +595,18 @@ def build_hedge_trades(
             underlying=under, plan=hedgeable_plan,
             account_equity=account_equity, gross_leverage=gross_leverage,
         )
+        # Use the larger of actual gross or plan-derived target gross as the
+        # reference for the hedge band.  This prevents silently under-hedging
+        # when actual positions exceed the plan's target allocation (e.g. a
+        # pair that grew beyond its intended weight).
+        ref_gross = max(actual_gross, target_gross)
 
         triggered, correction_usd = compute_hedge_delta(
-            net_notional=net_notional, target_gross=target_gross,
+            net_notional=net_notional, target_gross=ref_gross,
             net_exposure_band=net_exposure_band,
         )
 
-        net_pct = (net_notional / target_gross * 100.0) if target_gross > 0 else 0.0
+        net_pct = (net_notional / ref_gross * 100.0) if ref_gross > 0 else 0.0
         tprint(
             f"[HEDGE][{under:15s}] net={net_notional:>+12,.0f}  "
             f"tgt_gross={target_gross:>10,.0f}  net%={net_pct:>+6.1f}%  "
@@ -607,7 +626,7 @@ def build_hedge_trades(
             underlying=under, correction_usd=correction_usd,
             strat_pos=strat_pos, prices=prices,
             etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
-            plan=hedgeable_plan,
+            plan=hedgeable_plan, short_map=short_map,
         )
         if symbol is None or qty <= 0:
             tprint(f"[HEDGE][{under}] Could not resolve hedge leg; skipping.")
@@ -625,7 +644,7 @@ def build_hedge_trades(
             "ref_price":         ref_px,
             "correction_usd":    correction_usd,
             "net_notional_before": net_notional,
-            "target_gross":      target_gross,
+            "target_gross":      ref_gross,   # max(actual, plan) used for trigger
         })
 
     # Largest corrections first
@@ -1438,29 +1457,61 @@ def main() -> None:
                 pre_net[u] = net
                 pre_tgt[u] = tgt
 
-            hedge_trades = build_hedge_trades(
-                hedgeable_plan=hedgeable_df,
-                strat_pos=strat_pos, prices=prices,
-                account_equity=account_equity, gross_leverage=gross_leverage,
-                net_exposure_band=net_exposure_band, min_trade_usd=min_trade_usd,
-                etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
-            )
+            MAX_HEDGE_PASSES = 3
+            total_triggered = 0
+            total_traded    = 0
 
-            fills3, n_triggered, n_traded = execute_hedge_pass_parallel(
-                hedge_trades=hedge_trades,
-                host=host, port=port, client_id=client_id,
-                baseline=baseline, prices=prices,
-                prefer_delayed=prefer_delayed, exec_cfg=exec_cfg,
-                strategy_tag=strategy_tag, run_date=run_date,
-                limit_bps=limit_bps, timeout=timeout, max_retries=max_retries,
-                dry_run=dry_run, parallel_n=parallel_n,
-                short_map=short_map, cancel_service=cancel_service,
-                log_exposure_event=log_exposure_event,
-                net_exposure_band=net_exposure_band,
-                etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
-                log_lock=log_lock,
-            )
-            all_fills.extend(fills3)
+            for hedge_pass in range(1, MAX_HEDGE_PASSES + 1):
+                if stop_requested():
+                    break
+
+                # Refresh positions for each pass
+                ib_pos    = current_ib_positions(ib)
+                strat_pos = strategy_position_only(ib_pos, baseline)
+
+                hedge_trades = build_hedge_trades(
+                    hedgeable_plan=hedgeable_df,
+                    strat_pos=strat_pos, prices=prices,
+                    account_equity=account_equity, gross_leverage=gross_leverage,
+                    net_exposure_band=net_exposure_band, min_trade_usd=min_trade_usd,
+                    etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+                    short_map=short_map,
+                )
+
+                if not hedge_trades:
+                    tprint(f"[HEDGE] Pass {hedge_pass}: no trades needed — converged.")
+                    break
+
+                tprint(f"[HEDGE] Pass {hedge_pass}/{MAX_HEDGE_PASSES}: "
+                       f"{len(hedge_trades)} trades queued.")
+
+                fills3, n_triggered, n_traded = execute_hedge_pass_parallel(
+                    hedge_trades=hedge_trades,
+                    host=host, port=port, client_id=client_id,
+                    baseline=baseline, prices=prices,
+                    prefer_delayed=prefer_delayed, exec_cfg=exec_cfg,
+                    strategy_tag=strategy_tag, run_date=run_date,
+                    limit_bps=limit_bps, timeout=timeout, max_retries=max_retries,
+                    dry_run=dry_run, parallel_n=parallel_n,
+                    short_map=short_map, cancel_service=cancel_service,
+                    log_exposure_event=log_exposure_event,
+                    net_exposure_band=net_exposure_band,
+                    etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+                    log_lock=log_lock,
+                )
+                all_fills.extend(fills3)
+                total_triggered += n_triggered
+                total_traded    += n_traded
+
+                # Sync positions before next pass / summary
+                _hedge_syms = [t["symbol"] for t in hedge_trades]
+                _sync_positions_after_external_trades(
+                    ib, watch_syms=_hedge_syms, timeout_s=15.0
+                )
+
+                if n_traded == 0:
+                    tprint(f"[HEDGE] Pass {hedge_pass}: no fills — stopping passes.")
+                    break
 
             # Post-hedge net for summary
             ib_pos_final    = current_ib_positions(ib)
@@ -1476,8 +1527,8 @@ def main() -> None:
             print_phase_summary(
                 phase="PHASE 3 — DIRECTIONAL HEDGE",
                 n_checked=len(pre_net),
-                n_triggered=n_triggered,
-                n_traded=n_traded,
+                n_triggered=total_triggered,
+                n_traded=total_traded,
                 net_by_underlying=post_net,
                 target_gross_by_underlying=pre_tgt,
                 net_exposure_band=net_exposure_band,
