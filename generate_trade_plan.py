@@ -91,6 +91,72 @@ def _zipf_weights(n: int, exponent: float = 1.0) -> np.ndarray:
     return w / w.sum() if w.sum() > 0 else w
 
 
+def _decay_score_weights(
+    df: pd.DataFrame,
+    weighting_cfg: dict,
+    beta_col: str = "beta_abs",
+) -> np.ndarray:
+    """Compute portfolio weights from decay-score signal blended with equal weight.
+
+    Parameters
+    ----------
+    df : DataFrame of eligible names. Must contain columns ``blended_gross_decay``,
+         ``borrow_current``, and *beta_col*.
+    weighting_cfg : sleeve ``weighting`` dict from strategy_config.yml.
+    beta_col : column name for absolute-value beta (default ``beta_abs``).
+
+    Returns
+    -------
+    np.ndarray of weights summing to 1.0, aligned with *df* row order.
+    """
+    n = len(df)
+    if n == 0:
+        return np.array([])
+
+    # --- config ----------------------------------------------------------
+    borrow_aversion = float(weighting_cfg.get("borrow_aversion", 1.0))
+    margin_power    = float(weighting_cfg.get("margin_efficiency_power", 0.0))
+    eq_blend        = _clamp01(weighting_cfg.get("eq_blend", 0.0))
+    max_w           = float(weighting_cfg.get("max_name_weight", 1.0))
+
+    # --- raw sizing score ------------------------------------------------
+    blended = pd.to_numeric(df["blended_gross_decay"], errors="coerce")
+    borrow  = pd.to_numeric(df["borrow_current"], errors="coerce").fillna(0.0)
+    raw_score = blended - borrow_aversion * borrow       # higher = better
+
+    # --- margin efficiency adjustment ------------------------------------
+    beta_abs = pd.to_numeric(df[beta_col], errors="coerce").clip(lower=0.1)
+    margin_adj = np.power(1.0 / beta_abs, margin_power)  # favours 2x over 3x
+    adjusted = (raw_score * margin_adj).fillna(0.0).clip(lower=0.0)
+
+    # --- normalise signal weights ----------------------------------------
+    sig_total = adjusted.sum()
+    signal_w = adjusted.values / sig_total if sig_total > 0 else np.zeros(n)
+
+    # --- blend with equal weight -----------------------------------------
+    eq_w = np.ones(n) / n
+    final_w = eq_blend * eq_w + (1.0 - eq_blend) * signal_w
+
+    # --- max-name-weight cap with redistribution -------------------------
+    for _ in range(10):
+        excess = np.maximum(final_w - max_w, 0.0)
+        total_excess = excess.sum()
+        if total_excess < 1e-12:
+            break
+        final_w = np.minimum(final_w, max_w)
+        uncapped = final_w < max_w - 1e-12
+        if uncapped.any():
+            uc_total = final_w[uncapped].sum()
+            if uc_total > 0:
+                final_w[uncapped] += total_excess * (final_w[uncapped] / uc_total)
+        else:
+            break
+
+    # --- safety normalisation --------------------------------------------
+    s = final_w.sum()
+    return final_w / s if s > 0 else eq_w
+
+
 def load_blacklist(cfg: dict) -> Set[str]:
     raw = cfg.get("strategy", {}).get("blacklist", []) or []
     return {_norm_sym(sym) for sym in raw if str(sym).strip()}
@@ -226,6 +292,12 @@ def main() -> None:
     wl_set = set(wl_list)
     zipf_exp = float(wl.get("weighting", {}).get("zipf_exponent", 1.0))
 
+    # Weighting configs (full dicts, consumed by _decay_score_weights)
+    core_weighting_cfg = core.get("weighting", {})
+    wl_weighting_cfg   = wl.get("weighting", {})
+    core_weight_method = str(core_weighting_cfg.get("method", "equal")).lower()
+    wl_weight_method   = str(wl_weighting_cfg.get("method", "decay_score")).lower()
+
     # Flow config
     flow_shorts = [_norm_sym(x) for x in (flow.get("universe", {}).get("shorts", []) or [])]
     flow_weights_raw = (flow.get("weighting", {}) or {}).get("weights", {}) or {}
@@ -248,6 +320,7 @@ def main() -> None:
     print(f"[INFO] target_gross_usd=${target_gross_usd:,.0f} | core={core_w:.0%} wl={wl_w:.0%} | beta_floor={beta_floor}")
     print(f"[INFO] core soft borrow cap={soft_borrow_cap:.1%} | wl hard cap={wl_hard_borrow_cap if np.isfinite(wl_hard_borrow_cap) else 'inf'} | flow hard cap={flow_hard_borrow_cap if np.isfinite(flow_hard_borrow_cap) else 'inf'}")
     print(f"[INFO] whitelist size={len(wl_list)} | flow shorts={len(flow_shorts)}")
+    print(f"[INFO] weighting: core={core_weight_method} wl={wl_weight_method}")
 
     if not screened_csv.exists():
         raise FileNotFoundError(f"Screened CSV not found: {screened_csv}")
@@ -278,6 +351,13 @@ def main() -> None:
 
     screened["Beta"] = pd.to_numeric(screened["Beta"], errors="coerce")
     screened["beta_abs"] = screened["Beta"].abs()
+
+    # Coerce decay columns for weighting (may be absent in older CSVs)
+    for _col in ("blended_gross_decay", "borrow_current"):
+        if _col not in screened.columns:
+            screened[_col] = np.nan
+        else:
+            screened[_col] = pd.to_numeric(screened[_col], errors="coerce")
 
     # Borrow if available
     borrow_col = get_borrow_col(screened)
@@ -334,8 +414,10 @@ def main() -> None:
         wl_borrow_ok = True
         # (or: pd.Series(True, index=eligible.index))
 
-        eligible["in_core"] = eligible["beta_abs"].ge(core_beta_min) & core_borrow_ok
-        eligible["in_wl"]   = eligible["in_whitelist"] & wl_borrow_ok
+        # Exclude inverse (β < 0) ETFs — they belong to the flow program, not core/whitelist
+        positive_beta = eligible["Beta"].gt(0)
+        eligible["in_core"] = positive_beta & eligible["beta_abs"].ge(core_beta_min) & core_borrow_ok
+        eligible["in_wl"]   = positive_beta & eligible["in_whitelist"] & wl_borrow_ok
 
 
         core_names = eligible.loc[eligible["in_core"]].copy()
@@ -352,22 +434,30 @@ def main() -> None:
         wl_budget   = target_gross_usd * w_wl
 
         # -----------------------------
-        # Allocate CORE (equal weight)
+        # Allocate CORE
         # -----------------------------
         if not core_names.empty and core_budget > 0:
-            n = len(core_names)
-            w = np.ones(n) / n
+            if core_weight_method == "decay_score":
+                w = _decay_score_weights(core_names, core_weighting_cfg)
+            else:   # "equal" or unrecognised → equal weight
+                w = np.ones(len(core_names)) / len(core_names)
             core_names["gross_target_usd"] = core_budget * w
             core_names["sleeve"] = "core_leveraged"
 
         # -----------------------------
-        # Allocate WHITELIST (zipf by list order)
+        # Allocate WHITELIST
         # -----------------------------
         if not wl_names.empty and wl_budget > 0:
-            # order by wl_list rank
-            wl_names["wl_rank"] = wl_names["ETF"].map(lambda x: wl_list.index(x) if x in wl_set else 10**9)
-            wl_names = wl_names.sort_values("wl_rank").copy()
-            w = _zipf_weights(len(wl_names), exponent=zipf_exp)
+            if wl_weight_method == "decay_score":
+                w = _decay_score_weights(wl_names, wl_weighting_cfg)
+            else:   # "zipf" (default) or "equal"
+                wl_names["wl_rank"] = wl_names["ETF"].map(
+                    lambda x: wl_list.index(x) if x in wl_set else 10**9)
+                wl_names = wl_names.sort_values("wl_rank").copy()
+                if wl_weight_method == "equal":
+                    w = np.ones(len(wl_names)) / len(wl_names)
+                else:
+                    w = _zipf_weights(len(wl_names), exponent=zipf_exp)
             wl_names["gross_target_usd"] = wl_budget * w
             wl_names["sleeve"] = "whitelist_stock"
 
@@ -386,6 +476,16 @@ def main() -> None:
         keep.loc[sized.index, "sleeve"] = sized["sleeve"]
 
         print(f"[INFO] sized core={len(core_names)} wl={len(wl_names)} | budgets: core=${core_budget:,.0f} wl=${wl_budget:,.0f}")
+
+        # Weight diagnostics
+        if core_weight_method == "decay_score" and not core_names.empty and core_budget > 0:
+            cw = core_names["gross_target_usd"] / core_budget
+            print(f"[INFO] core weights: max={cw.max():.3f} min={cw.min():.3f} "
+                  f"nonzero={int((cw > 1e-9).sum())}/{len(core_names)}")
+        if wl_weight_method == "decay_score" and not wl_names.empty and wl_budget > 0:
+            ww = wl_names["gross_target_usd"] / wl_budget
+            print(f"[INFO] wl weights: max={ww.max():.3f} min={ww.min():.3f} "
+                  f"nonzero={int((ww > 1e-9).sum())}/{len(wl_names)}")
 
         # Output proposed trades:
         proposed = keep.copy()

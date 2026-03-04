@@ -805,6 +805,246 @@ def execute_hedge_pass_serial(
 
 
 # ---------------------------------------------------------------------------
+# Phase 3 — Parallel hedge execution
+# ---------------------------------------------------------------------------
+
+def _hedge_worker(
+    trade_info: dict,
+    *,
+    worker_idx: int,
+    host: str,
+    port: int,
+    client_id: int,
+    baseline: Dict[str, float],
+    prices: Dict[str, float],
+    prefer_delayed: bool,
+    exec_cfg: dict,
+    strategy_tag: str,
+    run_date: str,
+    limit_bps: float,
+    timeout: float,
+    max_retries: int,
+    dry_run: bool,
+    short_map: Dict[str, dict],
+    cancel_service: CoordinatorCancelService,
+    log_exposure_event,
+    net_exposure_band: float,
+    etf_to_under: Dict[str, str],
+    etf_to_beta: Dict[str, float],
+    log_lock: threading.Lock,
+) -> Tuple[List[dict], bool]:
+    """Execute a single Phase 3 hedge trade on its own IB connection.
+
+    Returns (fill_records, was_traded).
+    """
+    ensure_thread_event_loop()
+    if stop_requested():
+        return [], False
+
+    under      = trade_info["underlying"]
+    symbol     = trade_info["symbol"]
+    action     = trade_info["action"]
+    qty        = trade_info["qty"]
+    ref_px     = trade_info["ref_price"]
+    target_gross = trade_info["target_gross"]
+
+    try:
+        ib_local = connect_ib(host, port, client_id + 300 + worker_idx)
+    except Exception as e:
+        tprint(f"[HEDGE][{under}] Worker IB connect failed: {e}")
+        return [], False
+
+    try:
+        # Re-verify: re-read live position before trading
+        ib_pos_now = current_ib_positions(ib_local)
+        strat_now  = strategy_position_only(ib_pos_now, baseline)
+        net_now, _ = compute_beta_adjusted_net_notional(
+            strat_pos=strat_now, prices=prices, underlying=under,
+            etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+        )
+        triggered_now, _ = compute_hedge_delta(
+            net_notional=net_now, target_gross=target_gross,
+            net_exposure_band=net_exposure_band,
+        )
+        if not triggered_now:
+            tprint(
+                f"[HEDGE][{under}] No longer triggered after re-read "
+                f"(net={net_now:+,.0f}); skipping."
+            )
+            return [], False
+
+        # Fresh price
+        fresh_px = get_snapshot_price(ib_local, symbol, prefer_delayed=prefer_delayed)
+        px = float(fresh_px or ref_px)
+        with log_lock:
+            prices[symbol] = px
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        px_under = float(prices.get(under) or 0.0)
+
+        # FTP gate for new shorts
+        if action == "SELL":
+            sm    = short_map.get(symbol, {})
+            avail = sm.get("available")
+            if avail is not None and avail <= 0:
+                tprint(f"[HEDGE][{under}] SKIP {symbol}: FTP available=0.")
+                return [{
+                    "filled_at": now, "run_date": run_date,
+                    "strategy_tag": strategy_tag,
+                    "pair_id": f"{under}__HEDGE",
+                    "underlying": under, "etf": symbol,
+                    "px_under": px_under, "px_etf": px,
+                    "target_sh_under": 0, "target_sh_etf": 0,
+                    "delta_sh_under": 0, "delta_sh_etf": -qty,
+                    "filled_sh_under": 0, "filled_sh_etf": 0,
+                    "notes": "HEDGE_SKIP_FTP_AVAIL0",
+                }], False
+
+        # Log pre-hedge state
+        log_exposure_event(
+            stage="HEDGE_PRE", pair_id=f"{under}__HEDGE",
+            underlying=under,
+            etf=(symbol if etf_to_under.get(symbol) == under else ""),
+            symbol=symbol, delta_sh=0, filled_sh=0, trade=None,
+        )
+
+        order_ref = f"{strategy_tag}|{under}__HEDGE|{symbol}|{action}"
+        res = execute_leg(
+            ib=ib_local, symbol=symbol, action=action, qty=qty,
+            ref_price=px, bps=limit_bps, order_ref=order_ref,
+            exec_cfg=exec_cfg, timeout=timeout, max_retries=max_retries,
+            dry_run=dry_run, context=f"{under}|HEDGE",
+            cancel_service=cancel_service,
+        )
+
+        filled_signed = int(res.filled) if action == "BUY" else -int(res.filled)
+
+        # Graceful 201 handling
+        if res.status == "SHORT_BLOCKED":
+            tprint(f"[HEDGE][{under}] {symbol} SHORT_BLOCKED (201). Logging and continuing.")
+            log_exposure_event(
+                stage="POST_HEDGE", pair_id=f"{under}__HEDGE",
+                underlying=under, etf=symbol, symbol=symbol,
+                delta_sh=-qty, filled_sh=0, trade=res.trade,
+            )
+            return [{
+                "filled_at": now, "run_date": run_date,
+                "strategy_tag": strategy_tag,
+                "pair_id": f"{under}__HEDGE",
+                "underlying": under, "etf": symbol,
+                "px_under": px_under, "px_etf": px,
+                "target_sh_under": 0, "target_sh_etf": 0,
+                "delta_sh_under": 0, "delta_sh_etf": -qty,
+                "filled_sh_under": 0, "filled_sh_etf": 0,
+                "notes": f"HEDGE_SHORT_BLOCKED_201 msg={res.error_msg}",
+            }], False
+
+        log_exposure_event(
+            stage="POST_HEDGE", pair_id=f"{under}__HEDGE",
+            underlying=under,
+            etf=(symbol if etf_to_under.get(symbol) == under else ""),
+            symbol=symbol,
+            delta_sh=(-qty if action == "SELL" else qty),
+            filled_sh=filled_signed, trade=res.trade,
+        )
+
+        is_etf_trade = (etf_to_under.get(symbol) == under)
+        fill_rec = {
+            "filled_at": now, "run_date": run_date,
+            "strategy_tag": strategy_tag,
+            "pair_id": f"{under}__HEDGE",
+            "underlying": under,
+            "etf": (symbol if is_etf_trade else ""),
+            "px_under": px_under,
+            "px_etf":   (px if is_etf_trade else 0.0),
+            "target_sh_under": 0, "target_sh_etf": 0,
+            "delta_sh_under":  (qty if action == "BUY"  else 0),
+            "delta_sh_etf":    (qty if action == "SELL" else 0),
+            "filled_sh_under": (filled_signed if action == "BUY"  else 0),
+            "filled_sh_etf":   (abs(filled_signed) if action == "SELL" else 0),
+            "notes": (
+                f"HEDGE_{action} status={res.status} "
+                f"correction_usd={trade_info['correction_usd']:+,.0f}"
+            ),
+        }
+        return [fill_rec], True
+
+    finally:
+        try:
+            ib_local.disconnect()
+        except Exception:
+            pass
+
+
+def execute_hedge_pass_parallel(
+    *,
+    hedge_trades: List[dict],
+    host: str,
+    port: int,
+    client_id: int,
+    baseline: Dict[str, float],
+    prices: Dict[str, float],
+    prefer_delayed: bool,
+    exec_cfg: dict,
+    strategy_tag: str,
+    run_date: str,
+    limit_bps: float,
+    timeout: float,
+    max_retries: int,
+    dry_run: bool,
+    parallel_n: int,
+    short_map: Dict[str, dict],
+    cancel_service: CoordinatorCancelService,
+    log_exposure_event,
+    net_exposure_band: float,
+    etf_to_under: Dict[str, str],
+    etf_to_beta: Dict[str, float],
+    log_lock: threading.Lock,
+) -> Tuple[List[dict], int, int]:
+    """Execute Phase 3 hedge trades in parallel (one IB connection per worker).
+
+    Returns (fill_records, n_triggered, n_traded).
+    """
+    if not hedge_trades:
+        return [], 0, 0
+
+    all_fills: List[dict] = []
+    n_triggered = len(hedge_trades)
+    n_traded    = 0
+    n_workers   = min(parallel_n, len(hedge_trades))
+
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        futures = {
+            pool.submit(
+                _hedge_worker, t,
+                worker_idx=i,
+                host=host, port=port, client_id=client_id,
+                baseline=baseline, prices=prices,
+                prefer_delayed=prefer_delayed, exec_cfg=exec_cfg,
+                strategy_tag=strategy_tag, run_date=run_date,
+                limit_bps=limit_bps, timeout=timeout, max_retries=max_retries,
+                dry_run=dry_run, short_map=short_map,
+                cancel_service=cancel_service,
+                log_exposure_event=log_exposure_event,
+                net_exposure_band=net_exposure_band,
+                etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+                log_lock=log_lock,
+            ): t
+            for i, t in enumerate(hedge_trades)
+        }
+        for fut in as_completed(futures):
+            try:
+                fills, was_traded = fut.result()
+                all_fills.extend(fills)
+                if was_traded:
+                    n_traded += 1
+            except Exception as ex:
+                tprint(f"[HEDGE] Worker raised: {ex}")
+
+    return all_fills, n_triggered, n_traded
+
+
+# ---------------------------------------------------------------------------
 # Phase summary printer
 # ---------------------------------------------------------------------------
 
@@ -1183,17 +1423,19 @@ def main() -> None:
                 etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
             )
 
-            fills3, n_triggered, n_traded = execute_hedge_pass_serial(
+            fills3, n_triggered, n_traded = execute_hedge_pass_parallel(
                 hedge_trades=hedge_trades,
-                ib=ib, baseline=baseline, prices=prices,
+                host=host, port=port, client_id=client_id,
+                baseline=baseline, prices=prices,
                 prefer_delayed=prefer_delayed, exec_cfg=exec_cfg,
                 strategy_tag=strategy_tag, run_date=run_date,
                 limit_bps=limit_bps, timeout=timeout, max_retries=max_retries,
-                dry_run=dry_run, short_map=short_map,
-                cancel_service=cancel_service,
+                dry_run=dry_run, parallel_n=parallel_n,
+                short_map=short_map, cancel_service=cancel_service,
                 log_exposure_event=log_exposure_event,
                 net_exposure_band=net_exposure_band,
                 etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+                log_lock=log_lock,
             )
             all_fills.extend(fills3)
 

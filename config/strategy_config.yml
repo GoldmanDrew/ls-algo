@@ -1,7 +1,7 @@
 ibkr:
   host: 127.0.0.1
-  port: 7497
-  client_id: 31                # change to 41 for live
+  port: 7496
+  client_id: 41                # change to 41 for live
   prefer_delayed: true
 
 accounting:
@@ -9,7 +9,7 @@ accounting:
 
 strategy:
   tag: ETF_LS
-  capital_usd: 175000          # fallback if equity_source=static
+  capital_usd: 350000          # fallback if equity_source=static
   gross_leverage: 4
   equity_source: "ibkr"      # "ibkr" | "static" | "file"
   blacklist:
@@ -80,8 +80,8 @@ portfolio:
       weighting:
         <<: *weighting_defaults
         max_name_weight: 0.08         # 8% cap per underlying
-        eq_blend: 0.20                # 20% equal-weight + 80% decay-score
-        borrow_aversion: 6.0          # heavy penalty — big sleeve, drag matters
+        eq_blend: 0.5                # 20% equal-weight + 80% decay-score
+        borrow_aversion: 3
 
     whitelist_stock:
       allocation_type: "stock"
@@ -95,15 +95,15 @@ portfolio:
           - NFLW
           - HOOW
           - MARO
+          - TSLO
           - MSFW
           - PLTW
           - MSTW
       weighting:
         <<: *weighting_defaults
-        max_name_weight: 0.10         # 10% cap per underlying
-        eq_blend: 0.35                # 35% equal-weight + 65% decay-score
-        borrow_aversion: 10.0          # lighter penalty — small sleeve, hand-picked names
-
+        max_name_weight: 0.20         # 10% cap per underlying
+        eq_blend: 0.50                # 35% equal-weight + 65% decay-score
+        borrow_aversion: 3
     flow_program:
       allocation_type: "flow"
       frequency: "W"
