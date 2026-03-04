@@ -832,14 +832,15 @@ def _hedge_worker(
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
     log_lock: threading.Lock,
-) -> Tuple[List[dict], bool]:
+) -> Tuple[List[dict], bool, bool]:
     """Execute a single Phase 3 hedge trade on its own IB connection.
 
-    Returns (fill_records, was_traded).
+    Returns (fill_records, was_traded, was_triggered).
+    was_triggered=False means the trade was no longer needed after re-verification.
     """
     ensure_thread_event_loop()
     if stop_requested():
-        return [], False
+        return [], False, True        # count as triggered (shutdown, not re-check)
 
     under      = trade_info["underlying"]
     symbol     = trade_info["symbol"]
@@ -852,7 +853,7 @@ def _hedge_worker(
         ib_local = connect_ib(host, port, client_id + 300 + worker_idx)
     except Exception as e:
         tprint(f"[HEDGE][{under}] Worker IB connect failed: {e}")
-        return [], False
+        return [], False, True        # connection failure, still counts as triggered
 
     try:
         # Re-verify: re-read live position before trading
@@ -871,7 +872,7 @@ def _hedge_worker(
                 f"[HEDGE][{under}] No longer triggered after re-read "
                 f"(net={net_now:+,.0f}); skipping."
             )
-            return [], False
+            return [], False, False   # was_triggered=False → decrement n_triggered
 
         # Fresh price
         fresh_px = get_snapshot_price(ib_local, symbol, prefer_delayed=prefer_delayed)
@@ -898,7 +899,7 @@ def _hedge_worker(
                     "delta_sh_under": 0, "delta_sh_etf": -qty,
                     "filled_sh_under": 0, "filled_sh_etf": 0,
                     "notes": "HEDGE_SKIP_FTP_AVAIL0",
-                }], False
+                }], False, True
 
         # Log pre-hedge state
         log_exposure_event(
@@ -937,7 +938,7 @@ def _hedge_worker(
                 "delta_sh_under": 0, "delta_sh_etf": -qty,
                 "filled_sh_under": 0, "filled_sh_etf": 0,
                 "notes": f"HEDGE_SHORT_BLOCKED_201 msg={res.error_msg}",
-            }], False
+            }], False, True
 
         log_exposure_event(
             stage="POST_HEDGE", pair_id=f"{under}__HEDGE",
@@ -967,7 +968,7 @@ def _hedge_worker(
                 f"correction_usd={trade_info['correction_usd']:+,.0f}"
             ),
         }
-        return [fill_rec], True
+        return [fill_rec], True, True
 
     finally:
         try:
@@ -1003,19 +1004,39 @@ def execute_hedge_pass_parallel(
 ) -> Tuple[List[dict], int, int]:
     """Execute Phase 3 hedge trades in parallel (one IB connection per worker).
 
+    TWS limits concurrent API connections (~8). Workers are capped at 6
+    concurrent and staggered 1.5s apart to avoid overwhelming the gateway.
+
     Returns (fill_records, n_triggered, n_traded).
     """
+    import time as _time
+
     if not hedge_trades:
         return [], 0, 0
 
     all_fills: List[dict] = []
     n_triggered = len(hedge_trades)
     n_traded    = 0
-    n_workers   = min(parallel_n, len(hedge_trades))
+
+    # Cap concurrent workers to avoid TWS connection limit (default ~8 max)
+    MAX_HEDGE_WORKERS = 6
+    n_workers = min(parallel_n, len(hedge_trades), MAX_HEDGE_WORKERS)
+    stagger_delay = 1.5   # seconds between submitting each worker
+
+    tprint(
+        f"[HEDGE] Launching {len(hedge_trades)} trades with "
+        f"{n_workers} concurrent workers (stagger={stagger_delay}s)"
+    )
 
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        futures = {
-            pool.submit(
+        futures = {}
+        for i, t in enumerate(hedge_trades):
+            if stop_requested():
+                break
+            # Stagger submissions so connections don't all hit TWS at once
+            if i > 0:
+                _time.sleep(stagger_delay)
+            fut = pool.submit(
                 _hedge_worker, t,
                 worker_idx=i,
                 host=host, port=port, client_id=client_id,
@@ -1029,15 +1050,17 @@ def execute_hedge_pass_parallel(
                 net_exposure_band=net_exposure_band,
                 etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                 log_lock=log_lock,
-            ): t
-            for i, t in enumerate(hedge_trades)
-        }
+            )
+            futures[fut] = t
+
         for fut in as_completed(futures):
             try:
-                fills, was_traded = fut.result()
+                fills, was_traded, was_triggered = fut.result()
                 all_fills.extend(fills)
                 if was_traded:
                     n_traded += 1
+                if not was_triggered:
+                    n_triggered -= 1
             except Exception as ex:
                 tprint(f"[HEDGE] Worker raised: {ex}")
 
