@@ -257,9 +257,18 @@ def _establish_worker(
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        short_blocked = False
+
         for action, sym, qty, px, leg_type in legs:
             if stop_requested():
                 break
+
+            # If the short leg was fully blocked, skip the long to avoid
+            # creating a naked long.  Phase 3's 3a/3b will catch any
+            # remaining imbalance on the next hedge pass.
+            if action == "BUY" and short_blocked:
+                tprint(f"[ESTABLISH][{under}] Skipping long — short leg was blocked.")
+                continue
 
             # FTP gate for short leg
             if action == "SELL":
@@ -267,6 +276,7 @@ def _establish_worker(
                 avail = sm.get("available")
                 if avail is not None and avail <= 0:
                     tprint(f"[ESTABLISH][{under}] SKIP {sym}: FTP available=0.")
+                    short_blocked = True
                     local_fills.append({
                         "filled_at": now, "run_date": run_date,
                         "strategy_tag": strategy_tag,
@@ -284,6 +294,12 @@ def _establish_worker(
             order_ref = f"{strategy_tag}|{under}__ESTABLISH|{sym}|{leg_type.upper()}"
             res = exec_leg_local(sym, action, qty, px, order_ref)
             filled_signed = int(res.filled) if action == "BUY" else -int(res.filled)
+
+            # If the short filled zero shares (blocked, timed out, or failed),
+            # skip the long leg to prevent naked longs.
+            # Partial fills (res.filled > 0) are OK — Phase 3 handles the residual.
+            if action == "SELL" and int(res.filled) == 0:
+                short_blocked = True
 
             stage = "POST_ETF" if leg_type == "etf" else "POST_UNDER_ESTABLISH"
             log_exposure_event(
@@ -343,12 +359,29 @@ def execute_establish_parallel(
     if not establish_trades:
         return []
 
+    import time as _time
+
     all_fills: List[dict] = []
-    n_workers = min(parallel_n, len(establish_trades))
+
+    # Cap concurrent workers to avoid TWS connection limit (~8 max),
+    # matching the Phase 3 hedge pattern.
+    MAX_ESTABLISH_WORKERS = 6
+    n_workers = min(parallel_n, len(establish_trades), MAX_ESTABLISH_WORKERS)
+    stagger_delay = 1.5   # seconds between submitting each worker
+
+    tprint(
+        f"[ESTABLISH] Launching {len(establish_trades)} workers with "
+        f"{n_workers} concurrent (stagger={stagger_delay}s)"
+    )
 
     with ThreadPoolExecutor(max_workers=n_workers) as pool:
-        futures = {
-            pool.submit(
+        futures = {}
+        for i, t in enumerate(establish_trades):
+            if stop_requested():
+                break
+            if i > 0:
+                _time.sleep(stagger_delay)
+            fut = pool.submit(
                 _establish_worker, t,
                 worker_idx=i,
                 host=host, port=port, client_id=client_id,
@@ -360,9 +393,9 @@ def execute_establish_parallel(
                 cancel_service=cancel_service,
                 log_exposure_event=log_exposure_event,
                 short_first=short_first, log_lock=log_lock,
-            ): t
-            for i, t in enumerate(establish_trades)
-        }
+            )
+            futures[fut] = t
+
         for fut in as_completed(futures):
             try:
                 all_fills.extend(fut.result())
@@ -505,13 +538,15 @@ def resolve_hedge_leg(
 
     if correction_usd < 0:
         # Add to ETF short leg
+        # Include plan ETFs AND ETFs already held short (even if dropped from today's plan)
         plan_etfs = set(plan["ETF"].astype(str))
         etf_candidates = [
             sym for sym, u in etf_to_under.items()
-            if u == underlying and sym in plan_etfs
+            if u == underlying
+            and (sym in plan_etfs or float(strat_pos.get(sym, 0.0)) < 0)
         ]
         if not etf_candidates:
-            tprint(f"[HEDGE][{underlying}] No ETF candidates in plan; cannot add to short.")
+            tprint(f"[HEDGE][{underlying}] No ETF candidates (plan or positioned); cannot add to short.")
             return None, "SELL", 0, 0.0
 
         # Sort: prefer already-shorted ETFs, then by largest abs position
@@ -583,9 +618,30 @@ def build_hedge_trades(
     underlyings = sorted(hedgeable_plan["Underlying"].unique())
     trades: List[dict] = []
 
+    # Diagnostic: warn about positioned symbols invisible to hedge math
+    all_mapped = set(etf_to_under.keys()) | set(etf_to_under.values())
+    unmapped = {
+        s for s, sh in strat_pos.items()
+        if float(sh) != 0.0 and s not in all_mapped
+    }
+    if unmapped:
+        tprint(
+            f"[HEDGE] WARNING: {len(unmapped)} positioned symbols not in ETF beta map: "
+            f"{sorted(unmapped)[:10]}"
+        )
+
     for under in underlyings:
         if stop_requested():
             break
+
+        # Guard: skip this underlying if we have no price for it.
+        # Without a valid underlying price, compute_beta_adjusted_net_notional
+        # silently zeroes the long contribution, making net look heavily short
+        # and potentially triggering a wrong-direction hedge.
+        px_under = float(prices.get(under) or 0.0)
+        if px_under <= 0.0:
+            tprint(f"[HEDGE][{under}] WARNING: No price for underlying; skipping hedge check.")
+            continue
 
         net_notional, actual_gross = compute_beta_adjusted_net_notional(
             strat_pos=strat_pos, prices=prices, underlying=under,
@@ -875,14 +931,22 @@ def _hedge_worker(
         return [], False, True        # connection failure, still counts as triggered
 
     try:
-        # Re-verify: re-read live position before trading
+        # Re-verify: re-read live position and fresh price before trading.
+        # Fetch fresh price FIRST so the net-notional calculation uses
+        # current market, not a stale snapshot from build time.
         ib_pos_now = current_ib_positions(ib_local)
         strat_now  = strategy_position_only(ib_pos_now, baseline)
+
+        fresh_px = get_snapshot_price(ib_local, symbol, prefer_delayed=prefer_delayed)
+        px = float(fresh_px or ref_px)
+        with log_lock:
+            prices[symbol] = px
+
         net_now, _ = compute_beta_adjusted_net_notional(
             strat_pos=strat_now, prices=prices, underlying=under,
             etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
         )
-        triggered_now, _ = compute_hedge_delta(
+        triggered_now, correction_now = compute_hedge_delta(
             net_notional=net_now, target_gross=target_gross,
             net_exposure_band=net_exposure_band,
         )
@@ -893,11 +957,34 @@ def _hedge_worker(
             )
             return [], False, False   # was_triggered=False → decrement n_triggered
 
-        # Fresh price
-        fresh_px = get_snapshot_price(ib_local, symbol, prefer_delayed=prefer_delayed)
-        px = float(fresh_px or ref_px)
-        with log_lock:
-            prices[symbol] = px
+        # Check that the correction direction hasn't flipped since build time.
+        # E.g. was net-long (SELL correction) but now net-short (BUY needed).
+        if (correction_now < 0 and action != "SELL") or (correction_now > 0 and action != "BUY"):
+            tprint(
+                f"[HEDGE][{under}] Correction direction flipped "
+                f"(was {action}, now {'SELL' if correction_now < 0 else 'BUY'}); skipping."
+            )
+            return [], False, True
+
+        # Recompute qty from fresh correction + fresh price.
+        # Keeps the same symbol/action but sizes the trade to current market.
+        if action == "SELL":
+            beta = etf_to_beta.get(symbol, 1.0)
+            qty = int(math.floor(abs(correction_now) / (px * beta))) if (px > 0 and beta > 0) else 0
+        else:
+            qty = int(math.floor(abs(correction_now) / px)) if px > 0 else 0
+
+        if qty <= 0:
+            tprint(f"[HEDGE][{under}] Re-computed qty=0 after fresh correction; skipping.")
+            return [], False, True
+
+        # Apply FTP cap on re-computed qty
+        if action == "SELL" and short_map:
+            avail = (short_map.get(symbol) or {}).get("available")
+            if avail is not None and avail > 0:
+                qty = min(qty, int(avail))
+
+        tprint(f"[HEDGE][{under}] Re-verified: correction={correction_now:+,.0f} -> qty={qty}")
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         px_under = float(prices.get(under) or 0.0)
@@ -1458,14 +1545,14 @@ def main() -> None:
                 pre_tgt[u] = tgt
 
             MAX_HEDGE_PASSES = 3
-            total_triggered = 0
+            triggered_underlyings: Set[str] = set()
             total_traded    = 0
 
             for hedge_pass in range(1, MAX_HEDGE_PASSES + 1):
                 if stop_requested():
                     break
 
-                # Refresh positions for each pass
+                # Refresh positions at the start of each pass
                 ib_pos    = current_ib_positions(ib)
                 strat_pos = strategy_position_only(ib_pos, baseline)
 
@@ -1482,34 +1569,97 @@ def main() -> None:
                     tprint(f"[HEDGE] Pass {hedge_pass}: no trades needed — converged.")
                     break
 
-                tprint(f"[HEDGE] Pass {hedge_pass}/{MAX_HEDGE_PASSES}: "
-                       f"{len(hedge_trades)} trades queued.")
+                short_corrections = [t for t in hedge_trades if t["action"] == "SELL"]
+                long_corrections  = [t for t in hedge_trades if t["action"] == "BUY"]
 
-                fills3, n_triggered, n_traded = execute_hedge_pass_parallel(
-                    hedge_trades=hedge_trades,
-                    host=host, port=port, client_id=client_id,
-                    baseline=baseline, prices=prices,
-                    prefer_delayed=prefer_delayed, exec_cfg=exec_cfg,
-                    strategy_tag=strategy_tag, run_date=run_date,
-                    limit_bps=limit_bps, timeout=timeout, max_retries=max_retries,
-                    dry_run=dry_run, parallel_n=parallel_n,
-                    short_map=short_map, cancel_service=cancel_service,
-                    log_exposure_event=log_exposure_event,
-                    net_exposure_band=net_exposure_band,
-                    etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
-                    log_lock=log_lock,
-                )
-                all_fills.extend(fills3)
-                total_triggered += n_triggered
-                total_traded    += n_traded
-
-                # Sync positions before next pass / summary
-                _hedge_syms = [t["symbol"] for t in hedge_trades]
-                _sync_positions_after_external_trades(
-                    ib, watch_syms=_hedge_syms, timeout_s=15.0
+                tprint(
+                    f"[HEDGE] Pass {hedge_pass}/{MAX_HEDGE_PASSES}: "
+                    f"{len(short_corrections)} short corrections, "
+                    f"{len(long_corrections)} long corrections (pre-rebuild)."
                 )
 
-                if n_traded == 0:
+                pass_traded = 0
+
+                # ── 3a: Execute short legs first ─────────────────────────────
+                # Short first so we know actual coverage before sizing longs.
+                if short_corrections and not stop_requested():
+                    fills3a, n_trig_a, n_trade_a = execute_hedge_pass_parallel(
+                        hedge_trades=short_corrections,
+                        host=host, port=port, client_id=client_id,
+                        baseline=baseline, prices=prices,
+                        prefer_delayed=prefer_delayed, exec_cfg=exec_cfg,
+                        strategy_tag=strategy_tag, run_date=run_date,
+                        limit_bps=limit_bps, timeout=timeout, max_retries=max_retries,
+                        dry_run=dry_run, parallel_n=parallel_n,
+                        short_map=short_map, cancel_service=cancel_service,
+                        log_exposure_event=log_exposure_event,
+                        net_exposure_band=net_exposure_band,
+                        etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+                        log_lock=log_lock,
+                    )
+                    all_fills.extend(fills3a)
+                    triggered_underlyings.update(t["underlying"] for t in short_corrections)
+                    total_traded    += n_trade_a
+                    pass_traded     += n_trade_a
+
+                    # Sync positions so long-leg sizing reflects actual short fills.
+                    # If SMUP only filled 50 of 200, the rebuild below will see the
+                    # real net and buy only as much underlying as is appropriate.
+                    # 20s timeout: up to 6 parallel shorts may need extra propagation time.
+                    _sync_positions_after_external_trades(
+                        ib,
+                        watch_syms=[t["symbol"] for t in short_corrections],
+                        timeout_s=20.0,
+                    )
+
+                # ── 3b: Rebuild from fresh positions, then execute long legs ─
+                # Do NOT use the long_corrections list built before 3a — it was
+                # sized against planned shorts, not actual fills.
+                if not stop_requested():
+                    ib_pos    = current_ib_positions(ib)
+                    strat_pos = strategy_position_only(ib_pos, baseline)
+
+                    hedge_trades_b = build_hedge_trades(
+                        hedgeable_plan=hedgeable_df,
+                        strat_pos=strat_pos, prices=prices,
+                        account_equity=account_equity, gross_leverage=gross_leverage,
+                        net_exposure_band=net_exposure_band, min_trade_usd=min_trade_usd,
+                        etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+                        short_map=short_map,
+                    )
+                    long_corrections_b = [t for t in hedge_trades_b if t["action"] == "BUY"]
+
+                    if long_corrections_b:
+                        tprint(
+                            f"[HEDGE] Pass {hedge_pass}b: {len(long_corrections_b)} long "
+                            f"corrections sized to actual short fills."
+                        )
+                        fills3b, n_trig_b, n_trade_b = execute_hedge_pass_parallel(
+                            hedge_trades=long_corrections_b,
+                            host=host, port=port, client_id=client_id,
+                            baseline=baseline, prices=prices,
+                            prefer_delayed=prefer_delayed, exec_cfg=exec_cfg,
+                            strategy_tag=strategy_tag, run_date=run_date,
+                            limit_bps=limit_bps, timeout=timeout, max_retries=max_retries,
+                            dry_run=dry_run, parallel_n=parallel_n,
+                            short_map=short_map, cancel_service=cancel_service,
+                            log_exposure_event=log_exposure_event,
+                            net_exposure_band=net_exposure_band,
+                            etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+                            log_lock=log_lock,
+                        )
+                        all_fills.extend(fills3b)
+                        triggered_underlyings.update(t["underlying"] for t in long_corrections_b)
+                        total_traded    += n_trade_b
+                        pass_traded     += n_trade_b
+
+                        _sync_positions_after_external_trades(
+                            ib,
+                            watch_syms=[t["symbol"] for t in long_corrections_b],
+                            timeout_s=15.0,
+                        )
+
+                if pass_traded == 0:
                     tprint(f"[HEDGE] Pass {hedge_pass}: no fills — stopping passes.")
                     break
 
@@ -1527,7 +1677,7 @@ def main() -> None:
             print_phase_summary(
                 phase="PHASE 3 — DIRECTIONAL HEDGE",
                 n_checked=len(pre_net),
-                n_triggered=total_triggered,
+                n_triggered=len(triggered_underlyings),
                 n_traded=total_traded,
                 net_by_underlying=post_net,
                 target_gross_by_underlying=pre_tgt,
