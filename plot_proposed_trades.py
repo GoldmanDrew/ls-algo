@@ -48,7 +48,7 @@ def load_proposed(run_date: str) -> pd.DataFrame:
     df = pd.read_csv(path)
 
     numeric_cols = [
-        "target_long_usd", "target_short_usd",
+        "long_usd", "short_usd",
         "borrow_current", "gross_decay_annual",
         "expected_decay_annual", "net_decay_annual",
         "vol_underlying_annual", "vol_etf_annual", "Beta",
@@ -69,8 +69,8 @@ def active_rows(df: pd.DataFrame) -> pd.DataFrame:
     """Rows with a non-zero allocation (purgatory=False and at least one leg)."""
     return df[
         (df["purgatory"] == False) &  # noqa: E712
-        ((df["target_long_usd"].fillna(0).abs() > 1) |
-         (df["target_short_usd"].fillna(0).abs() > 1))
+        ((df["long_usd"].fillna(0).abs() > 1) |
+         (df["short_usd"].fillna(0).abs() > 1))
     ].copy()
 
 
@@ -89,32 +89,32 @@ def _bar_label(ax, val: float, label: str, *, side: str, fontsize: int = 7,
 def plot_allocation(ax: plt.Axes, df: pd.DataFrame) -> None:
     """
     Panel 1 — diverging bars.
-    Right (steelblue): target_long_usd  = underlying we are buying.
-    Left  (tomato):    target_short_usd = ETF we are shorting (already negative).
+    Right (steelblue): long_usd  = underlying we are buying.
+    Left  (tomato):    short_usd = ETF we are shorting (already negative).
     """
-    df = df.sort_values("target_long_usd", ascending=True).reset_index(drop=True)
+    df = df.sort_values("long_usd", ascending=True).reset_index(drop=True)
     y  = np.arange(len(df))
 
     # Determine bar padding from data range
-    xmax = max(df["target_long_usd"].abs().max(),
-               df["target_short_usd"].abs().max(), 1)
+    xmax = max(df["long_usd"].abs().max(),
+               df["short_usd"].abs().max(), 1)
     pad  = xmax * 0.012
 
     # Long (underlying) bars
-    ax.barh(y, df["target_long_usd"], color="steelblue", alpha=0.85, height=0.7)
+    ax.barh(y, df["long_usd"], color="steelblue", alpha=0.85, height=0.7)
     # Short (ETF) bars
-    ax.barh(y, df["target_short_usd"], color="tomato",    alpha=0.85, height=0.7)
+    ax.barh(y, df["short_usd"], color="tomato",    alpha=0.85, height=0.7)
 
     # Ticker labels at bar ends
     for i, row in df.iterrows():
         # underlying label on the right
-        if abs(row["target_long_usd"]) > 1:
-            ax.text(row["target_long_usd"] + pad, i,
+        if abs(row["long_usd"]) > 1:
+            ax.text(row["long_usd"] + pad, i,
                     str(row["Underlying"]),
                     ha="left", va="center", fontsize=6.5, color="steelblue")
         # ETF label on the left
-        if abs(row["target_short_usd"]) > 1:
-            ax.text(row["target_short_usd"] - pad, i,
+        if abs(row["short_usd"]) > 1:
+            ax.text(row["short_usd"] - pad, i,
                     str(row["ETF"]),
                     ha="right", va="center", fontsize=6.5, color="tomato")
 
