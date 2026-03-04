@@ -10,27 +10,24 @@ Adds columns to the screened DataFrame:
 All decay numbers are PER $1 OF ETF SHORT NOTIONAL.
 Borrow is also per $1 ETF short. So: net = gross − borrow. No scaling needed.
 
-Decay measurement — two methods, both per $1 ETF short:
+Decay measurement — LOG RETURNS for both bull and inverse, per $1 ETF short:
 
-  ── Bull ETFs (Beta > 0) — SIMPLE RETURNS ─────────────────
-  Hedged pair: short $1 ETF + long |β| underlying.
-
-    daily_pnl = |β| × r_underlying − r_etf
-
-  For a perfect β× tracker: daily_pnl = 0.
-  Captures fees + tracking error.
-
-  ── Inverse ETFs (Beta < 0) — LOG RETURNS ─────────────────
   Hedged pair using signed beta in log space:
 
-    daily_pnl = β × ln(1+r_und) − ln(1+r_etf)
+    weekly_pnl = β × ln(1+r_und_w) − ln(1+r_etf_w)
 
-  For a perfect −|β|× tracker: ≈ 0.5 × β(β−1) × r² > 0.
-  Log returns capture compounding vol drag that simple returns miss.
-  β(β−1) is always positive for |β| > 1.
+  For a perfect β× daily tracker:
+    β × ln(1+r) − ln(1+βr) ≈ 0.5 × β(β−1) × r²  (always > 0 for |β| > 1)
 
-  ── Common ────────────────────────────────────────────────
-  gross_decay_annual = mean(daily_pnl) × 252
+  Log returns are required for BOTH bull and inverse because the
+  simple-return hedge PnL (|β|×r_und − r_etf) is identically zero
+  at daily frequency (by construction: r_etf = β×r_und) and ~zero
+  at weekly. It cannot capture vol drag. Log returns do.
+
+  Measured at weekly (W-FRI) frequency × 52 to reduce microstructure
+  noise (bid-ask bounce, closing auctions, illiquid names).
+
+  gross_decay_annual = mean(weekly_pnl) × 52
   net_decay_annual   = gross_decay_annual − borrow_net_annual
 
 Both legs use explicit total-return price series:
@@ -58,28 +55,127 @@ TRADING_DAYS = 252
 # ──────────────────────────────────────────────
 # Total return price series (per-ticker)
 # ──────────────────────────────────────────────
+
+# Common split/reverse-split ratios.  When yfinance's auto_adjust
+# fails (or the adjustment hasn't propagated yet), a split shows up
+# as a single-day return that is *exactly* one of these ratios.
+# We detect returns within ±2 % of each ratio and correct the price
+# series by dividing out the split factor from that day onward.
+_SPLIT_RATIOS = sorted(set(
+    [n / d for n in (1, 2, 3, 4, 5, 10, 15, 20, 25, 50)
+           for d in (1, 2, 3, 4, 5, 10, 15, 20, 25, 50)
+           if n != d and 0.05 <= n / d <= 20.0]
+), reverse=True)
+
+_SPLIT_TOL = 0.02          # ±2 % tolerance around each ratio
+_JUMP_FLOOR = 0.40         # ignore daily moves < 40 %
+_CONTEXT_WINDOW = 20       # days of context for local vol estimate
+_ZSCORE_THRESHOLD = 4.0    # jump must be > 4σ vs local vol to be a split
+
+
+def _clean_split_artifacts(prices: pd.Series) -> pd.Series:
+    """Detect and correct unadjusted splits/reverse-splits in a price series.
+
+    Approach:  walk through daily price ratios (p[t] / p[t-1]).
+    If a ratio matches a known split factor (within tolerance) AND
+    the jump is an extreme outlier relative to local volatility
+    (z-score > 4), correct it by dividing all subsequent prices by
+    the split factor.
+
+    The z-score approach (instead of a fixed neighbor threshold) handles
+    volatile penny/crypto stocks correctly: a 20:1 reverse split is
+    still 10+ sigma even on a stock with 200% annualized vol.
+
+    Returns a corrected copy of the series.
+    """
+    if len(prices) < 3:
+        return prices.copy()
+
+    prices = prices.copy()
+    vals = prices.values.astype(float)
+
+    # Pre-compute daily log returns for z-score calculation
+    log_ratios = np.full(len(vals), np.nan)
+    for i in range(1, len(vals)):
+        if vals[i - 1] > 0 and np.isfinite(vals[i - 1]) and vals[i] > 0:
+            log_ratios[i] = np.log(vals[i] / vals[i - 1])
+
+    for i in range(1, len(vals) - 1):
+        if vals[i - 1] == 0 or not np.isfinite(vals[i - 1]):
+            continue
+        ratio = vals[i] / vals[i - 1]
+        daily_ret = ratio - 1.0
+
+        # Skip small moves — not a split
+        if abs(daily_ret) < _JUMP_FLOOR:
+            continue
+
+        # Check if this ratio matches a known split factor
+        matched_factor = None
+        for sf in _SPLIT_RATIOS:
+            if abs(ratio - sf) / sf < _SPLIT_TOL:
+                matched_factor = sf
+                break
+            # Also check inverse (reverse-split looks like 1/sf)
+            inv_sf = 1.0 / sf
+            if abs(ratio - inv_sf) / inv_sf < _SPLIT_TOL:
+                matched_factor = inv_sf
+                break
+
+        if matched_factor is None:
+            continue
+
+        # Z-score test: is this jump an extreme outlier vs local vol?
+        # Use a window of returns EXCLUDING the candidate split day.
+        start = max(1, i - _CONTEXT_WINDOW)
+        end = min(len(log_ratios), i + _CONTEXT_WINDOW + 1)
+        context = [log_ratios[j] for j in range(start, end)
+                   if j != i and np.isfinite(log_ratios[j])]
+
+        if len(context) >= 5:
+            local_std = float(np.std(context))
+            if local_std > 0:
+                log_jump = abs(np.log(ratio))
+                zscore = log_jump / local_std
+                if zscore < _ZSCORE_THRESHOLD:
+                    # Jump is within normal vol range → real price move
+                    continue
+
+        # If we don't have enough context, fall back to accepting the
+        # correction (better to fix a split than leave 839% vol).
+
+        # Correct: divide everything from day i onward by the factor
+        vals[i:] /= matched_factor
+
+        # Recompute log_ratios for the corrected region so subsequent
+        # iterations see clean data
+        for j in range(max(1, i), min(len(vals), i + 2)):
+            if vals[j - 1] > 0 and vals[j] > 0:
+                log_ratios[j] = np.log(vals[j] / vals[j - 1])
+
+    prices.iloc[:] = vals
+    return prices
+
+
 def _get_total_return_series(ticker: str, period: str = "2y") -> pd.Series:
     """
     Build a long-only total return price series for one ticker.
 
-    Uses unadjusted close + explicit dividends:
-        TR_t = TR_{t-1} × (Close_t + Div_t) / Close_{t-1}
+    Uses auto_adjust=True + repair=True so yfinance returns prices
+    adjusted for both stock splits AND dividends, with Yahoo's own
+    split-repair logic applied.  Then runs _clean_split_artifacts()
+    as a second safety net for cases where yfinance's repair is
+    incomplete or hasn't propagated yet.
     """
     try:
         t = yf.Ticker(ticker)
-        df = t.history(period=period, auto_adjust=False, actions=True)
+        df = t.history(period=period, auto_adjust=True, repair=True)
 
         if df.empty or "Close" not in df.columns:
             return pd.Series(dtype=float, name=ticker)
 
-        close = df["Close"]
-        divs = df.get("Dividends", pd.Series(0.0, index=df.index))
-        divs = divs.reindex(close.index, fill_value=0.0)
-
-        rel = (close + divs) / close.shift(1)
-        rel.iloc[0] = 1.0
-
-        tr_price = close.iloc[0] * rel.cumprod()
+        tr_price = df["Close"].dropna()
+        tr_price = _clean_split_artifacts(tr_price)
         tr_price.name = ticker
         return tr_price
 
@@ -167,87 +263,88 @@ def _compute_beta_ols(
 # ──────────────────────────────────────────────
 # Annualized volatility
 # ──────────────────────────────────────────────
-def _annualized_vol(tr_series: pd.Series, min_days: int = 60) -> float | None:
-    """Annualized realized vol from a total-return price series."""
+_VOL_CAP_ANNUAL = 5.0   # 500 % — loose backstop for truly broken data
+                        # Split artifacts are now cleaned at the source
+                        # (_clean_split_artifacts), so this should rarely
+                        # bind.  Kept as a last-resort safety net only.
+
+
+def _annualized_vol(tr_series: pd.Series, min_days: int = 60,
+                    cap: float = _VOL_CAP_ANNUAL) -> float | None:
+    """Annualized realized vol from a total-return price series.
+
+    Split artifacts are handled upstream by _clean_split_artifacts().
+    A loose cap (500 %) is kept as a last-resort backstop for any
+    remaining data anomalies beyond splits.
+    """
     tr = tr_series.dropna()
     if len(tr) < min_days + 1:
         return None
     ret = tr.pct_change().dropna()
     if len(ret) < min_days:
         return None
-    return round(float(ret.std() * np.sqrt(TRADING_DAYS)), 6)
+    vol = float(ret.std() * np.sqrt(TRADING_DAYS))
+    if cap and vol > cap:
+        vol = cap
+    return round(vol, 6)
 
 
 # ──────────────────────────────────────────────
-# Gross decay — per $1 ETF short, simple annual
+# Gross decay — per $1 ETF short, weekly × 52
 # ──────────────────────────────────────────────
+_WEEKS_PER_YEAR = 52
+_MIN_WEEKS = 12   # ~60 trading days
+
+
 def _compute_gross_decay(
     etf_tr: pd.Series,
     und_tr: pd.Series,
     beta: float,
-    min_days: int = 60,
+    min_weeks: int = _MIN_WEEKS,
 ) -> float | None:
     """
     Gross annualized decay per $1 of ETF short notional.
-    Returns a SIMPLE (linear) annual rate, same units as borrow.
+    Measured at WEEKLY frequency (Friday-to-Friday) × 52 to reduce
+    microstructure noise that inflates daily hedge-PnL estimates.
 
-    ── Bull ETFs (beta > 0) ────────────────────────
-    Simple returns, hedged pair: short $1 ETF + long |β| underlying.
+    LOG RETURNS are used for BOTH bull and inverse ETFs:
 
-      daily_pnl = |β| × r_und − r_etf
+        weekly_pnl = β × ln(1+r_und_w) − ln(1+r_etf_w)
 
-    For a perfect β× tracker: daily_pnl = 0.
-    Positive = fees + tracking error → profitable to short.
+    Why log returns for bull too?  A β× daily tracker has r_etf = β×r_und,
+    so the simple-return hedge PnL (β×r_und − r_etf) is *identically zero*
+    at daily frequency and ~zero at weekly — it cannot capture vol drag.
+    In log space, β×ln(1+r) − ln(1+βr) ≈ 0.5×β(β−1)×r² > 0, which is
+    exactly the compounding drag we want to measure.
 
-    ── Inverse ETFs (beta < 0) ─────────────────────
-    Log returns with signed beta to isolate pure vol drag:
-
-      daily_pnl = β × ln(1+r_und) − ln(1+r_etf)
-
-    For a perfect −|β|× tracker: ≈ 0.5×β(β−1)×r² > 0.
-    Log returns capture compounding vol drag that simple returns miss.
-
+    gross_decay_annual = mean(weekly_pnl) × 52
     net_decay = gross_decay − borrow_net_annual (no scaling needed).
     """
-    df = pd.concat([etf_tr.rename("etf"), und_tr.rename("und")], axis=1).dropna()
-    if len(df) < min_days + 1:
+    combined = pd.concat([etf_tr.rename("etf"), und_tr.rename("und")], axis=1).dropna()
+    if len(combined) < min_weeks * 5:
         return None
 
-    abs_beta = abs(float(beta))
-    if abs_beta < 0.1:
+    if abs(float(beta)) < 0.1:
         return None
 
-    if beta > 0:
-        # Bull ETF: simple returns, hedged pair
-        r_etf = df["etf"].pct_change()
-        r_und = df["und"].pct_change()
+    # Resample to weekly (last trading day of each week)
+    weekly = combined.resample("W-FRI").last().dropna()
+    if len(weekly) < min_weeks + 1:
+        return None
 
-        valid = r_etf.notna() & r_und.notna()
-        r_etf = r_etf[valid]
-        r_und = r_und[valid]
+    # Log returns for both bull and inverse
+    r_etf = np.log(weekly["etf"] / weekly["etf"].shift(1))
+    r_und = np.log(weekly["und"] / weekly["und"].shift(1))
 
-        if len(r_etf) < min_days:
-            return None
+    valid = r_etf.notna() & r_und.notna() & np.isfinite(r_etf) & np.isfinite(r_und)
+    r_etf = r_etf[valid]
+    r_und = r_und[valid]
 
-        daily_pnl = abs_beta * r_und - r_etf
-    else:
-        # Inverse ETF: log returns to capture vol drag
-        r_etf = np.log(df["etf"] / df["etf"].shift(1))
-        r_und = np.log(df["und"] / df["und"].shift(1))
+    if len(r_etf) < min_weeks:
+        return None
 
-        valid = r_etf.notna() & r_und.notna() & np.isfinite(r_etf) & np.isfinite(r_und)
-        r_etf = r_etf[valid]
-        r_und = r_und[valid]
-
-        if len(r_etf) < min_days:
-            return None
-
-        daily_pnl = float(beta) * r_und - r_etf
-
-    # Simple (linear) annualized rate
-    gross_decay = float(daily_pnl.mean()) * TRADING_DAYS
-
-    return round(gross_decay, 6)
+    weekly_pnl = float(beta) * r_und - r_etf
+    return round(float(weekly_pnl.mean()) * _WEEKS_PER_YEAR, 6)
 
 
 # ──────────────────────────────────────────────
@@ -289,8 +386,7 @@ def enrich_with_decay_and_vol(
     tr_map = _download_all_tr_series(all_tickers, period=lookback,
                                       max_workers=max_workers)
 
-    vols_und = []
-    vols_etf = []
+    vols_etf_raw = []
     decays = []
     betas_out = []
     beta_nobs_out = []
@@ -299,6 +395,7 @@ def enrich_with_decay_and_vol(
     ok_vol = 0
     betas_computed = 0
 
+    # ── PASS 1: betas, raw ETF vols, realized decay ──
     for _, row in df.iterrows():
         etf = norm(row["ETF"])
         und = norm(row["Underlying"]) if pd.notna(row.get("Underlying")) else None
@@ -317,18 +414,8 @@ def enrich_with_decay_and_vol(
         betas_out.append(beta_f)
         beta_nobs_out.append(n_obs_i)
 
-        # ── Volatilities ──
-        vol_und = None
-        vol_etf = None
-        if und and und in tr_map:
-            vol_und = _annualized_vol(tr_map[und], min_days)
-        if etf in tr_map:
-            vol_etf = _annualized_vol(tr_map[etf], min_days)
-
-        vols_und.append(vol_und)
-        vols_etf.append(vol_etf)
-        if vol_und is not None:
-            ok_vol += 1
+        vol_etf = _annualized_vol(tr_map[etf], min_days) if etf in tr_map else None
+        vols_etf_raw.append(vol_etf)
 
         # ── Gross decay ──
         decay = None
@@ -339,23 +426,69 @@ def enrich_with_decay_and_vol(
             and etf in tr_map
             and und in tr_map
         ):
-            decay = _compute_gross_decay(
-                tr_map[etf],
-                tr_map[und],
-                beta_f,
-                min_days,
-            )
+            decay = _compute_gross_decay(tr_map[etf], tr_map[und], beta_f)
 
         decays.append(decay)
         if decay is not None:
             ok_decay += 1
 
-    # ── Write columns ──
     df["Beta"] = betas_out
     df["Beta_n_obs"] = beta_nobs_out
-    df["vol_underlying_annual"] = vols_und
-    df["vol_etf_annual"] = vols_etf
+    df["vol_etf_annual"] = vols_etf_raw
     df["gross_decay_annual"] = decays
+
+    # ── PASS 2: resolve underlying vol per ticker ──
+    # For each underlying, compute raw vol from its price series, then
+    # cross-check against implied vols from its ETFs (vol_etf / |β|).
+    # If raw vol is corrupted (e.g. unadjusted splits), use the best
+    # ETF-implied vol instead — picking the ETF with the most history
+    # and highest |β| (tightest leverage relationship).
+    # All ETFs sharing the same underlying get the SAME vol_und.
+    _VOL_RATIO_MAX = 2.0
+
+    unique_unds = df["Underlying"].dropna().apply(norm).unique()
+    resolved_vol_und = {}
+
+    for und in unique_unds:
+        raw_vol = _annualized_vol(tr_map[und], min_days) if und in tr_map else None
+
+        mask = df["Underlying"].apply(
+            lambda x, u=und: norm(x) == u if pd.notna(x) else False)
+        implied_candidates = []
+        for idx in df.index[mask]:
+            b = betas_out[idx]
+            ve = vols_etf_raw[idx]
+            nobs = beta_nobs_out[idx]
+            if b and abs(b) >= 0.5 and ve and ve > 0 and nobs:
+                implied = ve / abs(b)
+                weight = nobs * abs(b)
+                implied_candidates.append((implied, weight))
+
+        if not implied_candidates:
+            resolved_vol_und[und] = raw_vol
+            continue
+
+        total_w = sum(w for _, w in implied_candidates)
+        best_implied = sum(v * w for v, w in implied_candidates) / total_w
+
+        if raw_vol is None or raw_vol <= 0:
+            resolved_vol_und[und] = round(best_implied, 6)
+        elif best_implied > 0 and raw_vol / best_implied > _VOL_RATIO_MAX:
+            resolved_vol_und[und] = round(best_implied, 6)
+            print(f"  [VOL-FIX] {und}: raw={raw_vol*100:.1f}% -> implied={best_implied*100:.1f}% "
+                  f"(from {len(implied_candidates)} ETF(s))")
+        else:
+            resolved_vol_und[und] = raw_vol
+
+    vols_und = []
+    for i, row in df.iterrows():
+        und = norm(row["Underlying"]) if pd.notna(row.get("Underlying")) else None
+        vol_und = resolved_vol_und.get(und) if und else None
+        vols_und.append(vol_und)
+        if vol_und is not None:
+            ok_vol += 1
+
+    df["vol_underlying_annual"] = vols_und
 
     # ── Net decay = gross − borrow (both per $1 ETF short) ──
     borrow_net = pd.to_numeric(df.get("borrow_net_annual"), errors="coerce")

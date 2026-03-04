@@ -27,7 +27,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && (inputs.job == 'screener' || inputs.job == 'both'))
       || (github.event_name == 'schedule' && github.event.schedule == '0 15 * * 1-5')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -39,6 +39,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
       - name: Install dependencies
         run: |
@@ -63,6 +64,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/etf_screened_today.csv data/runs/ || true
+          git add data/scrape_cache_*.csv || true
           if git diff --cached --quiet; then
             echo "No screener changes to commit"
           else
@@ -91,6 +93,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
       - name: Install dependencies
         run: |

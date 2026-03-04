@@ -10,12 +10,15 @@ import smtplib
 from email.message import EmailMessage
 from email.utils import getaddresses
 
-import re
-import xml.etree.ElementTree as ET
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+
+from ibkr_accounting import (
+    canonical_symbol,
+    compute_net_exposure,
+    format_exposure_table,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent  # adjust if needed
@@ -38,253 +41,122 @@ def run_cmd(cmd: list[str], env: dict[str, str] | None = None) -> None:
         )
 
 
-def load_outputs(run_date: str) -> tuple[Path, Path, dict]:
+def load_outputs(run_date: str) -> tuple[Path, Path, Path, Path, dict]:
     outdir = PROJECT_ROOT / "data" / "runs" / run_date / "accounting"
     pnl_under = outdir / "pnl_by_underlying.csv"
+    pnl_symbol = outdir / "pnl_by_symbol.csv"
+    pnl_bucket = outdir / "pnl_by_bucket.csv"
     totals = outdir / "totals.json"
     if not pnl_under.exists():
         raise FileNotFoundError(f"Missing: {pnl_under}")
     if not totals.exists():
         raise FileNotFoundError(f"Missing: {totals}")
     totals_obj = json.loads(totals.read_text(encoding="utf-8"))
-    return pnl_under, totals, totals_obj
+    return pnl_under, pnl_symbol, pnl_bucket, totals, totals_obj
 
 
-def format_underlying_table(pnl_under_csv: Path) -> tuple[str, float]:
+def format_underlying_table(pnl_under_csv: Path, pnl_symbol_csv: Path) -> tuple[str, float]:
     """
     Returns:
-      - formatted table (plain text) of total_pnl by underlying
+      - formatted table (plain text) of total_pnl by underlying, with per-symbol
+        PnL rows indented underneath each underlying
       - total_pnl sum
     """
     df = pd.read_csv(pnl_under_csv)
+    if "underlying" not in df.columns or "total_pnl" not in df.columns:
+        raise ValueError("pnl_by_underlying.csv missing required columns")
 
-    if "underlying" not in df.columns:
-        raise ValueError("pnl_by_underlying.csv missing 'underlying' column")
-    if "total_pnl" not in df.columns:
-        raise ValueError("pnl_by_underlying.csv missing 'total_pnl' column")
+    df["total_pnl"] = pd.to_numeric(df["total_pnl"], errors="coerce").fillna(0.0)
+    df = df.sort_values("total_pnl", ascending=False)
+    total = float(df["total_pnl"].sum())
 
-    tbl = df[["underlying", "total_pnl"]].copy()
-    tbl["total_pnl"] = pd.to_numeric(tbl["total_pnl"], errors="coerce").fillna(0.0)
-    tbl = tbl.sort_values("total_pnl", ascending=False)
+    # Load per-symbol detail if available
+    sym_df: pd.DataFrame = pd.DataFrame()
+    if pnl_symbol_csv.exists():
+        try:
+            sym_df = pd.read_csv(pnl_symbol_csv)
+            sym_df["total_pnl"] = pd.to_numeric(sym_df["total_pnl"], errors="coerce").fillna(0.0)
+        except Exception:
+            sym_df = pd.DataFrame()
 
-    total = float(tbl["total_pnl"].sum())
+    # Column widths — include symbol names in the width calculation
+    all_labels = list(df["underlying"].astype(str))
+    if not sym_df.empty and "symbol" in sym_df.columns:
+        all_labels += ["  " + s for s in sym_df["symbol"].astype(str)]
+    all_labels += ["TOTAL"]
+    label_width = max(12, max(len(s) for s in all_labels))
 
-    total_row = pd.DataFrame([{"underlying": "TOTAL", "total_pnl": total}])
-    tbl2 = pd.concat([tbl, total_row], ignore_index=True)
-
-    tbl2["total_pnl"] = tbl2["total_pnl"].map(lambda x: f"{x:,.2f}")
-    underlying_width = max(10, int(tbl2["underlying"].astype(str).map(len).max()))
-    pnl_width = max(12, int(tbl2["total_pnl"].astype(str).map(len).max()))
+    all_pnl_strs = [f"{v:,.2f}" for v in list(df["total_pnl"]) + [total]]
+    if not sym_df.empty and "total_pnl" in sym_df.columns:
+        all_pnl_strs += [f"{v:,.2f}" for v in sym_df["total_pnl"]]
+    pnl_width = max(12, max(len(s) for s in all_pnl_strs))
 
     lines: list[str] = []
-    header = f"{'UNDERLYING'.ljust(underlying_width)}  {'TOTAL_PNL'.rjust(pnl_width)}"
+    header = f"{'UNDERLYING / SYMBOL'.ljust(label_width)}  {'TOTAL_PNL'.rjust(pnl_width)}"
     lines.append(header)
-    lines.append("-" * (underlying_width + 2 + pnl_width))
+    lines.append("-" * (label_width + 2 + pnl_width))
 
-    for _, r in tbl2.iterrows():
-        u = str(r["underlying"]).ljust(underlying_width)
-        p = str(r["total_pnl"]).rjust(pnl_width)
-        lines.append(f"{u}  {p}")
+    for _, r in df.iterrows():
+        underlying = str(r["underlying"])
+        pnl_str = f"{float(r['total_pnl']):,.2f}"
+        lines.append(f"{underlying.ljust(label_width)}  {pnl_str.rjust(pnl_width)}")
+
+        # Indented symbol rows for this underlying
+        if not sym_df.empty and "underlying" in sym_df.columns and "symbol" in sym_df.columns:
+            syms = sym_df[sym_df["underlying"] == underlying].sort_values("total_pnl", ascending=False)
+            for _, sr in syms.iterrows():
+                sym_label = "  " + str(sr["symbol"])
+                sym_pnl = f"{float(sr['total_pnl']):,.2f}"
+                # Show realized vs unrealized breakdown if available
+                detail = ""
+                if "realized_pnl" in sr and "unrealized_pnl" in sr:
+                    r_pnl = float(sr["realized_pnl"])
+                    u_pnl = float(sr["unrealized_pnl"])
+                    detail = f"  (r: {r_pnl:,.2f}  u: {u_pnl:,.2f})"
+                lines.append(f"{sym_label.ljust(label_width)}  {sym_pnl.rjust(pnl_width)}{detail}")
+
+    lines.append("-" * (label_width + 2 + pnl_width))
+    total_str = f"{total:,.2f}"
+    lines.append(f"{'TOTAL'.ljust(label_width)}  {total_str.rjust(pnl_width)}")
 
     return "\n".join(lines), total
 
 
-def ensure_ledger_dir() -> None:
-    LEDGER_DIR.mkdir(parents=True, exist_ok=True)
-
-
-# ---------------------------------------------------------------
-# Net Exposure helpers (beta-normalized)
-# ---------------------------------------------------------------
-def canonical_symbol(sym: str) -> str:
-    """Mirror the normalization used in ibkr_accounting.py."""
-    if sym is None:
-        return ""
-    s = str(sym).strip().upper()
-    m = re.match(r"^([A-Z]{1,5})[ \-\.]([A-Z])$", s)
-    if m:
-        return f"{m.group(1)}.{m.group(2)}"
-    return s
-
-
-def parse_positions_for_exposure(pos_xml: Path) -> pd.DataFrame:
+def format_bucket_table(pnl_bucket_csv: Path) -> str:
     """
-    Parse flex_positions.xml to extract fields needed for exposure calc:
-    symbol, position, markPrice, fxRateToBase, positionValue.
+    Returns a formatted plain-text table of PnL by bucket, with symbol lists.
     """
-    r = ET.parse(pos_xml).getroot()
-    op = r.find(".//OpenPositions")
-    if op is None:
-        return pd.DataFrame(columns=["symbol", "position", "markPrice", "fxRateToBase"])
-    rows = []
-    for node in op:
-        a = node.attrib
-        sym = canonical_symbol(a.get("symbol", ""))
-        if not sym:
-            continue
-        rows.append({
-            "symbol": sym,
-            "position": float(a.get("position", "0") or 0),
-            "markPrice": float(a.get("markPrice", "0") or 0),
-            "fxRateToBase": float(a.get("fxRateToBase", "1") or 1),
-        })
-    return pd.DataFrame(rows)
+    if not pnl_bucket_csv.exists():
+        return "(pnl_by_bucket.csv not found)"
 
+    df = pd.read_csv(pnl_bucket_csv)
+    if df.empty or "bucket" not in df.columns or "total_pnl" not in df.columns:
+        return "(bucket data unavailable)"
 
-def load_etf_beta_map(screened_csv: Path) -> tuple[dict, dict]:
-    """
-    Load ETF -> Underlying mapping and ETF -> Beta from etf_screened_today.csv.
-    Returns (etf_to_under, etf_to_beta) dicts keyed by canonical symbol.
+    df["total_pnl"] = pd.to_numeric(df["total_pnl"], errors="coerce").fillna(0.0)
+    df = df.sort_values("total_pnl", ascending=False)
 
-    Beta represents the ETF's sensitivity to its underlying (e.g. 2.0 for a
-    2× levered ETF, -1.0 for an inverse, 1.0 for a plain wrapper).
-    """
-    u = pd.read_csv(screened_csv)
-    cols_lc = {c.lower(): c for c in u.columns}
-
-    # Find columns flexibly
-    etf_col = None
-    for cand in ["etf", "symbol", "ticker", "etf_symbol"]:
-        if cand in cols_lc:
-            etf_col = cols_lc[cand]
-            break
-    under_col = None
-    for cand in ["underlying", "underlyingsymbol", "underlying_symbol", "root"]:
-        if cand in cols_lc:
-            under_col = cols_lc[cand]
-            break
-    beta_col = None
-    for cand in ["beta", "leverage", "lev"]:
-        if cand in cols_lc:
-            beta_col = cols_lc[cand]
-            break
-
-    if etf_col is None or under_col is None:
-        return {}, {}
-
-    u = u[[etf_col, under_col] + ([beta_col] if beta_col else [])].dropna(subset=[etf_col, under_col])
-    u[etf_col] = u[etf_col].astype(str).str.upper().map(canonical_symbol)
-    u[under_col] = u[under_col].astype(str).str.upper().map(canonical_symbol)
-
-    etf_to_under = dict(zip(u[etf_col], u[under_col]))
-
-    if beta_col:
-        u[beta_col] = pd.to_numeric(u[beta_col], errors="coerce").fillna(1.0)
-        etf_to_beta = dict(zip(u[etf_col], u[beta_col]))
-    else:
-        etf_to_beta = {k: 1.0 for k in etf_to_under}
-
-    return etf_to_under, etf_to_beta
-
-
-def compute_net_exposure(
-    pos_xml: Path,
-    screened_csv: Path,
-    pnl_underlyings: set[str] | None = None,
-) -> pd.DataFrame:
-    """
-    Compute beta-normalized net exposure by underlying.
-
-    For each position:
-      mv_base = position × beta × markPrice × fxRateToBase
-
-    Beta is the ETF's sensitivity to its underlying (e.g. 2.0 for a 2×
-    levered ETF).  Spot / 1× holdings have beta = 1.0.
-
-    Then group by underlying to get net_notional_usd and gross_notional_usd.
-
-    If pnl_underlyings is provided, only include underlyings in that set
-    (to keep the same universe as the PnL report).
-
-    Returns DataFrame with columns:
-      underlying, net_notional_usd, gross_notional_usd, n_legs
-    """
-    pos = parse_positions_for_exposure(pos_xml)
-    if pos.empty:
-        return pd.DataFrame(columns=["underlying", "net_notional_usd", "gross_notional_usd", "n_legs"])
-
-    etf_to_under, etf_to_beta = load_etf_beta_map(screened_csv)
-
-    # Map each position to its underlying and beta
-    pos["is_etf"] = pos["symbol"].isin(etf_to_under)
-    pos["underlying"] = np.where(
-        pos["is_etf"],
-        pos["symbol"].map(etf_to_under),
-        pos["symbol"],
-    )
-    pos["beta"] = np.where(
-        pos["is_etf"],
-        pos["symbol"].map(etf_to_beta).astype(float),
-        1.0,
-    )
-    pos["beta"] = pd.to_numeric(pos["beta"], errors="coerce").fillna(1.0)
-
-    # Beta-adjusted signed market value in base currency
-    pos["mv_base"] = pos["position"] * pos["beta"] * pos["markPrice"] * pos["fxRateToBase"]
-    pos["gross_mv_base"] = pos["mv_base"].abs()
-
-    # Filter to PnL universe if provided
-    if pnl_underlyings is not None:
-        pos = pos[pos["underlying"].isin(pnl_underlyings)].copy()
-
-    if pos.empty:
-        return pd.DataFrame(columns=["underlying", "net_notional_usd", "gross_notional_usd", "n_legs"])
-
-    exposure = (
-        pos.groupby("underlying", as_index=False)
-        .agg(
-            net_notional_usd=("mv_base", "sum"),
-            gross_notional_usd=("gross_mv_base", "sum"),
-            n_legs=("symbol", "nunique"),
-        )
-        .sort_values("net_notional_usd", ascending=False)
-    )
-
-    return exposure
-
-
-def format_exposure_table(exposure_df: pd.DataFrame) -> tuple[str, float, float]:
-    """
-    Format net exposure by underlying as a plain-text table.
-    Returns (table_str, total_net, total_gross).
-    """
-    if exposure_df.empty:
-        return "(no exposure data)", 0.0, 0.0
-
-    tbl = exposure_df[["underlying", "net_notional_usd", "gross_notional_usd"]].copy()
-    total_net = float(tbl["net_notional_usd"].sum())
-    total_gross = float(tbl["gross_notional_usd"].sum())
-
-    total_row = pd.DataFrame([{
-        "underlying": "TOTAL",
-        "net_notional_usd": total_net,
-        "gross_notional_usd": total_gross,
-    }])
-    tbl2 = pd.concat([tbl, total_row], ignore_index=True)
-
-    tbl2["net_notional_usd"] = tbl2["net_notional_usd"].map(lambda x: f"{x:,.2f}")
-    tbl2["gross_notional_usd"] = tbl2["gross_notional_usd"].map(lambda x: f"{x:,.2f}")
-
-    u_w = max(10, int(tbl2["underlying"].astype(str).map(len).max()))
-    net_w = max(14, int(tbl2["net_notional_usd"].astype(str).map(len).max()))
-    gross_w = max(16, int(tbl2["gross_notional_usd"].astype(str).map(len).max()))
+    # Friendly label mapping
+    _LABELS = {
+        "bucket_1_high_leverage": "Bucket 1 — High Leverage (β ≥ cutoff)",
+        "bucket_2_low_leverage":  "Bucket 2 — Low Leverage / Spot (0 ≤ β < cutoff)",
+        "bucket_3_inverse":       "Bucket 3 — Inverse (β < 0)",
+    }
 
     lines: list[str] = []
-    header = (
-        f"{'UNDERLYING'.ljust(u_w)}  "
-        f"{'NET_NOTIONAL'.rjust(net_w)}  "
-        f"{'GROSS_NOTIONAL'.rjust(gross_w)}"
-    )
-    lines.append(header)
-    lines.append("-" * (u_w + 2 + net_w + 2 + gross_w))
+    for _, row in df.iterrows():
+        bucket_key = str(row["bucket"])
+        label = _LABELS.get(bucket_key, bucket_key)
+        pnl = float(row["total_pnl"])
+        lines.append(f"  {label}")
+        lines.append(f"    PnL: {pnl:>12,.2f}")
+        lines.append("")
 
-    for _, r in tbl2.iterrows():
-        u = str(r["underlying"]).ljust(u_w)
-        n = str(r["net_notional_usd"]).rjust(net_w)
-        g = str(r["gross_notional_usd"]).rjust(gross_w)
-        lines.append(f"{u}  {n}  {g}")
+    return "\n".join(lines).rstrip()
 
-    return "\n".join(lines), total_net, total_gross
+
+def ensure_ledger_dir() -> None:
+    LEDGER_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def update_pnl_history(run_date: str, total_pnl: float) -> pd.DataFrame:
@@ -440,11 +312,12 @@ def main() -> int:
     run_cmd(["python", str(IBKR_ACCT_SCRIPT), run_date], env=env)
 
     # 3) Load outputs
-    pnl_under_csv, totals_json_path, totals = load_outputs(run_date)
+    pnl_under_csv, pnl_symbol_csv, pnl_bucket_csv, totals_json_path, totals = load_outputs(run_date)
     total_pnl = float(totals.get("total_pnl", 0.0))
 
-    # 4) Create underlying breakdown table
-    underlying_table, underlying_total = format_underlying_table(pnl_under_csv)
+    # 4) Create underlying breakdown table + bucket table
+    underlying_table, underlying_total = format_underlying_table(pnl_under_csv, pnl_symbol_csv)
+    bucket_table = format_bucket_table(pnl_bucket_csv)
 
     # 4b) Compute beta-normalized net exposure by underlying
     flex_dir = PROJECT_ROOT / "data" / "runs" / run_date / "ibkr_flex"
@@ -467,8 +340,8 @@ def main() -> int:
 
     if pos_xml.exists() and screened_csv.exists():
         try:
-            exposure_df = compute_net_exposure(pos_xml, screened_csv, pnl_underlyings)
-            exposure_table_str, total_net, total_gross = format_exposure_table(exposure_df)
+            exposure_df, pos_detail_df = compute_net_exposure(pos_xml, screened_csv, pnl_underlyings)
+            exposure_table_str, total_net, total_gross = format_exposure_table(exposure_df, pos_detail_df)
 
             # Save exposure CSV alongside the other accounting outputs
             outdir = PROJECT_ROOT / "data" / "runs" / run_date / "accounting"
@@ -499,6 +372,8 @@ def main() -> int:
     cum_total = float(hist["total_pnl"].iloc[-1]) if not hist.empty else 0.0
     n_days = int(hist.shape[0])
 
+    beta_cutoff = totals.get("beta_cutoff", 1.5)
+
     body = (
         f"As of: {asof}\n"
         f"Run date: {run_date}\n\n"
@@ -506,6 +381,10 @@ def main() -> int:
         "TOTAL PnL by underlying:\n"
         "----------------------------------------\n"
         f"{underlying_table}\n"
+        "----------------------------------------\n\n"
+        f"PnL BY BUCKET (beta_cutoff = {beta_cutoff}):\n"
+        "----------------------------------------\n"
+        f"{bucket_table}\n"
         "----------------------------------------\n\n"
         f"NET EXPOSURE by underlying (beta-normalized):\n"
         f"  Net notional:   {total_net:,.2f}\n"
@@ -516,13 +395,19 @@ def main() -> int:
         f"Since {START_DATE}: {n_days} day(s) logged | Cumulative PnL: {cum_total:,.2f}\n\n"
         "Attachments:\n"
         "- pnl_by_underlying.csv\n"
+        "- pnl_by_symbol.csv\n"
+        "- pnl_by_bucket.csv\n"
         "- totals.json\n"
         f"- {plot_path.name}\n"
         "- net_exposure_by_underlying.csv\n"
     )
 
-    # 7) Send (attach CSV + totals + plot + exposure)
+    # 7) Send (attach CSV + symbol + bucket + totals + plot + exposure)
     attachments = [pnl_under_csv, totals_json_path, plot_path]
+    if pnl_symbol_csv.exists():
+        attachments.insert(1, pnl_symbol_csv)   # underlying → symbol → bucket → totals
+    if pnl_bucket_csv.exists():
+        attachments.insert(2, pnl_bucket_csv)
     if exposure_csv_path is not None and exposure_csv_path.exists():
         attachments.append(exposure_csv_path)
 

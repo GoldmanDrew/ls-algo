@@ -2,7 +2,8 @@
 """
 ibkr_accounting.py
 
-Rebuild an accounting-grade PnL report from IBKR Flex XML exports.
+Rebuild an accounting-grade PnL report from IBKR Flex XML exports,
+plus beta-normalized net exposure by underlying.
 
 UPDATED:
 - Borrow fees from flex_borrow_fee_details.xml are now CUMULATIVE (all dates up
@@ -18,6 +19,8 @@ UPDATED:
   If neither is present, trading PnL is set to 0 and the script still runs.
 - Universe + ETF->Underlying mapping comes from: data/etf_screened_today.csv
   (NOT config/etf_cagr.csv)
+- Net exposure by underlying (beta-normalized) is now computed here and
+  output alongside PnL.  run_eod_pnl_email.py imports these functions.
 
 PnL vectors per symbol:
   realized_pnl           FIFO performance summary (YTD cumulative)
@@ -34,6 +37,7 @@ Outputs (written to: data/runs/<RUN_DATE>/accounting/):
 - pnl_by_symbol.csv
 - pnl_by_underlying.csv
 - pnl_by_pair.csv
+- net_exposure_by_underlying.csv
 - totals.json
 
 Run:
@@ -46,17 +50,16 @@ import json
 import re
 import sys
 import xml.etree.ElementTree as ET
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import yaml
 
 
-# -----------------------------
-# Helpers / normalization
-# -----------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers / normalization  (safe to import — no side-effects)
+# ──────────────────────────────────────────────────────────────────────────────
 def canonical_symbol(sym: str) -> str:
     if sym is None:
         return ""
@@ -81,9 +84,6 @@ def yyyymmdd_from_run_date(run_date: str) -> str:
     return run_date.replace("-", "")
 
 
-# -----------------------------
-# Resolve project root
-# -----------------------------
 def find_project_root(start: Path) -> Path:
     cur = start
     for _ in range(6):
@@ -95,32 +95,7 @@ def find_project_root(start: Path) -> Path:
 
 PROJECT_ROOT = find_project_root(Path(__file__).resolve())
 
-RUN_DATE = sys.argv[1] if len(sys.argv) > 1 else date.today().isoformat()
-RUN_DIR = PROJECT_ROOT / "data" / "runs" / RUN_DATE / "ibkr_flex"
-
-FLEX_CASH_PATH = RUN_DIR / "flex_cash.xml"
-FLEX_POSITIONS_PATH = RUN_DIR / "flex_positions.xml"
-FLEX_TRADES_PATH = RUN_DIR / "flex_trades.xml"
-FLEX_BORROW_DETAILS_PATH = RUN_DIR / "flex_borrow_fee_details.xml"  # optional but preferred
-
-missing = [p for p in [FLEX_CASH_PATH, FLEX_POSITIONS_PATH, FLEX_TRADES_PATH] if not p.exists()]
-if missing:
-    raise FileNotFoundError("Missing required IBKR Flex files:\n" + "\n".join(str(p) for p in missing))
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-CONFIG_YML_PATH = SCRIPT_DIR / "config" / "strategy_config.yml"
-if not CONFIG_YML_PATH.exists():
-    raise FileNotFoundError(f"Missing strategy_config.yml at: {CONFIG_YML_PATH}")
-
-# NEW: universe lives in /data (not config)
-ETF_SCREENED_PATH = PROJECT_ROOT / "data" / "etf_screened_today.csv"
-if not ETF_SCREENED_PATH.exists():
-    raise FileNotFoundError(f"Missing etf_screened_today.csv at: {ETF_SCREENED_PATH}")
-
-
-# -----------------------------
 # Hard exclusion
-# -----------------------------
 EXCLUDE_SYMBOLS = {canonical_symbol("BRK.B"), canonical_symbol("BRKB")}
 
 # Supplemental ETF→Underlying mappings for securities that were traded as part
@@ -128,11 +103,14 @@ EXCLUDE_SYMBOLS = {canonical_symbol("BRK.B"), canonical_symbol("BRKB")}
 # from rotations).  These get merged into the CSV-based map so their realized
 # PnL rolls up under the correct underlying.
 SUPPLEMENTAL_ETF_MAP: dict[str, str] = {
-    canonical_symbol("XRP"):  canonical_symbol("XRPZ"),   # Teucrium XRP – closed 2/13, rotated into XRPZ
-    canonical_symbol("GXRP"): canonical_symbol("XRPZ"),   # Grayscale XRP Trust – closed 2/13, rotated into XRPZ
+    canonical_symbol("XRP"):  canonical_symbol("XRPZ"),
+    canonical_symbol("GXRP"): canonical_symbol("XRPZ"),
 }
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Config helpers
+# ──────────────────────────────────────────────────────────────────────────────
 def load_blacklist(config_yml: Path) -> set[str]:
     cfg = yaml.safe_load(config_yml.read_text(encoding="utf-8")) or {}
     bl = set()
@@ -143,7 +121,7 @@ def load_blacklist(config_yml: Path) -> set[str]:
 
     bl_txt = ((cfg.get("paths", {}) or {}).get("blacklist_txt", "") or "").strip()
     if bl_txt:
-        p = (SCRIPT_DIR / bl_txt).resolve()
+        p = (Path(__file__).resolve().parent / bl_txt).resolve()
         if p.exists():
             for line in p.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
@@ -160,6 +138,9 @@ def _find_col(cols_lc: dict[str, str], candidates: list[str]) -> str | None:
     return None
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Universe / ETF→Underlying mapping
+# ──────────────────────────────────────────────────────────────────────────────
 def load_etf_to_under_map(screened_csv: Path) -> dict[str, str]:
     """
     Read data/etf_screened_today.csv and return ETF->Underlying mapping.
@@ -211,9 +192,42 @@ def load_universe_from_screened(screened_csv: Path) -> tuple[set[str], set[str]]
     return allowed_etfs, allowed_underlyings
 
 
-# -----------------------------
-# Parsers
-# -----------------------------
+def load_etf_beta_map(screened_csv: Path) -> tuple[dict[str, str], dict[str, float]]:
+    """
+    Load ETF -> Underlying mapping and ETF -> Beta from etf_screened_today.csv.
+    Returns (etf_to_under, etf_to_beta) dicts keyed by canonical symbol.
+
+    Beta represents the ETF's sensitivity to its underlying (e.g. 2.0 for a
+    2× levered ETF, -1.0 for an inverse, 1.0 for a plain wrapper).
+    """
+    u = pd.read_csv(screened_csv)
+    cols_lc = {c.lower(): c for c in u.columns}
+
+    etf_col = _find_col(cols_lc, ["etf", "symbol", "ticker", "etf_symbol"])
+    under_col = _find_col(cols_lc, ["underlying", "underlyingsymbol", "underlying_symbol", "root"])
+    beta_col = _find_col(cols_lc, ["beta", "leverage", "lev"])
+
+    if etf_col is None or under_col is None:
+        return {}, {}
+
+    u = u[[etf_col, under_col] + ([beta_col] if beta_col else [])].dropna(subset=[etf_col, under_col])
+    u[etf_col] = u[etf_col].astype(str).str.upper().map(canonical_symbol)
+    u[under_col] = u[under_col].astype(str).str.upper().map(canonical_symbol)
+
+    etf_to_under = dict(zip(u[etf_col], u[under_col]))
+
+    if beta_col:
+        u[beta_col] = pd.to_numeric(u[beta_col], errors="coerce").fillna(1.0)
+        etf_to_beta = dict(zip(u[etf_col], u[beta_col]))
+    else:
+        etf_to_beta = {k: 1.0 for k in etf_to_under}
+
+    return etf_to_under, etf_to_beta
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# XML Parsers
+# ──────────────────────────────────────────────────────────────────────────────
 def parse_fifo_perf(trades_xml: Path) -> pd.DataFrame:
     """
     Robust: tries multiple nodes.
@@ -262,7 +276,6 @@ def parse_fifo_perf(trades_xml: Path) -> pd.DataFrame:
         df = pd.DataFrame(_rows_from_node(n2, in_base=False))
         return df[df["symbol"].astype(bool)] if not df.empty else df
 
-    # No FIFO summary present — return empty but with correct schema (do not crash)
     return pd.DataFrame(columns=["symbol", "underlyingSymbol", "description", "realized_pnl", "unrealized_pnl"])
 
 
@@ -279,6 +292,7 @@ def parse_open_positions(pos_xml: Path) -> pd.DataFrame:
                 "symbol": canonical_symbol(a.get("symbol", "")),
                 "underlyingSymbol": canonical_symbol(a.get("underlyingSymbol", "") or ""),
                 "position": float(a.get("position", "0") or 0),
+                "markPrice": float(a.get("markPrice", "0") or 0),
                 "positionValue": float(a.get("positionValue", "0") or 0),
                 "fxRateToBase": float(a.get("fxRateToBase", "1") or 1),
             }
@@ -293,6 +307,82 @@ def parse_open_positions(pos_xml: Path) -> pd.DataFrame:
         df["is_short"] = df["position"] < 0
 
     return df
+
+
+def fetch_yfinance_closes(
+    symbols: list[str],
+    trade_date: str,
+    *,
+    batch_size: int = 50,
+) -> dict[str, float]:
+    """
+    Fetch closing prices for *trade_date* from Yahoo Finance v8 API.
+
+    Returns a dict  { canonical_symbol: close_price }.
+    Only symbols that actually have a close on *trade_date* are included.
+
+    Uses the Yahoo Finance chart API directly (not the yfinance library)
+    because yfinance v0.2.40's auto_adjust=True returns incorrect prices.
+    """
+    import requests as _requests
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    dt = datetime.strptime(trade_date, "%Y-%m-%d")
+    # Yahoo v8 chart API: use period1/period2 as Unix timestamps
+    period1 = int(dt.timestamp())
+    period2 = int((dt + timedelta(days=1)).timestamp())
+
+    def _fetch_one(sym: str) -> tuple[str, float | None]:
+        yahoo_sym = sym.replace(".", "-")
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{yahoo_sym}"
+        params = {
+            "period1": period1,
+            "period2": period2,
+            "interval": "1d",
+        }
+        headers = {"User-Agent": "Mozilla/5.0"}
+        try:
+            resp = _requests.get(url, params=params, headers=headers, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            result = data["chart"]["result"][0]
+            close = result["indicators"]["quote"][0]["close"][-1]
+            if close and close > 0:
+                return sym, float(close)
+        except Exception:
+            pass
+        return sym, None
+
+    closes: dict[str, float] = {}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(_fetch_one, sym) for sym in symbols]
+        for fut in as_completed(futures):
+            sym, price = fut.result()
+            if price is not None:
+                closes[sym] = price
+
+    return closes
+
+
+def override_mark_prices(
+    pos: pd.DataFrame,
+    yf_closes: dict[str, float],
+) -> pd.DataFrame:
+    """
+    Replace markPrice in the positions DataFrame with yfinance closes
+    where available.  Recalculates positionValue and positionValue_base.
+
+    Returns a new DataFrame (does not modify in place).
+    """
+    if not yf_closes:
+        return pos
+
+    pos = pos.copy()
+    mask = pos["symbol"].isin(yf_closes)
+    pos.loc[mask, "markPrice"] = pos.loc[mask, "symbol"].map(yf_closes)
+    pos["positionValue"] = pos["position"] * pos["markPrice"]
+    pos["positionValue_base"] = pos["positionValue"] * pos["fxRateToBase"]
+    return pos
 
 
 def parse_cash_transactions(cash_xml: Path) -> pd.DataFrame:
@@ -323,13 +413,6 @@ def parse_cash_transactions(cash_xml: Path) -> pd.DataFrame:
 def parse_borrow_fee_details(borrow_xml: Path, run_date: str) -> pd.DataFrame:
     """
     Parse Borrow Fee Details CUMULATIVE up to (and including) run_date.
-
-    IMPORTANT: FIFO PnL and cash transactions are YTD cumulative across the
-    flex query period, so borrow fees must also be cumulative to stay consistent.
-    Filtering to a single day would massively understate borrow costs.
-
-    Returns guaranteed columns even if empty.
-    Rows are aggregated by symbol (summed across all dates).
     """
     cols = ["symbol", "underlyingSymbol", "borrowFeeRate", "borrowFee_base"]
     if not borrow_xml.exists():
@@ -341,13 +424,12 @@ def parse_borrow_fee_details(borrow_xml: Path, run_date: str) -> pd.DataFrame:
 
     nodes = r.findall(".//HardToBorrowDetail")
     if not nodes:
-        nodes = r.findall(".//*[@valueDate]")  # fallback: any node with a valueDate attr
+        nodes = r.findall(".//*[@valueDate]")
 
     for node in nodes:
         a = node.attrib
         vd = (a.get("valueDate", "") or "").strip()
 
-        # Include all dates up to and including run_date (cumulative YTD)
         if vd > target:
             continue
 
@@ -378,7 +460,6 @@ def parse_borrow_fee_details(borrow_xml: Path, run_date: str) -> pd.DataFrame:
     if out.empty:
         return out
 
-    # Aggregate by symbol across all dates (cumulative)
     out = (
         out.groupby("symbol", as_index=False)
         .agg(
@@ -390,9 +471,9 @@ def parse_borrow_fee_details(borrow_xml: Path, run_date: str) -> pd.DataFrame:
     return out
 
 
-# -----------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 # Cash categorization + allocation fallback
-# -----------------------------
+# ──────────────────────────────────────────────────────────────────────────────
 def categorize_cash_row(row: pd.Series) -> str:
     t = row["type"]
     desc = (row["description"] or "").upper()
@@ -444,17 +525,220 @@ def allocate_to_shorts(unallocated_amount: float, pos: pd.DataFrame) -> pd.Serie
     return (weights / wsum) * float(unallocated_amount)
 
 
-# -----------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Net Exposure calculation (beta-normalized)
+# ──────────────────────────────────────────────────────────────────────────────
+def compute_net_exposure(
+    pos_xml: Path,
+    screened_csv: Path,
+    pnl_underlyings: set[str] | None = None,
+    *,
+    positions_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """
+    Compute beta-normalized net exposure by underlying.
+
+    For each position:
+      mv_base = position × beta × markPrice × fxRateToBase
+
+    Beta is the ETF's sensitivity to its underlying (e.g. 2.0 for a 2×
+    levered ETF).  Spot / 1× holdings have beta = 1.0.
+
+    Then group by underlying to get net_notional_usd and gross_notional_usd.
+
+    If pnl_underlyings is provided, only include underlyings in that set
+    (to keep the same universe as the PnL report).
+
+    Parameters
+    ----------
+    positions_df : DataFrame, optional
+        Pre-parsed positions (e.g. with yfinance-overridden markPrices).
+        If provided, pos_xml is ignored for position data.
+
+    Returns
+    -------
+    exposure_df : DataFrame
+        Grouped by underlying with columns:
+        underlying, symbols, net_notional_usd, gross_notional_usd, n_legs
+    pos_detail_df : DataFrame
+        Per-symbol rows with columns:
+        underlying, symbol, net_notional_usd, gross_notional_usd
+    """
+    empty = pd.DataFrame(columns=["underlying", "symbols", "net_notional_usd", "gross_notional_usd", "n_legs"])
+    empty_detail = pd.DataFrame(columns=["underlying", "symbol", "net_notional_usd", "gross_notional_usd"])
+
+    if positions_df is not None:
+        pos = positions_df.copy()
+    else:
+        pos = parse_open_positions(pos_xml)
+    if pos.empty:
+        return empty, empty_detail
+
+    etf_to_under, etf_to_beta = load_etf_beta_map(screened_csv)
+
+    # Map each position to its underlying and beta
+    pos["is_etf"] = pos["symbol"].isin(etf_to_under)
+    pos["underlying"] = np.where(
+        pos["is_etf"],
+        pos["symbol"].map(etf_to_under),
+        pos["symbol"],
+    )
+    pos["beta"] = np.where(
+        pos["is_etf"],
+        pos["symbol"].map(etf_to_beta).astype(float),
+        1.0,
+    )
+    pos["beta"] = pd.to_numeric(pos["beta"], errors="coerce").fillna(1.0)
+
+    # Beta-adjusted signed market value in base currency
+    pos["mv_base"] = pos["position"] * pos["beta"] * pos["markPrice"] * pos["fxRateToBase"]
+    pos["gross_mv_base"] = pos["mv_base"].abs()
+
+    # Filter to PnL universe if provided
+    if pnl_underlyings is not None:
+        pos = pos[pos["underlying"].isin(pnl_underlyings)].copy()
+
+    if pos.empty:
+        return empty, empty_detail
+
+    exposure = (
+        pos.groupby("underlying", as_index=False)
+        .agg(
+            symbols=("symbol", lambda s: ", ".join(sorted(s.astype(str)))),
+            net_notional_usd=("mv_base", "sum"),
+            gross_notional_usd=("gross_mv_base", "sum"),
+            n_legs=("symbol", "nunique"),
+        )
+        .sort_values("net_notional_usd", ascending=False)
+    )
+
+    pos_detail = (
+        pos.groupby(["underlying", "symbol"], as_index=False)
+        .agg(
+            net_notional_usd=("mv_base", "sum"),
+            gross_notional_usd=("gross_mv_base", "sum"),
+        )
+        .sort_values(["underlying", "net_notional_usd"], ascending=[True, False])
+    )
+
+    return exposure, pos_detail
+
+
+def format_exposure_table(
+    exposure_df: pd.DataFrame,
+    pos_detail_df: pd.DataFrame | None = None,
+) -> tuple[str, float, float]:
+    """
+    Format net exposure by underlying as a plain-text table.
+    If pos_detail_df is provided, per-symbol net/gross rows are shown
+    indented under each underlying.
+    Returns (table_str, total_net, total_gross).
+    """
+    if exposure_df.empty:
+        return "(no exposure data)", 0.0, 0.0
+
+    tbl = exposure_df[["underlying", "net_notional_usd", "gross_notional_usd"]].copy()
+    total_net = float(tbl["net_notional_usd"].sum())
+    total_gross = float(tbl["gross_notional_usd"].sum())
+
+    # Build all label candidates for column-width calculation
+    all_labels = list(tbl["underlying"].astype(str)) + ["TOTAL"]
+    if pos_detail_df is not None and not pos_detail_df.empty and "symbol" in pos_detail_df.columns:
+        all_labels += ["  " + s for s in pos_detail_df["symbol"].astype(str)]
+    u_w = max(10, max(len(s) for s in all_labels))
+
+    all_net = list(tbl["net_notional_usd"]) + [total_net]
+    all_gross = list(tbl["gross_notional_usd"]) + [total_gross]
+    if pos_detail_df is not None and not pos_detail_df.empty:
+        if "net_notional_usd" in pos_detail_df.columns:
+            all_net += list(pos_detail_df["net_notional_usd"])
+        if "gross_notional_usd" in pos_detail_df.columns:
+            all_gross += list(pos_detail_df["gross_notional_usd"])
+    net_w = max(14, max(len(f"{v:,.2f}") for v in all_net))
+    gross_w = max(16, max(len(f"{v:,.2f}") for v in all_gross))
+
+    lines: list[str] = []
+    header = (
+        f"{'UNDERLYING / SYMBOL'.ljust(u_w)}  "
+        f"{'NET_NOTIONAL'.rjust(net_w)}  "
+        f"{'GROSS_NOTIONAL'.rjust(gross_w)}"
+    )
+    lines.append(header)
+    lines.append("-" * (u_w + 2 + net_w + 2 + gross_w))
+
+    for _, r in tbl.iterrows():
+        underlying = str(r["underlying"])
+        n = f"{float(r['net_notional_usd']):,.2f}"
+        g = f"{float(r['gross_notional_usd']):,.2f}"
+        lines.append(f"{underlying.ljust(u_w)}  {n.rjust(net_w)}  {g.rjust(gross_w)}")
+
+        # Indented per-symbol rows
+        if pos_detail_df is not None and not pos_detail_df.empty and "underlying" in pos_detail_df.columns:
+            syms = pos_detail_df[pos_detail_df["underlying"] == underlying].sort_values(
+                "net_notional_usd", ascending=False
+            )
+            for _, sr in syms.iterrows():
+                sym_label = ("  " + str(sr["symbol"])).ljust(u_w)
+                sn = f"{float(sr['net_notional_usd']):,.2f}".rjust(net_w)
+                sg = f"{float(sr['gross_notional_usd']):,.2f}".rjust(gross_w)
+                lines.append(f"{sym_label}  {sn}  {sg}")
+
+    lines.append("-" * (u_w + 2 + net_w + 2 + gross_w))
+    lines.append(f"{'TOTAL'.ljust(u_w)}  {f'{total_net:,.2f}'.rjust(net_w)}  {f'{total_gross:,.2f}'.rjust(gross_w)}")
+
+    return "\n".join(lines), total_net, total_gross
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Main
-# -----------------------------
-def main() -> int:
-    outdir: Path = RUN_DIR.parent / "accounting"
+# ──────────────────────────────────────────────────────────────────────────────
+def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> int:
+    """
+    Run the full accounting pipeline.
+
+    Parameters
+    ----------
+    run_date : str, optional
+        YYYY-MM-DD.  Defaults to sys.argv[1] or today.
+    use_yfinance : bool | None
+        If True, override Flex markPrices with yfinance closes for more
+        timely mark-to-market.  If None (default), read from
+        strategy_config.yml → accounting.use_yfinance (default False).
+    """
+    if run_date is None:
+        run_date = sys.argv[1] if len(sys.argv) > 1 else date.today().isoformat()
+
+    run_dir = PROJECT_ROOT / "data" / "runs" / run_date / "ibkr_flex"
+
+    flex_cash_path = run_dir / "flex_cash.xml"
+    flex_positions_path = run_dir / "flex_positions.xml"
+    flex_trades_path = run_dir / "flex_trades.xml"
+    flex_borrow_details_path = run_dir / "flex_borrow_fee_details.xml"
+
+    missing = [p for p in [flex_cash_path, flex_positions_path, flex_trades_path] if not p.exists()]
+    if missing:
+        raise FileNotFoundError("Missing required IBKR Flex files:\n" + "\n".join(str(p) for p in missing))
+
+    config_yml_path = Path(__file__).resolve().parent / "config" / "strategy_config.yml"
+    if not config_yml_path.exists():
+        raise FileNotFoundError(f"Missing strategy_config.yml at: {config_yml_path}")
+
+    # Resolve use_yfinance from config if not explicitly passed
+    cfg = yaml.safe_load(config_yml_path.read_text(encoding="utf-8")) or {}
+    if use_yfinance is None:
+        use_yfinance = bool((cfg.get("accounting", {}) or {}).get("use_yfinance", False))
+
+    etf_screened_path = PROJECT_ROOT / "data" / "etf_screened_today.csv"
+    if not etf_screened_path.exists():
+        raise FileNotFoundError(f"Missing etf_screened_today.csv at: {etf_screened_path}")
+
+    outdir: Path = run_dir.parent / "accounting"
     outdir.mkdir(parents=True, exist_ok=True)
 
-    fifo = parse_fifo_perf(FLEX_TRADES_PATH)
-    pos = parse_open_positions(FLEX_POSITIONS_PATH)
-    cash = parse_cash_transactions(FLEX_CASH_PATH)
-    borrow_details = parse_borrow_fee_details(FLEX_BORROW_DETAILS_PATH, RUN_DATE)
+    fifo = parse_fifo_perf(flex_trades_path)
+    pos = parse_open_positions(flex_positions_path)
+    cash = parse_cash_transactions(flex_cash_path)
+    borrow_details = parse_borrow_fee_details(flex_borrow_details_path, run_date)
 
     # Exclusions
     if not fifo.empty:
@@ -546,8 +830,7 @@ def main() -> int:
         df[c] = df[c].fillna(0.0)
 
     # Underlying mapping (source of truth: data/etf_screened_today.csv)
-    etf_to_under = load_etf_to_under_map(ETF_SCREENED_PATH)
-    # Merge supplemental mappings (closed positions not in CSV anymore)
+    etf_to_under = load_etf_to_under_map(etf_screened_path)
     for sym, und in SUPPLEMENTAL_ETF_MAP.items():
         etf_to_under.setdefault(sym, und)
     df["underlying"] = df["symbol"].map(etf_to_under)
@@ -564,17 +847,12 @@ def main() -> int:
     )
 
     # Blacklist
-    blacklist = load_blacklist(CONFIG_YML_PATH)
+    blacklist = load_blacklist(config_yml_path)
     df = df[~df["symbol"].isin(blacklist)].copy()
     df = df[~df["underlying"].isin(blacklist)].copy()
 
-    # Universe filter (source: data/etf_screened_today.csv)
-    # Include ANY symbol whose resolved underlying is in allowed_underlyings.
-    # This is simpler and more correct than the old dual spot/ETF check because:
-    #   - Spot holdings of allowed underlyings pass (symbol == underlying, underlying allowed)
-    #   - ETFs mapped to allowed underlyings pass (etf_to_under resolved, underlying allowed)
-    #   - Closed ETF positions with realized PnL still pass if their underlying is tracked
-    allowed_etfs, allowed_underlyings = load_universe_from_screened(ETF_SCREENED_PATH)
+    # Universe filter
+    allowed_etfs, allowed_underlyings = load_universe_from_screened(etf_screened_path)
     df = df[df["underlying"].isin(allowed_underlyings)].copy()
 
     # Rebuild pair labels post-filter
@@ -586,6 +864,34 @@ def main() -> int:
 
     # Borrow + SCR
     kept_syms = set(df["symbol"].unique())
+
+    # ── yfinance mark-price override (only for kept symbols) ──
+    yf_closes: dict[str, float] = {}
+    if use_yfinance and kept_syms:
+        # Also include the underlyings themselves (spot positions)
+        yf_syms = sorted(kept_syms)
+        yf_closes = fetch_yfinance_closes(yf_syms, run_date)
+
+        if yf_closes:
+            # 1) Adjust unrealized PnL:  delta = position × (yf − flex) × fx
+            yf_unrealized_adj: dict[str, float] = {}
+            for _, row in pos[pos["symbol"].isin(kept_syms)].iterrows():
+                sym = row["symbol"]
+                if sym in yf_closes:
+                    price_diff = yf_closes[sym] - row["markPrice"]
+                    adj = row["position"] * price_diff * row["fxRateToBase"]
+                    yf_unrealized_adj[sym] = yf_unrealized_adj.get(sym, 0.0) + adj
+
+            df["unrealized_pnl"] += df["symbol"].map(yf_unrealized_adj).fillna(0.0)
+
+            # 2) Override markPrice on positions (affects exposure calc downstream)
+            pos = override_mark_prices(pos, yf_closes)
+
+            n_overridden = sum(1 for s in yf_syms if s in yf_closes)
+            print(f"[ACCOUNTING] yfinance: overrode {n_overridden}/{len(yf_syms)} markPrices for {run_date}")
+        else:
+            print(f"[ACCOUNTING] yfinance: no closes returned for {run_date} — keeping Flex markPrices")
+
     pos_kept_shorts = pos[(pos["symbol"].isin(kept_syms)) & (pos["is_short"])].copy()
 
     # SCR from cash
@@ -640,15 +946,56 @@ def main() -> int:
     ]
 
     pnl_by_symbol = df[["symbol", "underlying", "pair", "description"] + base_cols].sort_values("total_pnl", ascending=False)
-    pnl_by_underlying = df.groupby("underlying", as_index=False)[base_cols].sum().sort_values("total_pnl", ascending=False)
-    pnl_by_pair = df.groupby("pair", as_index=False)[base_cols].sum().sort_values("total_pnl", ascending=False)
+
+    _under_agg = df.groupby("underlying", as_index=False)[base_cols].sum()
+    _under_syms = (
+        df.groupby("underlying")["symbol"]
+        .apply(lambda s: ", ".join(sorted(s.astype(str))))
+        .reset_index()
+        .rename(columns={"symbol": "symbols"})
+    )
+    pnl_by_underlying = (
+        _under_agg.merge(_under_syms, on="underlying")
+        [["underlying", "symbols"] + base_cols]
+        .sort_values("total_pnl", ascending=False)
+    )
+    # ── Bucket PnL breakdown ──
+    # Bucket 1: β ≥ beta_cutoff          (high-leverage)
+    # Bucket 2: 0 ≤ β < beta_cutoff     (low-leverage / spot)
+    # Bucket 3: β < 0                   (inverse / short-beta)
+    beta_cutoff = float((cfg.get("strategy", {}) or {}).get("beta_cutoff", 1.5))
+    _, etf_to_beta_map = load_etf_beta_map(etf_screened_path)
+    df["_beta"] = df["symbol"].map(etf_to_beta_map).fillna(1.0)
+
+    def _assign_bucket(b: float) -> str:
+        if b < 0:
+            return "bucket_3_inverse"
+        if b >= beta_cutoff:
+            return "bucket_1_high_leverage"
+        return "bucket_2_low_leverage"
+
+    df["bucket"] = df["_beta"].apply(_assign_bucket)
+    pnl_by_bucket = (
+        df.groupby("bucket", as_index=False)[base_cols]
+        .sum()
+        .sort_values("total_pnl", ascending=False)
+    )
+    df.drop(columns=["_beta", "bucket"], inplace=True)
 
     pnl_by_symbol.to_csv(outdir / "pnl_by_symbol.csv", index=False)
     pnl_by_underlying.to_csv(outdir / "pnl_by_underlying.csv", index=False)
-    pnl_by_pair.to_csv(outdir / "pnl_by_pair.csv", index=False)
+    pnl_by_bucket.to_csv(outdir / "pnl_by_bucket.csv", index=False)
+
+    # ── Net exposure by underlying (beta-normalized) ──
+    pnl_underlyings = set(pnl_by_underlying["underlying"].dropna().astype(str))
+    exposure_df, _ = compute_net_exposure(
+        flex_positions_path, etf_screened_path, pnl_underlyings,
+        positions_df=pos,  # uses yfinance-overridden markPrices when enabled
+    )
+    exposure_df.to_csv(outdir / "net_exposure_by_underlying.csv", index=False)
 
     totals = {
-        "run_date": RUN_DATE,
+        "run_date": run_date,
         "fifo_summary_present": bool(not fifo.empty),
         "total_realized_pnl": float(df["realized_pnl"].sum()),
         "total_unrealized_pnl": float(df["unrealized_pnl"].sum()),
@@ -663,13 +1010,22 @@ def main() -> int:
         "excluded_cash_interest_base": float(cash.loc[cash["category"] == "exclude_interest", "amount_base"].sum()),
         "borrow_mode": borrow_mode,
         "borrow_total_account_source": float(borrow_total_account_source),
-        "borrow_details_file_present": bool(FLEX_BORROW_DETAILS_PATH.exists()),
+        "borrow_details_file_present": bool(flex_borrow_details_path.exists()),
         "borrow_details_rows_cumulative": int(borrow_details_kept.shape[0]) if isinstance(borrow_details_kept, pd.DataFrame) else 0,
-        "universe_source": str(ETF_SCREENED_PATH),
-        "universe_allowed_etfs": int(len(load_universe_from_screened(ETF_SCREENED_PATH)[0])),
-        "universe_allowed_underlyings": int(len(load_universe_from_screened(ETF_SCREENED_PATH)[1])),
+        "universe_source": str(etf_screened_path),
+        "universe_allowed_etfs": int(len(allowed_etfs)),
+        "universe_allowed_underlyings": int(len(allowed_underlyings)),
         "kept_symbols": int(df["symbol"].nunique()) if not df.empty else 0,
         "kept_underlyings": int(df["underlying"].nunique()) if not df.empty else 0,
+        "net_exposure_total": float(exposure_df["net_notional_usd"].sum()) if not exposure_df.empty else 0.0,
+        "gross_exposure_total": float(exposure_df["gross_notional_usd"].sum()) if not exposure_df.empty else 0.0,
+        "yfinance_override": bool(use_yfinance),
+        "yfinance_symbols_overridden": len(yf_closes),
+        "beta_cutoff": beta_cutoff,
+        "bucket_pnl": {
+            row["bucket"]: float(row["total_pnl"])
+            for _, row in pnl_by_bucket.iterrows()
+        },
     }
     with open(outdir / "totals.json", "w", encoding="utf-8") as f:
         json.dump(totals, f, indent=2)
@@ -680,8 +1036,15 @@ def main() -> int:
             "Fix your Flex query to include FIFOPerformanceSummary(InBase) if you want realized/unrealized PnL."
         )
 
+    n_exp = len(exposure_df) if not exposure_df.empty else 0
+    print(f"[ACCOUNTING] PnL: {df['symbol'].nunique()} symbols, {df['underlying'].nunique()} underlyings")
+    print(f"[ACCOUNTING] Exposure: {n_exp} underlyings, net={totals['net_exposure_total']:,.0f}, gross={totals['gross_exposure_total']:,.0f}")
+
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    _yf_flag = "--yf" in sys.argv
+    _args = [a for a in sys.argv[1:] if a != "--yf"]
+    _run_date = _args[0] if _args else None
+    raise SystemExit(main(_run_date, use_yfinance=_yf_flag if _yf_flag else None))

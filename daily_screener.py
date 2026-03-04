@@ -10,6 +10,12 @@ Replaces the multi-notebook workflow:
   3. etf_screener.py CLI (FTP borrow, screening logic)
   4. etf_analytics.py (decay + volatility enrichment)
 
+Changes from prior version:
+  - FTP retry with exponential backoff (3 attempts) + disk cache fallback
+  - Expected decay column: 0.5 × |β| × |β−1| × σ² × 252
+  - Blended decay scoring for generate_trade_plan.py sizing
+  - Graceful core package integration (optional)
+
 Run daily:
   python daily_screener.py                           # full pipeline, output → data/etf_screened_today.csv
   python daily_screener.py --skip-scrape             # skip YieldMax/Roundhill scraping (use cached)
@@ -17,7 +23,6 @@ Run daily:
   python daily_screener.py --lookback 1y             # shorter history for faster runs
   python daily_screener.py --output my_output.csv    # custom output path
 
-If ibkr_margin_requirements.csv exists in data/, it will be merged in automatically.
 """
 from __future__ import annotations
 
@@ -31,7 +36,7 @@ import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable, Set
 
@@ -44,6 +49,16 @@ import yfinance as yf
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 TRADING_DAYS = 252
+
+# ── Optional core package integration ──
+# If core/ is available, use shared norm_sym and expected_gross_decay.
+# Otherwise fall back to local implementations (this file is fully self-contained).
+try:
+    from core.symbols import norm_sym as _core_norm_sym
+    from core.portfolio import expected_gross_decay as _expected_gross_decay
+    _HAS_CORE = True
+except ImportError:
+    _HAS_CORE = False
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -62,7 +77,7 @@ leverage_pairs = [
     ("TSLL", "TSLA"), ("TSMX", "TSM"),  ("XOMX", "XOM"),
     # --- 3X Equity ---
     ("YINN", "FXI"),  ("MEXX", "EWW"),  ("KORU", "EWY"),  ("HIBL", "SPY"),
-    ("HIBS", "SPY"),  ("LABU", "XBI"),  ("LABD", "XBI"),  ("SOXL", "SOXX"),
+    ("LABU", "XBI"),  ("SOXL", "SOXX"),
     # --- 2X Thematic / Equity --
     ("CHAU", "ASHR"), ("CWEB", "KWEB"), ("ERX",  "XLE"),  ("NUGT", "GDX"),
     ("JNUG", "GDXJ"), ("GUSH", "XOP"), ("URAA", "URA"),
@@ -114,7 +129,7 @@ new_pairs = [
     ("UUUG", "UUUU"), ("HUTG", "HUT"),  ("XPEG", "XPEV"), ("ORLG", "ORLY"),
     ("LUNL", "LUNR"), ("RKTL", "RKT"),  ("EOSU", "EOSE"), ("BTFL", "BITF"),
     ("FGRU", "FIGR"), ("APHU", "APH"),  ("COPZ", "COPX"), ("LEUX", "LEU"),
-    ("COHX", "COHR"), ("CLSZ", "CLSK"), ("AXPG", "AXP"),  ("FCXG", "FCX"),
+    ("COHX", "COHR"), ("AXPG", "AXP"),  ("FCXG", "FCX"),
     ("BITX", "IBIT"), ("ETHU", "ETHA"), ("XXRP", "XRPZ"),
 ]
 
@@ -160,21 +175,22 @@ BENCHMARK_MAP = {
     "WTI": "USO",  "TSLA": "TSLA", "MSTR": "MSTR", "NVDA": "NVDA",
     "BTC": "IBIT", "ETH": "ETHA",  "CRCL": "CRCL", "CRWV": "CRWV",
     "GDX": "GDX",  "SLV": "SLV",   "XLE": "XLE",   "XOP": "XOP",
-    "TLT": "TLT",  "MSCIJP": "EWJ","APLD": "APLD",
+    "TLT": "TLT",  "MSCIJP": "EWJ","APLD": "APLD", "CLSK": "CLSK",
 }
 
 INVERSE_ETF_UNIVERSE = [
-    ("SDS",  2, "SPX"),  ("QID",  2, "NDX"),  ("DXD",  2, "DJIA"), ("TWM",  2, "RUT"),
-    ("SCO",  2, "WTI"),  ("MSTZ", 2, "MSTR"), ("NVDQ", 2, "NVDA"), ("BTCZ", 2, "BTC"),
-    ("ETHD", 2, "ETH"),  ("CRCD", 2, "CRCL"), ("CORD", 2, "CRWV"), ("TSLQ", 2, "TSLA"),
-    ("ZSL",  2, "SLV"),  ("SQQQ", 3, "NDX"),  ("SPXS", 3, "SPX"),  ("TZA",  3, "RUT"),
-    ("SOXS", 3, "SOX"),  ("FAZ",  3, "FIN"),   ("LABD", 3, "BIOTECH"),
-    ("TECS", 3, "TECH"), ("SDOW", 3, "DJIA"), ("DUST", 3, "GDX"),
-    ("TTXD", 2, "TECH"), ("TSXD", 2, "SOX"),  ("WEBS", 3, "TECH"), ("FNGD", 3, "TECH"),
-    ("REW",  2, "TECH"), ("SKF",  2, "FIN"),   ("SPXU", 3, "SPX"),
-    ("DUG",  2, "XLE"),  ("DRIP", 2, "XOP"),  ("TMV",  3, "TLT"),
-    ("TBT",  2, "TLT"),  ("TBX",  2, "TLT"),  ("NVDS", 1.5, "NVDA"),
-    ("EWV",  2, "MSCIJP"), ("APLZ", 2, "APLD"),
+    ("SDS",  -2, "SPX"),  ("QID",  -2, "NDX"),  ("DXD",  -2, "DJIA"), ("TWM",  -2, "RUT"),
+    ("SCO",  -2, "WTI"),  ("MSTZ", -2, "MSTR"), ("NVDQ", -2, "NVDA"), ("BTCZ", -2, "BTC"),
+    ("ETHD", -2, "ETH"),  ("CRCD", -2, "CRCL"), ("CORD", -2, "CRWV"), ("TSLQ", -2, "TSLA"),
+    ("ZSL",  -2, "SLV"),  ("SQQQ", -3, "NDX"),  ("SPXS", -3, "SPX"),  ("TZA",  -3, "RUT"),
+    ("SOXS", -3, "SOX"),  ("FAZ",  -3, "FIN"),   ("LABD", -3, "BIOTECH"),
+    ("TECS", -3, "TECH"), ("SDOW", -3, "DJIA"), ("DUST", -3, "GDX"),
+    ("TTXD", -2, "TECH"), ("TSXD", -2, "SOX"),  ("WEBS", -3, "TECH"), ("FNGD", -3, "TECH"),
+    ("REW",  -2, "TECH"), ("SKF",  -2, "FIN"),   ("SPXU", -3, "SPX"),
+    ("DUG",  -2, "XLE"),  ("DRIP", -2, "XOP"),  ("TMV",  -3, "TLT"),
+    ("TBT",  -2, "TLT"),  ("TBX",  -2, "TLT"),  ("NVDS", -1.5, "NVDA"),
+    ("EWV",  -2, "MSCIJP"), ("APLZ", -2, "APLD"),
+    ("HIBS", -3, "SPX"),  ("CLSZ", -2, "CLSK"),
 ]
 
 
@@ -183,6 +199,8 @@ INVERSE_ETF_UNIVERSE = [
 # ══════════════════════════════════════════════════════════════════
 
 def _norm_sym(x) -> str:
+    if _HAS_CORE:
+        return _core_norm_sym(x)
     return builtins.str(x).strip().upper().replace(".", "-")
 
 
@@ -198,8 +216,41 @@ def _dedupe_by_etf(pairs: list[tuple]) -> list[tuple]:
     return out
 
 
+_YIELDMAX_CACHE = Path("data/scrape_cache_yieldmax.csv")
+_ROUNDHILL_CACHE = Path("data/scrape_cache_roundhill.csv")
+
+
+def _save_scrape_cache(df: pd.DataFrame, path: Path) -> None:
+    """Persist a successful scrape result so future failures can fall back."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(path, index=False)
+    except Exception as e:
+        print(f"[WARN] Could not write scrape cache {path}: {e}")
+
+
+def _load_scrape_cache(path: Path, label: str) -> pd.DataFrame:
+    """Load a cached scrape result on failure.  Returns empty DF if no cache."""
+    if path.exists():
+        try:
+            df = pd.read_csv(path)
+            age_h = (datetime.now()
+                     - datetime.fromtimestamp(path.stat().st_mtime)).total_seconds() / 3600
+            print(f"[WARN] {label}: falling back to cached scrape "
+                  f"({len(df)} rows, {age_h:.0f}h old)")
+            return df
+        except Exception as e:
+            print(f"[WARN] {label}: cache read failed: {e}")
+    return pd.DataFrame(columns=["ETF", "Underlying"])
+
+
 def _scrape_yieldmax() -> pd.DataFrame:
-    """Scrape YieldMax single-stock option income ETFs → DataFrame(ETF, Underlying)."""
+    """Scrape YieldMax single-stock option income ETFs → DataFrame(ETF, Underlying).
+
+    On success the result is cached to disk.  On failure (timeout, HTTP
+    error, etc.) the most recent cached result is returned instead of an
+    empty DataFrame, so the universe doesn't silently shrink.
+    """
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0 Chrome/120.0.0.0"})
     url = "https://yieldmaxetfs.com/nav-group/yieldmax-single-stock-option-income-etfs/"
@@ -208,7 +259,7 @@ def _scrape_yieldmax() -> pd.DataFrame:
         resp.raise_for_status()
     except Exception as e:
         print(f"[WARN] YieldMax scrape failed: {e}")
-        return pd.DataFrame(columns=["ETF", "Underlying"])
+        return _load_scrape_cache(_YIELDMAX_CACHE, "YieldMax")
 
     from bs4 import BeautifulSoup
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -223,11 +274,18 @@ def _scrape_yieldmax() -> pd.DataFrame:
         m = re.search(r"YieldMax\s+([A-Z\.]{2,6})\s+Option Income", name_node.strip())
         if m:
             rows.append((ticker, m.group(1)))
-    return pd.DataFrame(rows, columns=["ETF", "Underlying"]).drop_duplicates()
+    df = pd.DataFrame(rows, columns=["ETF", "Underlying"]).drop_duplicates()
+    if not df.empty:
+        _save_scrape_cache(df, _YIELDMAX_CACHE)
+    return df
 
 
 def _scrape_roundhill() -> pd.DataFrame:
-    """Scrape Roundhill WeeklyPay ETFs → DataFrame(ETF, Underlying)."""
+    """Scrape Roundhill WeeklyPay ETFs → DataFrame(ETF, Underlying).
+
+    On success the result is cached to disk.  On failure the most
+    recent cached result is returned.
+    """
     BAD_TOKENS = {"NEW","ETF","ETFS","WEEKLYPAY","WEEKLY","PAY",
                   "ISSUE","TREASURY","INCOME","STRATEGY","FUND","TRUST","INC"}
     OVERRIDES = {"TSYW": "TLT", "BRKW": "BRK-B"}
@@ -238,7 +296,7 @@ def _scrape_roundhill() -> pd.DataFrame:
         resp.raise_for_status()
     except Exception as e:
         print(f"[WARN] Roundhill scrape failed: {e}")
-        return pd.DataFrame(columns=["ETF", "Underlying"])
+        return _load_scrape_cache(_ROUNDHILL_CACHE, "Roundhill")
 
     from bs4 import BeautifulSoup
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -264,7 +322,10 @@ def _scrape_roundhill() -> pd.DataFrame:
             underlying = etf[:-1]
         if underlying:
             rows.append((etf, OVERRIDES.get(etf, underlying)))
-    return pd.DataFrame(rows, columns=["ETF", "Underlying"]).drop_duplicates()
+    df = pd.DataFrame(rows, columns=["ETF", "Underlying"]).drop_duplicates()
+    if not df.empty:
+        _save_scrape_cache(df, _ROUNDHILL_CACHE)
+    return df
 
 
 def build_full_universe(skip_scrape: bool = False, skip_inverse: bool = False) -> pd.DataFrame:
@@ -316,6 +377,14 @@ def build_full_universe(skip_scrape: bool = False, skip_inverse: bool = False) -
     all_df["ETF"] = all_df["ETF"].apply(_norm_sym)
     all_df["Underlying"] = all_df["Underlying"].apply(_norm_sym)
 
+    # Filter out known bad tickers (scraped erroneously, delisted, etc.)
+    _BAD_TICKERS = {"JP", "JPO"}
+    bad_mask = all_df["ETF"].isin(_BAD_TICKERS) | all_df["Underlying"].isin(_BAD_TICKERS)
+    if bad_mask.any():
+        dropped_etfs = sorted(set(all_df.loc[bad_mask, "ETF"].astype(str)))
+        print(f"[UNIVERSE] Dropped {bad_mask.sum()} rows with bad ETF tickers: {dropped_etfs}")
+        all_df = all_df[~bad_mask].reset_index(drop=True)
+
     # 5. Inverse ETFs (bucket C)
     if not skip_inverse:
         inv_rows = []
@@ -343,20 +412,128 @@ def build_full_universe(skip_scrape: bool = False, skip_inverse: bool = False) -
 # SECTION 3 — TOTAL RETURN SERIES + BETA CALCULATION
 # ══════════════════════════════════════════════════════════════════
 
+# Common split/reverse-split ratios.  When yfinance's auto_adjust
+# fails (or the adjustment hasn't propagated yet), a split shows up
+# as a single-day return that is *exactly* one of these ratios.
+# We detect returns within ±2 % of each ratio and correct the price
+# series by dividing out the split factor from that day onward.
+_SPLIT_RATIOS = sorted(set(
+    [n / d for n in (1, 2, 3, 4, 5, 10, 15, 20, 25, 50)
+           for d in (1, 2, 3, 4, 5, 10, 15, 20, 25, 50)
+           if n != d and 0.05 <= n / d <= 20.0]
+), reverse=True)
+
+_SPLIT_TOL = 0.02          # ±2 % tolerance around each ratio
+_JUMP_FLOOR = 0.40         # ignore daily moves < 40 %
+_CONTEXT_WINDOW = 20       # days of context for local vol estimate
+_ZSCORE_THRESHOLD = 4.0    # jump must be > 4σ vs local vol to be a split
+
+
+def _clean_split_artifacts(prices: pd.Series) -> pd.Series:
+    """Detect and correct unadjusted splits/reverse-splits in a price series.
+
+    Approach:  walk through daily price ratios (p[t] / p[t-1]).
+    If a ratio matches a known split factor (within tolerance) AND
+    the jump is an extreme outlier relative to local volatility
+    (z-score > 4), correct it by dividing all subsequent prices by
+    the split factor.
+
+    The z-score approach (instead of a fixed neighbor threshold) handles
+    volatile penny/crypto stocks correctly: a 20:1 reverse split is
+    still 10+ sigma even on a stock with 200% annualized vol.
+
+    Returns a corrected copy of the series.
+    """
+    if len(prices) < 3:
+        return prices.copy()
+
+    prices = prices.copy()
+    vals = prices.values.astype(float)
+
+    # Pre-compute daily log returns for z-score calculation
+    log_ratios = np.full(len(vals), np.nan)
+    for i in range(1, len(vals)):
+        if vals[i - 1] > 0 and np.isfinite(vals[i - 1]) and vals[i] > 0:
+            log_ratios[i] = np.log(vals[i] / vals[i - 1])
+
+    for i in range(1, len(vals) - 1):
+        if vals[i - 1] == 0 or not np.isfinite(vals[i - 1]):
+            continue
+        ratio = vals[i] / vals[i - 1]
+        daily_ret = ratio - 1.0
+
+        # Skip small moves — not a split
+        if abs(daily_ret) < _JUMP_FLOOR:
+            continue
+
+        # Check if this ratio matches a known split factor
+        matched_factor = None
+        for sf in _SPLIT_RATIOS:
+            if abs(ratio - sf) / sf < _SPLIT_TOL:
+                matched_factor = sf
+                break
+            # Also check inverse (reverse-split looks like 1/sf)
+            inv_sf = 1.0 / sf
+            if abs(ratio - inv_sf) / inv_sf < _SPLIT_TOL:
+                matched_factor = inv_sf
+                break
+
+        if matched_factor is None:
+            continue
+
+        # Z-score test: is this jump an extreme outlier vs local vol?
+        # Use a window of returns EXCLUDING the candidate split day.
+        start = max(1, i - _CONTEXT_WINDOW)
+        end = min(len(log_ratios), i + _CONTEXT_WINDOW + 1)
+        context = [log_ratios[j] for j in range(start, end)
+                   if j != i and np.isfinite(log_ratios[j])]
+
+        if len(context) >= 5:
+            local_std = float(np.std(context))
+            if local_std > 0:
+                log_jump = abs(np.log(ratio))
+                zscore = log_jump / local_std
+                if zscore < _ZSCORE_THRESHOLD:
+                    # Jump is within normal vol range → real price move
+                    continue
+
+        # If we don't have enough context, fall back to accepting the
+        # correction (better to fix a split than leave 839% vol).
+
+        # Correct: divide everything from day i onward by the factor
+        vals[i:] /= matched_factor
+
+        # Recompute log_ratios for the corrected region so subsequent
+        # iterations see clean data
+        for j in range(max(1, i), min(len(vals), i + 2)):
+            if vals[j - 1] > 0 and vals[j] > 0:
+                log_ratios[j] = np.log(vals[j] / vals[j - 1])
+
+    prices.iloc[:] = vals
+    return prices
+
+
 def _get_total_return_series(ticker: str, period: str = "2y") -> pd.Series:
-    """Build total-return price series: TR_t = TR_{t-1} × (Close_t + Div_t) / Close_{t-1}."""
+    """Fetch adjusted-close total-return series from Yahoo Finance v8 API.
+
+    Uses Yahoo's adjclose (split + dividend adjusted) directly instead of
+    yfinance, which returns incorrect adjusted prices in v0.2.40.
+    """
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+    params = {"range": period, "interval": "1d", "events": "div,splits"}
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        t = yf.Ticker(ticker)
-        df = t.history(period=period, auto_adjust=False, actions=True)
-        if df.empty or "Close" not in df.columns:
-            return pd.Series(dtype=float, name=ticker)
-        close = df["Close"]
-        divs = df.get("Dividends", pd.Series(0.0, index=df.index)).reindex(close.index, fill_value=0.0)
-        rel = (close + divs) / close.shift(1)
-        rel.iloc[0] = 1.0
-        tr = close.iloc[0] * rel.cumprod()
-        tr.name = ticker
-        return tr
+        resp = requests.get(url, params=params, headers=headers, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        result = data["chart"]["result"][0]
+        timestamps = result["timestamp"]
+        adjclose = result["indicators"]["adjclose"][0]["adjclose"]
+        idx = pd.to_datetime(timestamps, unit="s", utc=True).tz_convert(
+            "America/New_York"
+        ).normalize()
+        s = pd.Series(adjclose, index=idx, name=ticker, dtype=float).dropna()
+        return s
     except Exception:
         return pd.Series(dtype=float, name=ticker)
 
@@ -426,6 +603,13 @@ def add_betas(universe_df: pd.DataFrame, tr_map: dict[str, pd.Series],
             betas.append(exp_lev)
             nobs.append(n)
             sources.append("imputed_no_overlap")
+        elif exp_lev != 0 and abs(b) > 0.3 and (b > 0) != (exp_lev > 0):
+            # OLS beta sign disagrees with expected leverage direction
+            print(f"  [BETA] WARNING: {etf} OLS β={b:.4f} sign disagrees with "
+                  f"expected leverage={exp_lev:.1f}; using expected. Likely bad data.")
+            betas.append(exp_lev)
+            nobs.append(n)
+            sources.append("imputed_sign_mismatch")
         else:
             betas.append(b)
             nobs.append(n)
@@ -435,14 +619,6 @@ def add_betas(universe_df: pd.DataFrame, tr_map: dict[str, pd.Series],
     df["Beta_n_obs"] = nobs
     df["Beta_source"] = sources
 
-    # Drop bad tickers
-    bad = {"JP", "JPO"}
-    mask = ~(df["ETF"].isin(bad) | df["Underlying"].isin(bad))
-    dropped = len(df) - mask.sum()
-    if dropped > 0:
-        print(f"[BETA] Dropped {dropped} rows with bad tickers")
-    df = df[mask].reset_index(drop=True)
-
     ols_count = (df["Beta_source"] == "ols").sum()
     imp_count = df["Beta_source"].str.startswith("imputed").sum()
     print(f"[BETA] OLS: {ols_count} | Imputed: {imp_count} | Total: {len(df)}")
@@ -450,7 +626,7 @@ def add_betas(universe_df: pd.DataFrame, tr_map: dict[str, pd.Series],
 
 
 # ══════════════════════════════════════════════════════════════════
-# SECTION 4 — IBKR FTP BORROW DATA
+# SECTION 4 — IBKR FTP BORROW DATA (with retry + cache)
 # ══════════════════════════════════════════════════════════════════
 
 FTP_HOST = os.getenv("IBKR_FTP_HOST") or "ftp2.interactivebrokers.com"
@@ -458,24 +634,11 @@ FTP_USER = os.getenv("IBKR_FTP_USER") or "shortstock"
 FTP_PASS = os.getenv("IBKR_FTP_PASS") or ""
 FTP_FILE = os.getenv("IBKR_FTP_FILE") or "usa.txt"
 
+BORROW_CACHE_PATH = Path("data/borrow_cache.csv")
 
-def fetch_ibkr_shortstock_file(filename: str = FTP_FILE) -> pd.DataFrame:
-    """Download and parse IBKR short stock availability FTP file."""
-    print(f"[FTP] Connecting to {FTP_HOST} ...")
-    ftp = ftplib.FTP(timeout=30)
-    try:
-        ftp.connect(FTP_HOST, 21)
-        ftp.login(user=FTP_USER, passwd=FTP_PASS)
-        ftp.set_pasv(True)
-        buf = io.BytesIO()
-        ftp.retrbinary(f"RETR {filename}", buf.write)
-    finally:
-        try: ftp.quit()
-        except Exception:
-            try: ftp.close()
-            except Exception: pass
 
-    text = buf.getvalue().decode("utf-8", errors="ignore")
+def _parse_ftp_text(text: str) -> pd.DataFrame:
+    """Parse raw IBKR FTP short-stock text into a DataFrame."""
     lines = [ln for ln in text.splitlines() if ln.strip()]
     header_idx = next((i for i, ln in enumerate(lines) if ln.startswith("#SYM|")), None)
     if header_idx is None:
@@ -486,8 +649,72 @@ def fetch_ibkr_shortstock_file(filename: str = FTP_FILE) -> pd.DataFrame:
     df = df.iloc[:, :min(len(header_cols), df.shape[1])]
     df.columns = header_cols[:df.shape[1]]
     df = df.drop(columns=[c for c in df.columns if not c or str(c).startswith("unnamed")], errors="ignore")
-    print(f"[FTP] Parsed {len(df)} rows")
     return df
+
+
+def fetch_ibkr_shortstock_file(
+    filename: str = FTP_FILE,
+    max_retries: int = 3,
+    cache_path: Path = BORROW_CACHE_PATH,
+) -> pd.DataFrame:
+    """Download and parse IBKR short stock availability FTP file.
+
+    Retries up to *max_retries* times with exponential backoff.
+    On success, caches the parsed result to *cache_path*.
+    On failure, falls back to the cached file (with a warning).
+    """
+    last_err = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(f"[FTP] Connecting to {FTP_HOST} ... (attempt {attempt}/{max_retries})")
+            ftp = ftplib.FTP(timeout=30)
+            try:
+                ftp.connect(FTP_HOST, 21)
+                ftp.login(user=FTP_USER, passwd=FTP_PASS)
+                ftp.set_pasv(True)
+                buf = io.BytesIO()
+                ftp.retrbinary(f"RETR {filename}", buf.write)
+            finally:
+                try: ftp.quit()
+                except Exception:
+                    try: ftp.close()
+                    except Exception: pass
+
+            text = buf.getvalue().decode("utf-8", errors="ignore")
+            df = _parse_ftp_text(text)
+            print(f"[FTP] Parsed {len(df)} rows")
+
+            # Cache successful fetch
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                df.to_csv(cache_path, index=False)
+                print(f"[FTP] Cached to {cache_path}")
+            except Exception as e:
+                print(f"[FTP] Warning: could not write cache: {e}")
+
+            return df
+
+        except Exception as e:
+            last_err = e
+            if attempt < max_retries:
+                wait = 2 ** attempt  # 2s, 4s
+                print(f"[FTP] Attempt {attempt} failed: {e}")
+                print(f"[FTP] Retrying in {wait}s ...")
+                time.sleep(wait)
+
+    # All retries exhausted — try cache fallback
+    print(f"[FTP] All {max_retries} attempts failed: {last_err}")
+    if cache_path.exists():
+        age_hours = (datetime.now() - datetime.fromtimestamp(cache_path.stat().st_mtime)).total_seconds() / 3600
+        print(f"[FTP] ⚠ Falling back to cached borrow data ({age_hours:.1f}h old)")
+        df = pd.read_csv(cache_path)
+        print(f"[FTP] Loaded {len(df)} rows from cache")
+        return df
+    else:
+        raise ConnectionError(
+            f"IBKR FTP unreachable after {max_retries} attempts and no cache at {cache_path}. "
+            f"Last error: {last_err}"
+        )
 
 
 def _parse_rate_to_decimal(x) -> float:
@@ -606,55 +833,114 @@ def screen_universe(df: pd.DataFrame, params: ScreeningParams) -> pd.DataFrame:
 
 
 # ══════════════════════════════════════════════════════════════════
-# SECTION 6 — DECAY + VOLATILITY ENRICHMENT
+# SECTION 6 — DECAY + VOLATILITY ENRICHMENT (with expected + blended)
 # ══════════════════════════════════════════════════════════════════
 
-def _annualized_vol(tr_series: pd.Series, min_days: int = 60) -> float | None:
+_VOL_CAP_ANNUAL = 5.0   # 500 % — loose backstop for truly broken data
+                        # Split artifacts are now cleaned at the source
+                        # (_clean_split_artifacts), so this should rarely
+                        # bind.  Kept as a last-resort safety net only.
+
+
+def _annualized_vol(tr_series: pd.Series, min_days: int = 60,
+                    cap: float = _VOL_CAP_ANNUAL) -> float | None:
+    """Annualized realized vol from a total-return price series.
+
+    Split artifacts are handled upstream by _clean_split_artifacts().
+    A loose cap (500 %) is kept as a last-resort backstop for any
+    remaining data anomalies beyond splits.
+    """
     tr = tr_series.dropna()
     if len(tr) < min_days + 1: return None
     ret = tr.pct_change().dropna()
     if len(ret) < min_days: return None
-    return round(float(ret.std() * np.sqrt(TRADING_DAYS)), 6)
+    vol = float(ret.std() * np.sqrt(TRADING_DAYS))
+    if cap and vol > cap:
+        vol = cap
+    return round(vol, 6)
+
+
+def expected_gross_decay(beta: float, sigma_annual: float) -> float:
+    """Theoretical annualized volatility drag: 0.5 × |β| × |β−1| × σ²_annual.
+
+    *sigma_annual* is the annualized vol of the underlying (from _annualized_vol).
+    Works for bull (β>0) and inverse (β<0) ETFs.
+    For β=2, σ_annual=0.30:  0.5 × 2 × 1 × 0.09 = 0.09  (9%)
+    For β=−2, σ_annual=0.30: 0.5 × 2 × 3 × 0.09 = 0.27  (27%)
+    For β=1, any σ:           0.5 × 1 × 0 × σ²   = 0     (no drag for 1x)
+    """
+    if _HAS_CORE:
+        return _expected_gross_decay(beta, sigma_annual)
+    abs_b = abs(beta)
+    abs_bm1 = abs(beta - 1.0)
+    return round(0.5 * abs_b * abs_bm1 * sigma_annual ** 2, 6)
+
+
+_WEEKS_PER_YEAR = 52
+_MIN_WEEKS = 12   # ~60 trading days
 
 
 def _compute_gross_decay(etf_tr: pd.Series, und_tr: pd.Series,
-                         beta: float, min_days: int = 60) -> float | None:
+                         beta: float, min_weeks: int = _MIN_WEEKS) -> float | None:
     """
-    Gross annualized decay per $1 ETF short.
-    Bull (β>0): simple returns |β|×r_und − r_etf
-    Inverse (β<0): log returns β×ln(1+r_und) − ln(1+r_etf)
+    Gross annualized decay per $1 ETF short, measured at WEEKLY frequency.
+
+    Using weekly (Friday-to-Friday) returns × 52 instead of daily × 252
+    reduces microstructure noise (bid-ask bounce, closing auctions,
+    illiquid names) that inflates daily hedge-PnL estimates.
+
+    LOG RETURNS are used for BOTH bull and inverse ETFs:
+
+        weekly_pnl = β × ln(1+r_und_w) − ln(1+r_etf_w)
+
+    Why log returns for bull too?  A β× daily tracker has r_etf = β×r_und,
+    so the simple-return hedge PnL (β×r_und − r_etf) is *identically zero*
+    at daily frequency and ~zero at weekly — it cannot capture vol drag.
+    In log space, β×ln(1+r) − ln(1+βr) ≈ 0.5×β(β−1)×r² > 0, which is
+    exactly the compounding drag we want to measure.
+
+    gross_decay_annual = mean(weekly_pnl) × 52
     """
-    df = pd.concat([etf_tr.rename("etf"), und_tr.rename("und")], axis=1).dropna()
-    if len(df) < min_days + 1: return None
-    abs_beta = abs(float(beta))
-    if abs_beta < 0.1: return None
+    combined = pd.concat([etf_tr.rename("etf"), und_tr.rename("und")], axis=1).dropna()
+    if len(combined) < min_weeks * 5:  # need enough daily points to form weeks
+        return None
+    if abs(float(beta)) < 0.1:
+        return None
 
-    if beta > 0:
-        r_etf = df["etf"].pct_change()
-        r_und = df["und"].pct_change()
-        valid = r_etf.notna() & r_und.notna()
-        r_etf, r_und = r_etf[valid], r_und[valid]
-        if len(r_etf) < min_days: return None
-        daily_pnl = abs_beta * r_und - r_etf
-    else:
-        r_etf = np.log(df["etf"] / df["etf"].shift(1))
-        r_und = np.log(df["und"] / df["und"].shift(1))
-        valid = r_etf.notna() & r_und.notna() & np.isfinite(r_etf) & np.isfinite(r_und)
-        r_etf, r_und = r_etf[valid], r_und[valid]
-        if len(r_etf) < min_days: return None
-        daily_pnl = float(beta) * r_und - r_etf
+    # Resample to weekly (last trading day of each week)
+    weekly = combined.resample("W-FRI").last().dropna()
+    if len(weekly) < min_weeks + 1:
+        return None
 
-    return round(float(daily_pnl.mean()) * TRADING_DAYS, 6)
+    # Log returns for both bull and inverse
+    r_etf = np.log(weekly["etf"] / weekly["etf"].shift(1))
+    r_und = np.log(weekly["und"] / weekly["und"].shift(1))
+    valid = r_etf.notna() & r_und.notna() & np.isfinite(r_etf) & np.isfinite(r_und)
+    r_etf, r_und = r_etf[valid], r_und[valid]
+    if len(r_etf) < min_weeks:
+        return None
+
+    weekly_pnl = float(beta) * r_und - r_etf
+    return round(float(weekly_pnl.mean()) * _WEEKS_PER_YEAR, 6)
 
 
 def enrich_with_decay_and_vol(df: pd.DataFrame, tr_map: dict[str, pd.Series],
-                              min_days: int = 60) -> pd.DataFrame:
-    """Add vol + decay columns using pre-downloaded TR series."""
-    print("[DECAY] Computing decay + volatility ...")
-    vols_und, vols_etf, decays = [], [], []
-    betas_out, beta_nobs_out = [], []
-    ok_decay = ok_vol = betas_computed = 0
+                              min_days: int = 60,
+                              realized_trust_days: int = 252) -> pd.DataFrame:
+    """Add vol + decay columns using pre-downloaded TR series.
 
+    NEW columns added (on top of existing gross/net decay):
+      - expected_gross_decay_annual  : theoretical 0.5×|β|×|β−1|×σ²×252
+      - blended_gross_decay          : weighted mix of realized + expected
+      - decay_score                  : blended gross decay minus borrow (for sizing)
+    """
+    print("[DECAY] Computing decay + volatility ...")
+    vols_etf_raw = []
+    decays = []
+    betas_out, beta_nobs_out = [], []
+    ok_decay = ok_vol = ok_expected = betas_computed = 0
+
+    # ── PASS 1: betas, raw vols, realized decay ──
     for _, row in df.iterrows():
         etf = _norm_sym(row["ETF"])
         und = _norm_sym(row["Underlying"]) if pd.notna(row.get("Underlying")) else None
@@ -670,82 +956,191 @@ def enrich_with_decay_and_vol(df: pd.DataFrame, tr_map: dict[str, pd.Series],
         betas_out.append(beta_f)
         beta_nobs_out.append(n_obs_i)
 
-        vol_und = _annualized_vol(tr_map[und], min_days) if und and und in tr_map else None
         vol_etf = _annualized_vol(tr_map[etf], min_days) if etf in tr_map else None
-        vols_und.append(vol_und)
-        vols_etf.append(vol_etf)
-        if vol_und is not None: ok_vol += 1
+        vols_etf_raw.append(vol_etf)
 
+        # Realized gross decay (path-dependent, weekly frequency)
         decay = None
         if beta_f and abs(beta_f) >= 0.1 and und and etf in tr_map and und in tr_map:
-            decay = _compute_gross_decay(tr_map[etf], tr_map[und], beta_f, min_days)
+            decay = _compute_gross_decay(tr_map[etf], tr_map[und], beta_f)
         decays.append(decay)
         if decay is not None: ok_decay += 1
 
     df["Beta"] = betas_out
     df["Beta_n_obs"] = beta_nobs_out
-    df["vol_underlying_annual"] = vols_und
-    df["vol_etf_annual"] = vols_etf
+    df["vol_etf_annual"] = vols_etf_raw
     df["gross_decay_annual"] = decays
 
+    # ── PASS 2: resolve underlying vol per ticker ──
+    # For each underlying, compute raw vol from its price series, then
+    # cross-check against implied vols from its ETFs (vol_etf / |β|).
+    # If raw vol is corrupted (e.g. unadjusted splits), use the best
+    # ETF-implied vol instead — picking the ETF with the most history
+    # and highest |β| (tightest leverage relationship).
+    # All ETFs sharing the same underlying get the SAME vol_und.
+    _VOL_RATIO_MAX = 2.0  # allow up to 2× before overriding
+
+    # Group rows by underlying
+    und_syms = df["Underlying"].dropna().apply(_norm_sym).unique()
+    resolved_vol_und = {}  # underlying → final vol
+
+    for und in und_syms:
+        # Raw vol from the underlying's own price series
+        raw_vol = _annualized_vol(tr_map[und], min_days) if und in tr_map else None
+
+        # Collect implied vols from all ETFs on this underlying
+        mask = df["Underlying"].apply(
+            lambda x: _norm_sym(x) == und if pd.notna(x) else False)
+        implied_candidates = []  # (implied_vol, weight)
+        for idx in df.index[mask]:
+            b = betas_out[idx]
+            ve = vols_etf_raw[idx]
+            nobs = beta_nobs_out[idx]
+            if b and abs(b) >= 0.5 and ve and ve > 0 and nobs:
+                implied = ve / abs(b)
+                # Weight: prefer more history and higher leverage
+                weight = nobs * abs(b)
+                implied_candidates.append((implied, weight))
+
+        if not implied_candidates:
+            resolved_vol_und[und] = raw_vol
+            continue
+
+        # Best implied vol = weighted average, weighted by n_obs × |β|
+        total_w = sum(w for _, w in implied_candidates)
+        best_implied = sum(v * w for v, w in implied_candidates) / total_w
+
+        if raw_vol is None or raw_vol <= 0:
+            # No raw vol — use implied
+            resolved_vol_und[und] = round(best_implied, 6)
+        elif best_implied > 0 and raw_vol / best_implied > _VOL_RATIO_MAX:
+            # Raw vol is suspiciously high — override with implied
+            resolved_vol_und[und] = round(best_implied, 6)
+            print(f"  [VOL-FIX] {und}: raw={raw_vol*100:.1f}% → implied={best_implied*100:.1f}% "
+                  f"(from {len(implied_candidates)} ETF(s))")
+        else:
+            resolved_vol_und[und] = raw_vol
+
+    # Assign resolved vol_und to each row + compute expected decay
+    vols_und, expected_decays = [], []
+    for i, row in df.iterrows():
+        und = _norm_sym(row["Underlying"]) if pd.notna(row.get("Underlying")) else None
+        vol_und = resolved_vol_und.get(und) if und else None
+        vols_und.append(vol_und)
+        if vol_und is not None: ok_vol += 1
+
+        beta_f = betas_out[i]
+        exp_decay = None
+        if beta_f and abs(beta_f) >= 0.1 and vol_und is not None and vol_und > 0:
+            exp_decay = expected_gross_decay(beta_f, vol_und)
+            ok_expected += 1
+        expected_decays.append(exp_decay)
+
+    df["vol_underlying_annual"] = vols_und
+    df["expected_gross_decay_annual"] = expected_decays
+
+    # NOTE: no hard caps on decay values — the vol cap (_VOL_CAP_ANNUAL)
+    # is the single control point.  Expected decay flows from σ² and is
+    # legitimately >100% for inverse ETFs on volatile underlyings (e.g.
+    # MSTZ/MSTR: expected ≈ 262%, realized ≈ 256%).
+
+    # Blended gross decay: trust realized more as n_obs grows
+    # w_realized = min(1.0, n_obs / realized_trust_days)
+    blended = []
+    for _, row in df.iterrows():
+        realized = row["gross_decay_annual"]
+        expected = row["expected_gross_decay_annual"]
+        n_obs = row["Beta_n_obs"] if pd.notna(row.get("Beta_n_obs")) else 0
+
+        if pd.notna(realized) and pd.notna(expected):
+            w_realized = min(1.0, n_obs / realized_trust_days)
+            blended.append(round(w_realized * realized + (1.0 - w_realized) * expected, 6))
+        elif pd.notna(realized):
+            blended.append(realized)
+        elif pd.notna(expected):
+            blended.append(expected)
+        else:
+            blended.append(np.nan)
+    df["blended_gross_decay"] = blended
+
+    # Net decay (realized only, backward compat)
     borrow_net = pd.to_numeric(df.get("borrow_net_annual"), errors="coerce")
     df["net_decay_annual"] = np.where(
         df["gross_decay_annual"].notna() & borrow_net.notna(),
         df["gross_decay_annual"] - borrow_net, np.nan)
 
-    print(f"[DECAY] Beta OLS fill-ins: {betas_computed} | Vol: {ok_vol}/{len(df)} | Decay: {ok_decay}/{len(df)}")
+    # Decay score: blended gross decay minus borrow (for generate_trade_plan sizing)
+    borrow_current = pd.to_numeric(df.get("borrow_current"), errors="coerce")
+    df["decay_score"] = np.where(
+        df["blended_gross_decay"].notna() & borrow_current.notna(),
+        df["blended_gross_decay"] - borrow_current, np.nan)
+
+    # ── Vol-ratio diagnostic ──
+    # For levered ETFs, vol_etf should be ≈ |β| × vol_und.  Flag
+    # rows where the ratio deviates by more than 3× (data-quality issue).
+    _vol_ratio_warn = []
+    for idx, row in df.iterrows():
+        vu = row.get("vol_underlying_annual")
+        ve = row.get("vol_etf_annual")
+        b  = row.get("Beta")
+        if pd.notna(vu) and pd.notna(ve) and pd.notna(b) and vu > 0 and abs(b) > 0.1:
+            expected_ve = abs(b) * vu
+            ratio = ve / expected_ve if expected_ve > 0 else np.nan
+            if pd.notna(ratio) and (ratio < 0.20 or ratio > 3.0):
+                _vol_ratio_warn.append(
+                    f"  {row['ETF']:8s} vol_und={vu*100:6.1f}%  vol_etf={ve*100:6.1f}%  "
+                    f"β={b:+.2f}  ratio={ratio:.2f}")
+    if _vol_ratio_warn:
+        print(f"\n[DECAY] ⚠ Vol-ratio outliers ({len(_vol_ratio_warn)} rows — "
+              f"vol_etf / (|β| × vol_und) far from 1.0):")
+        for line in _vol_ratio_warn[:10]:
+            print(line)
+        if len(_vol_ratio_warn) > 10:
+            print(f"  ... and {len(_vol_ratio_warn) - 10} more")
+
+    print(f"\n[DECAY] Beta OLS fill-ins: {betas_computed} | Vol: {ok_vol}/{len(df)} "
+          f"| Realized decay: {ok_decay}/{len(df)} | Expected decay: {ok_expected}/{len(df)}")
     return df
 
 
 # ══════════════════════════════════════════════════════════════════
-# SECTION 7 — MARGIN ENRICHMENT (optional, from fetch_ibkr_margin.py output)
+# SECTION 7 — MARGIN 
 # ══════════════════════════════════════════════════════════════════
+def estimate_margin_requirements(df: pd.DataFrame) -> pd.DataFrame:
+    """Estimate IBKR margin requirements from leverage factor.
 
-def merge_margin_data(df: pd.DataFrame, margin_csv: Path) -> pd.DataFrame:
+    IBKR scales margin proportionally to the ETF's leverage multiple:
+      maint_long  = min(1.0, |leverage| × 0.25)
+      maint_short = min(1.0, |leverage| × 0.30)
+      init_long   = max(0.50, maint_long)
+      init_short  = max(0.50, maint_short)
+
+    Examples:
+      1x long:  25% maint, 50% init   |  1x short:  30% maint, 50% init
+      2x long:  50% maint, 50% init   |  2x short:  60% maint, 60% init
+      3x long:  75% maint, 75% init   |  3x short:  90% maint, 90% init
+
+    Hard-to-borrow or borrow-spiking symbols get 100% short margin.
     """
-    If ibkr_margin_requirements.csv exists, merge maint_pct columns.
-    Also merges pair-level margin if ibkr_pair_margin.csv exists.
-    """
-    if not margin_csv.exists():
-        print(f"[MARGIN] No margin file found at {margin_csv} — skipping")
-        return df
+    lev = df["Beta"].abs().fillna(1.0)
 
-    margin_df = pd.read_csv(margin_csv)
-    print(f"[MARGIN] Loaded {len(margin_df)} symbols from {margin_csv}")
+    df["maint_pct_long"]  = (lev * 0.25).clip(upper=1.0)
+    df["maint_pct_short"] = (lev * 0.30).clip(upper=1.0)
+    df["init_pct_long"]   = df["maint_pct_long"].clip(lower=0.50)
+    df["init_pct_short"]  = df["maint_pct_short"].clip(lower=0.50)
 
-    # Build symbol → maint_pct lookup
-    margin_lookup = margin_df.set_index("symbol")[
-        ["maint_pct_long", "maint_pct_short", "init_pct_long", "init_pct_short"]
-    ].to_dict("index")
+    # Override: hard-to-borrow / spiking → 100% short margin
+    if "borrow_spiking" in df.columns:
+        spike = df["borrow_spiking"].fillna(False)
+        df.loc[spike, "maint_pct_short"] = 1.0
+        df.loc[spike, "init_pct_short"]  = 1.0
 
-    # For each pair: short ETF margin + long underlying margin
-    pair_maint = []
-    for _, row in df.iterrows():
-        etf = _norm_sym(row["ETF"])
-        und = _norm_sym(row["Underlying"]) if pd.notna(row.get("Underlying")) else None
-        beta = float(row["Beta"]) if pd.notna(row.get("Beta")) else np.nan
+    if "borrow_missing_from_ftp" in df.columns:
+        missing = df["borrow_missing_from_ftp"].fillna(False)
+        df.loc[missing, "maint_pct_short"] = 1.0
+        df.loc[missing, "init_pct_short"]  = 1.0
 
-        etf_short = margin_lookup.get(etf, {}).get("maint_pct_short", np.nan)
-        und_long = margin_lookup.get(und, {}).get("maint_pct_long", np.nan) if und else np.nan
-
-        if np.isfinite(etf_short) and np.isfinite(und_long) and np.isfinite(beta):
-            hr = 1.0 / max(abs(beta), 0.5)
-            pair_maint.append(round(etf_short + hr * und_long, 6))
-        else:
-            pair_maint.append(np.nan)
-
-    df["maint_pct_short_etf"] = [margin_lookup.get(_norm_sym(r["ETF"]), {}).get("maint_pct_short", np.nan)
-                                  for _, r in df.iterrows()]
-    df["maint_pct_long_und"] = [margin_lookup.get(_norm_sym(r["Underlying"]), {}).get("maint_pct_long", np.nan)
-                                 if pd.notna(r.get("Underlying")) else np.nan for _, r in df.iterrows()]
-    df["pair_maint_pct"] = pair_maint
-
-    valid = df["pair_maint_pct"].dropna()
-    if len(valid) > 0:
-        print(f"[MARGIN] Pair maint range: {valid.min()*100:.1f}% – {valid.max()*100:.1f}%  "
-              f"(median {valid.median()*100:.1f}%)")
     return df
-
 
 # ══════════════════════════════════════════════════════════════════
 # SECTION 8 — MAIN PIPELINE
@@ -763,8 +1158,6 @@ def main() -> int:
     ap.add_argument("--min-beta-days", type=int, default=None,
                     help="Min overlapping days for OLS beta (default: from config or 20)")
     ap.add_argument("--config", default=None, help="Path to strategy_config.yml")
-    ap.add_argument("--margin-csv", default="data/ibkr_margin_requirements.csv",
-                    help="Path to margin requirements CSV (from fetch_ibkr_margin.py)")
     args = ap.parse_args()
 
     run_date = args.run_date
@@ -867,7 +1260,17 @@ def main() -> int:
             universe = universe.drop_duplicates(subset=["ETF"]).reset_index(drop=True)
             print(f"[FTP] Added {len(missing_prot)} protected ETFs to universe")
 
-        borrow_df = get_ibkr_borrow_snapshot(universe["ETF"].unique())
+        try:
+            borrow_df = get_ibkr_borrow_snapshot(universe["ETF"].unique())
+        except (ConnectionError, OSError) as e:
+            print(f"[FTP] ⚠ Borrow fetch failed: {e}")
+            print("[FTP] Continuing with empty borrow data (all positions will show borrow_current=NaN)")
+            borrow_df = pd.DataFrame({"ETF": universe["ETF"].unique()})
+            borrow_df["borrow_net_annual"] = np.nan
+            borrow_df["borrow_current"] = np.nan
+            borrow_df["shares_available"] = 0
+            borrow_df["borrow_missing_from_ftp"] = True
+            borrow_df["borrow_spiking"] = False
 
     metrics = universe.merge(borrow_df, on="ETF", how="left")
 
@@ -880,19 +1283,30 @@ def main() -> int:
     purg = int(screened["purgatory"].sum())
     print(f"[SCREEN] Included: {included} | Purgatory: {purg} | Total: {len(screened)}")
 
-    # ── Step 5: Decay + vol ──
+    # ── Step 5: Decay + vol (UPDATED: now also computes expected + blended) ──
     print("\n" + "─" * 70)
     print("STEP 5 — Compute Decay + Volatility")
     print("─" * 70)
-    screened = enrich_with_decay_and_vol(screened, tr_map, min_days=min_beta_days)
+    # Read realized_trust_days from config if available
+    weighting_cfg = (sleeves_cfg.get("core_leveraged", {})
+                     .get("weighting", {}))
+    realized_trust_days = int(weighting_cfg.get("realized_trust_days", 252))
 
-    # ── Step 6: Margin enrichment (optional) ──
-    margin_path = Path(args.margin_csv)
-    if margin_path.exists():
-        print("\n" + "─" * 70)
-        print("STEP 6 — Merge Margin Requirements")
-        print("─" * 70)
-        screened = merge_margin_data(screened, margin_path)
+    screened = enrich_with_decay_and_vol(screened, tr_map, min_days=min_beta_days,
+                                         realized_trust_days=realized_trust_days)
+
+    # ------------------------------------------------------------------
+    # STEP 6 — Estimate Margin Requirements
+    # ------------------------------------------------------------------
+    print("\n" + "=" * 70)
+    print("STEP 6 — Estimate Margin Requirements")
+    print("=" * 70)
+    screened = estimate_margin_requirements(screened)
+    n_margin = len(screened)
+    med_ml = screened["maint_pct_long"].median()
+    med_ms = screened["maint_pct_short"].median()
+    print(f"[MARGIN] Estimated margin for {n_margin} rows from leverage factor")
+    print(f"[MARGIN] Maint long:  median={med_ml:.0%}  |  Maint short: median={med_ms:.0%}")
 
     # ── Drop helper columns, save ──
     drop_cols = ["Leverage", "ExpectedLeverage"]
@@ -911,13 +1325,20 @@ def main() -> int:
         print(f"[DONE] Net decay: median={valid_net.median()*100:.2f}%  "
               f"range=[{valid_net.min()*100:.2f}%, {valid_net.max()*100:.2f}%]")
 
-    top5 = screened[screened["net_decay_annual"].notna()].nlargest(5, "net_decay_annual")
+    valid_score = screened["decay_score"].dropna()
+    if len(valid_score) > 0:
+        print(f"[DONE] Decay score: median={valid_score.median()*100:.2f}%  "
+              f"range=[{valid_score.min()*100:.2f}%, {valid_score.max()*100:.2f}%]")
+
+    top5 = screened[screened["decay_score"].notna()].nlargest(5, "decay_score")
     if len(top5) > 0:
-        print(f"\n  Top 5 by net decay:")
+        print(f"\n  Top 5 by decay score (blended gross − borrow):")
         for _, r in top5.iterrows():
-            bn = r.get("borrow_net_annual")
-            print(f"    {r['ETF']:8s}  net={r['net_decay_annual']*100:6.2f}%  "
-                  f"gross={r['gross_decay_annual']*100:6.2f}%  "
+            bn = r.get("borrow_current")
+            exp = r.get("expected_gross_decay_annual")
+            print(f"    {r['ETF']:8s}  score={r['decay_score']*100:6.2f}%  "
+                  f"realized={r['gross_decay_annual']*100:6.2f}%  "
+                  f"expected={exp*100 if pd.notna(exp) else 0:6.2f}%  "
                   f"borrow={bn*100 if pd.notna(bn) else 0:5.2f}%  β={r['Beta']:.2f}")
 
     print("=" * 70)

@@ -1,19 +1,24 @@
 ibkr:
   host: 127.0.0.1
   port: 7496
-  client_id: 41 #change to 41 for live
+  client_id: 41                # change to 41 for live
   prefer_delayed: true
+
+accounting:
+  use_yfinance: true           # override Flex markPrice with yfinance close
+
 strategy:
   tag: ETF_LS
-  capital_usd: 330000
+  capital_usd: 350000          # fallback if equity_source=static
   gross_leverage: 4
+  equity_source: "ibkr"      # "ibkr" | "static" | "file"
   blacklist:
-  - JPM
-  - BRK-B
-  - AXP
-  - APLD
-  beta_cutoff: 1.5          # new: cutoff for |Beta|
-  beta_split_high: 1.0     # new: within leveraged sleeve, fraction to |Beta| > cutoff
+    - JPM
+    - BRK-B
+    - AXP
+    - APLD
+  beta_cutoff: 1.5
+
 paths:
   screened_csv: data/etf_screened_today.csv
   blacklist_txt: config/strategy_blacklist.txt
@@ -21,17 +26,14 @@ paths:
   proposed_trades_csv: data/proposed_trades.csv
   ledger_csv: data/strategy_ledger.csv
   fills_csv: data/trade_fills.csv
-
-  # NEW: weekly flow overlay
+  equity_snapshot_csv: data/equity_snapshot.csv
   flow_targets_csv: data/flow_targets.csv
   flow_ledger_csv: data/flow_ledger.csv
-execution:
-  # Parallelism
-  parallel_n: 25       # 1 = serial, 5-20 = parallel buckets
-  auto_approve: true   # must be true for parallel execution (no interactive prompts)
 
-  # Use no-price orders
-  order_style: ADAPTIVE_MKT   # options: ADAPTIVE_MKT, MKT, LMT
+execution:
+  parallel_n: 25
+  auto_approve: true
+  order_style: ADAPTIVE_MKT
   dry_run: false
   limit_bps: 25.0
   aggressive_bps_step: 50.0
@@ -43,14 +45,30 @@ execution:
   market_accept_timeout_sec: 90
   limit_done_timeout_sec: 90
   market_done_timeout_sec: 180
+  cancel_client_id: 99         # dedicated client for cancel coordinator
 
 screener:
-  borrow_low: 0.08           # 8% low-end threshold (decimal)
-  purgatory_margin: 0.04     # +4% band above BORROW_LOW (decimal)
-  whitelist_hard_borrow_cap: 0.25
-  flow_hard_borrow_cap: 0.25
+  borrow_low: 0.3
+  purgatory_margin: 0.1
+  whitelist_hard_borrow_cap: 0.4
+  flow_hard_borrow_cap: 0.4
   min_beta_days: 5
+
 portfolio:
+  # Rebalance thresholds — skip small trades to reduce costs
+  rebalance:
+    drift_trigger_pct: 0.15    # rebalance if name drifts >15% from target
+    min_trade_usd: 500         # skip deltas below $500
+    min_days_between: 1
+
+  # Shared weighting defaults — overridden per-sleeve below
+  _weighting_defaults: &weighting_defaults
+    method: "decay_score"             # "equal" or "decay_score"
+    realized_trust_days: 252          # full trust after 1yr of OLS data
+    borrow_blend_current: 0.5        # weight on current vs historical borrow
+    maturity_full_days: 252           # linear ramp: ETF needs 1yr history for full weight
+    margin_efficiency_power: 0.5     # favour 2x over 3x: score x (1/|B|)^0.5
+
   sleeves:
     core_leveraged:
       allocation_type: "stock"
@@ -58,9 +76,11 @@ portfolio:
       rules:
         min_beta_used: 1.50
       weighting:
-        method: "equal"
-        max_name_weight: 0.05
-        min_names: 10
+        <<: *weighting_defaults
+        max_name_weight: 0.08         # 8% cap per underlying
+        eq_blend: 0.20                # 20% equal-weight + 80% decay-score
+        borrow_aversion: 6.0          # heavy penalty — big sleeve, drag matters
+
     whitelist_stock:
       allocation_type: "stock"
       target_weight: 0.12
@@ -77,11 +97,11 @@ portfolio:
           - PLTW
           - MSTW
       weighting:
-        method: "zipf"
-        zipf_exponent: 1.0
-        rank_order: "as_listed"
-        caps:
-          max_name_weight: 0.20
+        <<: *weighting_defaults
+        max_name_weight: 0.10         # 10% cap per underlying
+        eq_blend: 0.35                # 35% equal-weight + 65% decay-score
+        borrow_aversion: 10.0          # lighter penalty — small sleeve, hand-picked names
+
     flow_program:
       allocation_type: "flow"
       frequency: "D"
