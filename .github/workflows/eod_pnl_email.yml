@@ -2,7 +2,7 @@ name: EOD PnL Email + Daily Screener
 
 on:
   schedule:
-    # 8:00 AM ET daily (winter: EST=13:00 UTC, summer: EDT=12:00 UTC)
+    # 15:00 UTC = 8am EST (winter) / 9am EDT (summer) — daily screener and pnl
     - cron: "0 13 * * 1-5"
   workflow_dispatch:
     inputs:
@@ -18,12 +18,12 @@ on:
 
 jobs:
   # ────────────────────────────────────────────────────────
-  # Daily screener
+  # Daily screener — runs at 10am EST on weekdays
   # ────────────────────────────────────────────────────────
   screener:
     if: >-
       (github.event_name == 'workflow_dispatch' && (inputs.job == 'screener' || inputs.job == 'both'))
-      || (github.event_name == 'schedule')
+      || (github.event_name == 'schedule' && github.event.schedule == '0 13 * * 1-5')
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -69,14 +69,15 @@ jobs:
             git commit -m "screener: $(date -u +%Y-%m-%d) run"
             git pull --rebase origin main
             git push
+          fi
 
   # ────────────────────────────────────────────────────────
-  # EOD PnL email
+  # EOD PnL email — runs at 5pm EST on weekdays
   # ────────────────────────────────────────────────────────
   eod:
     if: >-
       (github.event_name == 'workflow_dispatch' && (inputs.job == 'eod' || inputs.job == 'both'))
-      || (github.event_name == 'schedule')
+      || (github.event_name == 'schedule' && github.event.schedule == '0 13 * * 1-5')
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -141,3 +142,4 @@ jobs:
             git commit -m "eod: $(date -u +%Y-%m-%d) pnl history update"
             git pull --rebase origin main
             git push
+          fi
