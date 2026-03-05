@@ -27,7 +27,7 @@ import pandas as pd
 import yaml
 from zoneinfo import ZoneInfo
 
-from ib_insync import IB, MarketOrder, Stock, Order
+from ib_insync import IB, MarketOrder, Stock, Order, TagValue
 
 
 TRADING_DAYS = 252
@@ -139,39 +139,6 @@ def usd_to_shares_floor(abs_usd: float, px: float) -> int:
 # Order execution
 # ---------------------------------------------------------------------------
 
-def place_adaptive_mkt(
-    ib: IB,
-    sym: str,
-    *,
-    action: str,
-    qty: int,
-    order_ref: str,
-    priority: str = "Patient",
-    good_after_time: str | None = None,
-):
-    """
-    Places Adaptive Market order.  If good_after_time is set (IBKR format
-    "YYYYMMDD HH:MM:SS" in exchange tz), the order activates at that time.
-    """
-    sym = str(sym).upper().replace(".", "-")
-    c = Stock(sym, "SMART", "USD")
-    ib.qualifyContracts(c)
-
-    o = Order(
-        action=action,
-        totalQuantity=int(qty),
-        orderType="MKT",
-        tif="DAY",
-        orderRef=order_ref,
-        algoStrategy="Adaptive",
-        algoParams=[("adaptivePriority", priority)],
-    )
-
-    if good_after_time:
-        o.goodAfterTime = good_after_time
-
-    return ib.placeOrder(c, o)
-
 
 def execute_sell(ib: IB, sym: str, qty: int, order_ref: str) -> None:
     if qty <= 0:
@@ -221,6 +188,8 @@ def load_ledger(path: str) -> pd.DataFrame:
     for c in ["date", "ticker"]:
         if c in df.columns:
             df[c] = df[c].astype(str)
+    if "carry_usd" not in df.columns:
+        df["carry_usd"] = 0.0
     if "ticker" in df.columns:
         df["ticker"] = df["ticker"].astype(str).map(norm_sym)
     if "delta_usd" in df.columns:
@@ -229,6 +198,17 @@ def load_ledger(path: str) -> pd.DataFrame:
         df["cum_usd"] = pd.to_numeric(df["cum_usd"], errors="coerce")
     return df
 
+def get_carry_map(df):
+
+    if df.empty:
+        return {}
+
+    return (
+        df.sort_values("date")
+        .groupby("ticker")["carry_usd"]
+        .last()
+        .to_dict()
+    )
 
 def append_ledger(ledger_path: str, ledger_df: pd.DataFrame, rows: list[dict]) -> pd.DataFrame:
     if not rows:
@@ -478,9 +458,14 @@ def main() -> None:
         tprint(f"[FLOW] Per-day budget: ${per_day_total:,.2f}  x {len(schedule)} day(s)")
 
         # ---------------------------------------------------------------
-        # Submit orders for each scheduled day
+        # Submit orders for each scheduled day, properly handling carry
+        # ---------------------------------------------------------------
+        ledger_df = load_ledger(ledger_path)
+        # ---------------------------------------------------------------
+        # Submit orders and update ledger in one pass
         # ---------------------------------------------------------------
         ledger_rows: list[dict] = []
+        carry_map = get_carry_map(load_ledger(ledger_path))  # existing carry from ledger
 
         for target_date, gat_str in schedule:
             tprint(f"\n{'─'*110}")
@@ -488,48 +473,74 @@ def main() -> None:
             tprint(f"[FLOW] {target_date}  ({label})")
             tprint(f"{'─'*110}")
 
-            for o in sized:
-                sym = o["ticker"]
-                qty = int(o["shares"])
-                delta_usd = float(o["delta_usd"])
-                px = float(o["px"])
-                order_ref = f"{strategy_tag}|FLOW|{sym}|{target_date}"
+            for o in alloc.itertuples(index=False):
+                sym = norm_sym(o.ticker)
+                delta_usd = float(o.delta_usd)
+                prior_carry = carry_map.get(sym, 0.0)
+                effective_usd = delta_usd + prior_carry
 
-                tprint(f"  {sym}: SELL {qty} sh  (~${delta_usd:,.0f} @ {px:.2f})")
-
-                if dry_run:
-                    tprint(f"  [DRY_RUN] Would SELL {sym} qty={qty} ref={order_ref}")
-                else:
+                # Get price (cached if already fetched)
+                if sym not in prices:
                     try:
-                        place_adaptive_mkt(
-                            ib, sym,
+                        px = get_price_fallback_ib(ib, sym, prefer_delayed=prefer_delayed)
+                        prices[sym] = px
+                    except Exception as e:
+                        tprint(f"[FLOW] SKIP {sym}: hist price unavailable ({type(e).__name__}: {e})")
+                        continue
+                else:
+                    px = prices[sym]
+
+                shares = usd_to_shares_floor(effective_usd, px)
+                trade_usd = shares * px
+                carry_usd = effective_usd - trade_usd
+
+                if shares == 0:
+                    # Nothing to trade, record carry
+                    tprint(f"[FLOW] CARRY {sym}: +${delta_usd:.0f} (total carry=${effective_usd:.0f})")
+                    ledger_rows.append({
+                        "date": target_date,
+                        "ticker": sym,
+                        "delta_usd": 0.0,
+                        "carry_usd": effective_usd,
+                    })
+                    carry_map[sym] = effective_usd
+                    continue
+
+                # Record the trade
+                tprint(f"{sym}: SELL {shares} sh (~${trade_usd:,.0f} @ {px:.2f})")
+
+                if not dry_run:
+                    try:
+                        contract = Stock(sym, "SMART", "USD")
+                        ib.qualifyContracts(contract)
+                        order = Order(
                             action="SELL",
-                            qty=qty,
-                            order_ref=order_ref,
-                            priority="Patient",
-                            good_after_time=gat_str or None,
+                            totalQuantity=shares,
+                            orderType="MKT",
+                            tif="DAY",
+                            goodAfterTime=gat_str if gat_str else "",
+                            orderRef=f"{strategy_tag}|FLOW|{sym}|{gat_str}",
                         )
+                        ib.placeOrder(contract, order)
                     except Exception as e:
                         tprint(f"  ORDER FAIL {sym}: {type(e).__name__}: {e}")
                         continue
 
+                # Update ledger
                 ledger_rows.append({
                     "date": target_date,
                     "ticker": sym,
-                    "delta_usd": float(delta_usd),
+                    "delta_usd": trade_usd,
+                    "carry_usd": carry_usd,
                 })
+                carry_map[sym] = carry_usd
 
-        # Update ledger
-        try:
-            ledger_df = load_ledger(ledger_path)
-            append_ledger(ledger_path, ledger_df, ledger_rows)
-            tprint(f"\n[FLOW] Ledger updated: {ledger_path}")
-        except Exception as e:
-            tprint(f"\n[FLOW] WARNING: ledger update failed ({type(e).__name__}: {e})")
-
-        grand_total = per_day_total * len(schedule)
+        # Append all ledger rows at once
+        ledger_df = load_ledger(ledger_path)
+        append_ledger(ledger_path, ledger_df, ledger_rows)
+        tprint(f"\n[FLOW] Ledger updated: {ledger_path}")
+        grand_total = sum(o["delta_usd"] for o in sized) * len(schedule)
         tprint(f"\n[FLOW] Done. Total scheduled (USD): ${grand_total:,.2f} across {len(schedule)} day(s).")
-
     finally:
         try:
             ib.disconnect()
