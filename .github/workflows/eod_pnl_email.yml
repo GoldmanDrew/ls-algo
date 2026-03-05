@@ -18,7 +18,7 @@ on:
 
 jobs:
   # ────────────────────────────────────────────────────────
-  # Daily screener — runs at 10am EST on weekdays
+  # Daily screener — runs at 8am EST on weekdays
   # ────────────────────────────────────────────────────────
   screener:
     if: >-
@@ -72,7 +72,7 @@ jobs:
           fi
 
   # ────────────────────────────────────────────────────────
-  # EOD PnL email — runs at 5pm EST on weekdays
+  # EOD PnL email — runs at 8pm EST on weekdays
   # ────────────────────────────────────────────────────────
   eod:
     if: >-
