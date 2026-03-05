@@ -299,9 +299,17 @@ def send_email(
         # IMPORTANT: pass explicit envelope recipients list
         s.send_message(msg, to_addrs=recipients)
 
+from datetime import timedelta, date
+
+def get_previous_day(run_date: str | None = None) -> str:
+    """Returns run_date string; defaults to previous day if not provided."""
+    if run_date:
+        return run_date
+    prev_day = date.today() - timedelta(days=1)
+    return prev_day.isoformat()
 
 def main() -> int:
-    run_date = os.environ.get("RUN_DATE") or date.today().isoformat()
+    run_date = os.environ.get("RUN_DATE") or get_previous_day()
 
     # 1) Pull Flex files for RUN_DATE
     env = os.environ.copy()
@@ -367,7 +375,7 @@ def main() -> int:
     except Exception:
         asof = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    subject = f"EOD PnL by Underlying — {run_date} — Total: {underlying_total:,.2f}"
+    subject = f"EOD PnL by Underlying — {run_date} (Previous Day) — Total: {underlying_total:,.2f}"
 
     cum_total = float(hist["total_pnl"].iloc[-1]) if not hist.empty else 0.0
     n_days = int(hist.shape[0])
@@ -376,7 +384,7 @@ def main() -> int:
 
     body = (
         f"As of: {asof}\n"
-        f"Run date: {run_date}\n\n"
+        f"Run date: {run_date} — Previous day mark-to-market\n\n"
         f"TOTAL PnL (base): {underlying_total:,.2f}\n\n"
         "TOTAL PnL by underlying:\n"
         "----------------------------------------\n"

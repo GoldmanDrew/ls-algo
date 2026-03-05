@@ -5,7 +5,7 @@ ibkr:
   prefer_delayed: true
 
 accounting:
-  use_yfinance: true           # override Flex markPrice with yfinance close
+  use_yfinance: false           # override Flex markPrice with yfinance close
 
 strategy:
   tag: ETF_LS
