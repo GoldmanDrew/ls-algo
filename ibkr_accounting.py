@@ -945,11 +945,18 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "total_pnl",
     ]
 
-    pnl_by_symbol = df[["symbol", "underlying", "pair", "description"] + base_cols].sort_values("total_pnl", ascending=False)
+    # ── Bucket assignment: negative-beta ETFs → bucket_3, everything else → bucket_12 ──
+    _, etf_to_beta_map = load_etf_beta_map(etf_screened_path)
+    _sym_beta = df["symbol"].map(etf_to_beta_map).fillna(1.0)
+    df["bucket"] = np.where(_sym_beta < 0, "bucket_3", "bucket_12")
 
-    _under_agg = df.groupby("underlying", as_index=False)[base_cols].sum()
+    pnl_by_symbol = df[["symbol", "underlying", "bucket", "pair", "description"] + base_cols].sort_values("total_pnl", ascending=False)
+
+    # pnl_by_underlying: bucket_12 only (underlyings + positive-beta ETFs)
+    df_b12 = df[df["bucket"] == "bucket_12"]
+    _under_agg = df_b12.groupby("underlying", as_index=False)[base_cols].sum()
     _under_syms = (
-        df.groupby("underlying")["symbol"]
+        df_b12.groupby("underlying")["symbol"]
         .apply(lambda s: ", ".join(sorted(s.astype(str))))
         .reset_index()
         .rename(columns={"symbol": "symbols"})
@@ -959,40 +966,44 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         [["underlying", "symbols"] + base_cols]
         .sort_values("total_pnl", ascending=False)
     )
-    # ── Bucket PnL breakdown ──
-    # Bucket 1: β ≥ beta_cutoff          (high-leverage)
-    # Bucket 2: 0 ≤ β < beta_cutoff     (low-leverage / spot)
-    # Bucket 3: β < 0                   (inverse / short-beta)
-    beta_cutoff = float((cfg.get("strategy", {}) or {}).get("beta_cutoff", 1.5))
-    _, etf_to_beta_map = load_etf_beta_map(etf_screened_path)
-    df["_beta"] = df["symbol"].map(etf_to_beta_map).fillna(1.0)
 
-    def _assign_bucket(b: float) -> str:
-        if b < 0:
-            return "bucket_3_inverse"
-        if b >= beta_cutoff:
-            return "bucket_1_high_leverage"
-        return "bucket_2_low_leverage"
+    # Bucket 3 PnL by symbol (inverse/hedge ETFs)
+    pnl_bucket_3 = (
+        df[df["bucket"] == "bucket_3"][["symbol", "underlying", "pair", "description"] + base_cols]
+        .sort_values("total_pnl", ascending=False)
+    )
 
-    df["bucket"] = df["_beta"].apply(_assign_bucket)
     pnl_by_bucket = (
         df.groupby("bucket", as_index=False)[base_cols]
         .sum()
         .sort_values("total_pnl", ascending=False)
     )
-    df.drop(columns=["_beta", "bucket"], inplace=True)
 
     pnl_by_symbol.to_csv(outdir / "pnl_by_symbol.csv", index=False)
     pnl_by_underlying.to_csv(outdir / "pnl_by_underlying.csv", index=False)
+    pnl_bucket_3.to_csv(outdir / "pnl_bucket_3.csv", index=False)
     pnl_by_bucket.to_csv(outdir / "pnl_by_bucket.csv", index=False)
 
-    # ── Net exposure by underlying (beta-normalized) ──
+    # ── Net exposure (beta-normalized) ──
+    neg_beta_syms = {s for s, b in etf_to_beta_map.items() if b < 0}
     pnl_underlyings = set(pnl_by_underlying["underlying"].dropna().astype(str))
+
+    # Bucket 1&2 exposure (exclude negative-beta ETF positions)
+    pos_b12 = pos[~pos["symbol"].isin(neg_beta_syms)].copy()
     exposure_df, _ = compute_net_exposure(
         flex_positions_path, etf_screened_path, pnl_underlyings,
-        positions_df=pos,  # uses yfinance-overridden markPrices when enabled
+        positions_df=pos_b12,
     )
     exposure_df.to_csv(outdir / "net_exposure_by_underlying.csv", index=False)
+
+    # Bucket 3 exposure (negative-beta ETF positions only)
+    pos_b3 = pos[pos["symbol"].isin(neg_beta_syms)].copy()
+    b3_underlyings = set(pnl_bucket_3["underlying"].dropna().astype(str)) if not pnl_bucket_3.empty else set()
+    exposure_b3_df, _ = compute_net_exposure(
+        flex_positions_path, etf_screened_path, b3_underlyings,
+        positions_df=pos_b3,
+    )
+    exposure_b3_df.to_csv(outdir / "net_exposure_bucket_3.csv", index=False)
 
     totals = {
         "run_date": run_date,
@@ -1019,9 +1030,10 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "kept_underlyings": int(df["underlying"].nunique()) if not df.empty else 0,
         "net_exposure_total": float(exposure_df["net_notional_usd"].sum()) if not exposure_df.empty else 0.0,
         "gross_exposure_total": float(exposure_df["gross_notional_usd"].sum()) if not exposure_df.empty else 0.0,
+        "net_exposure_bucket_3": float(exposure_b3_df["net_notional_usd"].sum()) if not exposure_b3_df.empty else 0.0,
+        "gross_exposure_bucket_3": float(exposure_b3_df["gross_notional_usd"].sum()) if not exposure_b3_df.empty else 0.0,
         "yfinance_override": bool(use_yfinance),
         "yfinance_symbols_overridden": len(yf_closes),
-        "beta_cutoff": beta_cutoff,
         "bucket_pnl": {
             row["bucket"]: float(row["total_pnl"])
             for _, row in pnl_by_bucket.iterrows()
