@@ -131,7 +131,7 @@ def format_underlying_table(pnl_under_csv: Path, pnl_symbol_csv: Path) -> tuple[
             sym_df = pd.read_csv(pnl_symbol_csv)
             sym_df["total_pnl"] = pd.to_numeric(sym_df["total_pnl"], errors="coerce").fillna(0.0)
             if "bucket" in sym_df.columns:
-                sym_df = sym_df[sym_df["bucket"] == "bucket_12"]
+                sym_df = sym_df[sym_df["bucket"].isin(["bucket_1", "bucket_2"])]
         except Exception:
             sym_df = pd.DataFrame()
 
@@ -197,12 +197,11 @@ def format_bucket_table(pnl_bucket_csv: Path) -> str:
 
     # Friendly label mapping
     _LABELS = {
-        "bucket_12":              "Bucket 1&2 — Long/Short (β ≥ 0)",
-        "bucket_3":               "Bucket 3 — Inverse / Hedge (β < 0)",
+        "bucket_1":  "Bucket 1 — Levered (β > 1.5)",
+        "bucket_2":  "Bucket 2 — Standard (0 < β ≤ 1.5)",
+        "bucket_3":  "Bucket 3 — Inverse / Hedge (β < 0)",
         # Legacy keys
-        "bucket_1_high_leverage": "Bucket 1 — High Leverage (β ≥ cutoff)",
-        "bucket_2_low_leverage":  "Bucket 2 — Low Leverage / Spot (0 ≤ β < cutoff)",
-        "bucket_3_inverse":       "Bucket 3 — Inverse (β < 0)",
+        "bucket_12": "Bucket 1&2 — Long/Short (β ≥ 0)",
     }
 
     lines: list[str] = []
@@ -385,20 +384,68 @@ def main() -> int:
     pnl_under_csv, pnl_symbol_csv, pnl_bucket_csv, totals_json_path, totals = load_outputs(run_date)
     total_pnl = float(totals.get("total_pnl", 0.0))
 
-    # 4) Create underlying breakdown table (bucket 1&2) + bucket table
+    # 4) Create underlying breakdown table (bucket 1&2 combined) + bucket table
     underlying_table, underlying_total = format_underlying_table(pnl_under_csv, pnl_symbol_csv)
     bucket_table = format_bucket_table(pnl_bucket_csv)
 
-    # 4a) Bucket 3 PnL by symbol
+    # 4a) Per-bucket PnL
     outdir = PROJECT_ROOT / "data" / "runs" / run_date / "accounting"
+
+    pnl_b1_csv = outdir / "pnl_bucket_1.csv"
+    pnl_b2_csv = outdir / "pnl_bucket_2.csv"
     pnl_b3_csv = outdir / "pnl_bucket_3.csv"
+
+    # Bucket 1 PnL (levered ETFs + pro-rata spot)
+    b1_pnl_total = 0.0
+    b1_pnl_table = "(no bucket 1 data)"
+    if pnl_b1_csv.exists():
+        try:
+            _b1_df = pd.read_csv(pnl_b1_csv)
+            if not _b1_df.empty and "total_pnl" in _b1_df.columns:
+                _b1_df["total_pnl"] = pd.to_numeric(_b1_df["total_pnl"], errors="coerce").fillna(0.0)
+                b1_pnl_total = float(_b1_df["total_pnl"].sum())
+                # Build per-symbol detail from pnl_by_symbol filtered to bucket_1
+                _sym_b1 = pd.DataFrame()
+                if pnl_symbol_csv.exists():
+                    try:
+                        _sym_all = pd.read_csv(pnl_symbol_csv)
+                        _sym_b1 = _sym_all[_sym_all.get("bucket", pd.Series()) == "bucket_1"]
+                    except Exception:
+                        pass
+                b1_pnl_table, _ = _format_underlying_section(_b1_df, _sym_b1, section_label=None)
+        except Exception:
+            pass
+
+    # Bucket 2 PnL (standard ETFs + pro-rata spot)
+    b2_pnl_total = 0.0
+    b2_pnl_table = "(no bucket 2 data)"
+    if pnl_b2_csv.exists():
+        try:
+            _b2_df = pd.read_csv(pnl_b2_csv)
+            if not _b2_df.empty and "total_pnl" in _b2_df.columns:
+                _b2_df["total_pnl"] = pd.to_numeric(_b2_df["total_pnl"], errors="coerce").fillna(0.0)
+                b2_pnl_total = float(_b2_df["total_pnl"].sum())
+                _sym_b2 = pd.DataFrame()
+                if pnl_symbol_csv.exists():
+                    try:
+                        _sym_all2 = pd.read_csv(pnl_symbol_csv)
+                        _sym_b2 = _sym_all2[_sym_all2.get("bucket", pd.Series()) == "bucket_2"]
+                    except Exception:
+                        pass
+                b2_pnl_table, _ = _format_underlying_section(_b2_df, _sym_b2, section_label=None)
+        except Exception:
+            pass
+
+    # Bucket 3 PnL (inverse/hedge by symbol)
     b3_pnl_table, b3_pnl_total = format_bucket_3_pnl(pnl_b3_csv)
 
     # 4b) Load pre-computed exposure tables from accounting outputs
     exposure_csv_path = outdir / "net_exposure_by_underlying.csv"
+    exposure_b1_csv_path = outdir / "net_exposure_bucket_1.csv"
+    exposure_b2_csv_path = outdir / "net_exposure_bucket_2.csv"
     exposure_b3_csv_path = outdir / "net_exposure_bucket_3.csv"
 
-    # Bucket 1&2 exposure
+    # Combined bucket 1+2 exposure
     exposure_table_str = "(exposure data unavailable)"
     total_net = 0.0
     total_gross = 0.0
@@ -408,6 +455,28 @@ def main() -> int:
             exposure_table_str, total_net, total_gross = format_exposure_table(exposure_df)
         except Exception as e:
             exposure_table_str = f"(exposure error: {e})"
+
+    # Bucket 1 exposure
+    b1_exposure_table_str = "(no bucket 1 exposure data)"
+    b1_net = 0.0
+    b1_gross = 0.0
+    if exposure_b1_csv_path.exists():
+        try:
+            exposure_b1_df = pd.read_csv(exposure_b1_csv_path)
+            b1_exposure_table_str, b1_net, b1_gross = format_exposure_table(exposure_b1_df)
+        except Exception as e:
+            b1_exposure_table_str = f"(bucket 1 exposure error: {e})"
+
+    # Bucket 2 exposure
+    b2_exposure_table_str = "(no bucket 2 exposure data)"
+    b2_net = 0.0
+    b2_gross = 0.0
+    if exposure_b2_csv_path.exists():
+        try:
+            exposure_b2_df = pd.read_csv(exposure_b2_csv_path)
+            b2_exposure_table_str, b2_net, b2_gross = format_exposure_table(exposure_b2_df)
+        except Exception as e:
+            b2_exposure_table_str = f"(bucket 2 exposure error: {e})"
 
     # Bucket 3 exposure
     b3_exposure_table_str = "(no bucket 3 exposure data)"
@@ -421,7 +490,8 @@ def main() -> int:
             b3_exposure_table_str = f"(bucket 3 exposure error: {e})"
 
     # 5) Update history + plot since START_DATE
-    hist = update_pnl_history(run_date, total_pnl=underlying_total + b3_pnl_total)
+    grand_total = b1_pnl_total + b2_pnl_total + b3_pnl_total
+    hist = update_pnl_history(run_date, total_pnl=grand_total)
     plot_path = make_pnl_plot(hist)
 
     # 6) Compose email
@@ -437,8 +507,11 @@ def main() -> int:
     except Exception:
         asof = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    grand_total = underlying_total + b3_pnl_total
-    subject = f"EOD PnL — {run_date} (Previous Day) — Total: {grand_total:,.2f}"
+    subject = (
+        f"EOD PnL — {run_date} — "
+        f"B1: {b1_pnl_total:,.2f} | B2: {b2_pnl_total:,.2f} | B3: {b3_pnl_total:,.2f} | "
+        f"Total: {grand_total:,.2f}"
+    )
 
     cum_total = float(hist["total_pnl"].iloc[-1]) if not hist.empty else 0.0
     n_days = int(hist.shape[0])
@@ -446,24 +519,42 @@ def main() -> int:
     body = (
         f"As of: {asof}\n"
         f"Run date: {run_date} — Previous day mark-to-market\n\n"
-        f"TOTAL PnL (base): {grand_total:,.2f}\n\n"
-        "PnL by underlying (Bucket 1&2 — Long/Short):\n"
+        f"TOTAL PnL (base): {grand_total:,.2f}\n"
+        f"  Bucket 1 (Levered, β > 1.5):    {b1_pnl_total:,.2f}\n"
+        f"  Bucket 2 (Standard, 0 < β ≤ 1.5): {b2_pnl_total:,.2f}\n"
+        f"  Bucket 3 (Inverse, β < 0):       {b3_pnl_total:,.2f}\n\n"
+        "════════════════════════════════════════\n"
+        "PnL Bucket 1 — Levered (β > 1.5) by underlying:\n"
         "----------------------------------------\n"
-        f"{underlying_table}\n"
+        f"{b1_pnl_table}\n"
+        "----------------------------------------\n\n"
+        "PnL Bucket 2 — Standard (0 < β ≤ 1.5) by underlying:\n"
+        "----------------------------------------\n"
+        f"{b2_pnl_table}\n"
         "----------------------------------------\n\n"
         "PnL Bucket 3 — Inverse / Hedge (by symbol):\n"
         "----------------------------------------\n"
         f"{b3_pnl_table}\n"
         "----------------------------------------\n\n"
+        "PnL by underlying (Bucket 1&2 combined):\n"
+        "----------------------------------------\n"
+        f"{underlying_table}\n"
+        "----------------------------------------\n\n"
         "PnL BY BUCKET:\n"
         "----------------------------------------\n"
         f"{bucket_table}\n"
         "----------------------------------------\n\n"
-        f"NET EXPOSURE by underlying (Bucket 1&2, beta-normalized):\n"
-        f"  Net notional:   {total_net:,.2f}\n"
-        f"  Gross notional: {total_gross:,.2f}\n"
+        f"NET EXPOSURE Bucket 1 — Levered (beta-normalized):\n"
+        f"  Net notional:   {b1_net:,.2f}\n"
+        f"  Gross notional: {b1_gross:,.2f}\n"
         "----------------------------------------\n"
-        f"{exposure_table_str}\n"
+        f"{b1_exposure_table_str}\n"
+        "----------------------------------------\n\n"
+        f"NET EXPOSURE Bucket 2 — Standard (beta-normalized):\n"
+        f"  Net notional:   {b2_net:,.2f}\n"
+        f"  Gross notional: {b2_gross:,.2f}\n"
+        "----------------------------------------\n"
+        f"{b2_exposure_table_str}\n"
         "----------------------------------------\n\n"
         f"NET EXPOSURE Bucket 3 — Inverse / Hedge:\n"
         f"  Net notional:   {b3_net:,.2f}\n"
@@ -471,30 +562,38 @@ def main() -> int:
         "----------------------------------------\n"
         f"{b3_exposure_table_str}\n"
         "----------------------------------------\n\n"
+        f"NET EXPOSURE by underlying (Bucket 1&2 combined, beta-normalized):\n"
+        f"  Net notional:   {total_net:,.2f}\n"
+        f"  Gross notional: {total_gross:,.2f}\n"
+        "----------------------------------------\n"
+        f"{exposure_table_str}\n"
+        "----------------------------------------\n\n"
         f"Since {START_DATE}: {n_days} day(s) logged | Cumulative PnL: {cum_total:,.2f}\n\n"
         "Attachments:\n"
-        "- pnl_by_underlying.csv\n"
-        "- pnl_by_symbol.csv\n"
+        "- pnl_by_underlying.csv  (bucket 1&2 combined)\n"
+        "- pnl_bucket_1.csv\n"
+        "- pnl_bucket_2.csv\n"
         "- pnl_bucket_3.csv\n"
+        "- pnl_by_symbol.csv\n"
         "- pnl_by_bucket.csv\n"
         "- totals.json\n"
         f"- {plot_path.name}\n"
         "- net_exposure_by_underlying.csv\n"
+        "- net_exposure_bucket_1.csv\n"
+        "- net_exposure_bucket_2.csv\n"
         "- net_exposure_bucket_3.csv\n"
     )
 
-    # 7) Send (attach CSV + symbol + bucket3 + bucket + totals + plot + exposure)
+    # 7) Send (attach all CSVs + totals + plot + exposure)
     attachments = [pnl_under_csv, totals_json_path, plot_path]
     if pnl_symbol_csv.exists():
         attachments.insert(1, pnl_symbol_csv)
-    if pnl_b3_csv.exists():
-        attachments.insert(2, pnl_b3_csv)
-    if pnl_bucket_csv.exists():
-        attachments.insert(3, pnl_bucket_csv)
-    if exposure_csv_path.exists():
-        attachments.append(exposure_csv_path)
-    if exposure_b3_csv_path.exists():
-        attachments.append(exposure_b3_csv_path)
+    for csv_path in [pnl_b1_csv, pnl_b2_csv, pnl_b3_csv, pnl_bucket_csv]:
+        if csv_path.exists():
+            attachments.append(csv_path)
+    for csv_path in [exposure_csv_path, exposure_b1_csv_path, exposure_b2_csv_path, exposure_b3_csv_path]:
+        if csv_path.exists():
+            attachments.append(csv_path)
 
     send_email(
         subject=subject,
