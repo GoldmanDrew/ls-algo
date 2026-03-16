@@ -577,6 +577,7 @@ class CoordinatorCancelService:
             return 0
 
         cancelled = 0
+        cancelled_trades: List[Trade] = []
         try:
             ib.reqOpenOrders()
             ib.sleep(0.10)
@@ -603,14 +604,41 @@ class CoordinatorCancelService:
 
                 ib.cancelOrder(tr.order)
                 cancelled += 1
+                cancelled_trades.append(tr)
             except Exception:
                 pass
 
-        if cancelled:
-            try:
-                ib.sleep(0.10)
-            except Exception:
-                pass
+        # Wait for ALL cancelled orders to reach terminal state.
+        # This prevents the caller from submitting a new order while the
+        # old one is still live/filling — the root cause of double-fills.
+        if cancelled_trades:
+            CANCEL_CONFIRM_TIMEOUT = 10.0
+            t0 = time.time()
+            while time.time() - t0 < CANCEL_CONFIRM_TIMEOUT:
+                all_done = True
+                for tr in cancelled_trades:
+                    st = (tr.orderStatus.status or "").strip().lower()
+                    if st not in TERMINAL:
+                        all_done = False
+                        break
+                if all_done:
+                    break
+                try:
+                    ib.sleep(0.25)
+                except Exception:
+                    break
+            # Log any that didn't reach terminal (rare but informative)
+            for tr in cancelled_trades:
+                st = (tr.orderStatus.status or "").strip().lower()
+                if st not in TERMINAL:
+                    try:
+                        oid = int(getattr(tr.order, "orderId", 0) or 0)
+                        tprint(
+                            f"[CANCEL_COORD] WARNING: order {oid} for {symbol} "
+                            f"still status={st} after cancel confirm wait."
+                        )
+                    except Exception:
+                        pass
 
         return cancelled
 
@@ -677,9 +705,17 @@ def execute_leg(
         if remain <= 0:
             break
 
+        # Cancel any stale orders for this symbol and WAIT for them to
+        # reach terminal state.  This is critical: without confirmation,
+        # the old order can still fill while the new one is also live,
+        # causing double/triple fills (the root cause of the BUY-SELL-BUY
+        # cleanup bug).
         n_cancel = cancel_global()
         if n_cancel:
-            tprint(f"[{context}][CANCEL] {symbol_u}: cancelled {n_cancel} stale orders (global)")
+            tprint(f"[{context}][CANCEL] {symbol_u}: cancelled {n_cancel} stale orders (global, confirmed terminal)")
+            # Extra settle time: even after terminal confirmation, TWS may
+            # still be processing internal state.  Give it a moment.
+            ib.sleep(1.0)
 
         if order_style == "ADAPTIVE_MKT":
             if "|UNDER_DELTA" in order_ref:
@@ -729,7 +765,23 @@ def execute_leg(
                     error_msg=msg,
                 )
 
-            cancel_global()
+            # Before retrying, ensure this rejected order is truly dead.
+            # Cancel it explicitly and wait for terminal, then collect any
+            # partial fills it may have accumulated before rejection.
+            try:
+                ib.cancelOrder(trade.order)
+            except Exception:
+                pass
+            trade = wait_for_trade_terminal(ib, trade, timeout=15.0)
+            last_trade_local = trade
+            rejected_filled = int(trade.orderStatus.filled or 0)
+            if rejected_filled > 0:
+                filled_total = min(qty, filled_total + rejected_filled)
+                tprint(
+                    f"{ctx}[LEG] {symbol_u} NOT_ACK but had {rejected_filled} partial fills "
+                    f"before rejection; filled_total={filled_total}"
+                )
+
             tprint(f"{ctx}[LEG] {symbol_u} NOT_ACK (status={st} code={code} msg={msg}); retrying.")
             ib.sleep(1.0)
             continue
@@ -756,13 +808,19 @@ def execute_leg(
 
         # Market-data subscription block -> fallback LMT (existing behavior)
         if status == "cancelled" and is_mktdata_block(code, msg):
+            # Collect any partial fills from the cancelled adaptive order
+            filled_total = min(qty, filled_total + max(0, filled))
             cancel_global()
             adj = float(bps) / 10000.0
             lmt = ref_price * (1.0 + adj) if action.upper() == "BUY" else ref_price * (1.0 - adj)
 
+            lmt_remain = qty - filled_total
+            if lmt_remain <= 0:
+                continue
+
             o2 = build_limit_order(
                 action=action,
-                qty=remain,
+                qty=lmt_remain,
                 lmt_price=lmt,
                 order_ref=f"{order_ref}|att{attempt}|LMT_FALLBACK",
             )
@@ -782,11 +840,27 @@ def execute_leg(
         filled_total = min(qty, filled_total + max(0, filled))
 
         if status not in TERMINAL:
+            # Order didn't reach terminal within timeout — force cancel and
+            # wait for confirmation before potentially retrying.
             try:
                 ib.cancelOrder(trade.order)
-                ib.sleep(0.5)
             except Exception:
                 pass
+            trade = wait_for_trade_terminal(ib, trade, timeout=15.0)
+            last_trade_local = trade
+            # Re-read filled in case it filled during the cancel
+            post_cancel_filled = int(trade.orderStatus.filled or 0)
+            if post_cancel_filled > filled:
+                extra = post_cancel_filled - filled
+                filled_total = min(qty, filled_total + extra)
+                tprint(
+                    f"{ctx}[LEG] {symbol_u} picked up {extra} extra fills during cancel; "
+                    f"filled_total={filled_total}"
+                )
+
+        # Settle between attempts: let TWS propagate state before next order
+        if attempt < max_retries and filled_total < qty:
+            ib.sleep(1.5)
 
     # Final status
     if dry_run:
