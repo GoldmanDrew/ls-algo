@@ -480,31 +480,27 @@ def compute_hedge_delta(
     *,
     net_notional: float,
     target_gross: float,
-    net_exposure_band: float,
+    net_trigger_long_pct: float,   # 0.02
+    net_trigger_short_pct: float,  # 0.01
+    net_target_long_pct: float,    # 0.01
+    net_target_short_pct: float,   # 0.00
 ) -> Tuple[bool, float]:
-    """
-    Determine whether a hedge is needed and by how much.
-
-    Trigger:  |net_notional| > net_exposure_band * target_gross
-
-    If triggered:
-        target_net   = sign(net) * net_exposure_band * target_gross / 2
-        correction   = target_net - net_notional
-
-    correction < 0  =>  net too long  =>  add to ETF short
-    correction > 0  =>  net too short =>  add to underlying long
-
-    Returns (triggered, correction_usd).
-    """
     if target_gross <= 0.0:
         return False, 0.0
 
-    trigger_threshold = net_exposure_band * target_gross
-    if abs(net_notional) <= trigger_threshold:
-        return False, 0.0
+    if net_notional > 0:
+        # Net long — need to add shorts
+        trigger = net_trigger_long_pct * target_gross
+        if net_notional <= trigger:
+            return False, 0.0
+        target_net = net_target_long_pct * target_gross
+    else:
+        # Net short — need to add longs
+        trigger = net_trigger_short_pct * target_gross
+        if abs(net_notional) <= trigger:
+            return False, 0.0
+        target_net = -net_target_short_pct * target_gross
 
-    sign       = 1.0 if net_notional >= 0.0 else -1.0
-    target_net = sign * (net_exposure_band * target_gross / 2.0)
     correction = target_net - net_notional
     return True, correction
 
@@ -599,7 +595,10 @@ def build_hedge_trades(
     prices: Dict[str, float],
     account_equity: float,
     gross_leverage: float,
-    net_exposure_band: float,
+    net_trigger_long_pct: float,
+    net_trigger_short_pct: float,
+    net_target_long_pct: float,
+    net_target_short_pct: float,
     min_trade_usd: float,
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
@@ -659,7 +658,10 @@ def build_hedge_trades(
 
         triggered, correction_usd = compute_hedge_delta(
             net_notional=net_notional, target_gross=ref_gross,
-            net_exposure_band=net_exposure_band,
+            net_trigger_long_pct=net_trigger_long_pct,
+            net_trigger_short_pct=net_trigger_short_pct,
+            net_target_long_pct=net_target_long_pct,
+            net_target_short_pct=net_target_short_pct,
         )
 
         net_pct = (net_notional / ref_gross * 100.0) if ref_gross > 0 else 0.0
@@ -729,7 +731,10 @@ def execute_hedge_pass_serial(
     short_map: Dict[str, dict],
     cancel_service: CoordinatorCancelService,
     log_exposure_event,
-    net_exposure_band: float,
+    net_trigger_long_pct: float,
+    net_trigger_short_pct: float,
+    net_target_long_pct: float,
+    net_target_short_pct: float,
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
 ) -> Tuple[List[dict], int, int]:
@@ -769,7 +774,10 @@ def execute_hedge_pass_serial(
         )
         triggered_now, _ = compute_hedge_delta(
             net_notional=net_now, target_gross=target_gross,
-            net_exposure_band=net_exposure_band,
+            net_trigger_long_pct=net_trigger_long_pct,
+            net_trigger_short_pct=net_trigger_short_pct,
+            net_target_long_pct=net_target_long_pct,
+            net_target_short_pct=net_target_short_pct,
         )
         if not triggered_now:
             tprint(
@@ -903,7 +911,10 @@ def _hedge_worker(
     short_map: Dict[str, dict],
     cancel_service: CoordinatorCancelService,
     log_exposure_event,
-    net_exposure_band: float,
+    net_trigger_long_pct: float,
+    net_trigger_short_pct: float,
+    net_target_long_pct: float,
+    net_target_short_pct: float,
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
     log_lock: threading.Lock,
@@ -948,7 +959,10 @@ def _hedge_worker(
         )
         triggered_now, correction_now = compute_hedge_delta(
             net_notional=net_now, target_gross=target_gross,
-            net_exposure_band=net_exposure_band,
+            net_trigger_long_pct=net_trigger_long_pct,
+            net_trigger_short_pct=net_trigger_short_pct,
+            net_target_long_pct=net_target_long_pct,
+            net_target_short_pct=net_target_short_pct,
         )
         if not triggered_now:
             tprint(
@@ -1103,7 +1117,10 @@ def execute_hedge_pass_parallel(
     short_map: Dict[str, dict],
     cancel_service: CoordinatorCancelService,
     log_exposure_event,
-    net_exposure_band: float,
+    net_trigger_long_pct: float,
+    net_trigger_short_pct: float,
+    net_target_long_pct: float,
+    net_target_short_pct: float,
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
     log_lock: threading.Lock,
@@ -1153,7 +1170,10 @@ def execute_hedge_pass_parallel(
                 dry_run=dry_run, short_map=short_map,
                 cancel_service=cancel_service,
                 log_exposure_event=log_exposure_event,
-                net_exposure_band=net_exposure_band,
+                net_trigger_long_pct=net_trigger_long_pct,
+                net_trigger_short_pct=net_trigger_short_pct,
+                net_target_long_pct=net_target_long_pct,
+                net_target_short_pct=net_target_short_pct,
                 etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                 log_lock=log_lock,
             )
@@ -1185,7 +1205,8 @@ def print_phase_summary(
     n_traded: int,
     net_by_underlying: Dict[str, float],
     target_gross_by_underlying: Dict[str, float],
-    net_exposure_band: float,
+    net_trigger_long_pct: float,
+    net_trigger_short_pct: float,
 ) -> None:
     tprint(f"\n{'='*78}")
     tprint(f"  {phase}")
@@ -1201,7 +1222,8 @@ def print_phase_summary(
         net = net_by_underlying[under]
         tgt = target_gross_by_underlying.get(under, 0.0)
         pct = (net / tgt * 100.0) if tgt > 0 else 0.0
-        status = "OK" if abs(pct) <= net_exposure_band * 100.0 else "WARN"
+        band = net_trigger_long_pct if net >= 0 else net_trigger_short_pct
+        status = "OK" if abs(pct) <= band * 100.0 else "WARN"
         tprint(f"  {under:<15} {net:>12,.0f} {tgt:>12,.0f} {pct:>7.1f}%  {status}")
     tprint("")
 
@@ -1261,7 +1283,10 @@ def main() -> None:
     blacklist      = load_blacklist(cfg)
 
     # Rebalance params
-    net_exposure_band       = float(reb_cfg.get("net_exposure_band", 0.10))
+    net_trigger_long_pct    = float(reb_cfg.get("net_trigger_long_pct", 0.02))
+    net_trigger_short_pct   = float(reb_cfg.get("net_trigger_short_pct", 0.01))
+    net_target_long_pct     = float(reb_cfg.get("net_target_long_pct", 0.01))
+    net_target_short_pct    = float(reb_cfg.get("net_target_short_pct", 0.00))
     min_trade_usd           = float(reb_cfg.get("min_trade_usd", 500.0))
     establish_threshold_usd = float(reb_cfg.get("establish_threshold_usd", 100.0))
 
@@ -1524,7 +1549,10 @@ def main() -> None:
             account_equity = get_account_equity(ib)
             tprint(f"[EQUITY] NetLiquidation = ${account_equity:,.0f}")
             tprint(
-                f"[HEDGE]  net_exposure_band={net_exposure_band*100:.0f}%  "
+                f"[HEDGE]  trigger_long={net_trigger_long_pct*100:.0f}%  "
+                f"trigger_short={net_trigger_short_pct*100:.0f}%  "
+                f"target_long={net_target_long_pct*100:.0f}%  "
+                f"target_short={net_target_short_pct*100:.0f}%  "
                 f"gross_leverage={gross_leverage}x  "
                 f"min_trade_usd=${min_trade_usd:,.0f}"
             )
@@ -1560,7 +1588,11 @@ def main() -> None:
                     hedgeable_plan=hedgeable_df,
                     strat_pos=strat_pos, prices=prices,
                     account_equity=account_equity, gross_leverage=gross_leverage,
-                    net_exposure_band=net_exposure_band, min_trade_usd=min_trade_usd,
+                    net_trigger_long_pct=net_trigger_long_pct,
+                    net_trigger_short_pct=net_trigger_short_pct,
+                    net_target_long_pct=net_target_long_pct,
+                    net_target_short_pct=net_target_short_pct,
+                    min_trade_usd=min_trade_usd,
                     etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                     short_map=short_map,
                 )
@@ -1593,7 +1625,10 @@ def main() -> None:
                         dry_run=dry_run, parallel_n=parallel_n,
                         short_map=short_map, cancel_service=cancel_service,
                         log_exposure_event=log_exposure_event,
-                        net_exposure_band=net_exposure_band,
+                        net_trigger_long_pct=net_trigger_long_pct,
+                        net_trigger_short_pct=net_trigger_short_pct,
+                        net_target_long_pct=net_target_long_pct,
+                        net_target_short_pct=net_target_short_pct,
                         etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                         log_lock=log_lock,
                     )
@@ -1623,7 +1658,11 @@ def main() -> None:
                         hedgeable_plan=hedgeable_df,
                         strat_pos=strat_pos, prices=prices,
                         account_equity=account_equity, gross_leverage=gross_leverage,
-                        net_exposure_band=net_exposure_band, min_trade_usd=min_trade_usd,
+                        net_trigger_long_pct=net_trigger_long_pct,
+                        net_trigger_short_pct=net_trigger_short_pct,
+                        net_target_long_pct=net_target_long_pct,
+                        net_target_short_pct=net_target_short_pct,
+                        min_trade_usd=min_trade_usd,
                         etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                         short_map=short_map,
                     )
@@ -1644,7 +1683,10 @@ def main() -> None:
                             dry_run=dry_run, parallel_n=parallel_n,
                             short_map=short_map, cancel_service=cancel_service,
                             log_exposure_event=log_exposure_event,
-                            net_exposure_band=net_exposure_band,
+                            net_trigger_long_pct=net_trigger_long_pct,
+                            net_trigger_short_pct=net_trigger_short_pct,
+                            net_target_long_pct=net_target_long_pct,
+                            net_target_short_pct=net_target_short_pct,
                             etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                             log_lock=log_lock,
                         )
@@ -1681,7 +1723,8 @@ def main() -> None:
                 n_traded=total_traded,
                 net_by_underlying=post_net,
                 target_gross_by_underlying=pre_tgt,
-                net_exposure_band=net_exposure_band,
+                net_trigger_long_pct=net_trigger_long_pct,
+                net_trigger_short_pct=net_trigger_short_pct,
             )
         else:
             tprint("[PHASE 3] Skipped.")
