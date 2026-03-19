@@ -904,6 +904,8 @@ def _compute_gross_decay(etf_tr: pd.Series, und_tr: pd.Series,
 
     gross_decay_annual = mean(weekly_pnl) × 52
     """
+    etf_tr = etf_tr[~etf_tr.index.duplicated(keep='last')]
+    und_tr = und_tr[~und_tr.index.duplicated(keep='last')]
     combined = pd.concat([etf_tr.rename("etf"), und_tr.rename("und")], axis=1).dropna()
     if len(combined) < min_weeks * 5:  # need enough daily points to form weeks
         return None
