@@ -129,7 +129,8 @@ new_pairs = [
     ("UUUG", "UUUU"), ("HUTG", "HUT"),  ("XPEG", "XPEV"), ("ORLG", "ORLY"),
     ("LUNL", "LUNR"), ("RKTL", "RKT"),  ("EOSU", "EOSE"), ("BTFL", "BITF"),
     ("FGRU", "FIGR"), ("APHU", "APH"),  ("COPZ", "COPX"), ("LEUX", "LEU"),
-    ("COHX", "COHR"), ("AXPG", "AXP"),  ("FCXG", "FCX"),
+    ("COHX", "COHR"), ("AXPG", "AXP"),  ("FCXG", "FCX"), ("GLWG", "GLW"),
+    ("SNDU", "SNDK"), ("PAAU", "PAAS"),
     ("BITX", "IBIT"), ("ETHU", "ETHA"), ("XXRP", "XRPZ"),
 ]
 
@@ -566,6 +567,8 @@ def download_all_tr_series(tickers: list[str], period: str = "2y",
 def compute_beta_ols(etf_tr: pd.Series, und_tr: pd.Series,
                      min_days: int = 60) -> tuple[float | None, int]:
     """OLS: r_etf = alpha + beta × r_und. Returns (beta, n_obs)."""
+    etf_tr = etf_tr[~etf_tr.index.duplicated(keep='last')]
+    und_tr = und_tr[~und_tr.index.duplicated(keep='last')]
     df = pd.concat([etf_tr.rename("etf"), und_tr.rename("und")], axis=1).dropna()
     if len(df) < min_days + 1:
         return None, 0

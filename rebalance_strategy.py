@@ -424,6 +424,10 @@ def compute_beta_adjusted_net_notional(
         contribution = shares_s * price_s * beta_s
     where beta=1.0 for the spot underlying, and ETF shares are negative (short).
 
+    Negative-beta ETFs (inverse products) are EXCLUDED entirely.
+    Their exposure belongs to bucket 3 (flow program) and must not
+    influence core pair hedge decisions.
+
     Returns (net_notional, gross_notional).
         net > 0  =>  net long exposure
         net < 0  =>  net short exposure
@@ -443,6 +447,12 @@ def compute_beta_adjusted_net_notional(
             continue
 
         beta = etf_to_beta.get(sym, 1.0) if is_etf else 1.0
+
+        # Skip negative-beta ETFs — inverse products whose exposure
+        # is managed separately in the flow program (bucket 3).
+        if is_etf and beta < 0:
+            continue
+
         px   = float(prices.get(sym) or 0.0)
         if px <= 0.0:
             continue
@@ -603,21 +613,75 @@ def build_hedge_trades(
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
     short_map: Optional[Dict[str, dict]] = None,
+    flow_etfs: Optional[Set[str]] = None,
+    blacklist: Optional[Set[str]] = None,
 ) -> List[dict]:
     """
-    Iterate over all underlyings in hedgeable_plan. For each:
+    Iterate over ALL underlyings that have strategy positions — not just
+    those in hedgeable_plan.  This catches orphaned positions from Phase 1
+    cleanup, ETF delistings, forced short recalls, and any other event
+    that removes one leg of a pair.
+
+    For each underlying:
         1. Compute beta-adjusted net notional from live positions
-        2. Compute target gross from live equity
-        3. Check trigger
-        4. If triggered, resolve the single leg to trade
+        2. Compute target gross from live equity (0 if not in plan)
+        3. If the underlying is the ONLY remaining leg (no ETF exposure):
+           → generate a full close trade (orphan_close=True)
+        4. Otherwise: normal threshold check + resolve single leg
+
+    Negative-beta / flow-program ETFs are excluded so bucket-3 exposure
+    is not disturbed.  Blacklisted underlyings are skipped entirely
+    (they should not be traded by the strategy).
 
     Returns list of trade dicts ordered by abs(correction_usd) descending
     (largest imbalances traded first).
     """
-    underlyings = sorted(hedgeable_plan["Underlying"].unique())
+    if flow_etfs is None:
+        flow_etfs = set()
+    if blacklist is None:
+        blacklist = set()
+    else:
+        blacklist = set(blacklist)
+
+    plan_underlyings: Set[str] = set(
+        hedgeable_plan["Underlying"].unique()
+    ) if not hedgeable_plan.empty else set()
+
+    # ── Build the full set of underlyings with any strategy position ──
+    # Include: direct underlying positions + underlyings mapped from ETFs
+    # Exclude: flow ETFs and negative-beta (inverse) ETFs — bucket 3
+    # Exclude: blacklisted underlyings (not managed by Phase 3)
+    positioned_underlyings: Set[str] = set()
+    for sym, sh in strat_pos.items():
+        if float(sh) == 0.0:
+            continue
+        # Is this symbol an ETF?  Add its underlying unless it's
+        # a flow ETF or a negative-beta (inverse) product.
+        u = etf_to_under.get(sym)
+        if u and sym not in flow_etfs:
+            beta = etf_to_beta.get(sym, 1.0)
+            if beta >= 0:
+                positioned_underlyings.add(u)
+        # Is this symbol an underlying itself?
+        elif sym in set(etf_to_under.values()):
+            positioned_underlyings.add(sym)
+
+    # Remove blacklisted underlyings from the off-plan scan.
+    # (plan_underlyings already excludes them via generate_trade_plan.)
+    blacklisted_positioned = positioned_underlyings & blacklist
+    if blacklisted_positioned:
+        tprint(
+            f"[HEDGE] Skipping {len(blacklisted_positioned)} blacklisted "
+            f"positioned underlyings: {sorted(blacklisted_positioned)}"
+        )
+        positioned_underlyings -= blacklist
+
+    underlyings = sorted(plan_underlyings | positioned_underlyings)
     trades: List[dict] = []
 
     # Diagnostic: warn about positioned symbols invisible to hedge math
+    # (Actionable unmapped handling happens in detect_unmapped_positions
+    #  before Phase 3; this is just a debug-level count.)
     all_mapped = set(etf_to_under.keys()) | set(etf_to_under.values())
     unmapped = {
         s for s, sh in strat_pos.items()
@@ -625,18 +689,17 @@ def build_hedge_trades(
     }
     if unmapped:
         tprint(
-            f"[HEDGE] WARNING: {len(unmapped)} positioned symbols not in ETF beta map: "
-            f"{sorted(unmapped)[:10]}"
+            f"[HEDGE] INFO: {len(unmapped)} positioned symbols not in ETF beta map "
+            f"(CVRs, legacy, etc. — handled upstream if in screened CSV)."
         )
 
     for under in underlyings:
         if stop_requested():
             break
 
+        in_plan = under in plan_underlyings
+
         # Guard: skip this underlying if we have no price for it.
-        # Without a valid underlying price, compute_beta_adjusted_net_notional
-        # silently zeroes the long contribution, making net look heavily short
-        # and potentially triggering a wrong-direction hedge.
         px_under = float(prices.get(under) or 0.0)
         if px_under <= 0.0:
             tprint(f"[HEDGE][{under}] WARNING: No price for underlying; skipping hedge check.")
@@ -646,6 +709,61 @@ def build_hedge_trades(
             strat_pos=strat_pos, prices=prices, underlying=under,
             etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
         )
+
+        # ── Check if the underlying is the only remaining leg ────────
+        # (all core ETF shorts gone — orphaned position)
+        # Negative-beta (inverse) ETFs and flow ETFs are excluded from
+        # this check — they belong to bucket 3 and don't constitute
+        # a hedge for the underlying long.
+        under_sh = float(strat_pos.get(under, 0.0))
+        has_etf_exposure = False
+        for sym, u in etf_to_under.items():
+            if u != under:
+                continue
+            if sym in flow_etfs:
+                continue
+            beta = etf_to_beta.get(sym, 1.0)
+            if beta < 0:
+                continue
+            if float(strat_pos.get(sym, 0.0)) != 0.0:
+                has_etf_exposure = True
+                break
+
+        if not has_etf_exposure and under_sh != 0.0:
+            # Orphaned: underlying is the only remaining non-flow leg.
+            # Close the entire position to zero.
+            close_notional = abs(under_sh * px_under)
+            action = "SELL" if under_sh > 0 else "BUY"
+            qty = abs(int(under_sh))
+
+            label = "ORPHAN" if not in_plan else "ORPHAN(plan)"
+            tprint(
+                f"[HEDGE][{under:15s}] net={net_notional:>+12,.0f}  "
+                f"tgt_gross={'0':>10s}  net%={'n/a':>6s}  "
+                f"{label}: {action} {qty} to close"
+            )
+
+            if close_notional < min_trade_usd:
+                tprint(
+                    f"[HEDGE][{under}] orphan close ${close_notional:,.0f} "
+                    f"< min_trade_usd; skipping."
+                )
+                continue
+
+            trades.append({
+                "underlying":        under,
+                "symbol":            under,
+                "action":            action,
+                "qty":               qty,
+                "ref_price":         px_under,
+                "correction_usd":    -close_notional if action == "SELL" else close_notional,
+                "net_notional_before": net_notional,
+                "target_gross":      0.0,
+                "orphan_close":      True,
+            })
+            continue
+
+        # ── Normal hedge logic (has ETF exposure) ────────────────────
         target_gross = compute_target_gross_per_underlying(
             underlying=under, plan=hedgeable_plan,
             account_equity=account_equity, gross_leverage=gross_leverage,
@@ -665,10 +783,13 @@ def build_hedge_trades(
         )
 
         net_pct = (net_notional / ref_gross * 100.0) if ref_gross > 0 else 0.0
+        status_tag = "TRIGGERED" if triggered else "ok"
+        if not in_plan:
+            status_tag += " (off-plan)"
         tprint(
             f"[HEDGE][{under:15s}] net={net_notional:>+12,.0f}  "
             f"tgt_gross={target_gross:>10,.0f}  net%={net_pct:>+6.1f}%  "
-            f"{'TRIGGERED' if triggered else 'ok'}"
+            f"{status_tag}"
         )
 
         if not triggered:
@@ -703,13 +824,16 @@ def build_hedge_trades(
             "correction_usd":    correction_usd,
             "net_notional_before": net_notional,
             "target_gross":      ref_gross,   # max(actual, plan) used for trigger
+            "orphan_close":      False,
         })
 
     # Largest corrections first
     trades.sort(key=lambda t: abs(t["correction_usd"]), reverse=True)
+    n_orphan = sum(1 for t in trades if t.get("orphan_close"))
     tprint(
-        f"[HEDGE] Checked {len(underlyings)} underlyings -> "
-        f"{len(trades)} hedge trades queued."
+        f"[HEDGE] Checked {len(underlyings)} underlyings "
+        f"({len(underlyings) - len(plan_underlyings)} off-plan) -> "
+        f"{len(trades)} hedge trades queued ({n_orphan} orphan closes)."
     )
     return trades
 
@@ -764,28 +888,57 @@ def execute_hedge_pass_serial(
         qty        = trade_info["qty"]
         ref_px     = trade_info["ref_price"]
         target_gross = trade_info["target_gross"]
+        is_orphan  = trade_info.get("orphan_close", False)
 
         # Re-verify: re-read live position before each trade
         ib_pos_now = current_ib_positions(ib)
         strat_now  = strategy_position_only(ib_pos_now, baseline)
-        net_now, _ = compute_beta_adjusted_net_notional(
-            strat_pos=strat_now, prices=prices, underlying=under,
-            etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
-        )
-        triggered_now, _ = compute_hedge_delta(
-            net_notional=net_now, target_gross=target_gross,
-            net_trigger_long_pct=net_trigger_long_pct,
-            net_trigger_short_pct=net_trigger_short_pct,
-            net_target_long_pct=net_target_long_pct,
-            net_target_short_pct=net_target_short_pct,
-        )
-        if not triggered_now:
-            tprint(
-                f"[HEDGE][{under}] No longer triggered after re-read "
-                f"(net={net_now:+,.0f}); skipping."
+
+        if is_orphan:
+            # Orphan close: confirm position still exists, flatten entirely
+            cur_sh = float(strat_now.get(symbol, 0.0))
+            if (action == "SELL" and cur_sh <= 0) or (action == "BUY" and cur_sh >= 0):
+                tprint(
+                    f"[HEDGE][{under}] Orphan close: position already flat "
+                    f"(sh={cur_sh:.0f}); skipping."
+                )
+                n_triggered -= 1
+                continue
+            qty = abs(int(cur_sh))
+            if qty <= 0:
+                n_triggered -= 1
+                continue
+        else:
+            net_now, _ = compute_beta_adjusted_net_notional(
+                strat_pos=strat_now, prices=prices, underlying=under,
+                etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
             )
-            n_triggered -= 1
-            continue
+            triggered_now, _ = compute_hedge_delta(
+                net_notional=net_now, target_gross=target_gross,
+                net_trigger_long_pct=net_trigger_long_pct,
+                net_trigger_short_pct=net_trigger_short_pct,
+                net_target_long_pct=net_target_long_pct,
+                net_target_short_pct=net_target_short_pct,
+            )
+            if not triggered_now:
+                tprint(
+                    f"[HEDGE][{under}] No longer triggered after re-read "
+                    f"(net={net_now:+,.0f}); skipping."
+                )
+                n_triggered -= 1
+                continue
+
+            # Cap SELL-underlying to shares held — don't flip to short
+            if action == "SELL" and symbol == under:
+                cur_under_sh = float(strat_now.get(under, 0.0))
+                if cur_under_sh > 0:
+                    qty = min(qty, int(cur_under_sh))
+                else:
+                    tprint(
+                        f"[HEDGE][{under}] Reconcile SELL but underlying "
+                        f"sh={cur_under_sh:.0f}; cannot sell. Skipping."
+                    )
+                    continue
 
         # Fresh price
         fresh_px   = get_snapshot_price(ib, symbol, prefer_delayed=prefer_delayed)
@@ -795,8 +948,9 @@ def execute_hedge_pass_serial(
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         px_under = float(prices.get(under) or 0.0)
 
-        # FTP gate for new shorts
-        if action == "SELL":
+        # FTP gate for new shorts (ETF only — selling an existing
+        # underlying long is not a short sale)
+        if action == "SELL" and symbol != under:
             sm    = short_map.get(symbol, {})
             avail = sm.get("available")
             if avail is not None and avail <= 0:
@@ -873,10 +1027,10 @@ def execute_hedge_pass_serial(
             "px_under": px_under,
             "px_etf":   (px if is_etf_trade else 0.0),
             "target_sh_under": 0, "target_sh_etf": 0,
-            "delta_sh_under":  (qty if action == "BUY"  else 0),
-            "delta_sh_etf":    (qty if action == "SELL" else 0),
-            "filled_sh_under": (filled_signed if action == "BUY"  else 0),
-            "filled_sh_etf":   (abs(filled_signed) if action == "SELL" else 0),
+            "delta_sh_under":  ((-qty if action == "SELL" else qty) if not is_etf_trade else 0),
+            "delta_sh_etf":    (qty if (action == "SELL" and is_etf_trade) else 0),
+            "filled_sh_under": (filled_signed if not is_etf_trade else 0),
+            "filled_sh_etf":   (abs(filled_signed) if is_etf_trade else 0),
             "notes": (
                 f"HEDGE_{action} status={res.status} "
                 f"correction_usd={trade_info['correction_usd']:+,.0f}"
@@ -934,6 +1088,7 @@ def _hedge_worker(
     qty        = trade_info["qty"]
     ref_px     = trade_info["ref_price"]
     target_gross = trade_info["target_gross"]
+    is_orphan  = trade_info.get("orphan_close", False)
 
     try:
         ib_local = connect_ib(host, port, client_id + 300 + worker_idx)
@@ -953,58 +1108,88 @@ def _hedge_worker(
         with log_lock:
             prices[symbol] = px
 
-        net_now, _ = compute_beta_adjusted_net_notional(
-            strat_pos=strat_now, prices=prices, underlying=under,
-            etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
-        )
-        triggered_now, correction_now = compute_hedge_delta(
-            net_notional=net_now, target_gross=target_gross,
-            net_trigger_long_pct=net_trigger_long_pct,
-            net_trigger_short_pct=net_trigger_short_pct,
-            net_target_long_pct=net_target_long_pct,
-            net_target_short_pct=net_target_short_pct,
-        )
-        if not triggered_now:
-            tprint(
-                f"[HEDGE][{under}] No longer triggered after re-read "
-                f"(net={net_now:+,.0f}); skipping."
-            )
-            return [], False, False   # was_triggered=False → decrement n_triggered
+        # ── Orphan close: simplified re-verification ─────────────────
+        # No threshold math — just confirm the position still exists,
+        # then sell/buy ALL remaining shares to flatten.
+        if is_orphan:
+            cur_sh = float(strat_now.get(symbol, 0.0))
+            if (action == "SELL" and cur_sh <= 0) or (action == "BUY" and cur_sh >= 0):
+                tprint(
+                    f"[HEDGE][{under}] Orphan close: position already flat "
+                    f"(sh={cur_sh:.0f}); skipping."
+                )
+                return [], False, False
+            qty = abs(int(cur_sh))
+            if qty <= 0:
+                return [], False, False
+            tprint(f"[HEDGE][{under}] Orphan close re-verified: {action} {qty} {symbol}")
 
-        # Check that the correction direction hasn't flipped since build time.
-        # E.g. was net-long (SELL correction) but now net-short (BUY needed).
-        if (correction_now < 0 and action != "SELL") or (correction_now > 0 and action != "BUY"):
-            tprint(
-                f"[HEDGE][{under}] Correction direction flipped "
-                f"(was {action}, now {'SELL' if correction_now < 0 else 'BUY'}); skipping."
-            )
-            return [], False, True
-
-        # Recompute qty from fresh correction + fresh price.
-        # Keeps the same symbol/action but sizes the trade to current market.
-        if action == "SELL":
-            beta = etf_to_beta.get(symbol, 1.0)
-            qty = int(math.floor(abs(correction_now) / (px * beta))) if (px > 0 and beta > 0) else 0
         else:
-            qty = int(math.floor(abs(correction_now) / px)) if px > 0 else 0
+            # ── Normal hedge re-verification ─────────────────────────
+            net_now, _ = compute_beta_adjusted_net_notional(
+                strat_pos=strat_now, prices=prices, underlying=under,
+                etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+            )
+            triggered_now, correction_now = compute_hedge_delta(
+                net_notional=net_now, target_gross=target_gross,
+                net_trigger_long_pct=net_trigger_long_pct,
+                net_trigger_short_pct=net_trigger_short_pct,
+                net_target_long_pct=net_target_long_pct,
+                net_target_short_pct=net_target_short_pct,
+            )
+            if not triggered_now:
+                tprint(
+                    f"[HEDGE][{under}] No longer triggered after re-read "
+                    f"(net={net_now:+,.0f}); skipping."
+                )
+                return [], False, False   # was_triggered=False → decrement n_triggered
 
-        if qty <= 0:
-            tprint(f"[HEDGE][{under}] Re-computed qty=0 after fresh correction; skipping.")
-            return [], False, True
+            # Check that the correction direction hasn't flipped since build time.
+            if (correction_now < 0 and action != "SELL") or (correction_now > 0 and action != "BUY"):
+                tprint(
+                    f"[HEDGE][{under}] Correction direction flipped "
+                    f"(was {action}, now {'SELL' if correction_now < 0 else 'BUY'}); skipping."
+                )
+                return [], False, True
 
-        # Apply FTP cap on re-computed qty
-        if action == "SELL" and short_map:
-            avail = (short_map.get(symbol) or {}).get("available")
-            if avail is not None and avail > 0:
-                qty = min(qty, int(avail))
+            # Recompute qty from fresh correction + fresh price.
+            if action == "SELL":
+                beta = etf_to_beta.get(symbol, 1.0)
+                qty = int(math.floor(abs(correction_now) / (px * beta))) if (px > 0 and beta > 0) else 0
+            else:
+                qty = int(math.floor(abs(correction_now) / px)) if px > 0 else 0
 
-        tprint(f"[HEDGE][{under}] Re-verified: correction={correction_now:+,.0f} -> qty={qty}")
+            if qty <= 0:
+                tprint(f"[HEDGE][{under}] Re-computed qty=0 after fresh correction; skipping.")
+                return [], False, True
+
+            # Cap SELL-underlying to shares actually held long — never
+            # flip a long position into a short via reconciliation.
+            if action == "SELL" and symbol == under:
+                cur_under_sh = float(strat_now.get(under, 0.0))
+                if cur_under_sh > 0:
+                    qty = min(qty, int(cur_under_sh))
+                else:
+                    tprint(
+                        f"[HEDGE][{under}] Reconcile SELL but underlying "
+                        f"sh={cur_under_sh:.0f}; cannot sell. Skipping."
+                    )
+                    return [], False, True
+
+            # Apply FTP cap on re-computed qty (ETF shorts only)
+            if action == "SELL" and short_map and symbol != under:
+                avail = (short_map.get(symbol) or {}).get("available")
+                if avail is not None and avail > 0:
+                    qty = min(qty, int(avail))
+
+            tprint(f"[HEDGE][{under}] Re-verified: correction={correction_now:+,.0f} -> qty={qty}")
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         px_under = float(prices.get(under) or 0.0)
 
-        # FTP gate for new shorts
-        if action == "SELL":
+        # FTP gate for new shorts (ETF only — selling an existing
+        # underlying long is not a short sale)
+        if action == "SELL" and symbol != under:
             sm    = short_map.get(symbol, {})
             avail = sm.get("available")
             if avail is not None and avail <= 0:
@@ -1073,18 +1258,19 @@ def _hedge_worker(
         fill_rec = {
             "filled_at": now, "run_date": run_date,
             "strategy_tag": strategy_tag,
-            "pair_id": f"{under}__HEDGE",
+            "pair_id": f"{under}__{'ORPHAN_CLOSE' if is_orphan else 'HEDGE'}",
             "underlying": under,
             "etf": (symbol if is_etf_trade else ""),
             "px_under": px_under,
             "px_etf":   (px if is_etf_trade else 0.0),
             "target_sh_under": 0, "target_sh_etf": 0,
-            "delta_sh_under":  (qty if action == "BUY"  else 0),
-            "delta_sh_etf":    (qty if action == "SELL" else 0),
-            "filled_sh_under": (filled_signed if action == "BUY"  else 0),
-            "filled_sh_etf":   (abs(filled_signed) if action == "SELL" else 0),
+            "delta_sh_under":  ((-qty if action == "SELL" else qty) if not is_etf_trade else 0),
+            "delta_sh_etf":    (qty if (action == "SELL" and is_etf_trade) else 0),
+            "filled_sh_under": (filled_signed if not is_etf_trade else 0),
+            "filled_sh_etf":   (abs(filled_signed) if is_etf_trade else 0),
             "notes": (
-                f"HEDGE_{action} status={res.status} "
+                f"{'ORPHAN_CLOSE' if is_orphan else 'HEDGE'}_{action} "
+                f"status={res.status} "
                 f"correction_usd={trade_info['correction_usd']:+,.0f}"
             ),
         }
@@ -1226,6 +1412,404 @@ def print_phase_summary(
         status = "OK" if abs(pct) <= band * 100.0 else "WARN"
         tprint(f"  {under:<15} {net:>12,.0f} {tgt:>12,.0f} {pct:>7.1f}%  {status}")
     tprint("")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 final reconciliation — underlying-side corrections
+# ---------------------------------------------------------------------------
+
+def build_reconciliation_trades(
+    *,
+    strat_pos: Dict[str, float],
+    prices: Dict[str, float],
+    account_equity: float,
+    gross_leverage: float,
+    hedgeable_plan: pd.DataFrame,
+    net_trigger_long_pct: float,
+    net_trigger_short_pct: float,
+    net_target_long_pct: float,
+    net_target_short_pct: float,
+    min_trade_usd: float,
+    etf_to_under: Dict[str, str],
+    etf_to_beta: Dict[str, float],
+    flow_etfs: Set[str],
+    blacklist: Set[str],
+) -> List[dict]:
+    """
+    After the main hedge passes, some underlyings may still be outside
+    threshold because:
+        - ETF borrow was exhausted (partial fills across all passes)
+        - All ETFs were FTP-blocked (no short supply at all)
+        - ETF delisted / no valid candidates
+
+    For each still-triggered underlying, generate a trade on the
+    UNDERLYING itself:
+        - net-long  → SELL underlying to reduce long exposure
+        - net-short → BUY underlying to increase long exposure
+
+    Only operates on underlyings that have at least one ETF still
+    positioned (non-orphan).  Orphans are already handled by the
+    orphan_close path in the main hedge loop.
+
+    Returns trade list sorted by abs(correction_usd) descending.
+    """
+    blacklist = set(blacklist) if blacklist else set()
+    plan_underlyings: Set[str] = set(
+        hedgeable_plan["Underlying"].unique()
+    ) if not hedgeable_plan.empty else set()
+
+    # Same underlying scan as build_hedge_trades — all positioned
+    all_under_values = set(etf_to_under.values())
+    check_underlyings: Set[str] = set()
+    for sym, sh in strat_pos.items():
+        if float(sh) == 0.0:
+            continue
+        u = etf_to_under.get(sym)
+        if u and sym not in flow_etfs:
+            beta = etf_to_beta.get(sym, 1.0)
+            if beta >= 0:
+                check_underlyings.add(u)
+        elif sym in all_under_values:
+            check_underlyings.add(sym)
+    check_underlyings -= blacklist
+
+    trades: List[dict] = []
+
+    for under in sorted(check_underlyings):
+        if stop_requested():
+            break
+
+        px_under = float(prices.get(under) or 0.0)
+        if px_under <= 0.0:
+            continue
+
+        under_sh = float(strat_pos.get(under, 0.0))
+
+        # Skip orphans (no ETF exposure) — handled by main loop already
+        has_etf = False
+        for sym, u in etf_to_under.items():
+            if u != under or sym in flow_etfs:
+                continue
+            beta = etf_to_beta.get(sym, 1.0)
+            if beta < 0:
+                continue
+            if float(strat_pos.get(sym, 0.0)) != 0.0:
+                has_etf = True
+                break
+        if not has_etf:
+            continue
+
+        net_notional, actual_gross = compute_beta_adjusted_net_notional(
+            strat_pos=strat_pos, prices=prices, underlying=under,
+            etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+        )
+        target_gross = compute_target_gross_per_underlying(
+            underlying=under, plan=hedgeable_plan,
+            account_equity=account_equity, gross_leverage=gross_leverage,
+        )
+        ref_gross = max(actual_gross, target_gross)
+
+        triggered, correction_usd = compute_hedge_delta(
+            net_notional=net_notional, target_gross=ref_gross,
+            net_trigger_long_pct=net_trigger_long_pct,
+            net_trigger_short_pct=net_trigger_short_pct,
+            net_target_long_pct=net_target_long_pct,
+            net_target_short_pct=net_target_short_pct,
+        )
+
+        if not triggered:
+            continue
+        if abs(correction_usd) < min_trade_usd:
+            continue
+
+        # Correction via the UNDERLYING, not the ETF.
+        # correction < 0 (net-long)  → SELL underlying to reduce exposure
+        # correction > 0 (net-short) → BUY underlying (same as normal)
+        if correction_usd < 0:
+            action = "SELL"
+            qty = int(math.floor(abs(correction_usd) / px_under))
+            # Don't sell more underlying than we hold long
+            if under_sh > 0:
+                qty = min(qty, int(under_sh))
+            elif under_sh <= 0:
+                # We're net-long but underlying is already flat/short —
+                # this means net-long comes entirely from ETF beta.
+                # Selling underlying would make us more short. Skip.
+                tprint(
+                    f"[RECONCILE][{under}] Net-long but underlying "
+                    f"sh={under_sh:.0f}; cannot sell underlying."
+                )
+                continue
+        else:
+            action = "BUY"
+            qty = int(math.floor(abs(correction_usd) / px_under))
+
+        if qty <= 0:
+            continue
+
+        net_pct = (net_notional / ref_gross * 100.0) if ref_gross > 0 else 0.0
+        tprint(
+            f"[RECONCILE][{under:15s}] net={net_notional:>+12,.0f}  "
+            f"net%={net_pct:>+6.1f}%  -> {action} {qty} {under} "
+            f"@ ~{px_under:.2f} (correction={correction_usd:+,.0f})"
+        )
+        trades.append({
+            "underlying":        under,
+            "symbol":            under,
+            "action":            action,
+            "qty":               qty,
+            "ref_price":         px_under,
+            "correction_usd":    correction_usd,
+            "net_notional_before": net_notional,
+            "target_gross":      ref_gross,
+            "orphan_close":      False,
+        })
+
+    trades.sort(key=lambda t: abs(t["correction_usd"]), reverse=True)
+    if trades:
+        tprint(
+            f"[RECONCILE] {len(trades)} underlying-side corrections queued."
+        )
+    return trades
+
+
+# ---------------------------------------------------------------------------
+# Unmapped position detection + user-prompted close
+# ---------------------------------------------------------------------------
+
+def detect_unmapped_positions(
+    *,
+    strat_pos: Dict[str, float],
+    prices: Dict[str, float],
+    etf_to_under: Dict[str, str],
+    screened_universe: Set[str],
+    ib: IB,
+    prefer_delayed: bool,
+) -> List[dict]:
+    """
+    Find strategy positions that:
+        1. Appear in etf_screened_today.csv (ETF or Underlying column)
+        2. Are NOT in the ETF beta map used by Phase 3
+
+    This catches symbols that the screener knows about but that somehow
+    fell out of the etf_to_under mapping (ticker change between screener
+    and beta load, column parse issue, etc.).
+
+    Symbols not in the screened CSV at all (CVRs, personal holdings,
+    legacy positions) are ignored — they're outside our universe.
+
+    Returns list sorted by abs(notional) descending.
+    """
+    all_mapped = set(etf_to_under.keys()) | set(etf_to_under.values())
+    unmapped: List[dict] = []
+
+    for sym, sh_raw in strat_pos.items():
+        sh = float(sh_raw)
+        if sh == 0.0:
+            continue
+        if sym in all_mapped:
+            continue
+        # Only flag symbols that are in today's screened CSV
+        if sym not in screened_universe:
+            continue
+
+        # Try to price it
+        px = float(prices.get(sym) or 0.0)
+        if px <= 0.0:
+            try:
+                px = float(get_snapshot_price(ib, sym, prefer_delayed=prefer_delayed) or 0.0)
+                if px > 0:
+                    prices[sym] = px
+            except Exception:
+                px = 0.0
+
+        notional = sh * px if px > 0 else 0.0
+
+        unmapped.append({
+            "symbol":   sym,
+            "shares":   int(sh),
+            "price":    px,
+            "notional": notional,
+            "action":   "SELL" if sh > 0 else "BUY",
+            "qty":      abs(int(sh)),
+        })
+
+    unmapped.sort(key=lambda d: abs(d["notional"]), reverse=True)
+    return unmapped
+
+
+def prompt_unmapped_close(
+    unmapped: List[dict],
+    auto_approve: bool,
+) -> List[dict]:
+    """
+    Print a table of unmapped positions and prompt the user to decide
+    what to do.  Returns the subset of positions approved for closing.
+
+    This ALWAYS prompts (even with auto_approve=True) because unmapped
+    positions are an abnormal condition that requires human judgement —
+    a symbol may have legitimately dropped from the screened CSV, or
+    it may be a data issue that would resolve on the next screener run.
+    """
+    if not unmapped:
+        return []
+
+    total_abs_notional = sum(abs(d["notional"]) for d in unmapped)
+
+    tprint(f"\n{'='*90}")
+    tprint(f"  UNMAPPED POSITIONS — {len(unmapped)} symbols not in today's ETF beta map")
+    tprint(f"  These positions are invisible to Phase 3 hedge math.")
+    tprint(f"{'='*90}")
+    tprint(f"  {'SYMBOL':<12} {'SHARES':>10} {'PRICE':>10} {'NOTIONAL':>12}  ACTION")
+    tprint(f"  {'-'*12} {'-'*10} {'-'*10} {'-'*12}  {'-'*6}")
+    for d in unmapped:
+        px_str = f"${d['price']:.2f}" if d["price"] > 0 else "no price"
+        ntl_str = f"${d['notional']:>+11,.0f}" if d["price"] > 0 else "   unknown"
+        tprint(
+            f"  {d['symbol']:<12} {d['shares']:>+10,d} {px_str:>10} {ntl_str}  "
+            f"{d['action']} {d['qty']}"
+        )
+    tprint(f"\n  Total absolute notional: ${total_abs_notional:,.0f}")
+    tprint(f"{'='*90}")
+
+    # Unpriced symbols cannot be traded.
+    priceable = [d for d in unmapped if d["price"] > 0.0]
+    unpriceable = [d for d in unmapped if d["price"] <= 0.0]
+
+    if unpriceable:
+        tprint(
+            f"\n  WARNING: {len(unpriceable)} symbol(s) have no price and "
+            f"cannot be closed: {[d['symbol'] for d in unpriceable]}"
+        )
+
+    if not priceable:
+        tprint("  No priceable unmapped positions to close.")
+        return []
+
+    tprint(
+        f"\n  {len(priceable)} priceable position(s) can be closed to flatten."
+    )
+    # Always require explicit human approval — never auto-approve unmapped
+    # closes.  This is intentional: unmapped positions are an abnormal
+    # condition (screener data issue, ticker change, etc.) and need review.
+    tprint("  NOTE: auto_approve does NOT apply to unmapped closes.\n")
+    ans = input("  Close ALL priceable unmapped positions? (y/n): ").strip().lower()
+
+    if ans == "y":
+        tprint(f"  Approved: closing {len(priceable)} unmapped positions.\n")
+        return priceable
+    else:
+        tprint("  Skipped: unmapped positions left as-is.\n")
+        return []
+
+
+def execute_unmapped_closes(
+    *,
+    approved: List[dict],
+    ib: IB,
+    baseline: Dict[str, float],
+    prices: Dict[str, float],
+    prefer_delayed: bool,
+    exec_cfg: dict,
+    strategy_tag: str,
+    run_date: str,
+    limit_bps: float,
+    timeout: float,
+    max_retries: int,
+    dry_run: bool,
+    cancel_service: CoordinatorCancelService,
+    log_exposure_event,
+) -> List[dict]:
+    """
+    Execute close trades for unmapped positions serially on the
+    coordinator IB connection.
+
+    Re-reads live position before each trade to confirm the symbol
+    is still held (it may have been closed externally).
+
+    Returns fill records.
+    """
+    fill_records: List[dict] = []
+
+    for trade_info in approved:
+        if stop_requested():
+            tprint("[UNMAPPED] Shutdown requested; aborting.")
+            break
+
+        symbol = trade_info["symbol"]
+        action = trade_info["action"]
+
+        # Re-read live position — confirm still held
+        ib_pos_now = current_ib_positions(ib)
+        strat_now  = strategy_position_only(ib_pos_now, baseline)
+        cur_sh = float(strat_now.get(symbol, 0.0))
+
+        if (action == "SELL" and cur_sh <= 0) or (action == "BUY" and cur_sh >= 0):
+            tprint(
+                f"[UNMAPPED][{symbol}] Already flat (sh={cur_sh:.0f}); skipping."
+            )
+            continue
+
+        qty = abs(int(cur_sh))
+        if qty <= 0:
+            continue
+
+        # Fresh price
+        fresh_px = get_snapshot_price(ib, symbol, prefer_delayed=prefer_delayed)
+        px = float(fresh_px or trade_info["price"])
+        if px > 0:
+            prices[symbol] = px
+
+        if px <= 0.0:
+            tprint(f"[UNMAPPED][{symbol}] No price; cannot close.")
+            continue
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        log_exposure_event(
+            stage="UNMAPPED_PRE", pair_id=f"{symbol}__UNMAPPED",
+            underlying="", etf="", symbol=symbol,
+            delta_sh=0, filled_sh=0, trade=None,
+        )
+
+        order_ref = f"{strategy_tag}|UNMAPPED|{symbol}|{action}"
+        res = execute_leg(
+            ib=ib, symbol=symbol, action=action, qty=qty,
+            ref_price=px, bps=limit_bps, order_ref=order_ref,
+            exec_cfg=exec_cfg, timeout=timeout, max_retries=max_retries,
+            dry_run=dry_run, context=f"{symbol}|UNMAPPED",
+            cancel_service=cancel_service,
+        )
+
+        filled_signed = int(res.filled) if action == "BUY" else -int(res.filled)
+
+        log_exposure_event(
+            stage="UNMAPPED_POST", pair_id=f"{symbol}__UNMAPPED",
+            underlying="", etf="", symbol=symbol,
+            delta_sh=(-qty if action == "SELL" else qty),
+            filled_sh=filled_signed, trade=res.trade,
+        )
+
+        fill_records.append({
+            "filled_at": now, "run_date": run_date,
+            "strategy_tag": strategy_tag,
+            "pair_id": f"{symbol}__UNMAPPED",
+            "underlying": "", "etf": "",
+            "px_under": 0.0, "px_etf": 0.0,
+            "target_sh_under": 0, "target_sh_etf": 0,
+            "delta_sh_under": 0, "delta_sh_etf": 0,
+            "filled_sh_under": 0, "filled_sh_etf": 0,
+            "notes": (
+                f"UNMAPPED_CLOSE {action} {qty} "
+                f"status={res.status}"
+            ),
+        })
+        tprint(
+            f"[UNMAPPED][{symbol}] {action} {qty} @ ~{px:.2f} "
+            f"-> filled={abs(filled_signed)} status={res.status}"
+        )
+
+    return fill_records
 
 
 # ---------------------------------------------------------------------------
@@ -1467,15 +2051,15 @@ def main() -> None:
         ib_pos    = current_ib_positions(ib)
         strat_pos = strategy_position_only(ib_pos, baseline)
 
-        # Only prefetch symbols that are in the plan or screened universe;
+        # Only prefetch symbols that are in the plan or beta-mapped universe;
         # strat_pos may contain non-tradeable legacy holdings (CVRs, escrows, etc.)
-        screened_universe: Set[str] = (
+        beta_mapped_universe: Set[str] = (
             set(etf_to_under.keys()) | set(etf_to_under.values())
         )
         all_symbols: Set[str] = (
             set(plan["ETF"].tolist()) | set(plan["Underlying"].tolist())
             | {s for s, sh in strat_pos.items()
-               if float(sh) != 0.0 and s in screened_universe}
+               if float(sh) != 0.0 and s in beta_mapped_universe}
         )
         tprint(f"[PRICES] Prefetching {len(all_symbols)} symbols...")
         for sym in sorted(all_symbols):
@@ -1539,9 +2123,60 @@ def main() -> None:
         strat_pos = strategy_position_only(ib_pos, baseline)
 
         # ==================================================================
+        # PRE-PHASE-3 — Detect & prompt for unmapped positions
+        # ==================================================================
+        # Only flag symbols that appear in etf_screened_today.csv but
+        # somehow aren't in the etf_to_under beta map.  Everything
+        # outside the screened CSV (CVRs, personal holdings, legacy
+        # positions) is not our universe and gets ignored.
+        screened_universe: Set[str] = (
+            set(screened["ETF"].astype(str).map(norm_sym))
+            | set(screened["Underlying"].astype(str).map(norm_sym))
+        )
+        unmapped_positions = detect_unmapped_positions(
+            strat_pos=strat_pos,
+            prices=prices,
+            etf_to_under=etf_to_under,
+            screened_universe=screened_universe,
+            ib=ib,
+            prefer_delayed=prefer_delayed,
+        )
+        if unmapped_positions:
+            approved_unmapped = prompt_unmapped_close(
+                unmapped_positions, auto_approve=auto_approve,
+            )
+            if approved_unmapped:
+                fills_unmap = execute_unmapped_closes(
+                    approved=approved_unmapped,
+                    ib=ib,
+                    baseline=baseline,
+                    prices=prices,
+                    prefer_delayed=prefer_delayed,
+                    exec_cfg=exec_cfg,
+                    strategy_tag=strategy_tag,
+                    run_date=run_date,
+                    limit_bps=limit_bps,
+                    timeout=timeout,
+                    max_retries=max_retries,
+                    dry_run=dry_run,
+                    cancel_service=cancel_service,
+                    log_exposure_event=log_exposure_event,
+                )
+                all_fills.extend(fills_unmap)
+                if fills_unmap:
+                    _sync_positions_after_external_trades(ib, timeout_s=10.0)
+                    # Refresh positions so Phase 3 sees clean state
+                    ib_pos    = current_ib_positions(ib)
+                    strat_pos = strategy_position_only(ib_pos, baseline)
+
+        if stop_requested():
+            tprint("[SHUTDOWN] Exiting after unmapped close.")
+            return
+
+        # ==================================================================
         # PHASE 3 — Directional hedge rebalance
         # ==================================================================
-        if not args.skip_phase_3 and not hedgeable_df.empty:
+        if not args.skip_phase_3:
             tprint("\n" + "=" * 60)
             tprint("  PHASE 3 — DIRECTIONAL HEDGE REBALANCE")
             tprint("=" * 60)
@@ -1557,10 +2192,26 @@ def main() -> None:
                 f"min_trade_usd=${min_trade_usd:,.0f}"
             )
 
-            # Pre-hedge snapshot (for summary)
+            # Pre-hedge snapshot (for summary) — include all positioned
+            # underlyings, not just plan, so the summary reflects orphans.
             pre_net: Dict[str, float] = {}
             pre_tgt: Dict[str, float] = {}
-            for u in sorted(hedgeable_df["Underlying"].unique()):
+            _all_under_values = set(etf_to_under.values())
+            _snapshot_underlyings: Set[str] = set(
+                hedgeable_df["Underlying"].unique()
+            ) if not hedgeable_df.empty else set()
+            for sym, sh in strat_pos.items():
+                if float(sh) == 0.0:
+                    continue
+                u = etf_to_under.get(sym)
+                if u and sym not in flow_etfs:
+                    beta = etf_to_beta.get(sym, 1.0)
+                    if beta >= 0:
+                        _snapshot_underlyings.add(u)
+                elif sym in _all_under_values:
+                    _snapshot_underlyings.add(sym)
+
+            for u in sorted(_snapshot_underlyings):
                 net, _ = compute_beta_adjusted_net_notional(
                     strat_pos=strat_pos, prices=prices, underlying=u,
                     etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
@@ -1595,6 +2246,8 @@ def main() -> None:
                     min_trade_usd=min_trade_usd,
                     etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                     short_map=short_map,
+                    flow_etfs=flow_etfs,
+                    blacklist=blacklist,
                 )
 
                 if not hedge_trades:
@@ -1665,6 +2318,8 @@ def main() -> None:
                         min_trade_usd=min_trade_usd,
                         etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                         short_map=short_map,
+                        flow_etfs=flow_etfs,
+                        blacklist=blacklist,
                     )
                     long_corrections_b = [t for t in hedge_trades_b if t["action"] == "BUY"]
 
@@ -1705,16 +2360,86 @@ def main() -> None:
                     tprint(f"[HEDGE] Pass {hedge_pass}: no fills — stopping passes.")
                     break
 
-            # Post-hedge net for summary
+            # ── Final reconciliation: underlying-side corrections ─────
+            # After the main ETF-side hedge passes, some underlyings may
+            # still be outside threshold (borrow exhausted, FTP blocked,
+            # no ETF candidates).  Correct these by trading the underlying
+            # directly — sell to reduce net-long, buy to reduce net-short.
+            if not stop_requested():
+                ib_pos    = current_ib_positions(ib)
+                strat_pos = strategy_position_only(ib_pos, baseline)
+
+                reconcile_trades = build_reconciliation_trades(
+                    strat_pos=strat_pos,
+                    prices=prices,
+                    account_equity=account_equity,
+                    gross_leverage=gross_leverage,
+                    hedgeable_plan=hedgeable_df,
+                    net_trigger_long_pct=net_trigger_long_pct,
+                    net_trigger_short_pct=net_trigger_short_pct,
+                    net_target_long_pct=net_target_long_pct,
+                    net_target_short_pct=net_target_short_pct,
+                    min_trade_usd=min_trade_usd,
+                    etf_to_under=etf_to_under,
+                    etf_to_beta=etf_to_beta,
+                    flow_etfs=flow_etfs,
+                    blacklist=blacklist,
+                )
+
+                if reconcile_trades:
+                    tprint(
+                        f"\n{'-'*60}\n"
+                        f"  PHASE 3 RECONCILIATION — "
+                        f"{len(reconcile_trades)} underlying-side corrections\n"
+                        f"{'-'*60}"
+                    )
+                    fills_rec, n_trig_rec, n_trade_rec = execute_hedge_pass_parallel(
+                        hedge_trades=reconcile_trades,
+                        host=host, port=port, client_id=client_id,
+                        baseline=baseline, prices=prices,
+                        prefer_delayed=prefer_delayed, exec_cfg=exec_cfg,
+                        strategy_tag=strategy_tag, run_date=run_date,
+                        limit_bps=limit_bps, timeout=timeout,
+                        max_retries=max_retries,
+                        dry_run=dry_run, parallel_n=parallel_n,
+                        short_map=short_map, cancel_service=cancel_service,
+                        log_exposure_event=log_exposure_event,
+                        net_trigger_long_pct=net_trigger_long_pct,
+                        net_trigger_short_pct=net_trigger_short_pct,
+                        net_target_long_pct=net_target_long_pct,
+                        net_target_short_pct=net_target_short_pct,
+                        etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+                        log_lock=log_lock,
+                    )
+                    all_fills.extend(fills_rec)
+                    total_traded += n_trade_rec
+
+                    if fills_rec:
+                        _sync_positions_after_external_trades(
+                            ib,
+                            watch_syms=[t["symbol"] for t in reconcile_trades],
+                            timeout_s=15.0,
+                        )
+                    tprint(
+                        f"[RECONCILE] Complete: "
+                        f"{n_trade_rec}/{len(reconcile_trades)} traded."
+                    )
+
+            # Post-hedge net for summary — use actual ref_gross (same
+            # denominator Phase 3 used for trigger/target) so the WARN
+            # check reflects whether the pair is genuinely out-of-band.
             ib_pos_final    = current_ib_positions(ib)
             strat_pos_final = strategy_position_only(ib_pos_final, baseline)
             post_net: Dict[str, float] = {}
+            post_ref_gross: Dict[str, float] = {}
             for u in pre_net:
-                net, _ = compute_beta_adjusted_net_notional(
+                net, actual_gross = compute_beta_adjusted_net_notional(
                     strat_pos=strat_pos_final, prices=prices, underlying=u,
                     etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                 )
+                plan_tgt = pre_tgt.get(u, 0.0)
                 post_net[u] = net
+                post_ref_gross[u] = max(actual_gross, plan_tgt)
 
             print_phase_summary(
                 phase="PHASE 3 — DIRECTIONAL HEDGE",
@@ -1722,7 +2447,7 @@ def main() -> None:
                 n_triggered=len(triggered_underlyings),
                 n_traded=total_traded,
                 net_by_underlying=post_net,
-                target_gross_by_underlying=pre_tgt,
+                target_gross_by_underlying=post_ref_gross,
                 net_trigger_long_pct=net_trigger_long_pct,
                 net_trigger_short_pct=net_trigger_short_pct,
             )
