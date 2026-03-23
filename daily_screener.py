@@ -626,6 +626,79 @@ def drop_stale_etfs(
     return universe[~mask].reset_index(drop=True)
 
 
+def validate_ibkr_contracts(
+    universe: pd.DataFrame,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 7496,
+    client_id: int = 90,
+    timeout_per_batch: float = 10.0,
+    batch_size: int = 40,
+) -> pd.DataFrame:
+    """
+    Connect to IBKR and qualify each ETF contract.  Drop any ETF where
+    IBKR returns 'No security definition' — these are untradeable
+    (delisted, ticker changed, etc.) regardless of what Yahoo says.
+
+    Falls back gracefully if IBKR is not reachable: logs a warning and
+    returns the universe unchanged.
+    """
+    try:
+        from ib_insync import IB, Stock
+    except ImportError:
+        print("[IBKR-CHECK] ib_insync not installed; skipping contract validation.")
+        return universe
+
+    etf_syms = sorted(universe["ETF"].apply(_norm_sym).unique())
+    print(f"[IBKR-CHECK] Validating {len(etf_syms)} ETF contracts on {host}:{port} ...")
+
+    ib = IB()
+    try:
+        ib.connect(host, port, clientId=client_id, timeout=15, readonly=True)
+    except Exception as e:
+        print(f"[IBKR-CHECK] WARNING: Could not connect to IBKR ({e}). "
+              f"Skipping contract validation — stale-price filter is the only defense.")
+        return universe
+
+    try:
+        invalid: list[str] = []
+        for i in range(0, len(etf_syms), batch_size):
+            batch = etf_syms[i : i + batch_size]
+            contracts = [Stock(s.replace("-", " "), "SMART", "USD") for s in batch]
+            try:
+                ib.qualifyContracts(*contracts)
+            except Exception:
+                pass  # individual failures handled below
+
+            for sym, c in zip(batch, contracts):
+                if c.conId == 0:  # qualification failed
+                    invalid.append(sym)
+
+        if not invalid:
+            print(f"[IBKR-CHECK] All {len(etf_syms)} contracts valid.")
+            return universe
+
+        invalid_set = set(invalid)
+        mask = universe["ETF"].apply(_norm_sym).isin(invalid_set)
+        n_drop = mask.sum()
+
+        print(f"[IBKR-CHECK] Dropping {n_drop} ETFs with no IBKR security definition:")
+        for sym in sorted(invalid)[:20]:
+            und = universe.loc[universe["ETF"].apply(_norm_sym) == sym, "Underlying"]
+            und_str = _norm_sym(und.iloc[0]) if len(und) > 0 else "?"
+            print(f"  {sym:10s} -> {und_str:10s}  (no security definition)")
+        if len(invalid) > 20:
+            print(f"  ... and {len(invalid) - 20} more")
+
+        return universe[~mask].reset_index(drop=True)
+
+    finally:
+        try:
+            ib.disconnect()
+        except Exception:
+            pass
+
+
 def compute_beta_ols(etf_tr: pd.Series, und_tr: pd.Series,
                      min_days: int = 60) -> tuple[float | None, int]:
     """OLS: r_etf = alpha + beta × r_und. Returns (beta, n_obs)."""
@@ -1150,15 +1223,16 @@ def enrich_with_decay_and_vol(df: pd.DataFrame, tr_map: dict[str, pd.Series],
     df["blended_gross_decay"] = blended
 
     # Net decay (realized only, backward compat)
-    borrow_net = pd.to_numeric(df.get("borrow_net_annual"), errors="coerce")
+    borrow_net = pd.to_numeric(df.get("borrow_net_annual"), errors="coerce").fillna(0.0)
     df["net_decay_annual"] = np.where(
-        df["gross_decay_annual"].notna() & borrow_net.notna(),
+        df["gross_decay_annual"].notna(),
         df["gross_decay_annual"] - borrow_net, np.nan)
 
     # Decay score: blended gross decay minus borrow (for generate_trade_plan sizing)
-    borrow_current = pd.to_numeric(df.get("borrow_current"), errors="coerce")
+    # Missing borrow treated as 0 — same as _decay_score_weights in generate_trade_plan.
+    borrow_current = pd.to_numeric(df.get("borrow_current"), errors="coerce").fillna(0.0)
     df["decay_score"] = np.where(
-        df["blended_gross_decay"].notna() & borrow_current.notna(),
+        df["blended_gross_decay"].notna(),
         df["blended_gross_decay"] - borrow_current, np.nan)
 
     # ── Vol-ratio diagnostic ──
@@ -1241,6 +1315,8 @@ def main() -> int:
     ap.add_argument("--skip-scrape", action="store_true", help="Skip YieldMax/Roundhill scraping")
     ap.add_argument("--skip-inverse", action="store_true", help="Skip inverse ETF universe")
     ap.add_argument("--skip-ftp", action="store_true", help="Skip IBKR FTP borrow fetch")
+    ap.add_argument("--skip-ibkr-check", action="store_true",
+                    help="Skip IBKR contract validation (requires TWS/Gateway running)")
     ap.add_argument("--min-beta-days", type=int, default=None,
                     help="Min overlapping days for OLS beta (default: from config or 20)")
     ap.add_argument("--config", default=None, help="Path to strategy_config.yml")
@@ -1334,6 +1410,24 @@ def main() -> int:
         etf_syms = universe["ETF"].apply(_norm_sym).tolist()
         und_syms = universe["Underlying"].dropna().apply(_norm_sym).tolist()
         all_tickers = sorted(set(etf_syms + und_syms))
+
+    # IBKR contract validation — catch delisted ETFs that Yahoo still
+    # serves stale prices for.  Requires TWS/Gateway running.
+    if not args.skip_ibkr_check:
+        ibkr_cfg = cfg.get("ibkr", {})
+        pre_ibkr = len(universe)
+        universe = validate_ibkr_contracts(
+            universe,
+            host=str(ibkr_cfg.get("host", "127.0.0.1")),
+            port=int(ibkr_cfg.get("port", 7496)),
+            client_id=90,  # dedicated screener client, won't conflict with rebalancer
+        )
+        if len(universe) < pre_ibkr:
+            etf_syms = universe["ETF"].apply(_norm_sym).tolist()
+            und_syms = universe["Underlying"].dropna().apply(_norm_sym).tolist()
+            all_tickers = sorted(set(etf_syms + und_syms))
+    else:
+        print("[IBKR-CHECK] Skipped (--skip-ibkr-check)")
 
     universe = add_betas(universe, tr_map, min_days=min_beta_days)
 
