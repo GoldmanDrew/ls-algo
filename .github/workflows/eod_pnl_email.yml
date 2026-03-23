@@ -2,7 +2,7 @@ name: EOD PnL Email + Daily Screener
 
 on:
   schedule:
-    # 15:00 UTC = 8am EST (winter) / 9am EDT (summer) — daily screener and pnl
+    # 11:00 UTC = ~7am ET — daily screener + EOD
     - cron: "0 11 * * 2-6"
   workflow_dispatch:
     inputs:
@@ -18,7 +18,7 @@ on:
 
 jobs:
   # ────────────────────────────────────────────────────────
-  # Daily screener — runs at 8am EST on weekdays
+  # Daily screener — runs on weekdays
   # ────────────────────────────────────────────────────────
   screener:
     if: >-
@@ -55,14 +55,13 @@ jobs:
           print(datetime.now(pytz.timezone('America/New_York')).date().isoformat())
           ")
           echo "RUN_DATE=$RUN_DATE"
-          python daily_screener.py --run-date "$RUN_DATE"
+          python daily_screener.py --run-date "$RUN_DATE" --skip-ibkr-check
 
       - name: Commit screener outputs
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/etf_screened_today.csv data/runs/ || true
-          git add data/scrape_cache_*.csv || true
+          git add data/ || true
           if git diff --cached --quiet; then
             echo "No screener changes to commit"
           else
@@ -72,7 +71,7 @@ jobs:
           fi
 
   # ────────────────────────────────────────────────────────
-  # EOD PnL email — runs at 8pm EST on weekdays
+  # EOD PnL email — runs on weekdays
   # ────────────────────────────────────────────────────────
   eod:
     if: >-
@@ -129,25 +128,12 @@ jobs:
 
           # 3) Email
           python run_eod_pnl_email.py
-      - name: Commit screener outputs
+
+      - name: Commit PnL outputs
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/etf_screened_today.csv data/runs/ || true
-          git add data/scrape_cache_*.csv data/borrow_cache.csv || true
-          if git diff --cached --quiet; then
-            echo "No screener changes to commit"
-          else
-            git commit -m "screener: $(date -u +%Y-%m-%d) run"
-            git pull --rebase origin main
-            git push
-          fi
-      - name: Commit PnL history + plot back to repo
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/ledger/pnl_history.csv data/ledger/*.png || true
-          git add data/runs/ || true
+          git add data/ || true
           if git diff --cached --quiet; then
             echo "No PnL changes to commit"
           else
