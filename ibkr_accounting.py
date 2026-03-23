@@ -105,6 +105,22 @@ EXCLUDE_SYMBOLS = {canonical_symbol("BRK.B"), canonical_symbol("BRKB")}
 SUPPLEMENTAL_ETF_MAP: dict[str, str] = {
     canonical_symbol("XRP"):  canonical_symbol("XRPZ"),
     canonical_symbol("GXRP"): canonical_symbol("XRPZ"),
+    # Tradr ETFs — delisted/liquidated Jan–Mar 2026.
+    # Kept here so PnL history (realized, borrow, etc.) continues
+    # to map correctly even after the screened CSV drops them.
+    canonical_symbol("AURU"): canonical_symbol("AUR"),
+    canonical_symbol("AXUP"): canonical_symbol("AXON"),
+    canonical_symbol("BKNU"): canonical_symbol("BKNG"),
+    canonical_symbol("BLSX"): canonical_symbol("BLSH"),
+    canonical_symbol("CELT"): canonical_symbol("CELH"),
+    canonical_symbol("DASX"): canonical_symbol("DASH"),
+    canonical_symbol("DKUP"): canonical_symbol("DKNG"),
+    canonical_symbol("LYFX"): canonical_symbol("LYFT"),
+    canonical_symbol("NETX"): canonical_symbol("NET"),
+    canonical_symbol("NWMX"): canonical_symbol("NEM"),
+    canonical_symbol("OKTX"): canonical_symbol("OKTA"),
+    canonical_symbol("PXIU"): canonical_symbol("UPXI"),
+    canonical_symbol("QSX"):  canonical_symbol("QS"),
 }
 
 
@@ -862,21 +878,13 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     df = df[~df["symbol"].isin(blacklist)].copy()
     df = df[~df["underlying"].isin(blacklist)].copy()
 
-    # Universe filter — include underlyings from both the current screened
-    # CSV AND the Flex XML data.  The screened CSV covers active pairs;
-    # the Flex XML's underlyingSymbol field covers delisted/liquidated ETFs
-    # that still have PnL history (realized trades, borrow fees, etc.).
-    # This ensures PnL for CELT/CELH, DASX/DASH etc. is preserved even
-    # after those ETFs are dropped from the screened CSV.
+    # Universe filter — include underlyings from the current screened
+    # CSV plus any underlyings mapped by SUPPLEMENTAL_ETF_MAP (delisted
+    # ETFs with historical PnL).  This ensures PnL for CELT/CELH,
+    # DASX/DASH etc. is preserved even after the screened CSV drops them,
+    # without pulling in non-strategy positions (CSU.DB, 3905.T, etc.).
     allowed_etfs, allowed_underlyings = load_universe_from_screened(etf_screened_path)
-
-    # Add underlyings from Flex data where symbol ≠ underlying
-    # (i.e. ETF positions mapped by IBKR to their underlying).
-    # Self-mapped symbols (personal holdings) are excluded.
-    flex_pair_underlyings = set(
-        df.loc[df["symbol"] != df["underlying"], "underlying"].dropna().unique()
-    )
-    allowed_underlyings = allowed_underlyings | flex_pair_underlyings
+    allowed_underlyings |= set(SUPPLEMENTAL_ETF_MAP.values())
 
     df = df[df["underlying"].isin(allowed_underlyings)].copy()
 
