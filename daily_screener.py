@@ -379,7 +379,27 @@ def build_full_universe(skip_scrape: bool = False, skip_inverse: bool = False) -
     all_df["Underlying"] = all_df["Underlying"].apply(_norm_sym)
 
     # Filter out known bad tickers (scraped erroneously, delisted, etc.)
-    _BAD_TICKERS = {"JP", "JPO"}
+    # Delisted Tradr ETFs are hardcoded here so the screener produces a
+    # clean CSV on GitHub Actions (no TWS) as well as locally.
+    # When running locally with TWS, validate_ibkr_contracts catches
+    # future delistings automatically.
+    _BAD_TICKERS = {
+        "JP", "JPO",
+        # Tradr ETFs — liquidated Jan–Mar 2026
+        "AURU",   # AUR  — closed 2026-03-03
+        "AXUP",   # AXON — closed 2026-03-16
+        "BKNU",   # BKNG — closed 2026-03-16
+        "BLSX",   # BLSH — closed 2026-02-19
+        "CELT",   # CELH — closed 2026-01-23
+        "DASX",   # DASH — closed 2026-02-19
+        "DKUP",   # DKNG — closed 2026-03-16
+        "LYFX",   # LYFT — closed 2026-03-03
+        "NETX",   # NET  — closed 2026-03-13
+        "NWMX",   # NEM  — closed 2026-01-30
+        "OKTX",   # OKTA — closed 2026-02-04
+        "PXIU",   # UPXI — closed 2026-03-16
+        "QSX",    # QS   — closed 2026-01-30
+    }
     bad_mask = all_df["ETF"].isin(_BAD_TICKERS) | all_df["Underlying"].isin(_BAD_TICKERS)
     if bad_mask.any():
         dropped_etfs = sorted(set(all_df.loc[bad_mask, "ETF"].astype(str)))

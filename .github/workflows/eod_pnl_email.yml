@@ -55,7 +55,7 @@ jobs:
           print(datetime.now(pytz.timezone('America/New_York')).date().isoformat())
           ")
           echo "RUN_DATE=$RUN_DATE"
-          python daily_screener.py --run-date "$RUN_DATE"
+          python daily_screener.py --run-date "$RUN_DATE" --skip-ibkr-check
 
       - name: Commit screener outputs
         run: |
