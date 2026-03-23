@@ -7,13 +7,11 @@ UPDATE: Portfolio construction matches YAML sleeves (85/15 stock sleeves + flow 
 Implements:
 - Stock sleeves (rebalanced as part of each run):
     * core_leveraged:   target_weight=0.85 of target_gross_usd
-        - requires include_for_algo == True
         - requires |Beta| >= min_beta_used
         - apply soft borrow ban (screener.borrow_low) UNLESS whitelisted sleeve overrides
         - equal weight within sleeve (optional max_name_weight cap not enforced here; can be added)
 
     * whitelist_stock:  target_weight=0.15 of target_gross_usd
-        - requires include_for_algo == True
         - ETF must be in whitelist list
         - zipf weighting by list order (rank_order=as_listed)
         - OPTIONAL hard borrow cap for whitelist sleeve (e.g. 20%) if provided in cfg

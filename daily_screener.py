@@ -564,6 +564,68 @@ def download_all_tr_series(tickers: list[str], period: str = "2y",
     return results
 
 
+def drop_stale_etfs(
+    universe: pd.DataFrame,
+    tr_map: dict[str, pd.Series],
+    *,
+    max_stale_days: int = 5,
+    protected_etfs: Set[str] | None = None,
+) -> pd.DataFrame:
+    """
+    Remove ETFs whose last traded date is more than *max_stale_days*
+    calendar days ago, or that have no price data at all.
+
+    This catches delisted / liquidated ETFs automatically — once an ETF
+    stops trading, its price series goes stale and gets dropped on the
+    next screener run.  No manual watchlist or SEC scraping needed.
+
+    Protected ETFs (whitelist + flow) are still dropped if stale — a
+    delisted ETF can't be traded regardless of protection status.
+
+    Returns the filtered universe DataFrame.
+    """
+    if protected_etfs is None:
+        protected_etfs = set()
+
+    today = pd.Timestamp.now(tz="America/New_York").normalize()
+    stale_cutoff = today - pd.Timedelta(days=max_stale_days)
+
+    stale_etfs: list[tuple[str, str]] = []   # (etf, reason)
+
+    for _, row in universe.iterrows():
+        etf = _norm_sym(row["ETF"])
+        ts = tr_map.get(etf)
+        if ts is None or ts.empty:
+            stale_etfs.append((etf, "no_price_data"))
+            continue
+        last_date = ts.index[-1]
+        # Ensure tz-aware comparison
+        if last_date.tzinfo is None:
+            last_date = last_date.tz_localize("America/New_York")
+        if last_date < stale_cutoff:
+            stale_etfs.append((etf, f"last_trade={last_date.strftime('%Y-%m-%d')}"))
+
+    if not stale_etfs:
+        return universe
+
+    stale_set = {etf for etf, _ in stale_etfs}
+    mask = universe["ETF"].apply(_norm_sym).isin(stale_set)
+    n_drop = mask.sum()
+
+    # Print summary
+    print(f"[STALE] Dropping {n_drop} ETFs with no trading activity "
+          f"in the last {max_stale_days} days:")
+    for etf, reason in sorted(stale_etfs)[:20]:
+        prot_tag = " (protected)" if etf in protected_etfs else ""
+        und = universe.loc[universe["ETF"].apply(_norm_sym) == etf, "Underlying"]
+        und_str = _norm_sym(und.iloc[0]) if len(und) > 0 else "?"
+        print(f"  {etf:10s} -> {und_str:10s}  {reason}{prot_tag}")
+    if len(stale_etfs) > 20:
+        print(f"  ... and {len(stale_etfs) - 20} more")
+
+    return universe[~mask].reset_index(drop=True)
+
+
 def compute_beta_ols(etf_tr: pd.Series, und_tr: pd.Series,
                      min_days: int = 60) -> tuple[float | None, int]:
     """OLS: r_etf = alpha + beta × r_und. Returns (beta, n_obs)."""
@@ -793,7 +855,12 @@ class ScreeningParams:
 
 
 def screen_universe(df: pd.DataFrame, params: ScreeningParams) -> pd.DataFrame:
-    """Apply borrow-based screening: include_for_algo, purgatory, protected logic."""
+    """Apply borrow-based screening: include_for_algo, purgatory, protected logic.
+
+    Philosophy: include by default, exclude only with positive evidence.
+    FTP-missing ETFs are treated as "unknown borrow" and included — the
+    plan generator applies per-sleeve borrow caps that handle NaN correctly.
+    """
     df = df.copy()
     df["ETF"] = df["ETF"].astype(str).map(_norm_sym)
     df["borrow_current"] = pd.to_numeric(df.get("borrow_current"), errors="coerce")
@@ -810,26 +877,40 @@ def screen_universe(df: pd.DataFrame, params: ScreeningParams) -> pd.DataFrame:
     else:
         df["cagr_positive"] = pd.NA
 
-    df["borrow_leq_low"] = df["borrow_current"].notna() & (df["borrow_current"] <= params.borrow_low)
-    df["borrow_gt_low"] = ~df["borrow_leq_low"]
+    # Borrow classification (informational — used by plan generator)
+    borrow_known = df["borrow_current"].notna() & (~df["borrow_missing_from_ftp"])
+    df["borrow_leq_low"] = borrow_known & (df["borrow_current"] <= params.borrow_low)
+    df["borrow_gt_low"] = borrow_known & (df["borrow_current"] > params.borrow_low)
 
     hard_cap = float(params.hard_borrow_cap)
-    df["protected_ok"] = (df["protected"] & df["borrow_current"].notna()
-                          & (~df["borrow_missing_from_ftp"]) & (df["borrow_current"] <= hard_cap))
-    df["protected_bad"] = df["protected"] & (~df["protected_ok"])
+    df["protected_ok"] = df["protected"] & borrow_known & (df["borrow_current"] <= hard_cap)
+    df["protected_bad"] = df["protected"] & borrow_known & (df["borrow_current"] > hard_cap)
 
-    include_base = df["borrow_leq_low"] | df["protected_ok"]
-    if params.exclude_negative_cagr and "cagr_port_hist" in df.columns:
-        include_base = include_base & (df["cagr_positive"] == True)
-    df["include_for_algo"] = include_base
-
-    normal_purg = (df["borrow_current"].notna() & (~df["borrow_missing_from_ftp"])
+    # Purgatory: borrow confirmed between soft cap and hard cap, not protected.
+    # These get 0-target rows in proposed_trades (keep-open, don't size).
+    normal_purg = (borrow_known
                    & (df["borrow_current"] > params.borrow_low)
                    & (df["borrow_current"] <= (params.borrow_low + params.purgatory_margin))
                    & (~df["protected"]))
     df["purgatory"] = normal_purg | df["protected_bad"]
 
-    df["exclude_borrow_gt_low"] = df["borrow_gt_low"] & (~df["protected_ok"])
+    # Confirmed-expensive: borrow known > hard_cap, not protected.
+    # Only these are excluded — everything else passes through to the
+    # plan generator which applies per-sleeve borrow caps.
+    confirmed_exclude = (borrow_known
+                         & (df["borrow_current"] > hard_cap)
+                         & (~df["protected"]))
+
+    # include_for_algo = True by default.  Only False for:
+    #   - confirmed borrow above hard_cap (and not protected)
+    #   - purgatory (handled separately as keep-open rows)
+    include_base = ~confirmed_exclude & ~df["purgatory"]
+    if params.exclude_negative_cagr and "cagr_port_hist" in df.columns:
+        include_base = include_base & (df["cagr_positive"] == True)
+    df["include_for_algo"] = include_base
+
+    # Diagnostic columns (kept for backward compatibility)
+    df["exclude_borrow_gt_low"] = df["borrow_gt_low"] & (~df["protected"])
     df["exclude_no_shares"] = df["shares_available"] < params.min_shares_available
     df["exclude_borrow_spike"] = df["borrow_spiking"].fillna(False)
     return df
@@ -1237,6 +1318,23 @@ def main() -> int:
     all_tickers = sorted(set(etf_syms + und_syms))
 
     tr_map = download_all_tr_series(all_tickers, period=args.lookback, max_workers=args.threads)
+
+    # Drop ETFs that have stopped trading (delisted, liquidated, etc.)
+    # before computing betas — a dead ETF has no valid price series
+    # and would otherwise get an imputed beta and stay in the CSV.
+    stale_days = int(screener_cfg.get("max_stale_days", 5))
+    pre_count = len(universe)
+    universe = drop_stale_etfs(
+        universe, tr_map,
+        max_stale_days=stale_days,
+        protected_etfs=protected,
+    )
+    if len(universe) < pre_count:
+        # Re-derive ticker lists after dropping stale ETFs
+        etf_syms = universe["ETF"].apply(_norm_sym).tolist()
+        und_syms = universe["Underlying"].dropna().apply(_norm_sym).tolist()
+        all_tickers = sorted(set(etf_syms + und_syms))
+
     universe = add_betas(universe, tr_map, min_days=min_beta_days)
 
     # Save intermediate beta file

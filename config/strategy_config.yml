@@ -1,8 +1,8 @@
 ibkr:
   host: 127.0.0.1
   port: 7496
-  client_id: 41                # change to 41 for live
-  prefer_delayed: true
+  client_id: 41
+  prefer_delayed: false
 
 accounting:
   use_yfinance: false           # override Flex markPrice with yfinance close
@@ -53,14 +53,18 @@ screener:
   whitelist_hard_borrow_cap: 0.4
   flow_hard_borrow_cap: 0.4
   min_beta_days: 5
+  max_stale_days: 5             # drop ETFs with no trade in last N calendar days (delisted/liquidated)
 
 portfolio:
   # Rebalance thresholds — skip small trades to reduce costs
   rebalance:
-    drift_trigger_pct: 0.15    # rebalance if name drifts >15% from target (execute_trade_plan)
-    min_trade_usd: 500         # skip deltas below $500
+    drift_trigger_pct: 0.02       # rebalance if name drifts >2% from target (execute_trade_plan)
+    min_trade_usd: 200            # skip deltas below $200
     min_days_between: 1
-    net_exposure_band: 0.10    # rebalance_strategy: trigger if |net| > 10% of target_gross per underlying
+    net_trigger_long_pct: 0.02    # trigger when net long > 2% of gross
+    net_trigger_short_pct: 0.01   # trigger when net short > 1% of gross
+    net_target_long_pct: 0.01     # correct net-long to 1% (50% hedge-back)
+    net_target_short_pct: 0.00    # correct net-short to 0% (full flat)
     establish_threshold_usd: 100.0  # rebalance_strategy: skip Phase 2 if position already > $100
 
   # Shared weighting defaults — overridden per-sleeve below
@@ -80,7 +84,7 @@ portfolio:
       weighting:
         <<: *weighting_defaults
         max_name_weight: 0.08         # 8% cap per underlying
-        eq_blend: 0.5                # 20% equal-weight + 80% decay-score
+        eq_blend: 0.5                # 50% equal-weight + 50% decay-score
         borrow_aversion: 3
 
     whitelist_stock:
@@ -101,8 +105,8 @@ portfolio:
           - MSTW
       weighting:
         <<: *weighting_defaults
-        max_name_weight: 0.20         # 10% cap per underlying
-        eq_blend: 0.50                # 35% equal-weight + 65% decay-score
+        max_name_weight: 0.20         # 20% cap per underlying
+        eq_blend: 0.50                # 50% equal-weight + 50% decay-score
         borrow_aversion: 3
     flow_program:
       allocation_type: "flow"

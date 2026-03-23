@@ -409,6 +409,49 @@ def execute_establish_parallel(
 # Phase 3 — Directional hedge math
 # ---------------------------------------------------------------------------
 
+def has_blind_etfs(
+    *,
+    underlying: str,
+    strat_pos: Dict[str, float],
+    prices: Dict[str, float],
+    etf_to_under: Dict[str, str],
+    etf_to_beta: Dict[str, float],
+    flow_etfs: Optional[Set[str]] = None,
+) -> Tuple[bool, List[str]]:
+    """
+    Check if an underlying has any ETFs that are:
+        1. Positioned (non-zero shares in strat_pos)
+        2. Positive beta (core pair, not flow/inverse)
+        3. Cannot be priced (px <= 0)
+
+    When this returns True, compute_beta_adjusted_net_notional is blind
+    to those ETFs' contribution, and any hedge/reconcile trade on the
+    underlying risks creating a naked position.
+
+    Returns (is_blind, list_of_blind_etf_symbols).
+    """
+    if flow_etfs is None:
+        flow_etfs = set()
+
+    blind: List[str] = []
+    for sym, u in etf_to_under.items():
+        if u != underlying:
+            continue
+        if sym in flow_etfs:
+            continue
+        beta = etf_to_beta.get(sym, 1.0)
+        if beta < 0:
+            continue
+        sh = float(strat_pos.get(sym, 0.0))
+        if sh == 0.0:
+            continue
+        px = float(prices.get(sym) or 0.0)
+        if px <= 0.0:
+            blind.append(sym)
+
+    return len(blind) > 0, blind
+
+
 def compute_beta_adjusted_net_notional(
     *,
     strat_pos: Dict[str, float],
@@ -710,6 +753,30 @@ def build_hedge_trades(
             etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
         )
 
+        # ── Check for positioned ETFs with no price ──────────────────
+        # If any core ETF has shares but can't be priced, the net
+        # notional is unreliable (blind ETF contribution is invisible).
+        # We track this per-underlying but do NOT blanket-skip:
+        #   - Priceable ETF trades are still safe (adding shorts always
+        #     reduces net-long from the visible portion; worst case is
+        #     mild over-hedge that self-corrects on the next run)
+        #   - Underlying-side trades are BLOCKED (selling underlying
+        #     based on inflated priceable-only net could create a
+        #     naked short — the DKNG catastrophe)
+        #   - Orphan detection already handles this correctly: blind
+        #     ETFs with shares count as "has exposure", preventing
+        #     false orphan classification
+        is_blind, blind_syms = has_blind_etfs(
+            underlying=under, strat_pos=strat_pos, prices=prices,
+            etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+            flow_etfs=flow_etfs,
+        )
+        if is_blind:
+            tprint(
+                f"[HEDGE][{under:15s}] BLIND: {blind_syms} positioned but "
+                f"unpriceable — priceable-ETF trades only."
+            )
+
         # ── Check if the underlying is the only remaining leg ────────
         # (all core ETF shorts gone — orphaned position)
         # Negative-beta (inverse) ETFs and flow ETFs are excluded from
@@ -732,6 +799,8 @@ def build_hedge_trades(
         if not has_etf_exposure and under_sh != 0.0:
             # Orphaned: underlying is the only remaining non-flow leg.
             # Close the entire position to zero.
+            # No min_trade_usd gate — orphans are risk-reduction trades
+            # that should always execute regardless of size.
             close_notional = abs(under_sh * px_under)
             action = "SELL" if under_sh > 0 else "BUY"
             qty = abs(int(under_sh))
@@ -740,14 +809,10 @@ def build_hedge_trades(
             tprint(
                 f"[HEDGE][{under:15s}] net={net_notional:>+12,.0f}  "
                 f"tgt_gross={'0':>10s}  net%={'n/a':>6s}  "
-                f"{label}: {action} {qty} to close"
+                f"{label}: {action} {qty} to close (${close_notional:,.0f})"
             )
 
-            if close_notional < min_trade_usd:
-                tprint(
-                    f"[HEDGE][{under}] orphan close ${close_notional:,.0f} "
-                    f"< min_trade_usd; skipping."
-                )
+            if qty <= 0:
                 continue
 
             trades.append({
@@ -774,12 +839,22 @@ def build_hedge_trades(
         # pair that grew beyond its intended weight).
         ref_gross = max(actual_gross, target_gross)
 
+        # Off-plan underlyings are wind-downs: target 0% net on both
+        # sides (close entirely) rather than the normal 1%/0% targets
+        # which would leave a residual proportional to actual_gross.
+        if in_plan:
+            eff_target_long_pct  = net_target_long_pct
+            eff_target_short_pct = net_target_short_pct
+        else:
+            eff_target_long_pct  = 0.0
+            eff_target_short_pct = 0.0
+
         triggered, correction_usd = compute_hedge_delta(
             net_notional=net_notional, target_gross=ref_gross,
             net_trigger_long_pct=net_trigger_long_pct,
             net_trigger_short_pct=net_trigger_short_pct,
-            net_target_long_pct=net_target_long_pct,
-            net_target_short_pct=net_target_short_pct,
+            net_target_long_pct=eff_target_long_pct,
+            net_target_short_pct=eff_target_short_pct,
         )
 
         net_pct = (net_notional / ref_gross * 100.0) if ref_gross > 0 else 0.0
@@ -794,7 +869,9 @@ def build_hedge_trades(
 
         if not triggered:
             continue
-        if abs(correction_usd) < min_trade_usd:
+        # Off-plan corrections bypass min_trade_usd — these are
+        # risk-reduction wind-down trades, not cost-optimised hedges.
+        if in_plan and abs(correction_usd) < min_trade_usd:
             tprint(
                 f"[HEDGE][{under}] correction={correction_usd:+,.0f} "
                 f"< min_trade_usd={min_trade_usd}; skipping."
@@ -809,6 +886,18 @@ def build_hedge_trades(
         )
         if symbol is None or qty <= 0:
             tprint(f"[HEDGE][{under}] Could not resolve hedge leg; skipping.")
+            continue
+
+        # Block underlying-side trades when blind ETFs exist.
+        # Priceable-only net overstates the imbalance (blind shorts are
+        # invisible), so trading the underlying risks creating a naked
+        # position.  Priceable ETF-side trades are safe — adding shorts
+        # always reduces visible exposure.
+        if is_blind and symbol == under:
+            tprint(
+                f"[HEDGE][{under}] BLIND: blocking {action} {qty} {under} "
+                f"(underlying trade unsafe with unpriceable ETFs)."
+            )
             continue
 
         tprint(
@@ -1499,6 +1588,19 @@ def build_reconciliation_trades(
         if not has_etf:
             continue
 
+        # Guard: don't trade underlying if ETF prices are missing
+        is_blind, blind_syms = has_blind_etfs(
+            underlying=under, strat_pos=strat_pos, prices=prices,
+            etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+            flow_etfs=flow_etfs,
+        )
+        if is_blind:
+            tprint(
+                f"[RECONCILE][{under}] BLIND: {blind_syms} positioned but "
+                f"unpriceable — skipping."
+            )
+            continue
+
         net_notional, actual_gross = compute_beta_adjusted_net_notional(
             strat_pos=strat_pos, prices=prices, underlying=under,
             etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
@@ -1509,17 +1611,28 @@ def build_reconciliation_trades(
         )
         ref_gross = max(actual_gross, target_gross)
 
+        in_plan = under in plan_underlyings
+
+        # Off-plan: wind down to zero, not to 1% of actual
+        if in_plan:
+            eff_target_long_pct  = net_target_long_pct
+            eff_target_short_pct = net_target_short_pct
+        else:
+            eff_target_long_pct  = 0.0
+            eff_target_short_pct = 0.0
+
         triggered, correction_usd = compute_hedge_delta(
             net_notional=net_notional, target_gross=ref_gross,
             net_trigger_long_pct=net_trigger_long_pct,
             net_trigger_short_pct=net_trigger_short_pct,
-            net_target_long_pct=net_target_long_pct,
-            net_target_short_pct=net_target_short_pct,
+            net_target_long_pct=eff_target_long_pct,
+            net_target_short_pct=eff_target_short_pct,
         )
 
         if not triggered:
             continue
-        if abs(correction_usd) < min_trade_usd:
+        # Off-plan bypasses min_trade_usd — wind-down trades
+        if in_plan and abs(correction_usd) < min_trade_usd:
             continue
 
         # Correction via the UNDERLYING, not the ETF.
@@ -2210,6 +2323,7 @@ def main() -> None:
                         _snapshot_underlyings.add(u)
                 elif sym in _all_under_values:
                     _snapshot_underlyings.add(sym)
+            _snapshot_underlyings -= set(blacklist)
 
             for u in sorted(_snapshot_underlyings):
                 net, _ = compute_beta_adjusted_net_notional(

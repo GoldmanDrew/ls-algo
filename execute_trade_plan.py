@@ -1167,13 +1167,16 @@ def build_cleanup_trades_to_match_plan(
         if not u or u in blacklist:
             continue
 
-        # SAFETY: if borrow is missing (n/a), do not close in cleanup
+        # Borrow data — informational only for cleanup closes.
+        # Cleanup always closes to zero (cover a short or sell a long),
+        # neither of which requires borrow availability.  The price gate
+        # below catches truly untradeable contracts (delisted, etc.).
         b = borrow_by_etf.get(e_sym, None)
-        if b is None:
-            tprint(f"[CLEANUP] SKIP {e_sym}: borrow is n/a (missing). Leaving position untouched.")
-            continue
 
-        px = ensure_price_coordinator(ib, e_sym, prices, prefer_delayed)
+        try:
+            px = ensure_price_coordinator(ib, e_sym, prices, prefer_delayed)
+        except (RuntimeError, Exception) as e:
+            px = None
         if px is None:
             tprint(f"[CLEANUP] WARNING: No usable price for {e_sym}; skipping cleanup close for this symbol.")
             continue
@@ -1188,7 +1191,7 @@ def build_cleanup_trades_to_match_plan(
             "qty": qty,
             "px": float(px),
             "notional": float(qty) * float(px),
-            "borrow_annual": float(b),
+            "borrow_annual": float(b) if b is not None else None,
             "reason": "CLEANUP_CLOSE_UNWANTED_ETF",
             "underlying_group": u,
         })
