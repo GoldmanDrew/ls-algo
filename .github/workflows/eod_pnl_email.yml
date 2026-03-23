@@ -66,9 +66,7 @@ jobs:
             echo "No screener changes to commit"
           else
             git commit -m "screener: $(date -u +%Y-%m-%d) run"
-            git stash --include-untracked || true
-            git pull --rebase origin main
-            git stash pop || true
+            git pull --no-rebase -X ours origin main || true
             git push
           fi
 
@@ -140,8 +138,6 @@ jobs:
             echo "No PnL changes to commit"
           else
             git commit -m "eod: $(date -u +%Y-%m-%d) pnl history update"
-            git stash --include-untracked || true
-            git pull --rebase origin main
-            git stash pop || true
+            git pull --no-rebase -X ours origin main || true
             git push
           fi
