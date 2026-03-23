@@ -1034,7 +1034,7 @@ def expected_gross_decay(beta: float, sigma_annual: float) -> float:
 
 
 _WEEKS_PER_YEAR = 52
-_MIN_WEEKS = 12   # ~60 trading days
+_MIN_WEEKS = 4    # ~20 trading days
 
 
 def _compute_gross_decay(etf_tr: pd.Series, und_tr: pd.Series,
