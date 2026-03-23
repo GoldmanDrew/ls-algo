@@ -878,15 +878,18 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     df = df[~df["symbol"].isin(blacklist)].copy()
     df = df[~df["underlying"].isin(blacklist)].copy()
 
-    # Universe filter — include underlyings from the current screened
-    # CSV plus any underlyings mapped by SUPPLEMENTAL_ETF_MAP (delisted
-    # ETFs with historical PnL).  This ensures PnL for CELT/CELH,
-    # DASX/DASH etc. is preserved even after the screened CSV drops them,
-    # without pulling in non-strategy positions (CSU.DB, 3905.T, etc.).
+    # Universe filter — whitelist approach.  A symbol can only appear
+    # in PnL if it is a KNOWN part of our strategy universe:
+    #   1. An ETF in the screened CSV or SUPPLEMENTAL_ETF_MAP
+    #   2. An underlying mapped by one of those ETFs
+    # This excludes non-strategy positions (CSU.DB, 3905.T, currencies)
+    # while preserving historical PnL for delisted pairs (CELT/CELH, etc.)
     allowed_etfs, allowed_underlyings = load_universe_from_screened(etf_screened_path)
     allowed_underlyings |= set(SUPPLEMENTAL_ETF_MAP.values())
+    allowed_etfs |= set(SUPPLEMENTAL_ETF_MAP.keys())
+    allowed_symbols = allowed_etfs | allowed_underlyings
 
-    df = df[df["underlying"].isin(allowed_underlyings)].copy()
+    df = df[df["symbol"].isin(allowed_symbols)].copy()
 
     # Rebuild pair labels post-filter
     df["pair"] = np.where(
