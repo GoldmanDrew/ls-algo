@@ -862,8 +862,22 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     df = df[~df["symbol"].isin(blacklist)].copy()
     df = df[~df["underlying"].isin(blacklist)].copy()
 
-    # Universe filter
+    # Universe filter — include underlyings from both the current screened
+    # CSV AND the Flex XML data.  The screened CSV covers active pairs;
+    # the Flex XML's underlyingSymbol field covers delisted/liquidated ETFs
+    # that still have PnL history (realized trades, borrow fees, etc.).
+    # This ensures PnL for CELT/CELH, DASX/DASH etc. is preserved even
+    # after those ETFs are dropped from the screened CSV.
     allowed_etfs, allowed_underlyings = load_universe_from_screened(etf_screened_path)
+
+    # Add underlyings from Flex data where symbol ≠ underlying
+    # (i.e. ETF positions mapped by IBKR to their underlying).
+    # Self-mapped symbols (personal holdings) are excluded.
+    flex_pair_underlyings = set(
+        df.loc[df["symbol"] != df["underlying"], "underlying"].dropna().unique()
+    )
+    allowed_underlyings = allowed_underlyings | flex_pair_underlyings
+
     df = df[df["underlying"].isin(allowed_underlyings)].copy()
 
     # Rebuild pair labels post-filter
