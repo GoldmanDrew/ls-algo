@@ -64,6 +64,19 @@ def _format_underlying_section(
     Format a single section of the underlying table.
     Returns (formatted_text, section_total).
     """
+    # Drop rows with missing underlying (delisted ETFs, mapping gaps)
+    df = df.dropna(subset=["underlying"]).copy()
+    df["underlying"] = df["underlying"].astype(str)
+    if not sym_df.empty and "underlying" in sym_df.columns:
+        sym_df = sym_df.dropna(subset=["underlying"]).copy()
+        sym_df["underlying"] = sym_df["underlying"].astype(str)
+    if not sym_df.empty and "symbol" in sym_df.columns:
+        sym_df = sym_df.dropna(subset=["symbol"]).copy()
+        sym_df["symbol"] = sym_df["symbol"].astype(str)
+
+    if df.empty:
+        return "(no data)", 0.0
+
     df = df.sort_values("total_pnl", ascending=False)
     section_total = float(df["total_pnl"].sum())
 
@@ -152,10 +165,12 @@ def format_bucket_3_pnl(pnl_b3_csv: Path) -> tuple[str, float]:
         return "(no bucket 3 positions)", 0.0
 
     df["total_pnl"] = pd.to_numeric(df["total_pnl"], errors="coerce").fillna(0.0)
+    df = df.dropna(subset=["symbol"]).copy()
+    df["symbol"] = df["symbol"].astype(str)
     df = df.sort_values("total_pnl", ascending=False)
     total = float(df["total_pnl"].sum())
 
-    all_labels = list(df["symbol"].astype(str)) + ["TOTAL"]
+    all_labels = list(df["symbol"]) + ["TOTAL"]
     label_width = max(12, max(len(s) for s in all_labels))
     all_pnl = [f"{v:,.2f}" for v in list(df["total_pnl"]) + [total]]
     pnl_width = max(12, max(len(s) for s in all_pnl))
