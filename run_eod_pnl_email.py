@@ -235,21 +235,88 @@ def ensure_ledger_dir() -> None:
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def update_pnl_history(run_date: str, total_pnl: float) -> pd.DataFrame:
+PNL_HISTORY_BUCKET_COLS = ("pnl_bucket_1", "pnl_bucket_2", "pnl_bucket_3")
+
+
+def format_pair_exposure_flags(
+    exposure_df: pd.DataFrame,
+    *,
+    net_col: str = "net_notional_usd",
+    gross_col: str = "gross_notional_usd",
+    label_col: str = "underlying",
+    threshold: float = 0.05,
+) -> str:
+    """
+    Flag rows (e.g. per-underlying pairs) where |net| > threshold * gross for that row.
+    Returns a single line suitable for the top of the email body.
+    """
+    if exposure_df is None or exposure_df.empty:
+        return "Pair exposure: (no bucket 1&2 underlying exposure table)."
+    if label_col not in exposure_df.columns or net_col not in exposure_df.columns or gross_col not in exposure_df.columns:
+        return "Pair exposure: (missing columns for net/gross check)."
+
+    df = exposure_df.copy()
+    df[net_col] = pd.to_numeric(df[net_col], errors="coerce").fillna(0.0)
+    df[gross_col] = pd.to_numeric(df[gross_col], errors="coerce").fillna(0.0)
+
+    flags: list[str] = []
+    for _, r in df.iterrows():
+        gross = float(r[gross_col])
+        net = float(r[net_col])
+        if gross <= 0:
+            continue
+        if abs(net) > threshold * gross:
+            lab = str(r[label_col])
+            pct = 100.0 * abs(net) / gross
+            flags.append(
+                f"{lab} (|net|={abs(net):,.0f} vs gross={gross:,.0f} → {pct:.1f}%)"
+            )
+
+    if not flags:
+        return "Pair exposure: no underlying exceeds 5% |net| vs its gross (bucket 1&2 pairs)."
+
+    joined = "; ".join(flags)
+    return f"⚠️ Pair exposure — |net| > 5% of gross for: {joined}"
+
+
+def update_pnl_history(
+    run_date: str,
+    *,
+    b1: float,
+    b2: float,
+    b3: float,
+) -> pd.DataFrame:
     """
     Appends (or overwrites) a row in pnl_history.csv for the given run_date.
+    Stores per-bucket YTD PnL columns plus total_pnl (= sum of buckets).
     Returns the full history DF filtered from START_DATE onward.
     """
     ensure_ledger_dir()
 
-    row = pd.DataFrame([{"date": run_date, "total_pnl": float(total_pnl)}])
+    total_pnl = float(b1) + float(b2) + float(b3)
+    row = pd.DataFrame(
+        [
+            {
+                "date": run_date,
+                "pnl_bucket_1": float(b1),
+                "pnl_bucket_2": float(b2),
+                "pnl_bucket_3": float(b3),
+                "total_pnl": total_pnl,
+            }
+        ]
+    )
 
     if PNL_HISTORY_CSV.exists():
         hist = pd.read_csv(PNL_HISTORY_CSV)
-        if "date" not in hist.columns or "total_pnl" not in hist.columns:
+        if "date" not in hist.columns:
             hist = row
         else:
             hist["date"] = hist["date"].astype(str)
+            for c in PNL_HISTORY_BUCKET_COLS:
+                if c not in hist.columns:
+                    hist[c] = np.nan
+            if "total_pnl" not in hist.columns:
+                hist["total_pnl"] = np.nan
             hist = hist[hist["date"] != run_date]
             hist = pd.concat([hist, row], ignore_index=True)
     else:
@@ -257,7 +324,9 @@ def update_pnl_history(run_date: str, total_pnl: float) -> pd.DataFrame:
 
     hist["date"] = pd.to_datetime(hist["date"], errors="coerce")
     hist = hist.dropna(subset=["date"]).sort_values("date")
-    hist["total_pnl"] = pd.to_numeric(hist["total_pnl"], errors="coerce").fillna(0.0)
+    for c in PNL_HISTORY_BUCKET_COLS:
+        hist[c] = pd.to_numeric(hist.get(c, np.nan), errors="coerce")
+    hist["total_pnl"] = pd.to_numeric(hist["total_pnl"], errors="coerce")
 
     hist_out = hist.copy()
     hist_out["date"] = hist_out["date"].dt.strftime("%Y-%m-%d")
@@ -270,39 +339,90 @@ def update_pnl_history(run_date: str, total_pnl: float) -> pd.DataFrame:
 
 def make_pnl_plot(history: pd.DataFrame) -> Path:
     """
-    Creates a PNG plot showing YTD PnL since START_DATE.
-    Each row in history already contains the YTD cumulative total_pnl,
-    so we plot it directly (no cumsum).
+    Creates a PNG plot showing YTD PnL since START_DATE, one series per bucket.
+    Each row should hold YTD cumulative PnL per bucket (and total_pnl); legacy
+    rows may only have total_pnl with NaN bucket columns (no lines for those dates).
     """
     ensure_ledger_dir()
 
+    bucket_specs: tuple[tuple[str, str, str], ...] = (
+        ("pnl_bucket_1", "Bucket 1 — Levered", "#1f77b4"),
+        ("pnl_bucket_2", "Bucket 2 — Standard", "#ff7f0e"),
+        ("pnl_bucket_3", "Bucket 3 — Inverse", "#2ca02c"),
+    )
+
     if history.empty:
-        fig, ax = plt.subplots(figsize=(8, 4))
-        ax.set_title(f"PnL since {START_DATE} (no data yet)")
+        fig, ax = plt.subplots(figsize=(10, 4.5))
+        ax.set_title(f"YTD PnL by bucket since {START_DATE} (no data yet)")
         ax.set_xlabel("Date")
-        ax.set_ylabel("PnL (base)")
+        ax.set_ylabel("YTD PnL (base)")
         fig.tight_layout()
         fig.savefig(PLOT_PNG, dpi=150)
         plt.close(fig)
         return PLOT_PNG
 
-    x = history["date"]
-    y = history["total_pnl"]
-
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(x, y, marker="o", linewidth=2, markersize=6)
+    fig, ax = plt.subplots(figsize=(10, 4.5))
     ax.axhline(0, color="grey", linewidth=0.5, linestyle="--")
-    ax.set_title(f"YTD PnL since {START_DATE}")
+
+    for si, (col, label, color) in enumerate(bucket_specs):
+        if col not in history.columns:
+            continue
+        y = pd.to_numeric(history[col], errors="coerce")
+        mask = y.notna()
+        if not mask.any():
+            continue
+        dates = history.loc[mask, "date"]
+        yv = y[mask]
+        ax.plot(dates, yv, marker="o", linewidth=2, markersize=5, label=label, color=color)
+        for xi, yi in zip(dates, yv):
+            ax.annotate(
+                f"${yi:,.0f}",
+                (xi, yi),
+                textcoords="offset points",
+                xytext=(0, 8 + si * 13),
+                ha="center",
+                fontsize=7,
+                color=color,
+            )
+
+    # Dates with only legacy total_pnl (no per-bucket columns filled) still appear as one series
+    if "total_pnl" in history.columns:
+        tot = pd.to_numeric(history["total_pnl"], errors="coerce")
+        if all(c in history.columns for c in PNL_HISTORY_BUCKET_COLS):
+            legacy_only = history[list(PNL_HISTORY_BUCKET_COLS)].isna().all(axis=1)
+        else:
+            legacy_only = pd.Series(True, index=history.index)
+        mask = tot.notna() & legacy_only
+        if mask.any():
+            dates = history.loc[mask, "date"]
+            yv = tot[mask]
+            ax.plot(
+                dates,
+                yv,
+                marker="o",
+                linewidth=2,
+                markersize=6,
+                color="0.35",
+                linestyle="--",
+                label="Total (legacy, before per-bucket history)",
+            )
+            for xi, yi in zip(dates, yv):
+                ax.annotate(
+                    f"${yi:,.0f}",
+                    (xi, yi),
+                    textcoords="offset points",
+                    xytext=(0, 10),
+                    ha="center",
+                    fontsize=8,
+                    color="0.35",
+                )
+
+    ax.set_title(f"YTD PnL by bucket since {START_DATE}")
     ax.set_xlabel("Date")
     ax.set_ylabel("YTD PnL (base)")
     ax.grid(True, alpha=0.3)
     ax.tick_params(axis="x", rotation=30)
-
-    # Annotate each point with its value
-    for xi, yi in zip(x, y):
-        label = f"${yi:,.0f}"
-        ax.annotate(label, (xi, yi), textcoords="offset points",
-                    xytext=(0, 10), ha="center", fontsize=8)
+    ax.legend(loc="best", fontsize=8)
 
     fig.tight_layout()
     fig.savefig(PLOT_PNG, dpi=150)
@@ -464,12 +584,15 @@ def main() -> int:
     exposure_table_str = "(exposure data unavailable)"
     total_net = 0.0
     total_gross = 0.0
+    pair_exposure_line = "Pair exposure: (exposure file missing)."
     if exposure_csv_path.exists():
         try:
             exposure_df = pd.read_csv(exposure_csv_path)
             exposure_table_str, total_net, total_gross = format_exposure_table(exposure_df)
+            pair_exposure_line = format_pair_exposure_flags(exposure_df)
         except Exception as e:
             exposure_table_str = f"(exposure error: {e})"
+            pair_exposure_line = f"Pair exposure: (error loading exposure: {e})"
 
     # Bucket 1 exposure
     b1_exposure_table_str = "(no bucket 1 exposure data)"
@@ -506,7 +629,9 @@ def main() -> int:
 
     # 5) Update history + plot since START_DATE
     grand_total = b1_pnl_total + b2_pnl_total + b3_pnl_total
-    hist = update_pnl_history(run_date, total_pnl=grand_total)
+    hist = update_pnl_history(
+        run_date, b1=b1_pnl_total, b2=b2_pnl_total, b3=b3_pnl_total
+    )
     plot_path = make_pnl_plot(hist)
 
     # 6) Compose email
@@ -528,12 +653,36 @@ def main() -> int:
         f"Total: {grand_total:,.2f}"
     )
 
-    cum_total = float(hist["total_pnl"].iloc[-1]) if not hist.empty else 0.0
     n_days = int(hist.shape[0])
+    if not hist.empty and all(c in hist.columns for c in PNL_HISTORY_BUCKET_COLS):
+        last = hist.iloc[-1]
+        if pd.notna(last[PNL_HISTORY_BUCKET_COLS]).all():
+            hist_summary = (
+                f"Since {START_DATE}: {n_days} day(s) — latest logged YTD "
+                f"B1: {float(last['pnl_bucket_1']):,.2f} | "
+                f"B2: {float(last['pnl_bucket_2']):,.2f} | "
+                f"B3: {float(last['pnl_bucket_3']):,.2f} | "
+                f"Total: {float(last['total_pnl']):,.2f}\n"
+            )
+        else:
+            cum_total = float(last["total_pnl"]) if pd.notna(last.get("total_pnl")) else grand_total
+            hist_summary = (
+                f"Since {START_DATE}: {n_days} day(s) logged | "
+                f"Cumulative PnL (total): {cum_total:,.2f}\n"
+            )
+    elif not hist.empty:
+        cum_total = float(hist["total_pnl"].iloc[-1])
+        hist_summary = (
+            f"Since {START_DATE}: {n_days} day(s) logged | "
+            f"Cumulative PnL (total): {cum_total:,.2f}\n"
+        )
+    else:
+        hist_summary = f"Since {START_DATE}: no history rows yet.\n"
 
     body = (
         f"As of: {asof}\n"
-        f"Run date: {run_date} — Previous day mark-to-market\n\n"
+        f"Run date: {run_date} — Previous day mark-to-market\n"
+        f"{pair_exposure_line}\n\n"
         f"TOTAL PnL (base): {grand_total:,.2f}\n"
         f"  Bucket 1 (Levered, β > 1.5):    {b1_pnl_total:,.2f}\n"
         f"  Bucket 2 (Standard, 0 < β ≤ 1.5): {b2_pnl_total:,.2f}\n"
@@ -583,7 +732,7 @@ def main() -> int:
         "----------------------------------------\n"
         f"{exposure_table_str}\n"
         "----------------------------------------\n\n"
-        f"Since {START_DATE}: {n_days} day(s) logged | Cumulative PnL: {cum_total:,.2f}\n\n"
+        f"{hist_summary}\n"
         "Attachments:\n"
         "- pnl_by_underlying.csv  (bucket 1&2 combined)\n"
         "- pnl_bucket_1.csv\n"
