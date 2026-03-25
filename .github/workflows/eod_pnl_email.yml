@@ -2,8 +2,8 @@ name: EOD PnL Email + Daily Screener
 
 on:
   schedule:
-    # 11:00 UTC = ~7am ET — daily screener + EOD
-    - cron: "0 11 * * 2-6"
+    # 07:00 UTC = 2:00 AM America/New_York during EST; 3:00 AM during EDT
+    - cron: "0 7 * * 2-6"
   workflow_dispatch:
     inputs:
       job:
@@ -23,7 +23,7 @@ jobs:
   screener:
     if: >-
       (github.event_name == 'workflow_dispatch' && (inputs.job == 'screener' || inputs.job == 'both'))
-      || (github.event_name == 'schedule' && github.event.schedule == '0 11 * * 2-6')
+      || (github.event_name == 'schedule' && github.event.schedule == '0 7 * * 2-6')
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -78,7 +78,7 @@ jobs:
     if: >-
       always() &&
       ((github.event_name == 'workflow_dispatch' && (inputs.job == 'eod' || inputs.job == 'both'))
-      || (github.event_name == 'schedule' && github.event.schedule == '0 11 * * 2-6'))
+      || (github.event_name == 'schedule' && github.event.schedule == '0 7 * * 2-6'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
