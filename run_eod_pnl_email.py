@@ -656,7 +656,7 @@ def main() -> int:
     n_days = int(hist.shape[0])
     if not hist.empty and all(c in hist.columns for c in PNL_HISTORY_BUCKET_COLS):
         last = hist.iloc[-1]
-        if pd.notna(last[PNL_HISTORY_BUCKET_COLS]).all():
+        if all(pd.notna(last[c]) for c in PNL_HISTORY_BUCKET_COLS):
             hist_summary = (
                 f"Since {START_DATE}: {n_days} day(s) — latest logged YTD "
                 f"B1: {float(last['pnl_bucket_1']):,.2f} | "
