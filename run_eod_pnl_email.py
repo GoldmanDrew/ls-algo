@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import json
 import subprocess
+from collections import defaultdict
 from pathlib import Path
 from datetime import date, datetime
 import smtplib
@@ -28,9 +29,11 @@ IBKR_ACCT_SCRIPT = PROJECT_ROOT / "ibkr_accounting.py"
 
 # History / plot outputs
 LEDGER_DIR = PROJECT_ROOT / "data" / "ledger"
+RUNS_ROOT = PROJECT_ROOT / "data" / "runs"
 PNL_HISTORY_CSV = LEDGER_DIR / "pnl_history.csv"
 PLOT_PNG = LEDGER_DIR / "pnl_since_2026-02-27.png"
 START_DATE = "2026-02-27"
+PAIR_EXPOSURE_MIN_ABS_NET_USD = 500.0
 
 
 def run_cmd(cmd: list[str], env: dict[str, str] | None = None) -> None:
@@ -245,10 +248,11 @@ def format_pair_exposure_flags(
     gross_col: str = "gross_notional_usd",
     label_col: str = "underlying",
     threshold: float = 0.05,
+    min_abs_net_usd: float = PAIR_EXPOSURE_MIN_ABS_NET_USD,
 ) -> str:
     """
-    Flag rows (e.g. per-underlying pairs) where |net| > threshold * gross for that row.
-    Returns a single line suitable for the top of the email body.
+    Flag rows (e.g. per-underlying pairs) where |net| > threshold * gross and
+    |net| >= min_abs_net_usd. Returns multi-line text for the email body.
     """
     if exposure_df is None or exposure_df.empty:
         return "Pair exposure: (no bucket 1&2 underlying exposure table)."
@@ -259,24 +263,142 @@ def format_pair_exposure_flags(
     df[net_col] = pd.to_numeric(df[net_col], errors="coerce").fillna(0.0)
     df[gross_col] = pd.to_numeric(df[gross_col], errors="coerce").fillna(0.0)
 
-    flags: list[str] = []
+    rows: list[tuple[str, float, float, float]] = []
     for _, r in df.iterrows():
         gross = float(r[gross_col])
         net = float(r[net_col])
+        anet = abs(net)
         if gross <= 0:
             continue
-        if abs(net) > threshold * gross:
-            lab = str(r[label_col])
-            pct = 100.0 * abs(net) / gross
-            flags.append(
-                f"{lab} (|net|={abs(net):,.0f} vs gross={gross:,.0f} → {pct:.1f}%)"
+        if anet < min_abs_net_usd:
+            continue
+        if anet <= threshold * gross:
+            continue
+        lab = str(r[label_col])
+        pct = 100.0 * anet / gross
+        rows.append((lab, net, gross, pct))
+
+    if not rows:
+        return (
+            "Pair exposure: no underlying exceeds 5% |net| vs gross "
+            f"(bucket 1&2 pairs; |net| ≥ ${min_abs_net_usd:,.0f} only)."
+        )
+
+    rows.sort(key=lambda t: abs(t[1]), reverse=True)
+    lines = [
+        "⚠️ Pair exposure — |net| > 5% of gross "
+        f"(listed only if |net| ≥ ${min_abs_net_usd:,.0f}):",
+        "",
+    ]
+    for lab, net, gross, pct in rows:
+        lines.append(
+            f"  • {lab:8}  net ${abs(net):>10,.0f}  gross ${gross:>11,.0f}  ratio {pct:5.1f}%"
+        )
+    return "\n".join(lines)
+
+
+def read_bucket_pnl_from_run(run_date_str: str) -> tuple[float, float, float] | None:
+    """
+    Bucket YTD-style totals from a prior accounting run, if present.
+    Prefer totals.json bucket_pnl; else sum pnl_bucket_{1,2,3}.csv.
+    """
+    outdir = RUNS_ROOT / run_date_str / "accounting"
+    if not outdir.is_dir():
+        return None
+
+    totals_path = outdir / "totals.json"
+    if totals_path.exists():
+        try:
+            obj = json.loads(totals_path.read_text(encoding="utf-8"))
+            bp = obj.get("bucket_pnl")
+            if isinstance(bp, dict) and bp:
+                return (
+                    float(bp.get("bucket_1", 0.0)),
+                    float(bp.get("bucket_2", 0.0)),
+                    float(bp.get("bucket_3", 0.0)),
+                )
+        except Exception:
+            pass
+
+    paths = [outdir / f"pnl_bucket_{i}.csv" for i in (1, 2, 3)]
+    if not all(p.exists() for p in paths):
+        return None
+    sums: list[float] = []
+    for p in paths:
+        df = pd.read_csv(p)
+        if df.empty or "total_pnl" not in df.columns:
+            sums.append(0.0)
+        else:
+            sums.append(
+                float(pd.to_numeric(df["total_pnl"], errors="coerce").fillna(0.0).sum())
+            )
+    return sums[0], sums[1], sums[2]
+
+
+def enrich_history_bucket_cols_from_runs(hist: pd.DataFrame) -> pd.DataFrame:
+    """
+    Fill pnl_bucket_* (and total_pnl) from data/runs/<date>/accounting for every
+    run date on or after START_DATE that has bucket outputs.
+    """
+    if not RUNS_ROOT.is_dir():
+        return hist
+
+    start_dt = pd.to_datetime(START_DATE)
+    updates: dict[str, tuple[float, float, float]] = {}
+    for child in RUNS_ROOT.iterdir():
+        if not child.is_dir():
+            continue
+        ds = child.name
+        try:
+            dt = pd.to_datetime(ds)
+        except (ValueError, TypeError):
+            continue
+        if dt.normalize() < start_dt.normalize():
+            continue
+        triple = read_bucket_pnl_from_run(ds)
+        if triple is None:
+            continue
+        updates[ds] = triple
+
+    if not updates:
+        return hist
+
+    hist = hist.copy()
+    hist["date"] = pd.to_datetime(hist["date"], errors="coerce")
+    hist = hist.dropna(subset=["date"])
+    for c in PNL_HISTORY_BUCKET_COLS:
+        if c not in hist.columns:
+            hist[c] = np.nan
+    if "total_pnl" not in hist.columns:
+        hist["total_pnl"] = np.nan
+
+    date_key = hist["date"].dt.strftime("%Y-%m-%d")
+    new_rows: list[dict] = []
+    for ds, (b1, b2, b3) in updates.items():
+        tot = b1 + b2 + b3
+        m = date_key == ds
+        if m.any():
+            hist.loc[m, "pnl_bucket_1"] = b1
+            hist.loc[m, "pnl_bucket_2"] = b2
+            hist.loc[m, "pnl_bucket_3"] = b3
+            hist.loc[m, "total_pnl"] = tot
+        else:
+            new_rows.append(
+                {
+                    "date": pd.to_datetime(ds),
+                    "pnl_bucket_1": b1,
+                    "pnl_bucket_2": b2,
+                    "pnl_bucket_3": b3,
+                    "total_pnl": tot,
+                }
             )
 
-    if not flags:
-        return "Pair exposure: no underlying exceeds 5% |net| vs its gross (bucket 1&2 pairs)."
+    if new_rows:
+        hist = pd.concat([hist, pd.DataFrame(new_rows)], ignore_index=True)
 
-    joined = "; ".join(flags)
-    return f"⚠️ Pair exposure — |net| > 5% of gross for: {joined}"
+    hist = hist.sort_values("date").drop_duplicates(subset=["date"], keep="last")
+    hist = hist.reset_index(drop=True)
+    return hist
 
 
 def update_pnl_history(
@@ -328,6 +450,8 @@ def update_pnl_history(
         hist[c] = pd.to_numeric(hist.get(c, np.nan), errors="coerce")
     hist["total_pnl"] = pd.to_numeric(hist["total_pnl"], errors="coerce")
 
+    hist = enrich_history_bucket_cols_from_runs(hist)
+
     hist_out = hist.copy()
     hist_out["date"] = hist_out["date"].dt.strftime("%Y-%m-%d")
     hist_out.to_csv(PNL_HISTORY_CSV, index=False)
@@ -335,6 +459,48 @@ def update_pnl_history(
     start_dt = pd.to_datetime(START_DATE)
     hist = hist[hist["date"] >= start_dt].copy()
     return hist
+
+
+def _annotate_grouped_pnl_labels(
+    ax,
+    points: list[tuple[pd.Timestamp, float, str]],
+    *,
+    base_offset_y: float,
+    fontsize: float,
+    x_spread_pt: float,
+    y_step_pt: float,
+) -> None:
+    """
+    For each date, stagger labels horizontally and vertically so they do not overlap.
+    points: (x, y, matplotlib color)
+    """
+    by_x: dict[pd.Timestamp, list[tuple[float, str]]] = defaultdict(list)
+    for x, y, color in points:
+        by_x[x].append((y, color))
+
+    for x in sorted(by_x.keys(), key=lambda d: d.timestamp()):
+        items = sorted(by_x[x], key=lambda t: t[0], reverse=True)
+        n = len(items)
+        for i, (y, color) in enumerate(items):
+            dx_pt = (i - (n - 1) / 2.0) * x_spread_pt if n > 1 else 0.0
+            dy_pt = base_offset_y + i * y_step_pt
+            ax.annotate(
+                f"${y:,.0f}",
+                (x, y),
+                textcoords="offset points",
+                xytext=(dx_pt, dy_pt),
+                ha="center",
+                va="bottom",
+                fontsize=fontsize,
+                color=color,
+                bbox={
+                    "boxstyle": "round,pad=0.2",
+                    "facecolor": "white",
+                    "edgecolor": color,
+                    "linewidth": 0.35,
+                    "alpha": 0.92,
+                },
+            )
 
 
 def make_pnl_plot(history: pd.DataFrame) -> Path:
@@ -352,7 +518,7 @@ def make_pnl_plot(history: pd.DataFrame) -> Path:
     )
 
     if history.empty:
-        fig, ax = plt.subplots(figsize=(10, 4.5))
+        fig, ax = plt.subplots(figsize=(12, 5.2))
         ax.set_title(f"YTD PnL by bucket since {START_DATE} (no data yet)")
         ax.set_xlabel("Date")
         ax.set_ylabel("YTD PnL (base)")
@@ -361,10 +527,12 @@ def make_pnl_plot(history: pd.DataFrame) -> Path:
         plt.close(fig)
         return PLOT_PNG
 
-    fig, ax = plt.subplots(figsize=(10, 4.5))
+    fig, ax = plt.subplots(figsize=(12, 5.2))
     ax.axhline(0, color="grey", linewidth=0.5, linestyle="--")
 
-    for si, (col, label, color) in enumerate(bucket_specs):
+    bucket_label_points: list[tuple[pd.Timestamp, float, str]] = []
+
+    for col, label, color in bucket_specs:
         if col not in history.columns:
             continue
         y = pd.to_numeric(history[col], errors="coerce")
@@ -375,15 +543,17 @@ def make_pnl_plot(history: pd.DataFrame) -> Path:
         yv = y[mask]
         ax.plot(dates, yv, marker="o", linewidth=2, markersize=5, label=label, color=color)
         for xi, yi in zip(dates, yv):
-            ax.annotate(
-                f"${yi:,.0f}",
-                (xi, yi),
-                textcoords="offset points",
-                xytext=(0, 8 + si * 13),
-                ha="center",
-                fontsize=7,
-                color=color,
-            )
+            bucket_label_points.append((pd.Timestamp(xi), float(yi), color))
+
+    if bucket_label_points:
+        _annotate_grouped_pnl_labels(
+            ax,
+            bucket_label_points,
+            base_offset_y=10,
+            fontsize=7,
+            x_spread_pt=36,
+            y_step_pt=15,
+        )
 
     # Dates with only legacy total_pnl (no per-bucket columns filled) still appear as one series
     if "total_pnl" in history.columns:
@@ -406,16 +576,17 @@ def make_pnl_plot(history: pd.DataFrame) -> Path:
                 linestyle="--",
                 label="Total (legacy, before per-bucket history)",
             )
-            for xi, yi in zip(dates, yv):
-                ax.annotate(
-                    f"${yi:,.0f}",
-                    (xi, yi),
-                    textcoords="offset points",
-                    xytext=(0, 10),
-                    ha="center",
-                    fontsize=8,
-                    color="0.35",
-                )
+            legacy_pts = [
+                (pd.Timestamp(xi), float(yi), "0.35") for xi, yi in zip(dates, yv)
+            ]
+            _annotate_grouped_pnl_labels(
+                ax,
+                legacy_pts,
+                base_offset_y=12,
+                fontsize=8,
+                x_spread_pt=28,
+                y_step_pt=14,
+            )
 
     ax.set_title(f"YTD PnL by bucket since {START_DATE}")
     ax.set_xlabel("Date")
@@ -423,6 +594,7 @@ def make_pnl_plot(history: pd.DataFrame) -> Path:
     ax.grid(True, alpha=0.3)
     ax.tick_params(axis="x", rotation=30)
     ax.legend(loc="best", fontsize=8)
+    ax.margins(x=0.02, y=0.24)
 
     fig.tight_layout()
     fig.savefig(PLOT_PNG, dpi=150)
