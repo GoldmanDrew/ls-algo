@@ -24,7 +24,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 import pandas as pd
 import yaml
@@ -45,6 +45,7 @@ from execute_trade_plan import (
     today_str, run_dir,
     # IBKR connection + pricing
     connect_ib, get_snapshot_price, safe_price, ensure_price_coordinator,
+    configure_ib_error_log_filter,
     # Order construction + execution
     build_market_order, build_adaptive_market_order, build_limit_order,
     wait_for_trade_terminal, wait_for_trade_accepted,
@@ -78,6 +79,114 @@ def rebalance_dir(run_date: str) -> Path:
     d = run_dir(run_date) / "rebalance"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def configure_market_data_mode(ib: IB, prefer_delayed: bool) -> None:
+    """
+    Configure market data mode once on the coordinator connection.
+    Delayed mode avoids live entitlement warnings (10089) and is faster
+    when live subscriptions are incomplete.
+    """
+    data_type = 3 if prefer_delayed else 1
+    mode = "DELAYED(3)" if prefer_delayed else "LIVE(1)"
+    try:
+        ib.reqMarketDataType(data_type)
+        setattr(ib, "_ls_algo_market_data_type", data_type)
+        tprint(f"[PRICES] Market data mode set to {mode}.")
+    except Exception as ex:
+        tprint(f"[PRICES] WARNING: Failed to set market data mode {mode}: {ex}")
+
+
+def _read_snapshot_ticker_price(ticker) -> Optional[float]:
+    bid = safe_price(getattr(ticker, "bid", None)) or safe_price(getattr(ticker, "delayedBid", None))
+    ask = safe_price(getattr(ticker, "ask", None)) or safe_price(getattr(ticker, "delayedAsk", None))
+    last = safe_price(getattr(ticker, "last", None)) or safe_price(getattr(ticker, "delayedLast", None))
+    close = safe_price(getattr(ticker, "close", None)) or safe_price(getattr(ticker, "delayedClose", None))
+    mkt = safe_price(ticker.marketPrice())
+    if bid and ask:
+        return (bid + ask) / 2.0
+    return last or close or mkt
+
+
+def prefetch_prices_batched(
+    *,
+    ib: IB,
+    symbols: Iterable[str],
+    prices: Dict[str, float],
+    prefer_delayed: bool,
+    batch_size: int = 75,
+) -> Tuple[int, int]:
+    """
+    Prefetch prices using batched reqTickers snapshots. Falls back to
+    get_snapshot_price per symbol for unresolved names.
+    Returns (resolved_count, requested_count).
+    """
+    requested = sorted({norm_sym(s) for s in symbols if str(s).strip() and norm_sym(s) not in prices})
+    if not requested:
+        return 0, 0
+
+    resolved = 0
+    batch_size = max(1, int(batch_size))
+
+    for i in range(0, len(requested), batch_size):
+        if stop_requested():
+            break
+
+        chunk = requested[i : i + batch_size]
+        contracts = [make_stock(sym) for sym in chunk]
+
+        qualified = []
+        try:
+            qualified = list(ib.qualifyContracts(*contracts) or [])
+        except Exception:
+            for c in contracts:
+                try:
+                    q = ib.qualifyContracts(c)
+                    if q:
+                        qualified.extend(q)
+                except Exception:
+                    continue
+
+        if qualified:
+            try:
+                tickers = ib.reqTickers(*qualified)
+            except Exception:
+                tickers = []
+
+            for tk in tickers:
+                sym = norm_sym(str(getattr(getattr(tk, "contract", None), "symbol", "")))
+                px = _read_snapshot_ticker_price(tk)
+                if sym and px is not None:
+                    prices[sym] = float(px)
+                    resolved += 1
+
+        # Fallback path for symbols still unresolved in this batch.
+        for sym in chunk:
+            if sym in prices:
+                continue
+            try:
+                prices[sym] = float(get_snapshot_price(ib, sym, prefer_delayed=prefer_delayed))
+                resolved += 1
+            except RuntimeError as e:
+                tprint(f"[PRICES] WARNING: {e} — skipping {sym}")
+
+    return resolved, len(requested)
+
+
+def blocked_short_symbols_from_fills(fill_records: List[dict]) -> Set[str]:
+    """
+    Extract ETF symbols that failed shorting this run (201/FTP=0) so
+    later hedge passes don't keep retrying the same impossible short.
+    """
+    blocked: Set[str] = set()
+    for rec in fill_records:
+        note = str(rec.get("notes", "") or "")
+        if ("HEDGE_SHORT_BLOCKED_201" not in note) and ("HEDGE_SKIP_FTP_AVAIL0" not in note):
+            continue
+        etf = norm_sym(str(rec.get("etf", "") or ""))
+        if etf:
+            blocked.add(etf)
+    return blocked
 
 
 # ---------------------------------------------------------------------------
@@ -234,8 +343,12 @@ def _establish_worker(
             prices[under] = float(px_under)
             prices[etf]   = float(px_etf)
 
-        target_under_sh = target_shares_from_usd(long_usd,  px_under)
-        target_etf_sh   = target_shares_from_usd(short_usd, px_etf)
+        target_under_sh = target_shares_from_usd(abs(long_usd), px_under)
+        # short_usd is stored as negative notional in proposed_trades.csv.
+        # Convert to absolute shares for leg construction (SELL action is
+        # encoded separately), otherwise target_etf_sh stays <= 0 and the
+        # establish short leg is silently skipped.
+        target_etf_sh   = target_shares_from_usd(abs(short_usd), px_etf)
 
         def exec_leg_local(sym: str, action: str, qty: int, px: float, ref: str) -> ExecResult:
             return execute_leg(
@@ -568,6 +681,7 @@ def resolve_hedge_leg(
     etf_to_beta: Dict[str, float],
     plan: pd.DataFrame,
     short_map: Optional[Dict[str, dict]] = None,
+    blocked_short_etfs: Optional[Set[str]] = None,
 ) -> Tuple[Optional[str], str, int, float]:
     """
     Resolve which symbol/leg to trade to achieve the correction.
@@ -585,6 +699,8 @@ def resolve_hedge_leg(
     if correction_usd == 0.0:
         return None, "SELL", 0, 0.0
 
+    blocked_short_etfs = set(blocked_short_etfs or set())
+
     if correction_usd < 0:
         # Add to ETF short leg
         # Include plan ETFs AND ETFs already held short (even if dropped from today's plan)
@@ -594,8 +710,16 @@ def resolve_hedge_leg(
             if u == underlying
             and (sym in plan_etfs or float(strat_pos.get(sym, 0.0)) < 0)
         ]
+        if blocked_short_etfs:
+            etf_candidates = [s for s in etf_candidates if s not in blocked_short_etfs]
         if not etf_candidates:
-            tprint(f"[HEDGE][{underlying}] No ETF candidates (plan or positioned); cannot add to short.")
+            if blocked_short_etfs:
+                tprint(
+                    f"[HEDGE][{underlying}] No ETF candidates after blocked-short filter; "
+                    "deferring to reconciliation."
+                )
+            else:
+                tprint(f"[HEDGE][{underlying}] No ETF candidates (plan or positioned); cannot add to short.")
             return None, "SELL", 0, 0.0
 
         # Sort: prefer already-shorted ETFs, then by largest abs position
@@ -656,6 +780,7 @@ def build_hedge_trades(
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
     short_map: Optional[Dict[str, dict]] = None,
+    blocked_short_etfs: Optional[Set[str]] = None,
     flow_etfs: Optional[Set[str]] = None,
     blacklist: Optional[Set[str]] = None,
 ) -> List[dict]:
@@ -685,6 +810,7 @@ def build_hedge_trades(
         blacklist = set()
     else:
         blacklist = set(blacklist)
+    blocked_short_etfs = set(blocked_short_etfs or set())
 
     plan_underlyings: Set[str] = set(
         hedgeable_plan["Underlying"].unique()
@@ -839,22 +965,12 @@ def build_hedge_trades(
         # pair that grew beyond its intended weight).
         ref_gross = max(actual_gross, target_gross)
 
-        # Off-plan underlyings are wind-downs: target 0% net on both
-        # sides (close entirely) rather than the normal 1%/0% targets
-        # which would leave a residual proportional to actual_gross.
-        if in_plan:
-            eff_target_long_pct  = net_target_long_pct
-            eff_target_short_pct = net_target_short_pct
-        else:
-            eff_target_long_pct  = 0.0
-            eff_target_short_pct = 0.0
-
         triggered, correction_usd = compute_hedge_delta(
             net_notional=net_notional, target_gross=ref_gross,
             net_trigger_long_pct=net_trigger_long_pct,
             net_trigger_short_pct=net_trigger_short_pct,
-            net_target_long_pct=eff_target_long_pct,
-            net_target_short_pct=eff_target_short_pct,
+            net_target_long_pct=net_target_long_pct,
+            net_target_short_pct=net_target_short_pct,
         )
 
         net_pct = (net_notional / ref_gross * 100.0) if ref_gross > 0 else 0.0
@@ -883,6 +999,7 @@ def build_hedge_trades(
             strat_pos=strat_pos, prices=prices,
             etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
             plan=hedgeable_plan, short_map=short_map,
+            blocked_short_etfs=blocked_short_etfs,
         )
         if symbol is None or qty <= 0:
             tprint(f"[HEDGE][{under}] Could not resolve hedge leg; skipping.")
@@ -1613,20 +1730,12 @@ def build_reconciliation_trades(
 
         in_plan = under in plan_underlyings
 
-        # Off-plan: wind down to zero, not to 1% of actual
-        if in_plan:
-            eff_target_long_pct  = net_target_long_pct
-            eff_target_short_pct = net_target_short_pct
-        else:
-            eff_target_long_pct  = 0.0
-            eff_target_short_pct = 0.0
-
         triggered, correction_usd = compute_hedge_delta(
             net_notional=net_notional, target_gross=ref_gross,
             net_trigger_long_pct=net_trigger_long_pct,
             net_trigger_short_pct=net_trigger_short_pct,
-            net_target_long_pct=eff_target_long_pct,
-            net_target_short_pct=eff_target_short_pct,
+            net_target_long_pct=net_target_long_pct,
+            net_target_short_pct=net_target_short_pct,
         )
 
         if not triggered:
@@ -1957,6 +2066,12 @@ def main() -> None:
     port           = int(ibkr_cfg.get("port", 7496))
     client_id      = int(ibkr_cfg.get("client_id", 41))
     prefer_delayed = bool(ibkr_cfg.get("prefer_delayed", True))
+    suppress_error_codes = ibkr_cfg.get("suppress_error_codes", [10089])
+    suppress_error_codes = [int(c) for c in (suppress_error_codes or [])]
+
+    configure_ib_error_log_filter(suppress_error_codes)
+    if suppress_error_codes:
+        tprint(f"[IB] Suppressing noisy API error codes: {sorted(set(suppress_error_codes))}")
 
     exec_cfg = dict(exec_cfg)
     exec_cfg["prefer_delayed"] = prefer_delayed
@@ -2051,6 +2166,7 @@ def main() -> None:
     # Connect IBKR coordinator
     tprint(f"[IB] Connecting coordinator: {host}:{port}  clientId={client_id}")
     ib = connect_ib(host, port, client_id, coordinator=True)
+    configure_market_data_mode(ib, prefer_delayed=prefer_delayed)
 
     cancel_service = CoordinatorCancelService(host=host, port=port)
     cancel_service.start()
@@ -2058,6 +2174,7 @@ def main() -> None:
 
     log_lock:  threading.Lock = threading.Lock()
     prices:    Dict[str, float] = {}
+    blocked_short_etfs: Set[str] = set()
     all_fills: List[dict] = []
 
     try:
@@ -2175,15 +2292,14 @@ def main() -> None:
                if float(sh) != 0.0 and s in beta_mapped_universe}
         )
         tprint(f"[PRICES] Prefetching {len(all_symbols)} symbols...")
-        for sym in sorted(all_symbols):
-            if stop_requested():
-                break
-            if sym not in prices:
-                try:
-                    prices[sym] = get_snapshot_price(ib, sym, prefer_delayed=prefer_delayed)
-                except RuntimeError as e:
-                    tprint(f"[PRICES] WARNING: {e} — skipping {sym}")
-                    continue
+        n_px, n_req = prefetch_prices_batched(
+            ib=ib,
+            symbols=all_symbols,
+            prices=prices,
+            prefer_delayed=prefer_delayed,
+            batch_size=75,
+        )
+        tprint(f"[PRICES] Prefetch complete: {n_px}/{n_req} resolved.")
 
         if stop_requested():
             tprint("[SHUTDOWN] Exiting after Phase 1.")
@@ -2360,6 +2476,7 @@ def main() -> None:
                     min_trade_usd=min_trade_usd,
                     etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                     short_map=short_map,
+                    blocked_short_etfs=blocked_short_etfs,
                     flow_etfs=flow_etfs,
                     blacklist=blacklist,
                 )
@@ -2400,6 +2517,11 @@ def main() -> None:
                         log_lock=log_lock,
                     )
                     all_fills.extend(fills3a)
+                    newly_blocked = blocked_short_symbols_from_fills(fills3a)
+                    if newly_blocked - blocked_short_etfs:
+                        just_added = sorted(newly_blocked - blocked_short_etfs)
+                        tprint(f"[HEDGE] Marking {len(just_added)} ETF shorts as blocked this run: {just_added}")
+                    blocked_short_etfs |= newly_blocked
                     triggered_underlyings.update(t["underlying"] for t in short_corrections)
                     total_traded    += n_trade_a
                     pass_traded     += n_trade_a
@@ -2432,6 +2554,7 @@ def main() -> None:
                         min_trade_usd=min_trade_usd,
                         etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                         short_map=short_map,
+                        blocked_short_etfs=blocked_short_etfs,
                         flow_etfs=flow_etfs,
                         blacklist=blacklist,
                     )
@@ -2460,6 +2583,11 @@ def main() -> None:
                             log_lock=log_lock,
                         )
                         all_fills.extend(fills3b)
+                        newly_blocked = blocked_short_symbols_from_fills(fills3b)
+                        if newly_blocked - blocked_short_etfs:
+                            just_added = sorted(newly_blocked - blocked_short_etfs)
+                            tprint(f"[HEDGE] Marking {len(just_added)} ETF shorts as blocked this run: {just_added}")
+                        blocked_short_etfs |= newly_blocked
                         triggered_underlyings.update(t["underlying"] for t in long_corrections_b)
                         total_traded    += n_trade_b
                         pass_traded     += n_trade_b

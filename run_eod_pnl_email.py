@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import json
 import subprocess
-from collections import defaultdict
 from pathlib import Path
 from datetime import date, datetime
 import smtplib
@@ -461,46 +460,46 @@ def update_pnl_history(
     return hist
 
 
-def _annotate_grouped_pnl_labels(
+# Stable label placement per series: offset from marker in points (dx, dy), ha, va.
+# Spreads B1/B2/B3 horizontally on the same date so labels do not stack in one column.
+_PNL_LABEL_STYLE: dict[str, tuple[float, float, str, str]] = {
+    "#1f77b4": (11, 7, "left", "bottom"),   # Bucket 1 — levered
+    "#ff7f0e": (0, 9, "center", "bottom"),  # Bucket 2 — standard
+    "#2ca02c": (-11, 7, "right", "bottom"),  # Bucket 3 — inverse
+}
+_PNL_LABEL_LEGACY_STYLE = (0, -9, "center", "top")  # below marker, away from bucket labels above
+
+
+def _annotate_pnl_point_labels_stable(
     ax,
     points: list[tuple[pd.Timestamp, float, str]],
     *,
-    base_offset_y: float,
     fontsize: float,
-    x_spread_pt: float,
-    y_step_pt: float,
+    is_legacy: bool,
 ) -> None:
     """
-    For each date, stagger labels horizontally and vertically so they do not overlap.
-    points: (x, y, matplotlib color)
+    Annotate each (date, y, color) with a small label at a fixed offset for that color.
     """
-    by_x: dict[pd.Timestamp, list[tuple[float, str]]] = defaultdict(list)
     for x, y, color in points:
-        by_x[x].append((y, color))
+        ckey = str(color).lower()
+        if is_legacy:
+            dx, dy, ha, va = _PNL_LABEL_LEGACY_STYLE
+        elif ckey in _PNL_LABEL_STYLE:
+            dx, dy, ha, va = _PNL_LABEL_STYLE[ckey]
+        else:
+            dx, dy, ha, va = (0, 8, "center", "bottom")
 
-    for x in sorted(by_x.keys(), key=lambda d: d.timestamp()):
-        items = sorted(by_x[x], key=lambda t: t[0], reverse=True)
-        n = len(items)
-        for i, (y, color) in enumerate(items):
-            dx_pt = (i - (n - 1) / 2.0) * x_spread_pt if n > 1 else 0.0
-            dy_pt = base_offset_y + i * y_step_pt
-            ax.annotate(
-                f"${y:,.0f}",
-                (x, y),
-                textcoords="offset points",
-                xytext=(dx_pt, dy_pt),
-                ha="center",
-                va="bottom",
-                fontsize=fontsize,
-                color=color,
-                bbox={
-                    "boxstyle": "round,pad=0.2",
-                    "facecolor": "white",
-                    "edgecolor": color,
-                    "linewidth": 0.35,
-                    "alpha": 0.92,
-                },
-            )
+        ax.annotate(
+            f"${y:,.0f}",
+            (x, y),
+            textcoords="offset points",
+            xytext=(dx, dy),
+            ha=ha,
+            va=va,
+            fontsize=fontsize,
+            color=color,
+            clip_on=False,
+        )
 
 
 def make_pnl_plot(history: pd.DataFrame) -> Path:
@@ -518,8 +517,8 @@ def make_pnl_plot(history: pd.DataFrame) -> Path:
     )
 
     if history.empty:
-        fig, ax = plt.subplots(figsize=(12, 5.2))
-        ax.set_title(f"YTD PnL by bucket since {START_DATE} (no data yet)")
+        fig, ax = plt.subplots(figsize=(13, 5))
+        ax.set_title(f"YTD PnL by bucket since {START_DATE} (no data yet)", fontsize=11)
         ax.set_xlabel("Date")
         ax.set_ylabel("YTD PnL (base)")
         fig.tight_layout()
@@ -527,10 +526,11 @@ def make_pnl_plot(history: pd.DataFrame) -> Path:
         plt.close(fig)
         return PLOT_PNG
 
-    fig, ax = plt.subplots(figsize=(12, 5.2))
+    fig, ax = plt.subplots(figsize=(13, 5))
     ax.axhline(0, color="grey", linewidth=0.5, linestyle="--")
 
     bucket_label_points: list[tuple[pd.Timestamp, float, str]] = []
+    label_fs = 5.0
 
     for col, label, color in bucket_specs:
         if col not in history.columns:
@@ -541,18 +541,13 @@ def make_pnl_plot(history: pd.DataFrame) -> Path:
             continue
         dates = history.loc[mask, "date"]
         yv = y[mask]
-        ax.plot(dates, yv, marker="o", linewidth=2, markersize=5, label=label, color=color)
+        ax.plot(dates, yv, marker="o", linewidth=1.6, markersize=4, label=label, color=color)
         for xi, yi in zip(dates, yv):
             bucket_label_points.append((pd.Timestamp(xi), float(yi), color))
 
     if bucket_label_points:
-        _annotate_grouped_pnl_labels(
-            ax,
-            bucket_label_points,
-            base_offset_y=10,
-            fontsize=7,
-            x_spread_pt=36,
-            y_step_pt=15,
+        _annotate_pnl_point_labels_stable(
+            ax, bucket_label_points, fontsize=label_fs, is_legacy=False
         )
 
     # Dates with only legacy total_pnl (no per-bucket columns filled) still appear as one series
@@ -570,8 +565,8 @@ def make_pnl_plot(history: pd.DataFrame) -> Path:
                 dates,
                 yv,
                 marker="o",
-                linewidth=2,
-                markersize=6,
+                linewidth=1.6,
+                markersize=4,
                 color="0.35",
                 linestyle="--",
                 label="Total (legacy, before per-bucket history)",
@@ -579,22 +574,18 @@ def make_pnl_plot(history: pd.DataFrame) -> Path:
             legacy_pts = [
                 (pd.Timestamp(xi), float(yi), "0.35") for xi, yi in zip(dates, yv)
             ]
-            _annotate_grouped_pnl_labels(
-                ax,
-                legacy_pts,
-                base_offset_y=12,
-                fontsize=8,
-                x_spread_pt=28,
-                y_step_pt=14,
+            _annotate_pnl_point_labels_stable(
+                ax, legacy_pts, fontsize=label_fs, is_legacy=True
             )
 
-    ax.set_title(f"YTD PnL by bucket since {START_DATE}")
+    ax.set_title(f"YTD PnL by bucket since {START_DATE}", fontsize=11)
     ax.set_xlabel("Date")
     ax.set_ylabel("YTD PnL (base)")
     ax.grid(True, alpha=0.3)
-    ax.tick_params(axis="x", rotation=30)
-    ax.legend(loc="best", fontsize=8)
-    ax.margins(x=0.02, y=0.24)
+    ax.tick_params(axis="x", rotation=30, labelsize=8)
+    ax.tick_params(axis="y", labelsize=8)
+    ax.legend(loc="best", fontsize=7)
+    ax.margins(x=0.03, y=0.18)
 
     fig.tight_layout()
     fig.savefig(PLOT_PNG, dpi=150)

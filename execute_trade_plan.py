@@ -33,6 +33,7 @@ import asyncio
 import ftplib
 import io
 import json
+import logging
 import os
 import signal
 import sys
@@ -91,6 +92,44 @@ def ensure_thread_event_loop() -> asyncio.AbstractEventLoop:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     return loop
+
+
+# =============================================================================
+# IB error-log filtering (noise suppression)
+# =============================================================================
+
+class _IBErrorCodeFilter(logging.Filter):
+    def __init__(self, codes: Set[int]):
+        super().__init__()
+        self.codes = {int(c) for c in codes}
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        for code in self.codes:
+            if f"Error {code}," in msg:
+                return False
+        return True
+
+
+def configure_ib_error_log_filter(suppress_codes: Optional[Iterable[int]] = None) -> None:
+    """
+    Suppress selected noisy IB API error codes from logs while keeping
+    all other warnings/errors visible.
+    """
+    codes = {10089} if suppress_codes is None else {int(c) for c in suppress_codes}
+    if not codes:
+        return
+
+    for name in ("ib_insync.wrapper", "ib_insync.client", "ibapi.wrapper", "ibapi.client"):
+        lg = logging.getLogger(name)
+        key = f"_ls_algo_ib_filter_{'_'.join(str(c) for c in sorted(codes))}"
+        if getattr(lg, key, False):
+            continue
+        lg.addFilter(_IBErrorCodeFilter(codes))
+        setattr(lg, key, True)
 
 
 # =============================================================================
@@ -272,7 +311,15 @@ def connect_ib(host: str, port: int, client_id: int, coordinator: bool = False) 
         raise RuntimeError("Failed to connect to IBKR.")
 
     if coordinator:
-        ib.reqAutoOpenOrders(True)
+        # Only clientId=0 may call reqAutoOpenOrders; other client IDs
+        # throw IB error 321 ("Only the default client can auto bind").
+        if int(client_id) == 0:
+            ib.reqAutoOpenOrders(True)
+        else:
+            tprint(
+                f"[IB] coordinator=True with clientId={client_id}; "
+                "skipping reqAutoOpenOrders (requires clientId=0)."
+            )
 
     try:
         ib.reqIds(-1)
@@ -291,6 +338,20 @@ def safe_price(v) -> Optional[float]:
     except Exception:
         return None
 
+def _ensure_market_data_type(ib: IB, data_type: int) -> None:
+    """
+    Set market data type at most once per IB connection, unless it changes.
+    This avoids repeatedly calling reqMarketDataType for every symbol.
+    """
+    try:
+        cur = getattr(ib, "_ls_algo_market_data_type", None)
+        if cur == int(data_type):
+            return
+        ib.reqMarketDataType(int(data_type))
+        setattr(ib, "_ls_algo_market_data_type", int(data_type))
+    except Exception:
+        pass
+
 def get_snapshot_price(ib: IB, symbol: str, prefer_delayed: bool = True) -> float:
     sym_u = symbol.upper()
     contract = make_stock(sym_u)
@@ -307,7 +368,7 @@ def get_snapshot_price(ib: IB, symbol: str, prefer_delayed: bool = True) -> floa
         return last or close or mkt
 
     def snapshot_with_type(data_type: int) -> Optional[float]:
-        ib.reqMarketDataType(data_type)
+        _ensure_market_data_type(ib, data_type)
         t = ib.reqMktData(contract, "", snapshot=True)
         try:
             for _ in range(12):
@@ -328,8 +389,11 @@ def get_snapshot_price(ib: IB, symbol: str, prefer_delayed: bool = True) -> floa
 
     px: Optional[float] = None
     if prefer_delayed:
-        px = snapshot_with_type(4) or snapshot_with_type(3)
+        # Use delayed streaming snapshots first and avoid switching
+        # market-data type per symbol.
+        px = snapshot_with_type(3)
     else:
+        # Live first; delayed fallback if live entitlements are missing.
         px = snapshot_with_type(1) or snapshot_with_type(3)
 
     if px is None and not stop_requested():

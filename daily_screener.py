@@ -132,6 +132,9 @@ new_pairs = [
     ("COHX", "COHR"), ("AXPG", "AXP"),  ("FCXG", "FCX"), ("GLWG", "GLW"),
     ("SNDU", "SNDK"), ("PAAU", "PAAS"),
     ("BITX", "IBIT"), ("ETHU", "ETHA"), ("XXRP", "XRPZ"),
+    # 2026-03 launches (Direxion + Tradr)
+    ("ADBU", "ADBE"), ("PYPU", "PYPL"), ("TXNU", "TXN"),  ("UNHU", "UNH"),
+    ("AAOX", "AAOI"), ("HLXX", "HL"),   ("IBX",  "IBM"),
 ]
 
 proshares_pairs_levered = [
@@ -174,6 +177,7 @@ BENCHMARK_MAP = {
     "SPX": "SPY",  "NDX": "QQQ",   "DJIA": "DIA",  "RUT": "IWM",
     "SOX": "SOXX", "FIN": "XLF",   "BIOTECH": "XBI","TECH": "XLK",
     "WTI": "USO",  "TSLA": "TSLA", "MSTR": "MSTR", "NVDA": "NVDA",
+    "AMZN": "AMZN",
     "BTC": "IBIT", "ETH": "ETHA",  "CRCL": "CRCL", "CRWV": "CRWV",
     "GDX": "GDX",  "SLV": "SLV",   "XLE": "XLE",   "XOP": "XOP",
     "TLT": "TLT",  "MSCIJP": "EWJ","APLD": "APLD", "CLSK": "CLSK",
@@ -190,7 +194,7 @@ INVERSE_ETF_UNIVERSE = [
     ("REW",  -2, "TECH"), ("SKF",  -2, "FIN"),   ("SPXU", -3, "SPX"),
     ("DUG",  -2, "XLE"),  ("DRIP", -2, "XOP"),  ("TMV",  -3, "TLT"),
     ("TBT",  -2, "TLT"),  ("TBX",  -2, "TLT"),  ("NVDS", -1.5, "NVDA"),
-    ("EWV",  -2, "MSCIJP"), ("APLZ", -2, "APLD"),
+    ("EWV",  -2, "MSCIJP"), ("APLZ", -2, "APLD"), ("AMZO", -2, "AMZN"),
     ("HIBS", -3, "SPX"),  ("CLSZ", -2, "CLSK"),
 ]
 
@@ -433,21 +437,31 @@ def build_full_universe(skip_scrape: bool = False, skip_inverse: bool = False) -
 # SECTION 3 — TOTAL RETURN SERIES + BETA CALCULATION
 # ══════════════════════════════════════════════════════════════════
 
-# Common split/reverse-split ratios.  When yfinance's auto_adjust
-# fails (or the adjustment hasn't propagated yet), a split shows up
-# as a single-day return that is *exactly* one of these ratios.
-# We detect returns within ±2 % of each ratio and correct the price
-# series by dividing out the split factor from that day onward.
-_SPLIT_RATIOS = sorted(set(
-    [n / d for n in (1, 2, 3, 4, 5, 10, 15, 20, 25, 50)
-           for d in (1, 2, 3, 4, 5, 10, 15, 20, 25, 50)
-           if n != d and 0.05 <= n / d <= 20.0]
-), reverse=True)
+# Common split/reverse-split ratios.
+#
+# IMPORTANT:
+# Restrict to integer split factors and their reciprocals only.
+# Broad fractional grids (e.g. 3/2, 5/3, 5/8) can misclassify normal
+# large ETF moves as "splits", which then distorts beta estimates.
+_INTEGER_SPLIT_FACTORS = (2, 3, 4, 5, 10, 15, 20, 25, 50)
+_SPLIT_RATIOS = sorted(
+    set(list(_INTEGER_SPLIT_FACTORS) + [1.0 / f for f in _INTEGER_SPLIT_FACTORS]),
+    reverse=True,
+)
 
-_SPLIT_TOL = 0.02          # ±2 % tolerance around each ratio
+_SPLIT_TOL = 0.005         # ±0.5 % tolerance around each ratio
 _JUMP_FLOOR = 0.40         # ignore daily moves < 40 %
 _CONTEXT_WINDOW = 20       # days of context for local vol estimate
 _ZSCORE_THRESHOLD = 4.0    # jump must be > 4σ vs local vol to be a split
+
+# Manual split overrides aligned with the v9 backtest data treatment.
+# For SMUP's 2026-01-26 reverse split, use factor 10.0 to neutralize
+# the feed discontinuity on a post-split basis.
+_MANUAL_SPLIT_OVERRIDES: dict[str, dict[str, float]] = {
+    "SMUP": {
+        "2026-01-26": 10.0,
+    },
+}
 
 
 def _clean_split_artifacts(prices: pd.Series) -> pd.Series:
@@ -534,6 +548,52 @@ def _clean_split_artifacts(prices: pd.Series) -> pd.Series:
     return prices
 
 
+def _apply_manual_split_overrides(series: pd.Series, ticker: str) -> pd.Series:
+    """
+    Apply explicit split overrides to a total-return price series.
+
+    Behavior mirrors the v9 backtest:
+      - `factor` is a pre-split back-adjust multiplier.
+      - all history strictly before split date is multiplied by factor.
+      - if split date is absent, apply on nearest next trading day
+        within 3 calendar days.
+    """
+    if series.empty:
+        return series
+
+    tkr = _norm_sym(ticker)
+    overrides = _MANUAL_SPLIT_OVERRIDES.get(tkr, {})
+    if not overrides:
+        return series
+
+    out = series.sort_index().copy()
+    applied = []
+    for ds, factor in overrides.items():
+        ts = pd.Timestamp(ds)
+        apply_ts = None
+        if ts in out.index:
+            apply_ts = ts
+        else:
+            nxt = out.index[out.index >= ts]
+            if len(nxt) > 0 and (nxt[0] - ts).days <= 3:
+                apply_ts = nxt[0]
+
+        if apply_ts is None:
+            print(f"[TR][split-override] {tkr} {ts.date()} not applied (date missing)")
+            continue
+
+        f = float(factor)
+        out.loc[out.index < apply_ts] = out.loc[out.index < apply_ts] * f
+        applied.append((ts, apply_ts, f))
+
+    for req_ts, apply_ts, f in applied:
+        print(
+            f"[TR][split-override] {tkr} requested {req_ts.date()} "
+            f"applied {apply_ts.date()} back-adjust x{f:g}"
+        )
+    return out
+
+
 def _get_total_return_series(ticker: str, period: str = "2y") -> pd.Series:
     """Fetch adjusted-close total-return series from Yahoo Finance v8 API.
 
@@ -554,6 +614,8 @@ def _get_total_return_series(ticker: str, period: str = "2y") -> pd.Series:
             "America/New_York"
         ).normalize()
         s = pd.Series(adjclose, index=idx, name=ticker, dtype=float).dropna()
+        s = _apply_manual_split_overrides(s, ticker)
+        s = _clean_split_artifacts(s)
         return s
     except Exception:
         return pd.Series(dtype=float, name=ticker)

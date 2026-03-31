@@ -2,7 +2,8 @@ ibkr:
   host: 127.0.0.1
   port: 7496
   client_id: 41
-  prefer_delayed: false
+  prefer_delayed: true
+  suppress_error_codes: [10089]
 
 accounting:
   use_yfinance: false           # override Flex markPrice with yfinance close
@@ -17,7 +18,7 @@ strategy:
     - BRK-B
     - AXP
     - APLD
-  beta_cutoff: 1.5
+  beta_cutoff: 1.55
 
 paths:
   screened_csv: data/etf_screened_today.csv
@@ -85,7 +86,7 @@ portfolio:
         <<: *weighting_defaults
         max_name_weight: 0.08         # 8% cap per underlying
         eq_blend: 0.5                # 50% equal-weight + 50% decay-score
-        borrow_aversion: 3
+        borrow_aversion: 3.3
 
     whitelist_stock:
       allocation_type: "stock"
@@ -107,7 +108,7 @@ portfolio:
         <<: *weighting_defaults
         max_name_weight: 0.20         # 20% cap per underlying
         eq_blend: 0.50                # 50% equal-weight + 50% decay-score
-        borrow_aversion: 3
+        borrow_aversion: 3.3
     flow_program:
       allocation_type: "flow"
       frequency: "W"
@@ -130,20 +131,24 @@ portfolio:
           - TSYY
           - NVDQ
           - NVYY
+          - AMZO
+          - AZYY
       weighting:
         method: "fixed"
         normalize: true
         weights:
-          SDS: 0.22
-          EWV: 0.18
-          SQQQ: 0.15
-          TQQY: 0.07
-          LABD: 0.08
-          SOXS: 0.05
-          FAZ: 0.08
-          DUST: 0.03
-          ZSL: 0.01
-          TSLQ: 0.04
-          TSYY: 0.02
-          NVDQ: 0.04
-          NVYY: 0.03
+          SDS: 0.2113
+          EWV: 0.1729
+          SQQQ: 0.1440
+          TQQY: 0.0672
+          LABD: 0.0768
+          SOXS: 0.0480
+          FAZ: 0.0768
+          DUST: 0.0288
+          ZSL: 0.0096
+          TSLQ: 0.0384
+          TSYY: 0.0192
+          NVDQ: 0.0384
+          NVYY: 0.0288
+          AMZO: 0.0297
+          AZYY: 0.01
