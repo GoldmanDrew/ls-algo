@@ -283,7 +283,7 @@ def get_ibkr_borrow_snapshot_from_ftp(etf_list: Iterable[str]) -> pd.DataFrame:
     etf_list = list(dict.fromkeys([_norm_sym(x) for x in etf_list if str(x).strip()]))
 
     short_df = fetch_ibkr_shortstock_file(FTP_FILE)
-    for req in ("sym", "rebaterate", "feerate"):
+    for req in ("sym", "feerate"):
         if req not in short_df.columns:
             raise ValueError(f"Expected '{req}' column in FTP file; got: {list(short_df.columns)}")
 
@@ -291,25 +291,18 @@ def get_ibkr_borrow_snapshot_from_ftp(etf_list: Iterable[str]) -> pd.DataFrame:
     df["sym"] = df["sym"].astype(str).str.upper().str.strip()
 
     df["borrow_fee_annual"] = df["feerate"].map(_parse_rate_to_decimal)
-    df["borrow_rebate_annual"] = df["rebaterate"].map(_parse_rate_to_decimal)
     df["available_int"] = pd.to_numeric(df.get("available", 0), errors="coerce").fillna(0)
-
-    df["borrow_net_annual"] = df["borrow_fee_annual"] - df["borrow_rebate_annual"]
-    m = df["borrow_net_annual"].notna()
-    df.loc[m, "borrow_net_annual"] = df.loc[m, "borrow_net_annual"].clip(lower=0)
 
     agg = (
         df.groupby("sym", as_index=False)
           .agg(
               borrow_fee_annual=("borrow_fee_annual", "max"),
-              borrow_rebate_annual=("borrow_rebate_annual", "max"),
-              borrow_net_annual=("borrow_net_annual", "max"),
               shares_available=("available_int", "max"),
           )
     )
 
     agg = agg.rename(columns={"sym": "ETF"})
-    agg["borrow_current"] = agg["borrow_net_annual"]
+    agg["borrow_current"] = agg["borrow_fee_annual"]
     agg["borrow_spiking"] = False
     agg["borrow_missing_from_ftp"] = False
 
@@ -320,8 +313,6 @@ def get_ibkr_borrow_snapshot_from_ftp(etf_list: Iterable[str]) -> pd.DataFrame:
             {
                 "ETF": missing,
                 "borrow_fee_annual": np.nan,
-                "borrow_rebate_annual": np.nan,
-                "borrow_net_annual": np.nan,
                 "shares_available": 0,
                 "borrow_current": np.nan,
                 "borrow_spiking": False,

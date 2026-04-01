@@ -89,9 +89,12 @@ for col in ["ETF", "Underlying"]:
     )
 
 screen_df["Beta"] = pd.to_numeric(screen_df["Beta"], errors="coerce")
-for c in ["borrow_net_annual", "borrow_current", "blended_gross_decay", "decay_score"]:
+for c in ["borrow_current", "borrow_fee_annual", "blended_gross_decay", "decay_score"]:
     if c in screen_df.columns:
         screen_df[c] = pd.to_numeric(screen_df[c], errors="coerce")
+
+if "borrow_current" not in screen_df.columns and "borrow_fee_annual" in screen_df.columns:
+    screen_df["borrow_current"] = screen_df["borrow_fee_annual"]
 
 # Bucket 1: Beta > 1.5, positive, include_for_algo
 bucket1 = screen_df[
@@ -102,9 +105,9 @@ bucket1 = screen_df[
 print(f"Full universe: {len(screen_df)} rows")
 print(f"Bucket 1 (Beta > 1.5, positive, included): {len(bucket1)} pairs")
 print(f"Beta range: {bucket1['Beta'].min():.2f} - {bucket1['Beta'].max():.2f}")
-print(f"Borrow range: {bucket1['borrow_net_annual'].min():.3f} - {bucket1['borrow_net_annual'].max():.3f}")
+print(f"Borrow range: {bucket1['borrow_current'].min():.3f} - {bucket1['borrow_current'].max():.3f}")
 print()
-bucket1[["ETF", "Underlying", "Beta", "borrow_net_annual",
+bucket1[["ETF", "Underlying", "Beta", "borrow_current",
          "blended_gross_decay", "decay_score"]].sort_values("Beta", ascending=False)
 """))
 
@@ -142,7 +145,7 @@ print(f"Price data: {prices.index.min().date()} -> {prices.index.max().date()}, 
     # CELL: Build borrow maps
     # ==================================================================
     cells.append(code_cell("""def make_borrow_daily_map(screen_pass, etf_col="ETF",
-                         borrow_col="borrow_net_annual",
+                         borrow_col="borrow_current",
                          default_annual=DEFAULT_BORROW_ANNUAL):
     out = {}
     for _, row in screen_pass.iterrows():
@@ -362,7 +365,7 @@ def compute_inverse_borrow_weights(pairs, screen_pass, max_name_weight=0.08):
     raw_w = []
     for p in pairs:
         row = lookup.get(p)
-        borrow = float(row.get("borrow_net_annual", 0.05) or 0.05) if row is not None else 0.05
+        borrow = float(row.get("borrow_current", 0.05) or 0.05) if row is not None else 0.05
         raw_w.append(1.0 / max(borrow, 0.001))
 
     raw_w = np.array(raw_w)

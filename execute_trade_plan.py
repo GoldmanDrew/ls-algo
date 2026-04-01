@@ -236,8 +236,7 @@ def fetch_ibkr_short_availability_map(
         df["available_int"] = pd.NA
 
     fee = pd.to_numeric(df.get("feerate", pd.Series([pd.NA] * len(df))), errors="coerce") / 100.0
-    rebate = pd.to_numeric(df.get("rebaterate", pd.Series([pd.NA] * len(df))), errors="coerce") / 100.0
-    df["net_borrow_annual"] = (fee - rebate).clip(lower=0)
+    df["borrow_current_annual"] = fee
 
     sub = df[df["sym"].isin(want)].copy()
 
@@ -245,7 +244,7 @@ def fetch_ibkr_short_availability_map(
     for _, r in sub.iterrows():
         sym = str(r["sym"])
         avail = r.get("available_int", pd.NA)
-        borrow = r.get("net_borrow_annual", pd.NA)
+        borrow = r.get("borrow_current_annual", pd.NA)
         out[sym] = {
             "available": None if pd.isna(avail) else int(avail),
             "borrow": None if pd.isna(borrow) else float(borrow),

@@ -456,11 +456,11 @@ _CONTEXT_WINDOW = 20       # days of context for local vol estimate
 _ZSCORE_THRESHOLD = 4.0    # jump must be > 4σ vs local vol to be a split
 
 # Manual split overrides aligned with the v9 backtest data treatment.
-# For SMUP's 2026-01-26 reverse split, use factor 10.0 to neutralize
-# the feed discontinuity on a post-split basis.
+# For a 1-for-10 reverse split, pre-split history must be back-adjusted by 0.1
+# to the post-split basis.
 _MANUAL_SPLIT_OVERRIDES: dict[str, dict[str, float]] = {
     "SMUP": {
-        "2026-01-26": 10.0,
+        "2026-01-26": 0.1,
     },
 }
 
@@ -577,6 +577,12 @@ def _apply_manual_split_overrides(series: pd.Series, ticker: str) -> pd.Series:
     applied = []
     for ds, factor in overrides.items():
         ts = pd.Timestamp(ds)
+        # Align timezone with the price index before comparisons.
+        idx_tz = out.index.tz
+        if idx_tz is not None and ts.tzinfo is None:
+            ts = ts.tz_localize(idx_tz)
+        elif idx_tz is None and ts.tzinfo is not None:
+            ts = ts.tz_convert("UTC").tz_localize(None)
         apply_ts = None
         if ts in out.index:
             apply_ts = ts
@@ -1059,22 +1065,16 @@ def get_ibkr_borrow_snapshot(etf_list: Iterable[str]) -> pd.DataFrame:
     """Fetch borrow rates from IBKR FTP for a list of ETF symbols."""
     etf_list = list(dict.fromkeys([_norm_sym(x) for x in etf_list if str(x).strip()]))
     short_df = fetch_ibkr_shortstock_file(FTP_FILE)
-    for req in ("sym", "rebaterate", "feerate"):
+    for req in ("sym", "feerate"):
         if req not in short_df.columns:
             raise ValueError(f"Expected '{req}' column; got: {list(short_df.columns)}")
     df = short_df.copy()
     df["sym"] = df["sym"].astype(str).str.upper().str.strip()
     df["borrow_fee_annual"] = df["feerate"].map(_parse_rate_to_decimal)
-    df["borrow_rebate_annual"] = df["rebaterate"].map(_parse_rate_to_decimal)
     df["available_int"] = pd.to_numeric(df.get("available", 0), errors="coerce").fillna(0)
-    # Borrow cost is the fee rate itself; do not net against rebate.
-    # Keep borrow_net_annual as a compatibility column for downstream consumers.
-    df["borrow_net_annual"] = df["borrow_fee_annual"]
 
     agg = df.groupby("sym", as_index=False).agg(
         borrow_fee_annual=("borrow_fee_annual", "max"),
-        borrow_rebate_annual=("borrow_rebate_annual", "max"),
-        borrow_net_annual=("borrow_net_annual", "max"),
         shares_available=("available_int", "max"),
     ).rename(columns={"sym": "ETF"})
     agg["borrow_current"] = agg["borrow_fee_annual"]
@@ -1085,12 +1085,59 @@ def get_ibkr_borrow_snapshot(etf_list: Iterable[str]) -> pd.DataFrame:
     missing = [s for s in etf_list if s not in present]
     if missing:
         missing_df = pd.DataFrame({
-            "ETF": missing, "borrow_fee_annual": np.nan, "borrow_rebate_annual": np.nan,
-            "borrow_net_annual": np.nan, "shares_available": 0, "borrow_current": np.nan,
+            "ETF": missing, "borrow_fee_annual": np.nan,
+            "shares_available": 0, "borrow_current": np.nan,
             "borrow_spiking": False, "borrow_missing_from_ftp": True,
         })
         agg = pd.concat([agg, missing_df], ignore_index=True)
     return agg.drop_duplicates(subset=["ETF"], keep="first").reset_index(drop=True)
+
+
+def apply_sub2_borrow_floor(
+    df: pd.DataFrame,
+    tr_map: dict[str, pd.Series],
+    floor_price_usd: float = 2.0,
+) -> pd.DataFrame:
+    """Scale borrow for sub-$2 names to reflect minimum charge base.
+
+    For short borrow charged on max(price, floor), the effective annualized
+    borrow rate on market value is:
+        effective_rate = raw_rate * max(price, floor) / price
+    so names below the floor get multiplied by (floor / price).
+    """
+    out = df.copy()
+    out["ETF"] = out["ETF"].astype(str).map(_norm_sym)
+
+    # Use latest available TR close for each ETF as price reference.
+    etfs = out["ETF"].dropna().unique().tolist()
+    last_px_map: dict[str, float] = {}
+    for etf in etfs:
+        s = tr_map.get(etf)
+        if s is None or len(s) == 0:
+            last_px_map[etf] = np.nan
+            continue
+        s_num = pd.to_numeric(s, errors="coerce").dropna()
+        last_px_map[etf] = float(s_num.iloc[-1]) if len(s_num) else np.nan
+
+    out["borrow_price_ref"] = out["ETF"].map(last_px_map)
+    raw_borrow = pd.to_numeric(out.get("borrow_current"), errors="coerce")
+    out["borrow_current_raw_annual"] = raw_borrow
+
+    factor = pd.Series(1.0, index=out.index, dtype=float)
+    px = pd.to_numeric(out["borrow_price_ref"], errors="coerce")
+    m = raw_borrow.notna() & px.notna() & (px > 0) & (px < float(floor_price_usd))
+    factor.loc[m] = float(floor_price_usd) / px.loc[m]
+    out["borrow_floor_factor"] = factor
+
+    out["borrow_current"] = raw_borrow * factor
+    n_adj = int(m.sum())
+    if n_adj > 0:
+        med_mult = float(factor.loc[m].median())
+        print(
+            f"[BORROW] Applied sub-${floor_price_usd:.0f} borrow floor adjustment to "
+            f"{n_adj} ETF(s) (median multiplier {med_mult:.2f}x)"
+        )
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -1105,6 +1152,7 @@ _FALLBACK = {
     "min_shares_available": 1000,
     "whitelist_hard_borrow_cap": 0.25,
     "min_beta_days": 20,
+    "borrow_floor_price_usd": 2.0,
 }
 
 
@@ -1228,8 +1276,39 @@ _WEEKS_PER_YEAR = 52
 _MIN_WEEKS = 4    # ~20 trading days
 
 
-def _compute_gross_decay(etf_tr: pd.Series, und_tr: pd.Series,
-                         beta: float, min_weeks: int = _MIN_WEEKS) -> float | None:
+def _split_suspect_week_ends(prices: pd.Series) -> set[pd.Timestamp]:
+    """Identify week-ending dates impacted by split-like daily jumps."""
+    s = pd.to_numeric(prices, errors="coerce").dropna()
+    if len(s) < 3:
+        return set()
+    s = s[~s.index.duplicated(keep="last")].sort_index()
+
+    vals = s.values.astype(float)
+    idx = s.index
+    suspect_weeks: set[pd.Timestamp] = set()
+    for i in range(1, len(vals)):
+        p0, p1 = vals[i - 1], vals[i]
+        if not (np.isfinite(p0) and np.isfinite(p1) and p0 > 0 and p1 > 0):
+            continue
+        ratio = p1 / p0
+        if ratio <= 0:
+            continue
+        if abs(np.log(ratio)) < _JUMP_FLOOR:
+            continue
+        if any(abs(ratio - sf) / sf <= _SPLIT_TOL for sf in _SPLIT_RATIOS):
+            wk_end = idx[i].to_period("W-FRI").end_time.tz_localize(None).normalize()
+            suspect_weeks.add(wk_end)
+    return suspect_weeks
+
+
+def _compute_gross_decay(
+    etf_tr: pd.Series,
+    und_tr: pd.Series,
+    beta: float,
+    min_weeks: int = _MIN_WEEKS,
+    label: str | None = None,
+    drop_split_suspect_weeks: bool = False,
+) -> float | None:
     """
     Gross annualized decay per $1 ETF short, measured at WEEKLY frequency.
 
@@ -1271,6 +1350,17 @@ def _compute_gross_decay(etf_tr: pd.Series, und_tr: pd.Series,
         return None
 
     weekly_pnl = float(beta) * r_und - r_etf
+    if drop_split_suspect_weeks:
+        suspect_weeks = _split_suspect_week_ends(etf_tr)
+        if suspect_weeks:
+            keep = ~weekly_pnl.index.normalize().isin(suspect_weeks)
+            dropped = int((~keep).sum())
+            weekly_pnl = weekly_pnl[keep]
+            if dropped > 0 and label:
+                print(f"[DECAY][split-guard] {label}: dropped {dropped} split-suspect week(s)")
+            if len(weekly_pnl) < min_weeks:
+                return None
+
     return round(float(weekly_pnl.mean()) * _WEEKS_PER_YEAR, 6)
 
 
@@ -1312,7 +1402,7 @@ def enrich_with_decay_and_vol(df: pd.DataFrame, tr_map: dict[str, pd.Series],
         # Realized gross decay (path-dependent, weekly frequency)
         decay = None
         if beta_f and abs(beta_f) >= 0.1 and und and etf in tr_map and und in tr_map:
-            decay = _compute_gross_decay(tr_map[etf], tr_map[und], beta_f)
+            decay = _compute_gross_decay(tr_map[etf], tr_map[und], beta_f, label=etf)
         decays.append(decay)
         if decay is not None: ok_decay += 1
 
@@ -1389,10 +1479,51 @@ def enrich_with_decay_and_vol(df: pd.DataFrame, tr_map: dict[str, pd.Series],
     df["vol_underlying_annual"] = vols_und
     df["expected_gross_decay_annual"] = expected_decays
 
+    # Targeted split repair: only when realized vs expected is abnormally far apart.
+    repaired = 0
+    for i, row in df.iterrows():
+        realized = row.get("gross_decay_annual")
+        expected = row.get("expected_gross_decay_annual")
+        beta_f = betas_out[i]
+        etf = _norm_sym(row["ETF"]) if pd.notna(row.get("ETF")) else None
+        und = _norm_sym(row["Underlying"]) if pd.notna(row.get("Underlying")) else None
+        if (
+            etf is None or und is None or etf not in tr_map or und not in tr_map
+            or beta_f is None or abs(beta_f) < 0.1
+            or pd.isna(realized) or pd.isna(expected)
+        ):
+            continue
+
+        diff = abs(float(realized) - float(expected))
+        ratio = (abs(float(realized)) + 1e-9) / (abs(float(expected)) + 1e-9)
+        # "Vastly different": at least 100% annual gap and strong ratio mismatch.
+        if not (diff >= 1.0 and (ratio > 2.5 or ratio < 0.4)):
+            continue
+
+        repaired_decay = _compute_gross_decay(
+            tr_map[etf],
+            tr_map[und],
+            beta_f,
+            label=etf,
+            drop_split_suspect_weeks=True,
+        )
+        if repaired_decay is None:
+            continue
+        if abs(float(repaired_decay) - float(expected)) < diff:
+            df.at[i, "gross_decay_annual"] = repaired_decay
+            repaired += 1
+            print(
+                f"[DECAY][split-repair] {etf}: realized {float(realized)*100:.2f}% -> "
+                f"{float(repaired_decay)*100:.2f}% (expected {float(expected)*100:.2f}%)"
+            )
+
     # NOTE: no hard caps on decay values — the vol cap (_VOL_CAP_ANNUAL)
     # is the single control point.  Expected decay flows from σ² and is
     # legitimately >100% for inverse ETFs on volatile underlyings (e.g.
     # MSTZ/MSTR: expected ≈ 262%, realized ≈ 256%).
+    if repaired:
+        print(f"[DECAY] Applied targeted split repairs to {repaired} ticker(s)")
+
 
     # Blended gross decay: trust realized more as n_obs grows
     # w_realized = min(1.0, n_obs / realized_trust_days)
@@ -1562,8 +1693,12 @@ def main() -> int:
         hard_borrow_cap=float(screener_cfg.get("hard_borrow_cap",
                               screener_cfg.get("whitelist_hard_borrow_cap", _FALLBACK["whitelist_hard_borrow_cap"]))),
     )
+    borrow_floor_price_usd = float(
+        screener_cfg.get("borrow_floor_price_usd", _FALLBACK["borrow_floor_price_usd"])
+    )
     print(f"[CONFIG] borrow_low={params.borrow_low:.2%}  hard_cap={params.hard_borrow_cap:.2%}  "
           f"protected={len(protected)}")
+    print(f"[CONFIG] borrow_floor_price_usd=${borrow_floor_price_usd:.2f}")
 
     # Resolve min_beta_days: CLI > config > fallback
     min_beta_days = (args.min_beta_days
@@ -1635,8 +1770,6 @@ def main() -> int:
         print("[FTP] Skipped (--skip-ftp)")
         borrow_df = pd.DataFrame({"ETF": universe["ETF"].unique()})
         borrow_df["borrow_fee_annual"] = np.nan
-        borrow_df["borrow_rebate_annual"] = np.nan
-        borrow_df["borrow_net_annual"] = np.nan
         borrow_df["borrow_current"] = np.nan
         borrow_df["shares_available"] = 0
         borrow_df["borrow_missing_from_ftp"] = True
@@ -1657,14 +1790,17 @@ def main() -> int:
             print("[FTP] Continuing with empty borrow data (all positions will show borrow_current=NaN)")
             borrow_df = pd.DataFrame({"ETF": universe["ETF"].unique()})
             borrow_df["borrow_fee_annual"] = np.nan
-            borrow_df["borrow_rebate_annual"] = np.nan
-            borrow_df["borrow_net_annual"] = np.nan
             borrow_df["borrow_current"] = np.nan
             borrow_df["shares_available"] = 0
             borrow_df["borrow_missing_from_ftp"] = True
             borrow_df["borrow_spiking"] = False
 
     metrics = universe.merge(borrow_df, on="ETF", how="left")
+    metrics = apply_sub2_borrow_floor(
+        metrics,
+        tr_map=tr_map,
+        floor_price_usd=borrow_floor_price_usd,
+    )
 
     # ── Step 4: Screen ──
     print("\n" + "─" * 70)

@@ -209,7 +209,7 @@ def build_short_maps(tickers: List[str], df: pd.DataFrame) -> Dict[str, Dict]:
     """
     Given a full short_df from the FTP file, build a dict for the specified tickers:
         {
-          "ABNY": {"borrow": 0.12, "rebate": 0.01, "available": 6000},
+          "ABNY": {"borrow": 0.12, "available": 6000},
           ...
         }
     """
@@ -217,12 +217,8 @@ def build_short_maps(tickers: List[str], df: pd.DataFrame) -> Dict[str, Dict]:
 
     df = df.copy()
     df["sym"] = df["sym"].astype(str).str.upper().str.strip()
-    df["rebate_annual"] = pd.to_numeric(df["rebaterate"], errors="coerce") / 100.0
     df["fee_annual"] = pd.to_numeric(df["feerate"], errors="coerce") / 100.0
     df["available_int"] = pd.to_numeric(df["available"], errors="coerce")
-
-    df["net_borrow_annual"] = df["fee_annual"] - df["rebate_annual"]
-    df["net_borrow_annual"] = df["net_borrow_annual"].clip(lower=0)
 
     sub = df[df["sym"].isin(tickers)].copy()
 
@@ -230,8 +226,7 @@ def build_short_maps(tickers: List[str], df: pd.DataFrame) -> Dict[str, Dict]:
     for _, row in sub.iterrows():
         sym = row["sym"]
         out[sym] = {
-            "borrow": float(row["net_borrow_annual"]) if not pd.isna(row["net_borrow_annual"]) else None,
-            "rebate": float(row["rebate_annual"]) if not pd.isna(row["rebate_annual"]) else None,
+            "borrow": float(row["fee_annual"]) if not pd.isna(row["fee_annual"]) else None,
             "available": int(row["available_int"]) if not pd.isna(row["available_int"]) else None,
         }
     return out

@@ -5,7 +5,7 @@ Adds columns to the screened DataFrame:
   - vol_underlying_annual  : annualized realized vol of the underlying (total return)
   - vol_etf_annual         : annualized realized vol of the ETF (total return)
   - gross_decay_annual     : annualized gross decay per $1 ETF short (before borrow)
-  - net_decay_annual       : gross_decay_annual − borrow_net_annual
+  - net_decay_annual       : gross_decay_annual − borrow_current
 
 All decay numbers are PER $1 OF ETF SHORT NOTIONAL.
 Borrow is also per $1 ETF short. So: net = gross − borrow. No scaling needed.
@@ -28,7 +28,7 @@ Decay measurement — LOG RETURNS for both bull and inverse, per $1 ETF short:
   noise (bid-ask bounce, closing auctions, illiquid names).
 
   gross_decay_annual = mean(weekly_pnl) × 52
-  net_decay_annual   = gross_decay_annual − borrow_net_annual
+  net_decay_annual   = gross_decay_annual − borrow_current
 
 Both legs use explicit total-return price series:
   TR_t = TR_{t-1} × (Close_t + Div_t) / Close_{t-1}
@@ -318,7 +318,7 @@ def _compute_gross_decay(
     exactly the compounding drag we want to measure.
 
     gross_decay_annual = mean(weekly_pnl) × 52
-    net_decay = gross_decay − borrow_net_annual (no scaling needed).
+    net_decay = gross_decay − borrow_current (no scaling needed).
     """
     combined = pd.concat([etf_tr.rename("etf"), und_tr.rename("und")], axis=1).dropna()
     if len(combined) < min_weeks * 5:
@@ -367,7 +367,7 @@ def enrich_with_decay_and_vol(
       gross_decay_annual    - per $1 ETF short
                               Bull: simple returns |β|×r_und − r_etf
                               Inverse: log returns β×ln(1+r_und) − ln(1+r_etf)
-      net_decay_annual      - gross_decay_annual − borrow_net_annual
+      net_decay_annual      - gross_decay_annual − borrow_current
 
     No borrow_drag_annual column — borrow is already per $1 ETF short,
     decay is now also per $1 ETF short, so they subtract directly.
@@ -491,7 +491,10 @@ def enrich_with_decay_and_vol(
     df["vol_underlying_annual"] = vols_und
 
     # ── Net decay = gross − borrow (both per $1 ETF short) ──
-    borrow_net = pd.to_numeric(df.get("borrow_net_annual"), errors="coerce")
+    borrow_net = pd.to_numeric(
+        df.get("borrow_current", df.get("borrow_fee_annual")),
+        errors="coerce",
+    )
     df["net_decay_annual"] = np.where(
         df["gross_decay_annual"].notna() & borrow_net.notna(),
         df["gross_decay_annual"] - borrow_net,
@@ -525,7 +528,7 @@ def enrich_with_decay_and_vol(
     if len(temp) > 0:
         print(f"\n[etf_analytics] Top 5 net decay:")
         for _, r in temp.iterrows():
-            bn = r.get("borrow_net_annual")
+            bn = r.get("borrow_current")
             print(
                 f"  {r['ETF']:8s} net={r['net_decay_annual']*100:6.2f}%  "
                 f"gross={r['gross_decay_annual']*100:6.2f}%  "
