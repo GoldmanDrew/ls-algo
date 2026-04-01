@@ -30,6 +30,7 @@ import argparse
 import builtins
 import ftplib
 import io
+import random
 import os
 import re
 import time
@@ -463,6 +464,12 @@ _MANUAL_SPLIT_OVERRIDES: dict[str, dict[str, float]] = {
     },
 }
 
+# Known Yahoo symbol aliases for recently renamed products.
+# Used only when the primary symbol returns no data.
+_YF_SYMBOL_FALLBACKS: dict[str, str] = {
+    "SMUP": "SMU",
+}
+
 
 def _clean_split_artifacts(prices: pd.Series) -> pd.Series:
     """Detect and correct unadjusted splits/reverse-splits in a price series.
@@ -600,25 +607,127 @@ def _get_total_return_series(ticker: str, period: str = "2y") -> pd.Series:
     Uses Yahoo's adjclose (split + dividend adjusted) directly instead of
     yfinance, which returns incorrect adjusted prices in v0.2.40.
     """
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-    params = {"range": period, "interval": "1d", "events": "div,splits"}
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        resp = requests.get(url, params=params, headers=headers, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        result = data["chart"]["result"][0]
-        timestamps = result["timestamp"]
-        adjclose = result["indicators"]["adjclose"][0]["adjclose"]
-        idx = pd.to_datetime(timestamps, unit="s", utc=True).tz_convert(
-            "America/New_York"
-        ).normalize()
-        s = pd.Series(adjclose, index=idx, name=ticker, dtype=float).dropna()
-        s = _apply_manual_split_overrides(s, ticker)
-        s = _clean_split_artifacts(s)
-        return s
-    except Exception:
-        return pd.Series(dtype=float, name=ticker)
+    def _fetch_one(sym: str) -> pd.Series:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}"
+        params = {"range": period, "interval": "1d", "events": "div,splits"}
+        headers = {"User-Agent": "Mozilla/5.0"}
+        last_exc: Exception | None = None
+
+        # Retry transient Yahoo/API failures (e.g., 429, empty JSON payload)
+        # before declaring the symbol unpriceable.
+        for attempt in range(1, 4):
+            try:
+                resp = requests.get(url, params=params, headers=headers, timeout=15)
+                if resp.status_code == 429:
+                    raise requests.HTTPError("429 Too Many Requests")
+                resp.raise_for_status()
+                data = resp.json()
+                result = (data.get("chart") or {}).get("result") or []
+                if not result:
+                    raise ValueError("empty chart result")
+                timestamps = result[0]["timestamp"]
+                adjclose = result[0]["indicators"]["adjclose"][0]["adjclose"]
+                idx = pd.to_datetime(timestamps, unit="s", utc=True).tz_convert(
+                    "America/New_York"
+                ).normalize()
+                s = pd.Series(adjclose, index=idx, name=ticker, dtype=float).dropna()
+                if s.empty:
+                    raise ValueError("series empty after dropna")
+                return s
+            except Exception as e:
+                last_exc = e
+                if attempt < 3:
+                    sleep_s = (0.5 * (2 ** (attempt - 1))) + random.uniform(0.0, 0.25)
+                    time.sleep(sleep_s)
+
+        raise RuntimeError(f"yahoo v8 failed after retries: {last_exc}")
+
+    def _fetch_one_yf(sym: str) -> pd.Series:
+        # Secondary fallback path if Yahoo v8 keeps failing.
+        # We prefer Adj Close when available; fall back to Close.
+        h = yf.download(
+            sym,
+            period=period,
+            interval="1d",
+            auto_adjust=False,
+            progress=False,
+            threads=False,
+        )
+        if h is None or h.empty:
+            raise ValueError("yfinance history empty")
+
+        if isinstance(h.columns, pd.MultiIndex):
+            lvl0 = set(h.columns.get_level_values(0))
+            col0 = "Adj Close" if "Adj Close" in lvl0 else ("Close" if "Close" in lvl0 else None)
+            if col0 is None:
+                raise ValueError("yfinance missing close columns (multiindex)")
+            sub = h[col0]
+            # Single ticker should collapse to one series; if multiple cols,
+            # pick the first non-empty column deterministically.
+            if isinstance(sub, pd.DataFrame):
+                if sub.shape[1] == 0:
+                    raise ValueError("yfinance close dataframe empty")
+                s_raw = sub.iloc[:, 0]
+            else:
+                s_raw = sub
+        else:
+            col = "Adj Close" if "Adj Close" in h.columns else ("Close" if "Close" in h.columns else None)
+            if col is None:
+                raise ValueError("yfinance missing close columns")
+            s_raw = h[col]
+
+        s = pd.to_numeric(s_raw, errors="coerce").dropna()
+        if s.empty:
+            raise ValueError("yfinance close series empty")
+        idx = pd.to_datetime(s.index, utc=True).tz_convert("America/New_York").normalize()
+        return pd.Series(s.values, index=idx, name=ticker, dtype=float)
+
+    primary = _norm_sym(ticker)
+    tried = [primary]
+    fallback = _YF_SYMBOL_FALLBACKS.get(primary)
+    if fallback and fallback != primary:
+        tried.append(fallback)
+
+    last_err: Exception | None = None
+    for i, sym in enumerate(tried):
+        try:
+            s = _fetch_one(sym)
+            if i > 0:
+                print(f"[TR][fallback] {primary} -> {sym} ({len(s)} rows)")
+            try:
+                s = _apply_manual_split_overrides(s, ticker)
+                s = _clean_split_artifacts(s)
+            except Exception as e_clean:
+                # Never drop a symbol solely because cleanup failed.
+                print(
+                    f"[TR][warn] {primary} cleanup failed after {sym} fetch "
+                    f"({type(e_clean).__name__}: {e_clean}); using raw series"
+                )
+            return s
+        except Exception as e:
+            last_err = e
+
+    # Last resort: yfinance history endpoint for symbols Yahoo v8 rejected.
+    for i, sym in enumerate(tried):
+        try:
+            s = _fetch_one_yf(sym)
+            src = f"{primary}->{sym}" if i > 0 else primary
+            print(f"[TR][yf-fallback] {src} ({len(s)} rows)")
+            try:
+                s = _apply_manual_split_overrides(s, ticker)
+                s = _clean_split_artifacts(s)
+            except Exception as e_clean:
+                print(
+                    f"[TR][warn] {primary} cleanup failed on yf fallback "
+                    f"({type(e_clean).__name__}: {e_clean}); using raw series"
+                )
+            return s
+        except Exception as e:
+            last_err = e
+
+    if last_err is not None:
+        print(f"[TR][err] {primary} fetch failed ({type(last_err).__name__}: {last_err})")
+    return pd.Series(dtype=float, name=ticker)
 
 
 def download_all_tr_series(tickers: list[str], period: str = "2y",
