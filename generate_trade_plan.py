@@ -166,7 +166,8 @@ def get_borrow_col(df: pd.DataFrame) -> str | None:
     Accepts common names; returns column name or None.
     """
     candidates = [
-        "borrow_annual", "Borrow_annual", "borrow", "Borrow", "net_borrow_annual", "NetBorrowAnnual",
+        "borrow_current", "Borrow_Current", "borrow_fee_annual", "Borrow_Fee_Annual",
+        "borrow_annual", "Borrow_annual", "borrow", "Borrow",
         "borrow_rate", "borrowRate", "feerate", "fee_annual"
     ]
     cols = {c.lower(): c for c in df.columns}

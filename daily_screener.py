@@ -958,9 +958,9 @@ def get_ibkr_borrow_snapshot(etf_list: Iterable[str]) -> pd.DataFrame:
     df["borrow_fee_annual"] = df["feerate"].map(_parse_rate_to_decimal)
     df["borrow_rebate_annual"] = df["rebaterate"].map(_parse_rate_to_decimal)
     df["available_int"] = pd.to_numeric(df.get("available", 0), errors="coerce").fillna(0)
-    df["borrow_net_annual"] = df["borrow_fee_annual"] - df["borrow_rebate_annual"]
-    m = df["borrow_net_annual"].notna()
-    df.loc[m, "borrow_net_annual"] = df.loc[m, "borrow_net_annual"].clip(lower=0)
+    # Borrow cost is the fee rate itself; do not net against rebate.
+    # Keep borrow_net_annual as a compatibility column for downstream consumers.
+    df["borrow_net_annual"] = df["borrow_fee_annual"]
 
     agg = df.groupby("sym", as_index=False).agg(
         borrow_fee_annual=("borrow_fee_annual", "max"),
@@ -968,7 +968,7 @@ def get_ibkr_borrow_snapshot(etf_list: Iterable[str]) -> pd.DataFrame:
         borrow_net_annual=("borrow_net_annual", "max"),
         shares_available=("available_int", "max"),
     ).rename(columns={"sym": "ETF"})
-    agg["borrow_current"] = agg["borrow_net_annual"]
+    agg["borrow_current"] = agg["borrow_fee_annual"]
     agg["borrow_spiking"] = False
     agg["borrow_missing_from_ftp"] = False
 
@@ -1305,7 +1305,7 @@ def enrich_with_decay_and_vol(df: pd.DataFrame, tr_map: dict[str, pd.Series],
     df["blended_gross_decay"] = blended
 
     # Net decay (realized only, backward compat)
-    borrow_net = pd.to_numeric(df.get("borrow_net_annual"), errors="coerce").fillna(0.0)
+    borrow_net = pd.to_numeric(df.get("borrow_current"), errors="coerce").fillna(0.0)
     df["net_decay_annual"] = np.where(
         df["gross_decay_annual"].notna(),
         df["gross_decay_annual"] - borrow_net, np.nan)
@@ -1525,6 +1525,8 @@ def main() -> int:
     if args.skip_ftp:
         print("[FTP] Skipped (--skip-ftp)")
         borrow_df = pd.DataFrame({"ETF": universe["ETF"].unique()})
+        borrow_df["borrow_fee_annual"] = np.nan
+        borrow_df["borrow_rebate_annual"] = np.nan
         borrow_df["borrow_net_annual"] = np.nan
         borrow_df["borrow_current"] = np.nan
         borrow_df["shares_available"] = 0
@@ -1545,6 +1547,8 @@ def main() -> int:
             print(f"[FTP] ⚠ Borrow fetch failed: {e}")
             print("[FTP] Continuing with empty borrow data (all positions will show borrow_current=NaN)")
             borrow_df = pd.DataFrame({"ETF": universe["ETF"].unique()})
+            borrow_df["borrow_fee_annual"] = np.nan
+            borrow_df["borrow_rebate_annual"] = np.nan
             borrow_df["borrow_net_annual"] = np.nan
             borrow_df["borrow_current"] = np.nan
             borrow_df["shares_available"] = 0
