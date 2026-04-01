@@ -1620,6 +1620,78 @@ def print_phase_summary(
     tprint("")
 
 
+def filter_near_duplicate_requeues(
+    *,
+    trades: List[dict],
+    previous_attempts: Dict[Tuple[str, str], float],
+    abs_tolerance_usd: float,
+    rel_tolerance: float,
+    label: str,
+) -> List[dict]:
+    """
+    Drop trades that are near-identical requeues for the same symbol/action.
+    This reduces repetitive submit/cancel churn across hedge passes when the
+    correction has barely changed.
+    """
+    if not trades:
+        return trades
+
+    filtered: List[dict] = []
+    skipped = 0
+    for t in trades:
+        key = (str(t.get("symbol", "")), str(t.get("action", "")))
+        corr = float(t.get("correction_usd", 0.0))
+        prev = previous_attempts.get(key)
+        if prev is None:
+            filtered.append(t)
+            continue
+
+        tol = max(abs_tolerance_usd, abs(prev) * rel_tolerance)
+        if abs(corr - prev) <= tol:
+            skipped += 1
+            continue
+        filtered.append(t)
+
+    if skipped > 0:
+        tprint(
+            f"[HEDGE] {label}: skipped {skipped} near-duplicate requeues "
+            f"(abs_tol=${abs_tolerance_usd:,.0f}, rel_tol={rel_tolerance:.0%})."
+        )
+    return filtered
+
+
+def log_post_pass_unresolved_threshold(
+    *,
+    pass_label: str,
+    trades: List[dict],
+    unresolved_threshold_usd: float,
+) -> int:
+    """
+    Log remaining triggered corrections above a dollar threshold.
+    Returns the count above threshold.
+    """
+    unresolved = [
+        t for t in trades
+        if abs(float(t.get("correction_usd", 0.0))) >= unresolved_threshold_usd
+    ]
+    if not unresolved:
+        tprint(
+            f"[HEDGE] {pass_label}: no unresolved corrections "
+            f">= ${unresolved_threshold_usd:,.0f}."
+        )
+        return 0
+
+    top = ", ".join(
+        f"{t['underlying']}:{t['symbol']} {t['correction_usd']:+,.0f}"
+        for t in unresolved[:8]
+    )
+    tprint(
+        f"[HEDGE] {pass_label}: {len(unresolved)} unresolved corrections "
+        f">= ${unresolved_threshold_usd:,.0f}. Top: {top}"
+    )
+    return len(unresolved)
+
+
 # ---------------------------------------------------------------------------
 # Phase 3 final reconciliation — underlying-side corrections
 # ---------------------------------------------------------------------------
@@ -2100,6 +2172,9 @@ def main() -> None:
     net_target_long_pct     = float(reb_cfg.get("net_target_long_pct", 0.01))
     net_target_short_pct    = float(reb_cfg.get("net_target_short_pct", 0.00))
     min_trade_usd           = float(reb_cfg.get("min_trade_usd", 500.0))
+    requeue_abs_tolerance_usd = float(reb_cfg.get("requeue_abs_tolerance_usd", max(50.0, min_trade_usd * 0.25)))
+    requeue_rel_tolerance     = float(reb_cfg.get("requeue_rel_tolerance", 0.10))
+    post_pass_unresolved_usd  = float(reb_cfg.get("post_pass_unresolved_usd", min_trade_usd))
     establish_threshold_usd = float(reb_cfg.get("establish_threshold_usd", 100.0))
 
     run_date = args.run_date or today_str()
@@ -2456,6 +2531,7 @@ def main() -> None:
             MAX_HEDGE_PASSES = 3
             triggered_underlyings: Set[str] = set()
             total_traded    = 0
+            recent_attempts: Dict[Tuple[str, str], float] = {}
 
             for hedge_pass in range(1, MAX_HEDGE_PASSES + 1):
                 if stop_requested():
@@ -2480,6 +2556,13 @@ def main() -> None:
                     flow_etfs=flow_etfs,
                     blacklist=blacklist,
                 )
+                hedge_trades = filter_near_duplicate_requeues(
+                    trades=hedge_trades,
+                    previous_attempts=recent_attempts,
+                    abs_tolerance_usd=requeue_abs_tolerance_usd,
+                    rel_tolerance=requeue_rel_tolerance,
+                    label=f"Pass {hedge_pass}",
+                )
 
                 if not hedge_trades:
                     tprint(f"[HEDGE] Pass {hedge_pass}: no trades needed — converged.")
@@ -2487,6 +2570,19 @@ def main() -> None:
 
                 short_corrections = [t for t in hedge_trades if t["action"] == "SELL"]
                 long_corrections  = [t for t in hedge_trades if t["action"] == "BUY"]
+                blocked_short_skips = [
+                    t for t in short_corrections
+                    if t.get("symbol") in blocked_short_etfs and t.get("symbol") != t.get("underlying")
+                ]
+                if blocked_short_skips:
+                    tprint(
+                        f"[HEDGE] Pass {hedge_pass}: fast-fail skipped "
+                        f"{len(blocked_short_skips)} queued blocked ETF shorts."
+                    )
+                    short_corrections = [
+                        t for t in short_corrections
+                        if not (t.get("symbol") in blocked_short_etfs and t.get("symbol") != t.get("underlying"))
+                    ]
 
                 tprint(
                     f"[HEDGE] Pass {hedge_pass}/{MAX_HEDGE_PASSES}: "
@@ -2499,6 +2595,8 @@ def main() -> None:
                 # ── 3a: Execute short legs first ─────────────────────────────
                 # Short first so we know actual coverage before sizing longs.
                 if short_corrections and not stop_requested():
+                    for t in short_corrections:
+                        recent_attempts[(t["symbol"], t["action"])] = float(t.get("correction_usd", 0.0))
                     fills3a, n_trig_a, n_trade_a = execute_hedge_pass_parallel(
                         hedge_trades=short_corrections,
                         host=host, port=port, client_id=client_id,
@@ -2559,12 +2657,21 @@ def main() -> None:
                         blacklist=blacklist,
                     )
                     long_corrections_b = [t for t in hedge_trades_b if t["action"] == "BUY"]
+                    long_corrections_b = filter_near_duplicate_requeues(
+                        trades=long_corrections_b,
+                        previous_attempts=recent_attempts,
+                        abs_tolerance_usd=requeue_abs_tolerance_usd,
+                        rel_tolerance=requeue_rel_tolerance,
+                        label=f"Pass {hedge_pass}b",
+                    )
 
                     if long_corrections_b:
                         tprint(
                             f"[HEDGE] Pass {hedge_pass}b: {len(long_corrections_b)} long "
                             f"corrections sized to actual short fills."
                         )
+                        for t in long_corrections_b:
+                            recent_attempts[(t["symbol"], t["action"])] = float(t.get("correction_usd", 0.0))
                         fills3b, n_trig_b, n_trade_b = execute_hedge_pass_parallel(
                             hedge_trades=long_corrections_b,
                             host=host, port=port, client_id=client_id,
@@ -2597,6 +2704,33 @@ def main() -> None:
                             watch_syms=[t["symbol"] for t in long_corrections_b],
                             timeout_s=15.0,
                         )
+
+                # Post-pass check: what still exceeds a material dollar threshold?
+                ib_pos_post_pass = current_ib_positions(ib)
+                strat_pos_post_pass = strategy_position_only(ib_pos_post_pass, baseline)
+                post_pass_trades = build_hedge_trades(
+                    hedgeable_plan=hedgeable_df,
+                    strat_pos=strat_pos_post_pass, prices=prices,
+                    account_equity=account_equity, gross_leverage=gross_leverage,
+                    net_trigger_long_pct=net_trigger_long_pct,
+                    net_trigger_short_pct=net_trigger_short_pct,
+                    net_target_long_pct=net_target_long_pct,
+                    net_target_short_pct=net_target_short_pct,
+                    min_trade_usd=min_trade_usd,
+                    etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+                    short_map=short_map,
+                    blocked_short_etfs=blocked_short_etfs,
+                    flow_etfs=flow_etfs,
+                    blacklist=blacklist,
+                )
+                unresolved_count = log_post_pass_unresolved_threshold(
+                    pass_label=f"Post-pass {hedge_pass}",
+                    trades=post_pass_trades,
+                    unresolved_threshold_usd=post_pass_unresolved_usd,
+                )
+                if unresolved_count == 0:
+                    tprint(f"[HEDGE] Pass {hedge_pass}: converged above dollar threshold.")
+                    break
 
                 if pass_traded == 0:
                     tprint(f"[HEDGE] Pass {hedge_pass}: no fills — stopping passes.")
