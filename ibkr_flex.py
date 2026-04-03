@@ -44,6 +44,7 @@ import requests
 
 DEFAULT_BASE_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
 BACKUP_BASE_URL = "https://gdcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
+HARDCODED_FLEX_TOKEN = "605237565772720861934459"
 
 
 def today_str() -> str:
@@ -298,8 +299,10 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=float(os.getenv("IBKR_FLEX_TIMEOUT_SEC", "180")), help="max wait per report seconds")
     args = ap.parse_args()
 
-    # REQUIRED: use env vars correctly
-    token = _env_required("IBKR_FLEX_TOKEN")
+    # Hardcoded token for non-env runs.
+    token = HARDCODED_FLEX_TOKEN.strip()
+    if not token:
+        raise FlexError("HARDCODED_FLEX_TOKEN is empty")
     base_url = os.getenv("IBKR_FLEX_BASE_URL", DEFAULT_BASE_URL).strip()
 
     # You can override these via env vars if you prefer

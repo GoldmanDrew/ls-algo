@@ -70,10 +70,10 @@ PAIRS_CSV = Path(os.getenv("PAIRS_CSV", str(REPO_ROOT / "notebooks" / "all_pairs
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", str(REPO_ROOT / "data")))
 OUTPUT_FILE = Path(os.getenv("OUTPUT_FILE", str(OUTPUT_DIR / "etf_screened_today.csv")))
 
-FTP_HOST = os.getenv("IBKR_FTP_HOST") or "ftp2.interactivebrokers.com"
-FTP_USER = os.getenv("IBKR_FTP_USER") or "shortstock"
-FTP_PASS = os.getenv("IBKR_FTP_PASS") or ""
-FTP_FILE = os.getenv("IBKR_FTP_FILE") or "usa.txt"
+FTP_HOST = "ftp2.interactivebrokers.com"
+FTP_USER = "shortstock"
+FTP_PASS = ""
+FTP_FILE = "usa.txt"
 
 # Defaults (used if config missing)
 BORROW_LOW_DEFAULT = 0.08

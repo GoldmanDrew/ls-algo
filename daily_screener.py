@@ -965,10 +965,10 @@ def add_betas(universe_df: pd.DataFrame, tr_map: dict[str, pd.Series],
 # SECTION 4 — IBKR FTP BORROW DATA (with retry + cache)
 # ══════════════════════════════════════════════════════════════════
 
-FTP_HOST = os.getenv("IBKR_FTP_HOST") or "ftp2.interactivebrokers.com"
-FTP_USER = os.getenv("IBKR_FTP_USER") or "shortstock"
-FTP_PASS = os.getenv("IBKR_FTP_PASS") or ""
-FTP_FILE = os.getenv("IBKR_FTP_FILE") or "usa.txt"
+FTP_HOST = "ftp2.interactivebrokers.com"
+FTP_USER = "shortstock"
+FTP_PASS = ""
+FTP_FILE = "usa.txt"
 
 BORROW_CACHE_PATH = Path("data/borrow_cache.csv")
 
