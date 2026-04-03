@@ -1243,8 +1243,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     if not pos_spot.empty:
         pos_spot_b1 = pos_spot.copy()
         pos_spot_b1["_ratio"] = pos_spot_b1["symbol"].map(_spot_underlying).map(
-            lambda u: _ratio_map.get(u, _orphan_ratio)["b1"] if pd.notna(u) else 0.0
-        ).fillna(0.0)
+            lambda u: _live_pnl_ratio_map.get(u, _ratio_map.get(u, _orphan_ratio))["b1"] if pd.notna(u) else _orphan_ratio["b1"]
+        ).fillna(_orphan_ratio["b1"])
         pos_spot_b1["position"] = pos_spot_b1["position"] * pos_spot_b1["_ratio"]
         pos_spot_b1["positionValue"] = pos_spot_b1["positionValue"] * pos_spot_b1["_ratio"]
         pos_spot_b1["positionValue_base"] = pos_spot_b1["positionValue_base"] * pos_spot_b1["_ratio"]
@@ -1271,8 +1271,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     if not pos_spot.empty:
         pos_spot_b2 = pos_spot.copy()
         pos_spot_b2["_ratio"] = pos_spot_b2["symbol"].map(_spot_underlying).map(
-            lambda u: _ratio_map.get(u, _orphan_ratio)["b2"] if pd.notna(u) else 1.0
-        ).fillna(1.0)
+            lambda u: _live_pnl_ratio_map.get(u, _ratio_map.get(u, _orphan_ratio))["b2"] if pd.notna(u) else _orphan_ratio["b2"]
+        ).fillna(_orphan_ratio["b2"])
         pos_spot_b2["position"] = pos_spot_b2["position"] * pos_spot_b2["_ratio"]
         pos_spot_b2["positionValue"] = pos_spot_b2["positionValue"] * pos_spot_b2["_ratio"]
         pos_spot_b2["positionValue_base"] = pos_spot_b2["positionValue_base"] * pos_spot_b2["_ratio"]
