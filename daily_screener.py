@@ -198,6 +198,7 @@ INVERSE_ETF_UNIVERSE = [
     ("TBT",  -2, "TLT"),  ("TBX",  -2, "TLT"),  ("NVDS", -1.5, "NVDA"),
     ("EWV",  -2, "MSCIJP"), ("APLZ", -2, "APLD"), ("AMZO", -2, "AMZN"),
     ("BEZ", -2, "BE"), ("NBIZ", -2, "NBIS"), ("SMZ", -2, "SMR"),
+    ("QBTZ", -2, "QBTS"), ("IONZ", -2, "IONQ"),
     ("HIBS", -3, "SPX"),  ("CLSZ", -2, "CLSK"), ("IREZ", -2, "IREN")
 ]
 
