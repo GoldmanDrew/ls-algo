@@ -2,6 +2,7 @@
   "run_date": "2026-04-03",
   "fifo_summary_present": true,
   "total_realized_pnl": 16819.8858438,
+<<<<<<< HEAD
   "total_unrealized_pnl": 17786.556438,
   "total_dividends": 438.80999999999995,
   "total_withholding_tax": 0.0,
@@ -11,16 +12,32 @@
   "total_other_fees": 0.0,
   "total_bond_interest": 0.0,
   "total_pnl": 12732.302281800003,
+=======
+  "total_unrealized_pnl": 17786.556438000014,
+  "total_dividends": 438.81,
+  "total_withholding_tax": 0.0,
+  "total_pil_dividends": -16863.510000000002,
+  "total_borrow_fees": -6322.08,
+  "total_short_credit_interest": 872.6400000000001,
+  "total_other_fees": 0.0,
+  "total_bond_interest": 0.0,
+  "total_pnl": 12732.302281799988,
+>>>>>>> ae18eb877ee6102a66ec89e95c94714714c3eb2d
   "excluded_cash_interest_base": -759.1551274,
   "borrow_mode": "borrow_fee_details_cumulative_by_symbol",
   "borrow_total_account_source": -6322.08,
   "borrow_details_file_present": true,
   "borrow_details_rows_cumulative": 260,
+<<<<<<< HEAD
   "universe_source": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\etf_screened_today.csv",
+=======
+  "universe_source": "/home/runner/work/ls-algo/ls-algo/data/etf_screened_today.csv",
+>>>>>>> ae18eb877ee6102a66ec89e95c94714714c3eb2d
   "universe_allowed_etfs": 405,
   "universe_allowed_underlyings": 215,
   "kept_symbols": 439,
   "kept_underlyings": 175,
+<<<<<<< HEAD
   "net_exposure_total": 1112.2366096871847,
   "gross_exposure_total": 2280331.7893903125,
   "net_exposure_bucket_1": -267.15971901735793,
@@ -34,6 +51,21 @@
   "bucket_pnl": {
     "bucket_2": 13916.111427764465,
     "bucket_1": 3782.1583094116945,
+=======
+  "net_exposure_total": 1112.1954750910882,
+  "gross_exposure_total": 2280331.830524909,
+  "net_exposure_bucket_1": -267.1671182599348,
+  "gross_exposure_bucket_1": 2168125.3646218497,
+  "net_exposure_bucket_2": 1379.3625933510216,
+  "gross_exposure_bucket_2": 112206.46590305923,
+  "net_exposure_bucket_3": 515195.2272806128,
+  "gross_exposure_bucket_3": 515195.2272806128,
+  "yfinance_override": false,
+  "yfinance_symbols_overridden": 0,
+  "bucket_pnl": {
+    "bucket_1": 11955.509519198295,
+    "bucket_2": 5742.760217977863,
+>>>>>>> ae18eb877ee6102a66ec89e95c94714714c3eb2d
     "bucket_3": -4965.967455376156
   }
 }
