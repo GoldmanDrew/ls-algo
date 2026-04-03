@@ -1090,8 +1090,11 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     else:
         _held_ratio_map = {}
 
+    # Use universe-level ETF beta mix for spot/underlying attribution so
+    # bucket splitting is stable and proportional across all underlyings.
+    # Do not override with "currently held ETF legs" composition, which can
+    # incorrectly force 100% of an underlying into one bucket.
     _ratio_map = dict(_fallback_ratio_map)
-    _ratio_map.update(_held_ratio_map)
     # If an underlying has no ETF mapping at all (orphan spot), attribute it
     # fully to bucket_1 rather than bucket_2.
     _orphan_ratio = {"b1": 1.0, "b2": 0.0}
