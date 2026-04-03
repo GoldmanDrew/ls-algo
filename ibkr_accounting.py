@@ -1092,6 +1092,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
 
     _ratio_map = dict(_fallback_ratio_map)
     _ratio_map.update(_held_ratio_map)
+    # If an underlying has no ETF mapping at all (orphan spot), attribute it
+    # fully to bucket_1 rather than bucket_2.
+    _orphan_ratio = {"b1": 1.0, "b2": 0.0}
 
     # Assign buckets:
     # - ETFs are ALWAYS bucketed by their own beta (independent of held status)
@@ -1112,7 +1115,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         part = split_source.copy()
         part["bucket"] = bkt_label
         part["_ratio"] = part["underlying"].map(
-            lambda u, rk=ratio_key: _ratio_map.get(u, {"b1": 0.0, "b2": 1.0})[rk]
+            lambda u, rk=ratio_key: _ratio_map.get(u, _orphan_ratio)[rk]
         )
         for col in base_cols:
             part[col] = part[col] * part["_ratio"]
@@ -1213,7 +1216,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     if not pos_spot.empty:
         pos_spot_b1 = pos_spot.copy()
         pos_spot_b1["_ratio"] = pos_spot_b1["symbol"].map(_spot_underlying).map(
-            lambda u: _ratio_map.get(u, {"b1": 0.0})["b1"] if pd.notna(u) else 0.0
+            lambda u: _ratio_map.get(u, _orphan_ratio)["b1"] if pd.notna(u) else 0.0
         ).fillna(0.0)
         pos_spot_b1["position"] = pos_spot_b1["position"] * pos_spot_b1["_ratio"]
         pos_spot_b1["positionValue"] = pos_spot_b1["positionValue"] * pos_spot_b1["_ratio"]
@@ -1241,7 +1244,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     if not pos_spot.empty:
         pos_spot_b2 = pos_spot.copy()
         pos_spot_b2["_ratio"] = pos_spot_b2["symbol"].map(_spot_underlying).map(
-            lambda u: _ratio_map.get(u, {"b1": 0.0, "b2": 1.0})["b2"] if pd.notna(u) else 1.0
+            lambda u: _ratio_map.get(u, _orphan_ratio)["b2"] if pd.notna(u) else 1.0
         ).fillna(1.0)
         pos_spot_b2["position"] = pos_spot_b2["position"] * pos_spot_b2["_ratio"]
         pos_spot_b2["positionValue"] = pos_spot_b2["positionValue"] * pos_spot_b2["_ratio"]
