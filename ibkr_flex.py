@@ -43,6 +43,7 @@ import requests
 
 
 DEFAULT_BASE_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
+BACKUP_BASE_URL = "https://gdcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
 
 
 def today_str() -> str:
@@ -127,8 +128,34 @@ def _detect_extension(body: str) -> str:
     return "txt"
 
 
-def _requests_get_with_1018_backoff(url: str, params: dict, timeout: float, max_attempts: int = 8, base_sleep: float = 2.0) -> str:
+def _candidate_base_urls(base_url: str) -> list[str]:
+    """
+    Return unique candidate Flex hosts for failover.
+    If user provides ndcdyn, include gdcdyn as backup (and vice versa).
+    """
+    urls = [base_url.strip()]
+    if "ndcdyn.interactivebrokers.com" in base_url:
+        urls.append(BACKUP_BASE_URL)
+    elif "gdcdyn.interactivebrokers.com" in base_url:
+        urls.append(DEFAULT_BASE_URL)
+    else:
+        urls.append(BACKUP_BASE_URL)
+    # preserve order while de-duplicating
+    return list(dict.fromkeys(u for u in urls if u))
+
+
+def _requests_get_with_1018_backoff(
+    url: str,
+    params: dict,
+    timeout: float,
+    max_attempts: int | None = None,
+    base_sleep: float | None = None,
+) -> str:
     """Wrapper for requests.get that retries on IBKR throttling (1018) and transient HTTP issues."""
+    if max_attempts is None:
+        max_attempts = int(os.getenv("IBKR_FLEX_HTTP_MAX_ATTEMPTS", "8"))
+    if base_sleep is None:
+        base_sleep = float(os.getenv("IBKR_FLEX_HTTP_BASE_SLEEP_SEC", "2.0"))
     last_err = None
     for attempt in range(1, max_attempts + 1):
         try:
@@ -220,11 +247,29 @@ def fetch_and_save(
     max_wait_sec: float = 180.0,
 ) -> Path:
     """SendRequest -> poll GetStatement -> save to disk."""
-    ref = send_request_with_backoff(base_url, token, q.query_id)
+    ref = None
+    active_base_url = base_url
+    last_send_err: FlexError | None = None
+    candidates = _candidate_base_urls(base_url)
+    for i, candidate in enumerate(candidates, start=1):
+        try:
+            if i > 1:
+                print(f"[FLEX] retrying SendRequest via backup host: {candidate}")
+            ref = send_request_with_backoff(candidate, token, q.query_id)
+            active_base_url = candidate
+            break
+        except FlexError as e:
+            last_send_err = e
+            print(f"[FLEX] SendRequest failed on host {candidate}: {e}")
+            continue
+
+    if not ref:
+        raise FlexError(f"SendRequest failed on all candidate hosts for q={q.query_id}: {last_send_err}")
+
     t0 = time.time()
 
     while True:
-        body = get_statement(base_url, token, ref)
+        body = get_statement(active_base_url, token, ref)
 
         if _is_processing(body):
             if time.time() - t0 > max_wait_sec:
@@ -254,9 +299,7 @@ def main() -> int:
     args = ap.parse_args()
 
     # REQUIRED: use env vars correctly
-    # token = _env_required("IBKR_FLEX_TOKEN")
-    token = "605237565772720861934459" # MICHAEL TOKEN
-    #token = "195413602443563105417466" # DREW TOKEN
+    token = _env_required("IBKR_FLEX_TOKEN")
     base_url = os.getenv("IBKR_FLEX_BASE_URL", DEFAULT_BASE_URL).strip()
 
     # You can override these via env vars if you prefer
@@ -265,20 +308,15 @@ def main() -> int:
     q_positions = os.getenv("IBKR_FLEX_Q_POSITIONS", "").strip()
     q_borrow_details = os.getenv("IBKR_FLEX_Q_BORROW_DETAILS", "").strip()
 
-    # If you want to hardcode IDs while testing, you can set them here,
-    # but DO NOT hardcode the token in code.
+    # For local/manual runs, these defaults can be overridden by env vars.
     if not q_trades:
-        q_trades = "1376360" # MICHAEL
-        #q_trades = "1374436" # DREW
+        q_trades = "1376360"
     if not q_cash:
-        q_cash = "1376356" # MICHAEL
-        #q_cash = "1374451" # DREW
+        q_cash = "1376356"
     if not q_positions:
-        q_positions = "1376362" # MICHAEL
-        #q_positions = "1374454" # DREW
+        q_positions = "1376362"
     if not q_borrow_details:
-        q_borrow_details = "1408970" # MICHAEL
-        #q_borrow_details = "1408916" # DREW
+        q_borrow_details = "1408970"
     queries = [
         FlexQuery("flex_trades", q_trades),
         FlexQuery("flex_cash", q_cash),

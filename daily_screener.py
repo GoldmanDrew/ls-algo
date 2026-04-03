@@ -182,6 +182,7 @@ BENCHMARK_MAP = {
     "BTC": "IBIT", "ETH": "ETHA",  "CRCL": "CRCL", "CRWV": "CRWV",
     "GDX": "GDX",  "SLV": "SLV",   "XLE": "XLE",   "XOP": "XOP",
     "TLT": "TLT",  "MSCIJP": "EWJ","APLD": "APLD", "CLSK": "CLSK",
+    "IREN": "IREN",
 }
 
 INVERSE_ETF_UNIVERSE = [
