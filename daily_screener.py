@@ -182,7 +182,7 @@ BENCHMARK_MAP = {
     "BTC": "IBIT", "ETH": "ETHA",  "CRCL": "CRCL", "CRWV": "CRWV",
     "GDX": "GDX",  "SLV": "SLV",   "XLE": "XLE",   "XOP": "XOP",
     "TLT": "TLT",  "MSCIJP": "EWJ","APLD": "APLD", "CLSK": "CLSK",
-    "IREN": "IREN",
+    "IREN": "IREN", "BE": "BE", "NBIS": "NBIS", "SMR": "SMR",
 }
 
 INVERSE_ETF_UNIVERSE = [
@@ -197,6 +197,7 @@ INVERSE_ETF_UNIVERSE = [
     ("DUG",  -2, "XLE"),  ("DRIP", -2, "XOP"),  ("TMV",  -3, "TLT"),
     ("TBT",  -2, "TLT"),  ("TBX",  -2, "TLT"),  ("NVDS", -1.5, "NVDA"),
     ("EWV",  -2, "MSCIJP"), ("APLZ", -2, "APLD"), ("AMZO", -2, "AMZN"),
+    ("BEZ", -2, "BE"), ("NBIZ", -2, "NBIS"), ("SMZ", -2, "SMR"),
     ("HIBS", -3, "SPX"),  ("CLSZ", -2, "CLSK"), ("IREZ", -2, "IREN")
 ]
 

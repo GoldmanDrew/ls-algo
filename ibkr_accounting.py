@@ -1002,9 +1002,52 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         else:
             return "bucket_2"
 
+    # Build a fallback split map from the ETF universe itself (per underlying).
+    # This is used when we do not currently hold any ETF legs for an underlying.
+    # Weight by absolute beta so underlyings with only >1.5 ETFs default to
+    # bucket_1 for spot/fallback attribution.
+    _all_rows = []
+    for _s, _b in etf_to_beta_map.items():
+        if _b <= 0:
+            continue
+        _all_rows.append(
+            {
+                "underlying": etf_to_under.get(_s, _s),
+                "_bkt": "bucket_1" if _b > 1.5 else "bucket_2",
+                "beta_weight": abs(float(_b)),
+            }
+        )
+
+    if _all_rows:
+        _all_df = pd.DataFrame(_all_rows)
+        _all_beta_sums = (
+            _all_df.groupby(["underlying", "_bkt"])["beta_weight"]
+            .sum()
+            .reset_index()
+            .pivot(index="underlying", columns="_bkt", values="beta_weight")
+            .fillna(0)
+            .reset_index()
+        )
+        for bc in ["bucket_1", "bucket_2"]:
+            if bc not in _all_beta_sums.columns:
+                _all_beta_sums[bc] = 0.0
+        _all_beta_sums["_total"] = _all_beta_sums["bucket_1"] + _all_beta_sums["bucket_2"]
+        _all_beta_sums["ratio_b1"] = np.where(
+            _all_beta_sums["_total"] > 0,
+            _all_beta_sums["bucket_1"] / _all_beta_sums["_total"],
+            0.0,
+        )
+        _all_beta_sums["ratio_b2"] = 1.0 - _all_beta_sums["ratio_b1"]
+        _fallback_ratio_map: dict[str, dict[str, float]] = {
+            row["underlying"]: {"b1": float(row["ratio_b1"]), "b2": float(row["ratio_b2"])}
+            for _, row in _all_beta_sums.iterrows()
+        }
+    else:
+        _fallback_ratio_map = {}
+
     # Build ratio map from ETFs we actually hold (open positions only).
-    # Weight by beta-adjusted absolute notional (not raw beta) so the spot
-    # split reflects how much underlying exposure each bucket's ETFs represent.
+    # Weight by beta-adjusted absolute notional so the spot split reflects
+    # current exposure. This map overrides the universe fallback above.
     _held_etf_syms = set(pos["symbol"].unique()) & set(etf_to_beta_map.keys())
     _held_positive = {s for s in _held_etf_syms if etf_to_beta_map.get(s, 0) > 0}
 
@@ -1040,32 +1083,27 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             0.0,
         )
         _beta_sums["ratio_b2"] = 1.0 - _beta_sums["ratio_b1"]
-        _ratio_map: dict[str, dict[str, float]] = {
+        _held_ratio_map: dict[str, dict[str, float]] = {
             row["underlying"]: {"b1": float(row["ratio_b1"]), "b2": float(row["ratio_b2"])}
             for _, row in _beta_sums.iterrows()
         }
     else:
-        _ratio_map = {}
+        _held_ratio_map = {}
+
+    _ratio_map = dict(_fallback_ratio_map)
+    _ratio_map.update(_held_ratio_map)
 
     # Assign buckets:
-    # - Held positive-beta ETFs → bucket from their own beta
+    # - ETFs are ALWAYS bucketed by their own beta (independent of held status)
     # - Inverse ETFs (beta < 0) → bucket_3
-    # - Non-held positive-beta ETFs → split pro-rata by *held* ETF betas for
-    #   that underlying (so closed AMZW goes to bucket_1 if only bucket_1
-    #   ETFs are currently held for AMZN)
-    # - Spot positions → split pro-rata by held-ETF betas
-    _held_all = set(pos["symbol"].unique())
-    is_held_pos_etf = is_etf & df["symbol"].isin(_held_all) & (sym_beta > 0)
-
+    # - Spot positions (non-ETF rows) split using ratio map by underlying
     df["bucket"] = ""
-    # Inverse ETFs always bucket_3
     df.loc[is_etf & (sym_beta < 0), "bucket"] = "bucket_3"
-    # Held positive-beta ETFs get bucket from their own beta
-    df.loc[is_held_pos_etf & (sym_beta > 1.5), "bucket"] = "bucket_1"
-    df.loc[is_held_pos_etf & (sym_beta <= 1.5), "bucket"] = "bucket_2"
+    df.loc[is_etf & (sym_beta > 1.5), "bucket"] = "bucket_1"
+    df.loc[is_etf & (sym_beta > 0) & (sym_beta <= 1.5), "bucket"] = "bucket_2"
 
-    # Everything else (spot + non-held positive-beta ETFs) splits pro-rata
-    needs_split = (df["bucket"] == "")
+    # Only non-ETF rows split pro-rata by underlying bucket ratios.
+    needs_split = (~is_etf) & (df["bucket"] == "")
     fixed_rows = df[~needs_split].copy()
     split_source = df[needs_split].copy()
 
