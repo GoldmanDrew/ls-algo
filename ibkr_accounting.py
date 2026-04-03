@@ -1090,14 +1090,38 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     else:
         _held_ratio_map = {}
 
-    # Use universe-level ETF beta mix for spot/underlying attribution so
-    # bucket splitting is stable and proportional across all underlyings.
-    # Do not override with "currently held ETF legs" composition, which can
-    # incorrectly force 100% of an underlying into one bucket.
+    # Use universe-level ETF beta mix as the structural fallback.
     _ratio_map = dict(_fallback_ratio_map)
     # If an underlying has no ETF mapping at all (orphan spot), attribute it
     # fully to bucket_1 rather than bucket_2.
     _orphan_ratio = {"b1": 1.0, "b2": 0.0}
+    # Build a dynamic per-day ratio map from ETF PnL activity so spot/underlying
+    # attribution follows where ETF PnL actually landed today.
+    _etf_pnl_rows = df[is_etf & (sym_beta > 0)].copy()
+    if not _etf_pnl_rows.empty:
+        _etf_pnl_rows["_bkt"] = np.where(_etf_pnl_rows["symbol"].map(etf_to_beta_map) > 1.5, "bucket_1", "bucket_2")
+        _etf_pnl_rows["_w"] = _etf_pnl_rows["total_pnl"].abs()
+        _pnl_sums = (
+            _etf_pnl_rows.groupby(["underlying", "_bkt"])["_w"]
+            .sum()
+            .reset_index()
+            .pivot(index="underlying", columns="_bkt", values="_w")
+            .fillna(0)
+            .reset_index()
+        )
+        for bc in ["bucket_1", "bucket_2"]:
+            if bc not in _pnl_sums.columns:
+                _pnl_sums[bc] = 0.0
+        _pnl_sums["_total"] = _pnl_sums["bucket_1"] + _pnl_sums["bucket_2"]
+        _pnl_sums = _pnl_sums[_pnl_sums["_total"] > 0].copy()
+        _pnl_sums["ratio_b1"] = _pnl_sums["bucket_1"] / _pnl_sums["_total"]
+        _pnl_sums["ratio_b2"] = 1.0 - _pnl_sums["ratio_b1"]
+        _live_pnl_ratio_map: dict[str, dict[str, float]] = {
+            row["underlying"]: {"b1": float(row["ratio_b1"]), "b2": float(row["ratio_b2"])}
+            for _, row in _pnl_sums.iterrows()
+        }
+    else:
+        _live_pnl_ratio_map = {}
 
     # Assign buckets:
     # - ETFs are ALWAYS bucketed by their own beta (independent of held status)
@@ -1118,7 +1142,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         part = split_source.copy()
         part["bucket"] = bkt_label
         part["_ratio"] = part["underlying"].map(
-            lambda u, rk=ratio_key: _ratio_map.get(u, _orphan_ratio)[rk]
+            lambda u, rk=ratio_key: _live_pnl_ratio_map.get(u, _ratio_map.get(u, _orphan_ratio))[rk]
         )
         for col in base_cols:
             part[col] = part[col] * part["_ratio"]
