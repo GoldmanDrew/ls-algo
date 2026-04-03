@@ -21,6 +21,7 @@
   "universe_allowed_underlyings": 215,
   "kept_symbols": 439,
   "kept_underlyings": 175,
+<<<<<<< HEAD
   "net_exposure_total": 1112.2080840589988,
   "gross_exposure_total": 2280331.8179159407,
   "net_exposure_bucket_1": 10.362977289332775,
@@ -29,6 +30,16 @@
   "gross_exposure_bucket_2": 255944.03320805065,
   "net_exposure_bucket_3": 515195.2227368584,
   "gross_exposure_bucket_3": 515195.2227368584,
+=======
+  "net_exposure_total": 1112.2656240465876,
+  "gross_exposure_total": 2280331.7603759533,
+  "net_exposure_bucket_1": -71997.17528496697,
+  "gross_exposure_bucket_1": 2096395.3229701468,
+  "net_exposure_bucket_2": 73109.44090901355,
+  "gross_exposure_bucket_2": 183936.4374058068,
+  "net_exposure_bucket_3": 515195.2163759984,
+  "gross_exposure_bucket_3": 515195.2163759984,
+>>>>>>> 5b7b349844bc6398aa98b5990de2faefb89b1940
   "yfinance_override": false,
   "yfinance_symbols_overridden": 0,
   "bucket_pnl": {
