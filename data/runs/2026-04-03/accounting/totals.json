@@ -1,15 +1,9 @@
 {
   "run_date": "2026-04-03",
   "fifo_summary_present": true,
-<<<<<<< HEAD
   "total_realized_pnl": 16819.885843800002,
   "total_unrealized_pnl": 17786.556438,
   "total_dividends": 438.81000000000006,
-=======
-  "total_realized_pnl": 16819.8858438,
-  "total_unrealized_pnl": 17786.556438000014,
-  "total_dividends": 438.80999999999995,
->>>>>>> db4f8d56c7a2188a76e7b62db24652a29bf2c8f6
   "total_withholding_tax": 0.0,
   "total_pil_dividends": -16863.510000000002,
   "total_borrow_fees": -6322.080000000001,
@@ -22,40 +16,24 @@
   "borrow_total_account_source": -6322.08,
   "borrow_details_file_present": true,
   "borrow_details_rows_cumulative": 260,
-  "universe_source": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\etf_screened_today.csv",
+  "universe_source": "/home/runner/work/ls-algo/ls-algo/data/etf_screened_today.csv",
   "universe_allowed_etfs": 408,
   "universe_allowed_underlyings": 215,
   "kept_symbols": 439,
   "kept_underlyings": 175,
-<<<<<<< HEAD
-  "net_exposure_total": -30199.07345790682,
-  "gross_exposure_total": 2249020.4906833824,
-  "net_exposure_bucket_1": -73721.96297059947,
-  "gross_exposure_bucket_1": 2094670.5832544563,
-  "net_exposure_bucket_2": 43522.889512692665,
-  "gross_exposure_bucket_2": 154349.90742892586,
-  "net_exposure_bucket_3": 515195.2190128728,
-  "gross_exposure_bucket_3": 515195.2190128728,
+  "net_exposure_total": -30199.08953135027,
+  "gross_exposure_total": 2249020.5203005318,
+  "net_exposure_bucket_1": -73721.9505821608,
+  "gross_exposure_bucket_1": 2094670.546003728,
+  "net_exposure_bucket_2": 43522.861050810534,
+  "gross_exposure_bucket_2": 154349.97429680373,
+  "net_exposure_bucket_3": 515195.2227368584,
+  "gross_exposure_bucket_3": 515195.2227368584,
   "yfinance_override": false,
   "yfinance_symbols_overridden": 0,
   "bucket_pnl": {
     "bucket_1": 13556.738619588406,
     "bucket_2": 4141.531117587751,
-=======
-  "net_exposure_total": 1112.2354230935016,
-  "gross_exposure_total": 2280331.790576906,
-  "net_exposure_bucket_1": -64586.233367262495,
-  "gross_exposure_bucket_1": 2103806.2604174023,
-  "net_exposure_bucket_2": 65698.46879035603,
-  "gross_exposure_bucket_2": 176525.5301595042,
-  "net_exposure_bucket_3": 515195.2356880584,
-  "gross_exposure_bucket_3": 515195.2356880584,
-  "yfinance_override": false,
-  "yfinance_symbols_overridden": 0,
-  "bucket_pnl": {
-    "bucket_2": 10280.164706117235,
-    "bucket_1": 7418.1050310589235,
->>>>>>> db4f8d56c7a2188a76e7b62db24652a29bf2c8f6
     "bucket_3": -4965.967455376156
   }
 }
