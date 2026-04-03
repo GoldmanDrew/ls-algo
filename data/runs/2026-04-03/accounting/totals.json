@@ -1,7 +1,7 @@
 {
   "run_date": "2026-04-03",
   "fifo_summary_present": true,
-  "total_realized_pnl": 16819.885843800002,
+  "total_realized_pnl": 16819.8858438,
   "total_unrealized_pnl": 17786.556438000014,
   "total_dividends": 438.80999999999995,
   "total_withholding_tax": 0.0,
@@ -21,19 +21,19 @@
   "universe_allowed_underlyings": 215,
   "kept_symbols": 439,
   "kept_underlyings": 175,
-  "net_exposure_total": 1112.2309293555008,
-  "gross_exposure_total": 2280331.7950706445,
-  "net_exposure_bucket_1": -267.180020756492,
-  "gross_exposure_bucket_1": 2168125.366204299,
-  "net_exposure_bucket_2": 1379.4109501119963,
-  "gross_exposure_bucket_2": 112206.4288663452,
-  "net_exposure_bucket_3": 515195.2190128728,
-  "gross_exposure_bucket_3": 515195.2190128728,
+  "net_exposure_total": 1112.2354230935016,
+  "gross_exposure_total": 2280331.790576906,
+  "net_exposure_bucket_1": -64586.233367262495,
+  "gross_exposure_bucket_1": 2103806.2604174023,
+  "net_exposure_bucket_2": 65698.46879035603,
+  "gross_exposure_bucket_2": 176525.5301595042,
+  "net_exposure_bucket_3": 515195.2356880584,
+  "gross_exposure_bucket_3": 515195.2356880584,
   "yfinance_override": false,
   "yfinance_symbols_overridden": 0,
   "bucket_pnl": {
-    "bucket_2": 13104.316094225362,
-    "bucket_1": 4593.953642950798,
+    "bucket_2": 10280.164706117235,
+    "bucket_1": 7418.1050310589235,
     "bucket_3": -4965.967455376156
   }
 }
