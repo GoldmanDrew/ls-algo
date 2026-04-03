@@ -1231,85 +1231,40 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     # Compute bucket 1 and bucket 2 separately, then derive the combined
     # total as b1 + b2 so the numbers are guaranteed consistent.
 
-    # Bucket 1 exposure: levered ETFs (beta > 1.5) + pro-rata spot
-    high_beta_syms = {s for s, b in etf_to_beta_map.items() if b > 1.5}
-    pos_spot = pos[~pos["symbol"].isin(etf_to_beta_map)].copy()
-    _spot_underlying = df[df["symbol"].isin(pos_spot["symbol"])].drop_duplicates("symbol").set_index("symbol")["underlying"] if not pos_spot.empty else pd.Series(dtype=str)
-
-    pos_b1_parts: list[pd.DataFrame] = []
-    pos_b1_etfs = pos[pos["symbol"].isin(high_beta_syms)].copy()
-    if not pos_b1_etfs.empty:
-        pos_b1_parts.append(pos_b1_etfs)
-    if not pos_spot.empty:
-        pos_spot_b1 = pos_spot.copy()
-        pos_spot_b1["_ratio"] = pos_spot_b1["symbol"].map(_spot_underlying).map(
-            lambda u: _live_pnl_ratio_map.get(u, _ratio_map.get(u, _orphan_ratio))["b1"] if pd.notna(u) else _orphan_ratio["b1"]
-        ).fillna(_orphan_ratio["b1"])
-        pos_spot_b1["position"] = pos_spot_b1["position"] * pos_spot_b1["_ratio"]
-        pos_spot_b1["positionValue"] = pos_spot_b1["positionValue"] * pos_spot_b1["_ratio"]
-        pos_spot_b1["positionValue_base"] = pos_spot_b1["positionValue_base"] * pos_spot_b1["_ratio"]
-        pos_spot_b1 = pos_spot_b1[pos_spot_b1["_ratio"] > 0].drop(columns=["_ratio"])
-        if not pos_spot_b1.empty:
-            pos_b1_parts.append(pos_spot_b1)
-    if pos_b1_parts:
-        pos_b1_all = pd.concat(pos_b1_parts, ignore_index=True)
-        b1_underlyings = set(pnl_bucket_1["underlying"].dropna().astype(str)) if not pnl_bucket_1.empty else set()
-        exposure_b1_df, _ = compute_net_exposure(
-            flex_positions_path, etf_screened_path, b1_underlyings,
-            positions_df=pos_b1_all,
+    # Build combined bucket 1+2 exposure first, then split by proportional
+    # bucket ratios per underlying. This keeps exposure attribution consistent
+    # with PnL attribution for all underlyings (not just spot-only legs).
+    pos_b12 = pos[(~pos["symbol"].isin(neg_beta_syms))].copy()
+    b12_underlyings = set(pnl_by_underlying["underlying"].dropna().astype(str)) if not pnl_by_underlying.empty else set()
+    if not pos_b12.empty and b12_underlyings:
+        exposure_df, _ = compute_net_exposure(
+            flex_positions_path, etf_screened_path, b12_underlyings,
+            positions_df=pos_b12,
         )
+    else:
+        exposure_df = pd.DataFrame(columns=["underlying", "symbols", "net_notional_usd", "gross_notional_usd", "n_legs"])
+
+    if not exposure_df.empty:
+        exposure_b1_df = exposure_df.copy()
+        exposure_b2_df = exposure_df.copy()
+        exposure_b1_df["_ratio"] = exposure_b1_df["underlying"].map(
+            lambda u: _live_pnl_ratio_map.get(u, _ratio_map.get(u, _orphan_ratio))["b1"]
+        )
+        exposure_b2_df["_ratio"] = exposure_b2_df["underlying"].map(
+            lambda u: _live_pnl_ratio_map.get(u, _ratio_map.get(u, _orphan_ratio))["b2"]
+        )
+        for _edf in [exposure_b1_df, exposure_b2_df]:
+            _edf["net_notional_usd"] = _edf["net_notional_usd"] * _edf["_ratio"]
+            _edf["gross_notional_usd"] = _edf["gross_notional_usd"] * _edf["_ratio"]
+        exposure_b1_df = exposure_b1_df[exposure_b1_df["_ratio"] > 0].drop(columns=["_ratio"]).sort_values("net_notional_usd", ascending=False)
+        exposure_b2_df = exposure_b2_df[exposure_b2_df["_ratio"] > 0].drop(columns=["_ratio"]).sort_values("net_notional_usd", ascending=False)
     else:
         exposure_b1_df = pd.DataFrame(columns=["underlying", "symbols", "net_notional_usd", "gross_notional_usd", "n_legs"])
-    exposure_b1_df.to_csv(outdir / "net_exposure_bucket_1.csv", index=False)
-
-    # Bucket 2 exposure: standard ETFs (0 < beta ≤ 1.5) + pro-rata spot
-    low_beta_syms = {s for s, b in etf_to_beta_map.items() if 0 < b <= 1.5}
-    pos_b2_parts: list[pd.DataFrame] = []
-    pos_b2_etfs = pos[pos["symbol"].isin(low_beta_syms)].copy()
-    if not pos_b2_etfs.empty:
-        pos_b2_parts.append(pos_b2_etfs)
-    if not pos_spot.empty:
-        pos_spot_b2 = pos_spot.copy()
-        pos_spot_b2["_ratio"] = pos_spot_b2["symbol"].map(_spot_underlying).map(
-            lambda u: _live_pnl_ratio_map.get(u, _ratio_map.get(u, _orphan_ratio))["b2"] if pd.notna(u) else _orphan_ratio["b2"]
-        ).fillna(_orphan_ratio["b2"])
-        pos_spot_b2["position"] = pos_spot_b2["position"] * pos_spot_b2["_ratio"]
-        pos_spot_b2["positionValue"] = pos_spot_b2["positionValue"] * pos_spot_b2["_ratio"]
-        pos_spot_b2["positionValue_base"] = pos_spot_b2["positionValue_base"] * pos_spot_b2["_ratio"]
-        pos_spot_b2 = pos_spot_b2[pos_spot_b2["_ratio"] > 0].drop(columns=["_ratio"])
-        if not pos_spot_b2.empty:
-            pos_b2_parts.append(pos_spot_b2)
-    if pos_b2_parts:
-        pos_b2_all = pd.concat(pos_b2_parts, ignore_index=True)
-        b2_underlyings = set(pnl_bucket_2["underlying"].dropna().astype(str)) if not pnl_bucket_2.empty else set()
-        exposure_b2_df, _ = compute_net_exposure(
-            flex_positions_path, etf_screened_path, b2_underlyings,
-            positions_df=pos_b2_all,
-        )
-    else:
         exposure_b2_df = pd.DataFrame(columns=["underlying", "symbols", "net_notional_usd", "gross_notional_usd", "n_legs"])
-    exposure_b2_df.to_csv(outdir / "net_exposure_bucket_2.csv", index=False)
 
-    # Combined bucket 1+2 exposure — derived from b1 + b2 so totals are
-    # guaranteed consistent (previously computed independently with a
-    # different position set and underlying filter, causing mismatches).
-    _b12_parts = []
-    if not exposure_b1_df.empty:
-        _b12_parts.append(exposure_b1_df[["underlying", "net_notional_usd", "gross_notional_usd"]])
-    if not exposure_b2_df.empty:
-        _b12_parts.append(exposure_b2_df[["underlying", "net_notional_usd", "gross_notional_usd"]])
-    if _b12_parts:
-        _b12_combined = pd.concat(_b12_parts, ignore_index=True)
-        exposure_df = (
-            _b12_combined.groupby("underlying", as_index=False)
-            .agg(
-                net_notional_usd=("net_notional_usd", "sum"),
-                gross_notional_usd=("gross_notional_usd", "sum"),
-            )
-            .sort_values("net_notional_usd", ascending=False)
-        )
-    else:
-        exposure_df = pd.DataFrame(columns=["underlying", "net_notional_usd", "gross_notional_usd"])
+    exposure_b1_df.to_csv(outdir / "net_exposure_bucket_1.csv", index=False)
+    exposure_b2_df.to_csv(outdir / "net_exposure_bucket_2.csv", index=False)
+    exposure_df = exposure_df.sort_values("net_notional_usd", ascending=False)
     exposure_df.to_csv(outdir / "net_exposure_by_underlying.csv", index=False)
 
     # Bucket 3 exposure (negative-beta ETF positions, keyed by ETF symbol not underlying)
