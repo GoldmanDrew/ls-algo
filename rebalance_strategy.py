@@ -371,6 +371,8 @@ def _establish_worker(
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         short_blocked = False
+        short_requested_sh = 0
+        short_filled_sh = 0
 
         for action, sym, qty, px, leg_type in legs:
             if stop_requested():
@@ -382,6 +384,25 @@ def _establish_worker(
             if action == "BUY" and short_blocked:
                 tprint(f"[ESTABLISH][{under}] Skipping long — short leg was blocked.")
                 continue
+
+            # If the ETF short only partially filled, scale the underlying
+            # leg to match actual short coverage instead of opening the full
+            # long target immediately.
+            if action == "BUY" and leg_type == "under" and target_etf_sh > 0 and short_requested_sh > 0:
+                fill_ratio = min(1.0, max(0.0, float(short_filled_sh) / float(short_requested_sh)))
+                scaled_qty = int(math.floor(target_under_sh * fill_ratio))
+                if scaled_qty <= 0:
+                    tprint(
+                        f"[ESTABLISH][{under}] Skipping long — short fill ratio={fill_ratio:.1%} "
+                        f"({short_filled_sh}/{short_requested_sh}) gives 0 scaled shares."
+                    )
+                    continue
+                if scaled_qty < qty:
+                    tprint(
+                        f"[ESTABLISH][{under}] Scaling long leg to short fill ratio={fill_ratio:.1%}: "
+                        f"{qty} -> {scaled_qty} shares."
+                    )
+                    qty = scaled_qty
 
             # FTP gate for short leg
             if action == "SELL":
@@ -413,6 +434,9 @@ def _establish_worker(
             # Partial fills (res.filled > 0) are OK — Phase 3 handles the residual.
             if action == "SELL" and int(res.filled) == 0:
                 short_blocked = True
+            if action == "SELL" and leg_type == "etf":
+                short_requested_sh += int(qty)
+                short_filled_sh += int(abs(res.filled))
 
             stage = "POST_ETF" if leg_type == "etf" else "POST_UNDER_ESTABLISH"
             log_exposure_event(
