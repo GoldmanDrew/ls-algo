@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
 """
-plot_proposed_trades.py — Visualise proposed_trades.csv for a given run date.
+plot_proposed_trades.py — Visualise bucket-level proposed trades for a run date.
 
-Pipeline:
-  daily_screener.py → etf_screened_today.csv
-  → generate_trade_plan.py → proposed_trades.csv
-  → plot_proposed_trades.py → proposed_trades_plot.png   ← this script
-
-Usage:
-  python plot_proposed_trades.py                  # uses today's date
-  python plot_proposed_trades.py 2026-03-03       # specific run date
-  python plot_proposed_trades.py --show           # open plot window after saving
+Outputs:
+  - proposed_trades_bucket_1_plot.png   (beta > 1.5 from proposed_trades.csv)
+  - proposed_trades_bucket_2_plot.png   (0 < beta <= 1.5 from proposed_trades.csv)
 """
 from __future__ import annotations
 
@@ -20,7 +14,7 @@ from datetime import date
 from pathlib import Path
 
 import matplotlib
-matplotlib.use("Agg")  # headless by default; --show switches to interactive
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
@@ -28,18 +22,14 @@ import pandas as pd
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-RUNS_DIR     = PROJECT_ROOT / "data" / "runs"
-
-_SLEEVE_COLORS: dict[str, str] = {
-    "core_leveraged":  "steelblue",
-    "whitelist_stock": "coral",
-}
-_SLEEVE_DEFAULT = "grey"
+RUNS_DIR = PROJECT_ROOT / "data" / "runs"
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Data loading
-# ──────────────────────────────────────────────────────────────────────────────
+def _to_bool_series(s: pd.Series) -> pd.Series:
+    return s.astype(str).str.strip().str.lower().map(
+        {"true": True, "false": False, "1": True, "0": False}
+    ).fillna(False)
+
 
 def load_proposed(run_date: str) -> pd.DataFrame:
     path = RUNS_DIR / run_date / "proposed_trades.csv"
@@ -47,204 +37,159 @@ def load_proposed(run_date: str) -> pd.DataFrame:
         raise FileNotFoundError(f"proposed_trades.csv not found for {run_date}: {path}")
     df = pd.read_csv(path)
 
-    numeric_cols = [
-        "long_usd", "short_usd",
-        "borrow_current", "gross_decay_annual",
-        "expected_decay_annual", "net_decay_annual",
-        "vol_underlying_annual", "vol_etf_annual", "Beta",
-    ]
-    for col in numeric_cols:
+    for col in ("long_usd", "short_usd", "borrow_current", "net_decay_annual", "Beta"):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+        else:
+            df[col] = np.nan
 
     if "purgatory" in df.columns:
-        df["purgatory"] = df["purgatory"].astype(str).str.strip().str.lower().map(
-            {"true": True, "false": False, "1": True, "0": False}
-        ).fillna(False)
+        df["purgatory"] = _to_bool_series(df["purgatory"])
+    else:
+        df["purgatory"] = False
 
     return df
 
 
 def active_rows(df: pd.DataFrame) -> pd.DataFrame:
-    """Rows with a non-zero allocation (purgatory=False and at least one leg)."""
     return df[
-        (df["purgatory"] == False) &  # noqa: E712
-        ((df["long_usd"].fillna(0).abs() > 1) |
-         (df["short_usd"].fillna(0).abs() > 1))
+        (df["purgatory"] == False)  # noqa: E712
+        & ((df["long_usd"].fillna(0).abs() > 1) | (df["short_usd"].fillna(0).abs() > 1))
     ].copy()
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Panel helpers
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _bar_label(ax, val: float, label: str, *, side: str, fontsize: int = 7,
-               pad: float = 200) -> None:
-    """Place a ticker label just beyond the end of a bar."""
-    ha  = "left"  if side == "right" else "right"
-    x   = val + pad if side == "right" else val - pad
-    ax.text(x, 0, label, ha=ha, va="center", fontsize=fontsize, clip_on=True)
+def split_stock_buckets(df_active: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    b = pd.to_numeric(df_active["Beta"], errors="coerce")
+    b1 = df_active[b > 1.5].copy()
+    b2 = df_active[(b > 0) & (b <= 1.5)].copy()
+    return b1, b2
 
 
-def plot_allocation(ax: plt.Axes, df: pd.DataFrame) -> None:
-    """
-    Panel 1 — diverging bars.
-    Right (steelblue): long_usd  = underlying we are buying.
-    Left  (tomato):    short_usd = ETF we are shorting (already negative).
-    """
+def plot_allocation(ax: plt.Axes, df: pd.DataFrame, title: str) -> None:
+    if df.empty:
+        ax.text(0.5, 0.5, "No proposed trades in this bucket", ha="center", va="center", transform=ax.transAxes)
+        ax.set_title(title, fontsize=11, pad=6)
+        ax.set_axis_off()
+        return
+
     df = df.sort_values("long_usd", ascending=True).reset_index(drop=True)
-    y  = np.arange(len(df))
+    y = np.arange(len(df))
+    xmax = max(df["long_usd"].abs().max(), df["short_usd"].abs().max(), 1)
+    pad = xmax * 0.012
 
-    # Determine bar padding from data range
-    xmax = max(df["long_usd"].abs().max(),
-               df["short_usd"].abs().max(), 1)
-    pad  = xmax * 0.012
-
-    # Long (underlying) bars
     ax.barh(y, df["long_usd"], color="steelblue", alpha=0.85, height=0.7)
-    # Short (ETF) bars
-    ax.barh(y, df["short_usd"], color="tomato",    alpha=0.85, height=0.7)
+    ax.barh(y, df["short_usd"], color="tomato", alpha=0.85, height=0.7)
 
-    # Ticker labels at bar ends
     for i, row in df.iterrows():
-        # underlying label on the right
         if abs(row["long_usd"]) > 1:
-            ax.text(row["long_usd"] + pad, i,
-                    str(row["Underlying"]),
+            ax.text(row["long_usd"] + pad, i, str(row.get("Underlying", "")),
                     ha="left", va="center", fontsize=6.5, color="steelblue")
-        # ETF label on the left
         if abs(row["short_usd"]) > 1:
-            ax.text(row["short_usd"] - pad, i,
-                    str(row["ETF"]),
+            ax.text(row["short_usd"] - pad, i, str(row.get("ETF", "")),
                     ha="right", va="center", fontsize=6.5, color="tomato")
 
-    # Y-axis: "ETF → UNDERLYING"
-    labels = [f"{r.ETF} → {r.Underlying}" for _, r in df.iterrows()]
+    labels = [f"{r.ETF} -> {r.Underlying}" for _, r in df.iterrows()]
     ax.set_yticks(y)
     ax.set_yticklabels(labels, fontsize=7.5)
-
     ax.axvline(0, color="black", linewidth=0.8)
     ax.set_xlabel("Notional (USD)", fontsize=9)
-    ax.set_title("Allocation — ETF Short (left)  vs  Underlying Long (right)", fontsize=11, pad=6)
+    ax.set_title(title, fontsize=11, pad=6)
     ax.xaxis.grid(True, alpha=0.3, linestyle="--")
     ax.set_axisbelow(True)
 
-    long_patch  = mpatches.Patch(color="steelblue", alpha=0.85, label="Underlying (long)")
-    short_patch = mpatches.Patch(color="tomato",    alpha=0.85, label="ETF (short)")
+    long_patch = mpatches.Patch(color="steelblue", alpha=0.85, label="Underlying (long)")
+    short_patch = mpatches.Patch(color="tomato", alpha=0.85, label="ETF (short)")
     ax.legend(handles=[long_patch, short_patch], fontsize=8, loc="lower right")
 
 
 def plot_decay_score(ax: plt.Axes, df: pd.DataFrame) -> None:
-    """
-    Panel 2 — single horizontal bar chart of net_decay_annual (the sizing score).
-    NaN → 0.
-    """
-    df = df.copy()
-    df["_score"] = df["net_decay_annual"].fillna(0) * 100
-    df = df.sort_values("_score", ascending=True).reset_index(drop=True)
-    y  = np.arange(len(df))
+    if df.empty:
+        ax.text(0.5, 0.5, "No decay data", ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return
 
-    bars = ax.barh(y, df["_score"], color="seagreen", alpha=0.85, height=0.7)
-
-    # Value labels
-    xmax = df["_score"].max() if df["_score"].max() > 0 else 1
-    pad  = xmax * 0.012
-    for i, val in enumerate(df["_score"]):
-        if val > 0:
-            ax.text(val + pad, i, f"{val:.1f}%",
-                    ha="left", va="center", fontsize=6.5)
-
+    d = df.copy()
+    d["_score"] = d["net_decay_annual"].fillna(0) * 100
+    d = d.sort_values("_score", ascending=True).reset_index(drop=True)
+    y = np.arange(len(d))
+    ax.barh(y, d["_score"], color="seagreen", alpha=0.85, height=0.7)
     ax.set_yticks(y)
-    ax.set_yticklabels(df["ETF"].astype(str), fontsize=7.5)
+    ax.set_yticklabels(d["ETF"].astype(str), fontsize=7.5)
     ax.set_xlabel("Net Decay Score (% annual)", fontsize=9)
-    ax.set_title("Net Decay Score — Position Sizing Score (Annual %)", fontsize=11, pad=6)
+    ax.set_title("Net Decay Score", fontsize=11, pad=6)
     ax.xaxis.grid(True, alpha=0.3, linestyle="--")
     ax.set_axisbelow(True)
 
 
 def plot_borrow(ax: plt.Axes, df: pd.DataFrame) -> None:
-    """Panel 3 — borrow rate by ETF."""
-    df = df.copy()
-    df["_borrow"] = df["borrow_current"].fillna(0) * 100
-    df = df.sort_values("_borrow", ascending=True).reset_index(drop=True)
-    y  = np.arange(len(df))
+    if df.empty:
+        ax.text(0.5, 0.5, "No borrow data", ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return
 
-    ax.barh(y, df["_borrow"], color="mediumpurple", alpha=0.85, height=0.7)
-
-    xmax = df["_borrow"].max() if df["_borrow"].max() > 0 else 1
-    pad  = xmax * 0.012
-    for i, val in enumerate(df["_borrow"]):
-        ax.text(val + pad, i, f"{val:.1f}%",
-                ha="left", va="center", fontsize=6.5)
-
+    d = df.copy()
+    d["_borrow"] = d["borrow_current"].fillna(0) * 100
+    d = d.sort_values("_borrow", ascending=True).reset_index(drop=True)
+    y = np.arange(len(d))
+    ax.barh(y, d["_borrow"], color="mediumpurple", alpha=0.85, height=0.7)
     ax.set_yticks(y)
-    ax.set_yticklabels(df["ETF"].astype(str), fontsize=7.5)
+    ax.set_yticklabels(d["ETF"].astype(str), fontsize=7.5)
     ax.set_xlabel("Borrow Rate (% annual)", fontsize=9)
     ax.set_title("Current Borrow Rate by ETF", fontsize=11, pad=6)
     ax.xaxis.grid(True, alpha=0.3, linestyle="--")
     ax.set_axisbelow(True)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Main
-# ──────────────────────────────────────────────────────────────────────────────
-
-def make_plot(run_date: str, *, show: bool = False) -> Path:
-    df  = load_proposed(run_date)
-    act = active_rows(df)
-
-    if act.empty:
-        print(f"[WARN] No active (non-purgatory, non-zero) rows found for {run_date}.")
-
-    n = len(act)
-    # Scale height: ~0.22in per row, minimum 12in
+def render_stock_bucket(run_date: str, bucket_df: pd.DataFrame, bucket_label: str, out_path: Path) -> Path:
+    n = len(bucket_df)
     row_height = 0.22
-    panel_h    = max(12, n * row_height)
-    fig, axes  = plt.subplots(3, 1, figsize=(22, panel_h * 3 + 2))
+    panel_h = max(7, n * row_height)
+    fig, ax = plt.subplots(1, 1, figsize=(20, panel_h + 1.5))
 
-    plot_allocation(axes[0], act)
-    plot_decay_score(axes[1], act)
-    plot_borrow(axes[2], act)
+    # Keep only the proposed position allocation panel.
+    plot_allocation(ax, bucket_df, f"{bucket_label} Allocation — ETF short vs Underlying long")
 
-    fig.suptitle(
-        f"Proposed Trades — {run_date}   ({n} active positions)",
-        fontsize=13, fontweight="bold", y=1.002,
-    )
-    fig.tight_layout(pad=2.5)
+    fig.suptitle(f"{bucket_label} Proposed Trades — {run_date} ({n} rows)", fontsize=13, fontweight="bold", y=1.002)
+    fig.tight_layout(pad=2.2)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
 
-    out = RUNS_DIR / run_date / "proposed_trades_plot.png"
-    fig.savefig(out, dpi=150, bbox_inches="tight")
-    print(f"[OK] Saved -> {out}")
 
-    if show:
-        matplotlib.use("TkAgg")  # switch to interactive backend
-        plt.show()
-    else:
-        plt.close(fig)
+def make_bucket_plots(run_date: str) -> list[Path]:
+    proposed = load_proposed(run_date)
+    act = active_rows(proposed)
+    b1, b2 = split_stock_buckets(act)
 
-    return out
+    out_dir = RUNS_DIR / run_date
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_b1 = out_dir / "proposed_trades_bucket_1_plot.png"
+    out_b2 = out_dir / "proposed_trades_bucket_2_plot.png"
+
+    render_stock_bucket(run_date, b1, "Bucket 1 (Beta > 1.5)", out_b1)
+    render_stock_bucket(run_date, b2, "Bucket 2 (0 < Beta <= 1.5)", out_b2)
+
+    return [out_b1, out_b2]
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument(
-        "run_date", nargs="?",
-        default=date.today().isoformat(),
-        help="Run date YYYY-MM-DD (default: today)",
-    )
-    parser.add_argument(
-        "--show", action="store_true",
-        help="Open the plot in an interactive window after saving",
-    )
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("run_date", nargs="?", default=date.today().isoformat(),
+                        help="Run date YYYY-MM-DD (default: today)")
+    parser.add_argument("--show", action="store_true",
+                        help="Retained for compatibility; plotting is saved to files in headless mode.")
     args = parser.parse_args()
 
     try:
-        make_plot(args.run_date, show=args.show)
+        outputs = make_bucket_plots(args.run_date)
     except FileNotFoundError as exc:
         print(f"[ERROR] {exc}", file=sys.stderr)
         return 1
 
+    for p in outputs:
+        print(f"[OK] Saved -> {p}")
+    if args.show:
+        print("[INFO] --show requested; script runs headless and saves PNG files.")
     return 0
 
 

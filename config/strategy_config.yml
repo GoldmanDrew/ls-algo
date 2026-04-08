@@ -10,7 +10,7 @@ accounting:
 
 strategy:
   tag: ETF_LS
-  capital_usd: 350000          # fallback if equity_source=static
+  capital_usd: 625000          # fallback if equity_source=static
   gross_leverage: 4
   equity_source: "ibkr"      # "ibkr" | "static" | "file"
   blacklist:
@@ -28,7 +28,6 @@ paths:
   ledger_csv: data/strategy_ledger.csv
   fills_csv: data/trade_fills.csv
   equity_snapshot_csv: data/equity_snapshot.csv
-  flow_targets_csv: data/flow_targets.csv
   flow_ledger_csv: data/flow_ledger.csv
 
 execution:
@@ -49,10 +48,10 @@ execution:
   cancel_client_id: 99         # dedicated client for cancel coordinator
 
 screener:
-  borrow_low: 0.3
-  purgatory_margin: 0.1
+  borrow_low: 0.35
+  purgatory_margin: 0.15
   whitelist_hard_borrow_cap: 0.4
-  flow_hard_borrow_cap: 0.4
+  flow_hard_borrow_cap: 0.45
   min_beta_days: 5
   max_stale_days: 5             # drop ETFs with no trade in last N calendar days (delisted/liquidated)
 
@@ -79,35 +78,37 @@ portfolio:
   sleeves:
     core_leveraged:
       allocation_type: "stock"
-      target_weight: 0.88
+      target_weight: 0.8
       rules:
         min_beta_used: 1.50
       weighting:
         <<: *weighting_defaults
-        max_name_weight: 0.08         # 8% cap per underlying
-        eq_blend: 0.5                # 50% equal-weight + 50% decay-score
-        borrow_aversion: 3.3
+        max_name_weight: 0.15         # 12% cap per underlying
+        eq_blend: 0.15                # 25% equal-weight + 50% decay-score
+        borrow_aversion: 3
 
     whitelist_stock:
       allocation_type: "stock"
-      target_weight: 0.12
+      target_weight: 0.2
       universe:
         etfs:
           - MTYY
+          - HMYY
           - MAAY
           - FBYY
           - XBTY
-          - NFLW
-          - HOOW
-          - MARO
-          - TSLO
-          - MSFW
-          - PLTW
-          - MSTW
+          - QBY
+          - IOYY
+          - COYY
+          - AZYY
+          - GMEY
+          - DRAY
+          - PLYY
+          - RDYY
       weighting:
         <<: *weighting_defaults
-        max_name_weight: 0.20         # 20% cap per underlying
-        eq_blend: 0.50                # 50% equal-weight + 50% decay-score
+        max_name_weight: 0.3         # 20% cap per underlying
+        eq_blend: 0.05                # 50% equal-weight + 50% decay-score
         borrow_aversion: 3.3
     flow_program:
       allocation_type: "flow"

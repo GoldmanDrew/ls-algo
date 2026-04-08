@@ -111,6 +111,7 @@ new_pairs = [
     ("AFRU", "AFRM"), ("AXUP", "AXON"), ("KTUP", "KTOS"), ("TTDU", "TTD"),
     ("BKNU", "BKNG"), ("PXIU", "UPXI"), ("BMNU", "BMNR"), ("SBTU", "SBET"),
     ("CIFU", "CIFR"), ("SOLX", "GSOL"), ("XRPK", "XRPZ"), ("XRPT", "XRPZ"),
+    ("CHNU", "CHNL"), ("CRDX", "CRDD"), ("STLU", "STLR"),
     ("GMEU", "GME"),  ("APLX", "APLD"), ("APPX", "APP"),  ("ARCX", "ACHR"),
     ("ASTX", "ASTS"), ("AURU", "AUR"),  ("BEX",  "BE"),   ("BLSX", "BLSH"),
     ("CEGX", "CEG"),  ("CELT", "CELH"), ("CLSX", "CLSK"), ("COZX", "CORZ"),
@@ -401,6 +402,8 @@ def build_full_universe(skip_scrape: bool = False, skip_inverse: bool = False) -
         "CELT",   # CELH — closed 2026-01-23
         "DASX",   # DASH — closed 2026-02-19
         "DKUP",   # DKNG — closed 2026-03-16
+        "ARMU",   # ARM  — stale/no-trade as of 2026-03-23
+        "BULU",   # BULL — stale/no-trade as of 2026-03-23
         "LYFX",   # LYFT — closed 2026-03-03
         "NETX",   # NET  — closed 2026-03-13
         "NWMX",   # NEM  — closed 2026-01-30
@@ -1170,7 +1173,7 @@ class ScreeningParams:
 
 
 def screen_universe(df: pd.DataFrame, params: ScreeningParams) -> pd.DataFrame:
-    """Apply borrow-based screening: include_for_algo, purgatory, protected logic.
+    """Apply borrow-based screening: purgatory, protected, diagnostics.
 
     Philosophy: include by default, exclude only with positive evidence.
     FTP-missing ETFs are treated as "unknown borrow" and included — the
@@ -1216,13 +1219,11 @@ def screen_universe(df: pd.DataFrame, params: ScreeningParams) -> pd.DataFrame:
                          & (df["borrow_current"] > hard_cap)
                          & (~df["protected"]))
 
-    # include_for_algo = True by default.  Only False for:
-    #   - confirmed borrow above hard_cap (and not protected)
-    #   - purgatory (handled separately as keep-open rows)
-    include_base = ~confirmed_exclude & ~df["purgatory"]
+    # We no longer emit include_for_algo. Downstream sizing relies on sleeve
+    # membership rules in generate_trade_plan, with purgatory explicitly excluded.
+    # Keep confirmed_exclude as a diagnostic-only signal.
     if params.exclude_negative_cagr and "cagr_port_hist" in df.columns:
-        include_base = include_base & (df["cagr_positive"] == True)
-    df["include_for_algo"] = include_base
+        confirmed_exclude = confirmed_exclude | (df["cagr_positive"] != True)
 
     # Diagnostic columns (kept for backward compatibility)
     df["exclude_borrow_gt_low"] = df["borrow_gt_low"] & (~df["protected"])
@@ -1810,9 +1811,8 @@ def main() -> int:
     print("STEP 4 — Apply Screening Logic")
     print("─" * 70)
     screened = screen_universe(metrics, params)
-    included = int(screened["include_for_algo"].sum())
     purg = int(screened["purgatory"].sum())
-    print(f"[SCREEN] Included: {included} | Purgatory: {purg} | Total: {len(screened)}")
+    print(f"[SCREEN] Purgatory: {purg} | Total: {len(screened)}")
 
     # ── Step 5: Decay + vol (UPDATED: now also computes expected + blended) ──
     print("\n" + "─" * 70)
@@ -1848,7 +1848,8 @@ def main() -> int:
     print(f"\n{'=' * 70}")
     print(f"[DONE] Saved: {output_path}")
     print(f"[DONE] Dated: {dated_dir / 'etf_screened_today.csv'}")
-    print(f"[DONE] {len(screened)} pairs | {included} included | {purg} purgatory")
+    active = int((screened["purgatory"] != True).sum())  # noqa: E712
+    print(f"[DONE] {len(screened)} pairs | {active} active (non-purgatory) | {purg} purgatory")
 
     # Summary stats
     valid_net = screened["net_decay_annual"].dropna()

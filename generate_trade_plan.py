@@ -32,11 +32,10 @@ Implements:
 
 Outputs:
 - proposed_trades.csv (stock sleeves sized + purgatory keep-open rows)
-- flow_targets.csv (desired cumulative flow notionals as of run date, plus this-week increment)
 - flow_ledger.csv (append-only record of cumulative flow)
 
 Notes:
-- This script assumes screened_csv includes: ETF, Underlying, include_for_algo, purgatory, Beta
+- This script assumes screened_csv includes: ETF, Underlying, purgatory, Beta
 - Borrow caps require screened_csv to include a borrow column OR you pass a borrow_map externally.
   If you don’t have borrow in screened_csv, set caps high or skip borrow filtering here.
 """
@@ -314,7 +313,6 @@ def main() -> None:
 
     # Flow ledger paths (new)
     flow_ledger_path = Path(paths.get("flow_ledger_csv", "data/flow_ledger.csv"))
-    flow_targets_latest = Path(paths.get("flow_targets_csv", "data/flow_targets.csv"))
 
     print(f"[INFO] target_gross_usd=${target_gross_usd:,.0f} | core={core_w:.0%} wl={wl_w:.0%} | beta_floor={beta_floor}")
     print(f"[INFO] core soft borrow cap={soft_borrow_cap:.1%} | wl hard cap={wl_hard_borrow_cap if np.isfinite(wl_hard_borrow_cap) else 'inf'} | flow hard cap={flow_hard_borrow_cap if np.isfinite(flow_hard_borrow_cap) else 'inf'}")
@@ -331,7 +329,7 @@ def main() -> None:
         screened.to_csv(proposed_latest_csv, index=False)
         return
 
-    required_cols = {"ETF", "Underlying", "include_for_algo", "purgatory", "Beta"}
+    required_cols = {"ETF", "Underlying", "purgatory", "Beta"}
     missing = required_cols - set(screened.columns)
     if missing:
         raise ValueError(f"Screened CSV missing required columns: {sorted(missing)}. Found: {list(screened.columns)}")
@@ -352,7 +350,7 @@ def main() -> None:
     screened["beta_abs"] = screened["Beta"].abs()
 
     # Coerce decay columns for weighting (may be absent in older CSVs)
-    for _col in ("blended_gross_decay", "borrow_current"):
+    for _col in ("blended_gross_decay", "borrow_current", "net_decay_annual"):
         if _col not in screened.columns:
             screened[_col] = np.nan
         else:
@@ -364,9 +362,9 @@ def main() -> None:
     # if borrow missing, borrow_annual is NaN, and caps won't filter (we treat NaN as "unknown -> allow")
     # if you prefer "unknown -> exclude", change the predicate below accordingly.
 
-    # KEEP set: written to proposed_trades.csv (include algo + purgatory)
-    keep_mask = (screened["include_for_algo"] == True) | (screened["purgatory"] == True)  # noqa: E712
-    keep = screened.loc[keep_mask].copy()
+    # KEEP set: full screened rows. Final output is filtered to
+    # non-zero targets plus purgatory rows.
+    keep = screened.copy()
 
     # Initialize outputs on KEEP
     keep["strategy_tag"] = tag
@@ -374,15 +372,16 @@ def main() -> None:
     keep["short_usd"] = 0.0
     keep["sleeve"] = ""
 
-    # SIZING set: only include_for_algo names (never purgatory)
-    eligible = screened.loc[screened["include_for_algo"] == True].copy()  # noqa: E712
+    # SIZING set: all non-purgatory names. Sleeve membership rules
+    # determine tradability; no include_for_algo dependency.
+    eligible = screened.loc[screened["purgatory"] != True].copy()  # noqa: E712
     if eligible.empty:
-        print("[WARN] No eligible rows to size (include_for_algo empty).")
+        print("[WARN] No eligible rows to size (all rows are purgatory).")
         proposed = keep.copy()
         nonzero_mask = (proposed["long_usd"] != 0) | (proposed["short_usd"] != 0)
         proposed = proposed[nonzero_mask | (proposed["purgatory"] == True)]  # noqa: E712
 
-        cols_to_drop = ["include_for_algo", "Leverage", "ExpectedLeverage", "cagr_positive", "beta_abs"]
+        cols_to_drop = ["Leverage", "ExpectedLeverage", "cagr_positive", "beta_abs"]
         proposed = proposed.drop(columns=[c for c in cols_to_drop if c in proposed.columns], errors="ignore")
 
         dated_path = run_dir(args.run_date) / "proposed_trades.csv"
@@ -390,14 +389,17 @@ def main() -> None:
         proposed.to_csv(dated_path, index=False)
         proposed_latest_csv.parent.mkdir(parents=True, exist_ok=True)
         proposed.to_csv(proposed_latest_csv, index=False)
-        print(f"[OK] Wrote proposed trades → {dated_path}  (n={len(proposed)})")
-        print(f"[OK] Updated latest proposed trades → {proposed_latest_csv}  (n={len(proposed)})")
+        print(f"[OK] Wrote proposed trades -> {dated_path}  (n={len(proposed)})")
+        print(f"[OK] Updated latest proposed trades -> {proposed_latest_csv}  (n={len(proposed)})")
     else:
         # -----------------------------
         # Build sleeve membership
         # -----------------------------
         # core: |beta| >= min_beta_used AND passes soft borrow cap (unless also whitelist)
         eligible["in_whitelist"] = eligible["ETF"].isin(wl_set)
+        # Hard rule: negative net decay names are excluded from stock sleeves.
+        # This guarantees 0 target weight regardless of eq_blend.
+        net_decay_ok = ~(eligible["net_decay_annual"] < 0)
 
         # Borrow cap predicates
         # - soft cap applies to core ONLY when NOT whitelist
@@ -415,12 +417,15 @@ def main() -> None:
 
         # Exclude inverse (β < 0) ETFs — they belong to the flow program, not core/whitelist
         positive_beta = eligible["Beta"].gt(0)
-        eligible["in_core"] = positive_beta & eligible["beta_abs"].ge(core_beta_min) & core_borrow_ok
-        eligible["in_wl"]   = positive_beta & eligible["in_whitelist"] & wl_borrow_ok
+        eligible["in_core"] = positive_beta & eligible["beta_abs"].ge(core_beta_min) & core_borrow_ok & net_decay_ok
+        eligible["in_wl"]   = positive_beta & eligible["in_whitelist"] & wl_borrow_ok & net_decay_ok
 
 
         core_names = eligible.loc[eligible["in_core"]].copy()
         wl_names   = eligible.loc[eligible["in_wl"]].copy()
+        n_neg_decay_excluded = int((~net_decay_ok).sum())
+        if n_neg_decay_excluded:
+            print(f"[INFO] Excluded {n_neg_decay_excluded} names with negative net_decay_annual from stock sleeves.")
 
         # Reallocate sleeve weight if one side empty
         w_core, w_wl = core_w, wl_w
@@ -491,7 +496,7 @@ def main() -> None:
         nonzero_mask = (proposed["long_usd"] != 0) | (proposed["short_usd"] != 0)
         proposed = proposed[nonzero_mask | (proposed["purgatory"] == True)]  # noqa: E712
 
-        cols_to_drop = ["include_for_algo", "Leverage", "ExpectedLeverage", "cagr_positive", "beta_abs"]
+        cols_to_drop = ["Leverage", "ExpectedLeverage", "cagr_positive", "beta_abs"]
         proposed = proposed.drop(columns=[c for c in cols_to_drop if c in proposed.columns], errors="ignore")
 
         dated_path = run_dir(args.run_date) / "proposed_trades.csv"
@@ -500,8 +505,8 @@ def main() -> None:
         proposed_latest_csv.parent.mkdir(parents=True, exist_ok=True)
         proposed.to_csv(proposed_latest_csv, index=False)
 
-        print(f"[OK] Wrote proposed trades → {dated_path}  (n={len(proposed)})")
-        print(f"[OK] Updated latest proposed trades → {proposed_latest_csv}  (n={len(proposed)})")
+        print(f"[OK] Wrote proposed trades -> {dated_path}  (n={len(proposed)})")
+        print(f"[OK] Updated latest proposed trades -> {proposed_latest_csv}  (n={len(proposed)})")
 
     # =========================================================
     # FLOW PROGRAM TRACKING (cumulative weekly adds)
@@ -546,15 +551,7 @@ def main() -> None:
     if not to_append.empty:
         append_flow_ledger(flow_ledger_path, to_append)
 
-    # Write flow targets snapshot (latest + dated run folder copy)
-    flow_targets_latest.parent.mkdir(parents=True, exist_ok=True)
-    flow_df.to_csv(flow_targets_latest, index=False)
-
-    flow_dated = run_dir(args.run_date) / "flow_targets.csv"
-    flow_dated.parent.mkdir(parents=True, exist_ok=True)
-    flow_df.to_csv(flow_dated, index=False)
-
-    print(f"[OK] Flow tracking: weekly_add=${weekly_add_usd:,.2f} | wrote {flow_targets_latest} and {flow_dated}")
+    print(f"[OK] Flow tracking: weekly_add=${weekly_add_usd:,.2f} | flow targets snapshot deprecated (ledger-only)")
     print(f"[OK] Flow ledger: {flow_ledger_path} (appended {len(to_append)} rows)")
 
 
