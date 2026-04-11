@@ -15,10 +15,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from ibkr_accounting import (
+    EXCLUDE_SYMBOLS,
+    SUPPLEMENTAL_ETF_MAP,
     canonical_symbol,
     compute_net_exposure,
     format_exposure_table,
+    load_universe_from_screened,
+    parse_open_positions,
 )
+from strategy_config import load_config
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent  # adjust if needed
@@ -614,6 +619,221 @@ def parse_recipients(raw: str) -> list[str]:
     return emails
 
 
+def resolve_proposed_trades_path(run_date: str) -> Path:
+    dated = PROJECT_ROOT / "data" / "runs" / run_date / "proposed_trades.csv"
+    if dated.exists():
+        return dated
+
+    cfg = load_config(PROJECT_ROOT / "config" / "strategy_config.yml")
+    proposed_cfg = (cfg.get("paths", {}) or {}).get("proposed_trades_csv", "")
+    if proposed_cfg:
+        p = Path(proposed_cfg)
+        if p.exists():
+            return p
+    fallback = PROJECT_ROOT / "data" / "proposed_trades.csv"
+    if fallback.exists():
+        return fallback
+    raise FileNotFoundError("Could not locate proposed_trades.csv (dated or latest).")
+
+
+def load_position_discrepancies(run_date: str) -> pd.DataFrame:
+    screened_csv = PROJECT_ROOT / "data" / "etf_screened_today.csv"
+    if not screened_csv.exists():
+        raise FileNotFoundError(f"Missing etf_screened_today.csv at: {screened_csv}")
+
+    flex_positions_xml = PROJECT_ROOT / "data" / "runs" / run_date / "ibkr_flex" / "flex_positions.xml"
+    if not flex_positions_xml.exists():
+        raise FileNotFoundError(f"Missing Flex positions XML at: {flex_positions_xml}")
+
+    proposed_path = resolve_proposed_trades_path(run_date)
+    plan = pd.read_csv(proposed_path)
+    if plan.empty:
+        return pd.DataFrame(
+            columns=[
+                "symbol",
+                "target_net_usd",
+                "actual_net_usd",
+                "discrepancy_usd",
+                "abs_discrepancy_usd",
+                "target_gross_usd",
+                "actual_gross_usd",
+                "gross_gap_usd",
+                "under_exposed",
+            ]
+        )
+
+    cfg = load_config(PROJECT_ROOT / "config" / "strategy_config.yml")
+    strategy_tag = str((cfg.get("strategy", {}) or {}).get("tag", "")).strip()
+    if strategy_tag and "strategy_tag" in plan.columns:
+        plan = plan[plan["strategy_tag"].astype(str) == strategy_tag].copy()
+
+    for c in ("ETF", "Underlying"):
+        if c not in plan.columns:
+            raise ValueError(f"proposed_trades.csv missing required column: {c}")
+    plan["ETF"] = plan["ETF"].astype(str).map(canonical_symbol)
+    plan["Underlying"] = plan["Underlying"].astype(str).map(canonical_symbol)
+    plan["long_usd"] = pd.to_numeric(plan.get("long_usd", 0.0), errors="coerce").fillna(0.0)
+    plan["short_usd"] = pd.to_numeric(plan.get("short_usd", 0.0), errors="coerce").fillna(0.0)
+
+    target_under = (
+        plan.groupby("Underlying", as_index=False)["long_usd"].sum()
+        .rename(columns={"Underlying": "symbol", "long_usd": "target_net_usd"})
+    )
+    target_etf = (
+        plan.groupby("ETF", as_index=False)["short_usd"].sum()
+        .rename(columns={"ETF": "symbol", "short_usd": "target_net_usd"})
+    )
+    target = pd.concat([target_under, target_etf], ignore_index=True)
+    target = target[target["symbol"].astype(bool)].copy()
+    target = target.groupby("symbol", as_index=False)["target_net_usd"].sum()
+
+    pos = parse_open_positions(flex_positions_xml)
+    if pos.empty:
+        actual = pd.DataFrame(columns=["symbol", "actual_net_usd"])
+    else:
+        pos = pos.copy()
+        pos["symbol"] = pos["symbol"].astype(str).map(canonical_symbol)
+        pos = pos[~pos["symbol"].isin(EXCLUDE_SYMBOLS)].copy()
+        pos["actual_net_usd"] = (
+            pd.to_numeric(pos["position"], errors="coerce").fillna(0.0)
+            * pd.to_numeric(pos["markPrice"], errors="coerce").fillna(0.0)
+            * pd.to_numeric(pos["fxRateToBase"], errors="coerce").fillna(1.0)
+        )
+        actual = pos.groupby("symbol", as_index=False)["actual_net_usd"].sum()
+
+    allowed_etfs, allowed_underlyings = load_universe_from_screened(screened_csv)
+    allowed_etfs |= set(SUPPLEMENTAL_ETF_MAP.keys())
+    allowed_underlyings |= set(SUPPLEMENTAL_ETF_MAP.values())
+    allowed_symbols = allowed_etfs | allowed_underlyings
+
+    merged = target.merge(actual, on="symbol", how="outer")
+    merged["target_net_usd"] = pd.to_numeric(merged["target_net_usd"], errors="coerce").fillna(0.0)
+    merged["actual_net_usd"] = pd.to_numeric(merged["actual_net_usd"], errors="coerce").fillna(0.0)
+    merged["symbol"] = merged["symbol"].astype(str).map(canonical_symbol)
+    merged = merged[merged["symbol"].isin(allowed_symbols)].copy()
+
+    merged["discrepancy_usd"] = merged["actual_net_usd"] - merged["target_net_usd"]
+    merged["abs_discrepancy_usd"] = merged["discrepancy_usd"].abs()
+    merged["target_gross_usd"] = merged["target_net_usd"].abs()
+    merged["actual_gross_usd"] = merged["actual_net_usd"].abs()
+    merged["gross_gap_usd"] = merged["actual_gross_usd"] - merged["target_gross_usd"]
+    merged["under_exposed"] = merged["gross_gap_usd"] < -1e-9
+    merged = merged.sort_values("abs_discrepancy_usd", ascending=False).reset_index(drop=True)
+    return merged
+
+
+def format_largest_discrepancies(discrepancy_df: pd.DataFrame, top_n: int = 15) -> str:
+    if discrepancy_df.empty:
+        return "(no discrepancy rows in screened universe)"
+
+    top = discrepancy_df.head(top_n).copy()
+    headers = ["SYMBOL", "TARGET_NET", "ACTUAL_NET", "DISCREP", "|DISCREP|", "GROSS_GAP", "FLAG"]
+    row_labels = top["symbol"].astype(str).tolist() + [headers[0]]
+    col_vals = {
+        "TARGET_NET": [f"{v:,.0f}" for v in top["target_net_usd"]] + [headers[1]],
+        "ACTUAL_NET": [f"{v:,.0f}" for v in top["actual_net_usd"]] + [headers[2]],
+        "DISCREP": [f"{v:,.0f}" for v in top["discrepancy_usd"]] + [headers[3]],
+        "|DISCREP|": [f"{v:,.0f}" for v in top["abs_discrepancy_usd"]] + [headers[4]],
+        "GROSS_GAP": [f"{v:,.0f}" for v in top["gross_gap_usd"]] + [headers[5]],
+        "FLAG": [("UNDER" if b else "") for b in top["under_exposed"]] + [headers[6]],
+    }
+
+    sym_w = max(8, max(len(s) for s in row_labels))
+    tgt_w = max(10, max(len(s) for s in col_vals["TARGET_NET"]))
+    act_w = max(10, max(len(s) for s in col_vals["ACTUAL_NET"]))
+    d_w = max(10, max(len(s) for s in col_vals["DISCREP"]))
+    ad_w = max(10, max(len(s) for s in col_vals["|DISCREP|"]))
+    gg_w = max(10, max(len(s) for s in col_vals["GROSS_GAP"]))
+    fl_w = max(5, max(len(s) for s in col_vals["FLAG"]))
+
+    lines = [
+        f"{'SYMBOL'.ljust(sym_w)}  {'TARGET_NET'.rjust(tgt_w)}  {'ACTUAL_NET'.rjust(act_w)}  "
+        f"{'DISCREP'.rjust(d_w)}  {'|DISCREP|'.rjust(ad_w)}  {'GROSS_GAP'.rjust(gg_w)}  {'FLAG'.ljust(fl_w)}",
+        "-" * (sym_w + tgt_w + act_w + d_w + ad_w + gg_w + fl_w + 12),
+    ]
+    for _, r in top.iterrows():
+        flag = "UNDER" if bool(r["under_exposed"]) else ""
+        target_net = f"{float(r['target_net_usd']):,.0f}"
+        actual_net = f"{float(r['actual_net_usd']):,.0f}"
+        discrep = f"{float(r['discrepancy_usd']):,.0f}"
+        abs_discrep = f"{float(r['abs_discrepancy_usd']):,.0f}"
+        gross_gap = f"{float(r['gross_gap_usd']):,.0f}"
+        lines.append(
+            f"{str(r['symbol']).ljust(sym_w)}  "
+            f"{target_net.rjust(tgt_w)}  "
+            f"{actual_net.rjust(act_w)}  "
+            f"{discrep.rjust(d_w)}  "
+            f"{abs_discrep.rjust(ad_w)}  "
+            f"{gross_gap.rjust(gg_w)}  "
+            f"{flag.ljust(fl_w)}"
+        )
+    return "\n".join(lines)
+
+
+def make_position_discrepancy_plot(
+    discrepancy_df: pd.DataFrame,
+    run_date: str,
+    top_n: int = 25,
+) -> Path:
+    ensure_ledger_dir()
+    out_path = LEDGER_DIR / f"position_discrepancies_top_{top_n}_{run_date}.png"
+    top = discrepancy_df.head(top_n).copy()
+
+    if top.empty:
+        fig, ax = plt.subplots(figsize=(12, 5))
+        ax.text(0.5, 0.5, "No discrepancies to plot", ha="center", va="center", transform=ax.transAxes)
+        ax.axis("off")
+        fig.tight_layout()
+        fig.savefig(out_path, dpi=150)
+        plt.close(fig)
+        return out_path
+
+    top = top.sort_values("abs_discrepancy_usd", ascending=True)
+    y = np.arange(len(top))
+    colors = np.where(top["under_exposed"], "#d62728", "#1f77b4")
+
+    fig_h = max(6.0, 0.35 * len(top))
+    fig, ax = plt.subplots(figsize=(13, fig_h))
+    bars = ax.barh(y, top["discrepancy_usd"], color=colors, alpha=0.88)
+    ax.axvline(0, color="black", linewidth=0.8)
+    ax.set_yticks(y)
+    ax.set_yticklabels(top["symbol"].astype(str), fontsize=8)
+    ax.set_xlabel("Discrepancy USD (actual net - target net)")
+    ax.set_title(f"Top {min(top_n, len(top))} Position Discrepancies ({run_date})")
+    ax.grid(axis="x", alpha=0.25)
+
+    for bar, _, gross_gap, under in zip(
+        bars, top["discrepancy_usd"], top["gross_gap_usd"], top["under_exposed"]
+    ):
+        x = bar.get_width()
+        label = f"gap {gross_gap:,.0f}"
+        align = "left" if x >= 0 else "right"
+        dx = 3 if x >= 0 else -3
+        ax.annotate(
+            label,
+            xy=(x, bar.get_y() + bar.get_height() / 2),
+            xytext=(dx, 0),
+            textcoords="offset points",
+            va="center",
+            ha=align,
+            fontsize=7,
+            color="#d62728" if under else "#333333",
+        )
+
+    from matplotlib.patches import Patch
+
+    legend_items = [
+        Patch(facecolor="#d62728", label="Under-exposed (actual gross < target gross)"),
+        Patch(facecolor="#1f77b4", label="Other discrepancies"),
+    ]
+    ax.legend(handles=legend_items, loc="lower right", fontsize=8)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    return out_path
+
+
 def send_email(
     *,
     subject: str,
@@ -797,6 +1017,11 @@ def main() -> int:
     )
     plot_path = make_pnl_plot(hist)
 
+    discrepancy_df = load_position_discrepancies(run_date)
+    discrepancy_plot_path = make_position_discrepancy_plot(discrepancy_df, run_date, top_n=25)
+    discrepancy_table = format_largest_discrepancies(discrepancy_df, top_n=15)
+    under_exposed_count = int(discrepancy_df["under_exposed"].sum()) if not discrepancy_df.empty else 0
+
     # 6) Compose email
     recipients_raw = os.environ.get("PNL_RECIPIENTS", "")
     recipients = parse_recipients(recipients_raw)
@@ -846,6 +1071,8 @@ def main() -> int:
         f"As of: {asof}\n"
         f"Run date: {run_date} — Previous day mark-to-market\n"
         f"{pair_exposure_line}\n\n"
+        f"Position discrepancy rows: {len(discrepancy_df)} "
+        f"(under-exposed: {under_exposed_count})\n\n"
         f"TOTAL PnL (base): {grand_total:,.2f}\n"
         f"  Bucket 1 (Levered, β > 1.5):    {b1_pnl_total:,.2f}\n"
         f"  Bucket 2 (Standard, 0 < β ≤ 1.5): {b2_pnl_total:,.2f}\n"
@@ -895,6 +1122,11 @@ def main() -> int:
         "----------------------------------------\n"
         f"{exposure_table_str}\n"
         "----------------------------------------\n\n"
+        "Largest Position Discrepancies (actual net vs proposed target net):\n"
+        "----------------------------------------\n"
+        f"{discrepancy_table}\n"
+        "----------------------------------------\n"
+        "UNDER flag = actual gross exposure is below target gross exposure.\n\n"
         f"{hist_summary}\n"
         "Attachments:\n"
         "- pnl_by_underlying.csv  (bucket 1&2 combined)\n"
@@ -905,6 +1137,7 @@ def main() -> int:
         "- pnl_by_bucket.csv\n"
         "- totals.json\n"
         f"- {plot_path.name}\n"
+        f"- {discrepancy_plot_path.name}\n"
         "- net_exposure_by_underlying.csv\n"
         "- net_exposure_bucket_1.csv\n"
         "- net_exposure_bucket_2.csv\n"
@@ -912,7 +1145,7 @@ def main() -> int:
     )
 
     # 7) Send (attach all CSVs + totals + plot + exposure)
-    attachments = [pnl_under_csv, totals_json_path, plot_path]
+    attachments = [pnl_under_csv, totals_json_path, plot_path, discrepancy_plot_path]
     if pnl_symbol_csv.exists():
         attachments.insert(1, pnl_symbol_csv)
     for csv_path in [pnl_b1_csv, pnl_b2_csv, pnl_b3_csv, pnl_bucket_csv]:
