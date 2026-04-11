@@ -20,6 +20,7 @@ from ibkr_accounting import (
     canonical_symbol,
     compute_net_exposure,
     format_exposure_table,
+    load_etf_to_under_map,
     load_universe_from_screened,
     parse_open_positions,
 )
@@ -701,16 +702,25 @@ def load_position_discrepancies(run_date: str) -> pd.DataFrame:
         )
         actual = pos.groupby("symbol", as_index=False)["actual_net_usd"].sum()
 
-    allowed_etfs, allowed_underlyings = load_universe_from_screened(screened_csv)
+    allowed_etfs, _ = load_universe_from_screened(screened_csv)
     allowed_etfs |= set(SUPPLEMENTAL_ETF_MAP.keys())
-    allowed_underlyings |= set(SUPPLEMENTAL_ETF_MAP.values())
-    allowed_symbols = allowed_etfs | allowed_underlyings
+
+    etf_to_under = load_etf_to_under_map(screened_csv)
+    for e_sym, u_sym in SUPPLEMENTAL_ETF_MAP.items():
+        etf_to_under.setdefault(e_sym, u_sym)
+
+    blacklist_raw = ((cfg.get("strategy", {}) or {}).get("blacklist", [])) or []
+    blacklist = {canonical_symbol(str(s)) for s in blacklist_raw if str(s).strip()}
+    blocked_etfs = {s for s in blacklist if s in allowed_etfs}
+    blocked_etfs |= {e for e, u in etf_to_under.items() if u in blacklist}
 
     merged = target.merge(actual, on="symbol", how="outer")
     merged["target_net_usd"] = pd.to_numeric(merged["target_net_usd"], errors="coerce").fillna(0.0)
     merged["actual_net_usd"] = pd.to_numeric(merged["actual_net_usd"], errors="coerce").fillna(0.0)
     merged["symbol"] = merged["symbol"].astype(str).map(canonical_symbol)
-    merged = merged[merged["symbol"].isin(allowed_symbols)].copy()
+    merged = merged[merged["symbol"].isin(allowed_etfs)].copy()
+    if blocked_etfs:
+        merged = merged[~merged["symbol"].isin(blocked_etfs)].copy()
 
     merged["discrepancy_usd"] = merged["actual_net_usd"] - merged["target_net_usd"]
     merged["abs_discrepancy_usd"] = merged["discrepancy_usd"].abs()
@@ -773,7 +783,7 @@ def format_largest_discrepancies(discrepancy_df: pd.DataFrame, top_n: int = 15) 
 def make_position_discrepancy_plot(
     discrepancy_df: pd.DataFrame,
     run_date: str,
-    top_n: int = 25,
+    top_n: int = 30,
 ) -> Path:
     ensure_ledger_dir()
     out_path = LEDGER_DIR / f"position_discrepancies_top_{top_n}_{run_date}.png"
@@ -1018,8 +1028,8 @@ def main() -> int:
     plot_path = make_pnl_plot(hist)
 
     discrepancy_df = load_position_discrepancies(run_date)
-    discrepancy_plot_path = make_position_discrepancy_plot(discrepancy_df, run_date, top_n=25)
-    discrepancy_table = format_largest_discrepancies(discrepancy_df, top_n=15)
+    discrepancy_plot_path = make_position_discrepancy_plot(discrepancy_df, run_date, top_n=30)
+    discrepancy_table = format_largest_discrepancies(discrepancy_df, top_n=30)
     under_exposed_count = int(discrepancy_df["under_exposed"].sum()) if not discrepancy_df.empty else 0
 
     # 6) Compose email
