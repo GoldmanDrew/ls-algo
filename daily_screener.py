@@ -81,7 +81,7 @@ leverage_pairs = [
     ("LABU", "XBI"),  ("SOXL", "SOXX"),
     # --- 2X Thematic / Equity --
     ("CHAU", "ASHR"), ("CWEB", "KWEB"), ("ERX",  "XLE"),  ("NUGT", "GDX"),
-    ("JNUG", "GDXJ"), ("GUSH", "XOP"), ("URAA", "URA"),
+    ("JNUG", "GDXJ"), ("GUSH", "XOP"), ("URAA", "URA"), ("TQQQ", "QQQ"), ("SPXL", "SPY"), ("URTY", "IWM"),
 ]
 
 leverage_pairs_leverageshares = [
@@ -183,7 +183,7 @@ BENCHMARK_MAP = {
     "BTC": "IBIT", "ETH": "ETHA",  "CRCL": "CRCL", "CRWV": "CRWV",
     "GDX": "GDX",  "SLV": "SLV",   "XLE": "XLE",   "XOP": "XOP",
     "TLT": "TLT",  "MSCIJP": "EWJ","APLD": "APLD", "CLSK": "CLSK",
-    "IREN": "IREN", "BE": "BE", "NBIS": "NBIS", "SMR": "SMR",
+    "IREN": "IREN", "BE": "BE", "NBIS": "NBIS", "SMR": "SMR", "SPHB": "SPHB"
 }
 
 INVERSE_ETF_UNIVERSE = [
@@ -200,7 +200,7 @@ INVERSE_ETF_UNIVERSE = [
     ("EWV",  -2, "MSCIJP"), ("APLZ", -2, "APLD"), ("AMZO", -2, "AMZN"),
     ("BEZ", -2, "BE"), ("NBIZ", -2, "NBIS"), ("SMZ", -2, "SMR"),
     ("QBTZ", -2, "QBTS"), ("IONZ", -2, "IONQ"),
-    ("HIBS", -3, "SPX"),  ("CLSZ", -2, "CLSK"), ("IREZ", -2, "IREN")
+    ("HIBS", -3, "SPHB"),  ("CLSZ", -2, "CLSK"), ("IREZ", -2, "IREN")
 ]
 
 

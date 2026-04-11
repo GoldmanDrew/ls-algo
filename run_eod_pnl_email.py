@@ -844,6 +844,33 @@ def make_position_discrepancy_plot(
     return out_path
 
 
+def write_position_discrepancy_csvs(run_date: str, discrepancy_df: pd.DataFrame) -> tuple[Path, Path]:
+    outdir = PROJECT_ROOT / "data" / "runs" / run_date / "accounting"
+    outdir.mkdir(parents=True, exist_ok=True)
+    dated_path = outdir / "position_discrepancies_all.csv"
+    latest_path = PROJECT_ROOT / "data" / "position_discrepancies_all.csv"
+
+    cols = [
+        "symbol",
+        "target_net_usd",
+        "actual_net_usd",
+        "discrepancy_usd",
+        "abs_discrepancy_usd",
+        "target_gross_usd",
+        "actual_gross_usd",
+        "gross_gap_usd",
+        "under_exposed",
+    ]
+    out = discrepancy_df.copy()
+    for c in cols:
+        if c not in out.columns:
+            out[c] = np.nan
+    out = out[cols]
+    out.to_csv(dated_path, index=False)
+    out.to_csv(latest_path, index=False)
+    return dated_path, latest_path
+
+
 def send_email(
     *,
     subject: str,
@@ -1031,6 +1058,7 @@ def main() -> int:
     discrepancy_plot_path = make_position_discrepancy_plot(discrepancy_df, run_date, top_n=30)
     discrepancy_table = format_largest_discrepancies(discrepancy_df, top_n=30)
     under_exposed_count = int(discrepancy_df["under_exposed"].sum()) if not discrepancy_df.empty else 0
+    discrepancy_csv_path, _discrepancy_latest_csv_path = write_position_discrepancy_csvs(run_date, discrepancy_df)
 
     # 6) Compose email
     recipients_raw = os.environ.get("PNL_RECIPIENTS", "")
@@ -1148,6 +1176,7 @@ def main() -> int:
         "- totals.json\n"
         f"- {plot_path.name}\n"
         f"- {discrepancy_plot_path.name}\n"
+        f"- {discrepancy_csv_path.name}\n"
         "- net_exposure_by_underlying.csv\n"
         "- net_exposure_bucket_1.csv\n"
         "- net_exposure_bucket_2.csv\n"
@@ -1155,7 +1184,7 @@ def main() -> int:
     )
 
     # 7) Send (attach all CSVs + totals + plot + exposure)
-    attachments = [pnl_under_csv, totals_json_path, plot_path, discrepancy_plot_path]
+    attachments = [pnl_under_csv, totals_json_path, plot_path, discrepancy_plot_path, discrepancy_csv_path]
     if pnl_symbol_csv.exists():
         attachments.insert(1, pnl_symbol_csv)
     for csv_path in [pnl_b1_csv, pnl_b2_csv, pnl_b3_csv, pnl_bucket_csv]:
