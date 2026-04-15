@@ -469,6 +469,9 @@ _MANUAL_SPLIT_OVERRIDES: dict[str, dict[str, float]] = {
     "SMUP": {
         "2026-01-26": 0.1,
     },
+    "EOSU": {
+        "2026-04-15": 25,
+    },
 }
 
 # Known Yahoo symbol aliases for recently renamed products.
@@ -1244,15 +1247,17 @@ _VOL_CAP_ANNUAL = 5.0   # 500 % — loose backstop for truly broken data
 
 
 def _annualized_vol(tr_series: pd.Series, min_days: int = 60,
-                    cap: float = _VOL_CAP_ANNUAL) -> float | None:
-    """Annualized realized vol from a total-return price series.
+                    cap: float = _VOL_CAP_ANNUAL,
+                    max_days: int = TRADING_DAYS) -> float | None:
+    """Annualized realized vol from the last *max_days* of a TR series.
 
-    Split artifacts are handled upstream by _clean_split_artifacts().
-    A loose cap (500 %) is kept as a last-resort backstop for any
-    remaining data anomalies beyond splits.
+    Capping the lookback to 1 year (252 trading days) prevents stale
+    high-vol regimes from inflating expected-decay estimates for
+    underlyings whose recent vol is much lower.
     """
     tr = tr_series.dropna()
     if len(tr) < min_days + 1: return None
+    tr = tr.iloc[-max_days - 1:]  # keep max_days of returns (+1 for pct_change)
     ret = tr.pct_change().dropna()
     if len(ret) < min_days: return None
     vol = float(ret.std() * np.sqrt(TRADING_DAYS))
