@@ -72,6 +72,11 @@ def main() -> int:
         default=0.0,
         help="Optional cap per ETF short notional. 0 means no cap.",
     )
+    ap.add_argument(
+        "--auto-approve",
+        action="store_true",
+        help="Skip confirmation prompt before live order placement.",
+    )
     ap.add_argument("--live", action="store_true", help="Place live orders (default is dry-run).")
     ap.add_argument("--dry-run", action="store_true", help="Force dry-run mode.")
     args = ap.parse_args()
@@ -194,10 +199,10 @@ def main() -> int:
         ib_pos = current_ib_positions(ib)
         strat_pos = strategy_position_only(ib_pos, baseline)
         tprint(f"[HARVEST] Strategy-only symbols currently held: {len(strat_pos)}")
-
+        planned_rows: list[dict[str, Any]] = []
         for _, row in cands.iterrows():
             if stop_requested():
-                tprint("[HARVEST] Stop requested; halting candidate loop.")
+                tprint("[HARVEST] Stop requested; halting candidate planning.")
                 break
 
             etf = norm_sym(str(row["symbol"]))
@@ -294,6 +299,103 @@ def main() -> int:
                     }
                 )
                 continue
+
+            planned_rows.append(
+                {
+                    "symbol": etf,
+                    "underlying": under,
+                    "beta": beta,
+                    "target_short_usd": need_usd,
+                    "etf_px": px_etf,
+                    "under_px": px_under,
+                    "requested_short_sh": requested_short_sh,
+                    "ftp_available": avail,
+                    "ftp_borrow_annual": borrow,
+                }
+            )
+
+        if not planned_rows:
+            tprint("[HARVEST] No actionable candidates after planning filters.")
+            pd.DataFrame(attempted_rows).to_csv(attempted_path, index=False)
+            pd.DataFrame(fill_rows).to_csv(fills_path, index=False)
+            pd.DataFrame(summary_rows).to_csv(summary_path, index=False)
+            return 0
+
+        preview_df = pd.DataFrame(planned_rows).copy()
+        preview_df["requested_short_notional_usd"] = (
+            preview_df["requested_short_sh"] * preview_df["etf_px"]
+        )
+        preview_df["planned_under_buy_sh_if_full_fill"] = (
+            (
+                (preview_df["requested_short_sh"] * preview_df["etf_px"] * preview_df["beta"])
+                / preview_df["under_px"]
+            )
+            * max(0.0, 1.0 - float(args.underhedge_buffer_pct))
+        ).apply(lambda x: int(math.floor(float(x))) if pd.notna(x) else 0)
+
+        tprint("")
+        tprint("=" * 120)
+        tprint("[HARVEST] PRE-TRADE PLAN (what will be attempted)")
+        tprint("=" * 120)
+        tprint(
+            preview_df[
+                [
+                    "symbol",
+                    "underlying",
+                    "target_short_usd",
+                    "etf_px",
+                    "requested_short_sh",
+                    "requested_short_notional_usd",
+                    "planned_under_buy_sh_if_full_fill",
+                    "ftp_available",
+                ]
+            ].to_string(index=False)
+        )
+        tprint("=" * 120)
+        tprint("")
+
+        if (not dry_run) and (not args.auto_approve):
+            ans = input("[HARVEST] Approve live execution of this plan? (y/n): ").strip().lower()
+            if ans != "y":
+                tprint("[HARVEST] Execution cancelled by user.")
+                summary_rows.extend(
+                    {
+                        "symbol": str(r["symbol"]),
+                        "underlying": str(r["underlying"]),
+                        "requested_short_usd": float(r["target_short_usd"]),
+                        "requested_short_sh": int(r["requested_short_sh"]),
+                        "filled_short_sh": 0,
+                        "filled_under_buy_sh": 0,
+                        "remaining_short_usd": float(r["target_short_usd"]),
+                        "residual_beta_usd_after_hedge": 0.0,
+                        "status": "SKIP_USER_CANCELLED",
+                    }
+                    for r in planned_rows
+                )
+                pd.DataFrame(attempted_rows).to_csv(attempted_path, index=False)
+                pd.DataFrame(fill_rows).to_csv(fills_path, index=False)
+                pd.DataFrame(summary_rows).to_csv(summary_path, index=False)
+                return 0
+
+        for row in planned_rows:
+            if stop_requested():
+                tprint("[HARVEST] Stop requested; halting execution loop.")
+                break
+
+            etf = norm_sym(str(row["symbol"]))
+            under = norm_sym(str(row["underlying"]))
+            beta = float(row["beta"])
+            need_usd = float(row["target_short_usd"])
+            px_etf = float(row["etf_px"])
+            px_under = float(row["under_px"])
+            requested_short_sh = int(row["requested_short_sh"])
+            avail = row.get("ftp_available")
+            borrow = row.get("ftp_borrow_annual")
+
+            tprint(
+                f"[HARVEST] TRY {etf}: short {requested_short_sh} sh (~${requested_short_sh * px_etf:,.0f}) "
+                f"then hedge {under} from actual fills."
+            )
 
             short_ref = f"{strategy_tag}|HARVEST_SHORT|{under}|{etf}"
             short_res = execute_leg(

@@ -1,0 +1,25 @@
+{
+  "seed": 42,
+  "best_name": "cagr_tilt",
+  "target_lev_end": 4.78,
+  "cfg": {
+    "weight_power": 1.3,
+    "mix_decay_weight": 0.43,
+    "decay_weight_power": 1.1,
+    "max_dd_penalty_weight": 0.42,
+    "max_dd_penalty_start": "2024-01-01",
+    "max_dd_penalty_recent_weight": 0.62,
+    "position_concentration_power": 1.08,
+    "max_pair_weight_cap": 0.055,
+    "max_underlying_weight_cap": 0.12,
+    "missing_shares_cap": 0.02,
+    "cap_ramp_rebals": 4
+  },
+  "metrics": {
+    "score": -0.259154385215722,
+    "CAGR": -0.23482279652001248,
+    "TotalReturn": -0.28889299362158904,
+    "PnL_USD": -2876998.9042221038,
+    "MaxDD_2024": NaN
+  }
+}
