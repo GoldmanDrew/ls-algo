@@ -77,12 +77,16 @@ def main() -> int:
         action="store_true",
         help="Skip confirmation prompt before live order placement.",
     )
-    ap.add_argument("--live", action="store_true", help="Place live orders (default is dry-run).")
+    ap.add_argument(
+        "--live",
+        action="store_true",
+        help="Deprecated flag (live is now default).",
+    )
     ap.add_argument("--dry-run", action="store_true", help="Force dry-run mode.")
     args = ap.parse_args()
 
     run_date = args.run_date or os.environ.get("RUN_DATE") or today_str()
-    dry_run = bool(args.dry_run or (not args.live))
+    dry_run = bool(args.dry_run)
 
     cfg = load_config("config/strategy_config.yml")
     ibkr_cfg = cfg.get("ibkr", {}) or {}

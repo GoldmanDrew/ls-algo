@@ -77,7 +77,7 @@ leverage_pairs = [
     ("PLTU", "PLTR"), ("QCMU", "QCOM"), ("SHPU", "SHOP"), ("SOFA", "SOFI"),
     ("TSLL", "TSLA"), ("TSMX", "TSM"),  ("XOMX", "XOM"),
     # --- 3X Equity ---
-    ("YINN", "FXI"),  ("MEXX", "EWW"),  ("KORU", "EWY"),  ("HIBL", "SPY"),
+    ("YINN", "FXI"),  ("MEXX", "EWW"),  ("KORU", "EWY"),  ("HIBL", "SPHB"),
     ("LABU", "XBI"),  ("SOXL", "SOXX"),
     # --- 2X Thematic / Equity --
     ("CHAU", "ASHR"), ("CWEB", "KWEB"), ("ERX",  "XLE"),  ("NUGT", "GDX"),
@@ -129,7 +129,7 @@ new_pairs = [
     ("LITX", "LITE"), ("SNXX", "SNDX"), ("WDCX", "WDC"),  ("LNOK", "NOK"),
     ("USGG", "USAR"), ("ONDG", "ONDS"), ("PLUL", "PLUG"), ("ALBG", "ALB"),
     ("UUUG", "UUUU"), ("HUTG", "HUT"),  ("XPEG", "XPEV"), ("ORLG", "ORLY"),
-    ("LUNL", "LUNR"), ("RKTL", "RKT"),  ("EOSU", "EOSE"), ("BTFL", "BITF"),
+    ("LUNL", "LUNR"), ("RKTL", "RKT"),  ("EOSU", "EOSE"), ("BTFL", "KEEL"),
     ("FGRU", "FIGR"), ("APHU", "APH"),  ("COPZ", "COPX"), ("LEUX", "LEU"),
     ("COHX", "COHR"), ("AXPG", "AXP"),  ("FCXG", "FCX"), ("GLWG", "GLW"),
     ("SNDU", "SNDK"), ("PAAU", "PAAS"),
@@ -410,6 +410,7 @@ def build_full_universe(skip_scrape: bool = False, skip_inverse: bool = False) -
         "OKTX",   # OKTA — closed 2026-02-04
         "PXIU",   # UPXI — closed 2026-03-16
         "QSX",    # QS   — closed 2026-01-30
+        "FRDU",   # FRDU — closed 2026-03-16
     }
     bad_mask = all_df["ETF"].isin(_BAD_TICKERS) | all_df["Underlying"].isin(_BAD_TICKERS)
     if bad_mask.any():
