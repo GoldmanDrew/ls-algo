@@ -574,6 +574,11 @@ def _apply_manual_split_overrides(series: pd.Series, ticker: str) -> pd.Series:
       - all history strictly before split date is multiplied by factor.
       - if split date is absent, apply on nearest next trading day
         within 3 calendar days.
+
+    Self-healing: before applying, checks the price ratio across the
+    split boundary. If the pre/post prices are already close (ratio
+    within 3×), Yahoo has retroactively adjusted and the override is
+    skipped to avoid double-adjustment.
     """
     if series.empty:
         return series
@@ -606,6 +611,25 @@ def _apply_manual_split_overrides(series: pd.Series, ticker: str) -> pd.Series:
             continue
 
         f = float(factor)
+
+        # Self-healing: check if Yahoo already adjusted the split.
+        # Compare the last pre-split price to the first post-split price.
+        # If they're already within 3× of each other, the data is clean.
+        pre = out.loc[out.index < apply_ts]
+        post = out.loc[out.index >= apply_ts]
+        if len(pre) > 0 and len(post) > 0:
+            px_before = float(pre.iloc[-1])
+            px_after = float(post.iloc[0])
+            if px_before > 0 and px_after > 0:
+                raw_ratio = px_after / px_before
+                if 1/3 < raw_ratio < 3.0:
+                    print(
+                        f"[TR][split-override] {tkr} {ts.date()} SKIPPED — "
+                        f"Yahoo already adjusted (pre=${px_before:.2f} post=${px_after:.2f} "
+                        f"ratio={raw_ratio:.2f})"
+                    )
+                    continue
+
         out.loc[out.index < apply_ts] = out.loc[out.index < apply_ts] * f
         applied.append((ts, apply_ts, f))
 
