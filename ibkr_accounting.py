@@ -1882,27 +1882,54 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     pos_b12 = pos[(~pos["symbol"].isin(neg_beta_syms))].copy()
     b12_underlyings = set(pnl_by_underlying["underlying"].dropna().astype(str)) if not pnl_by_underlying.empty else set()
     if not pos_b12.empty and b12_underlyings:
-        exposure_df, _ = compute_net_exposure(
+        exposure_df, exposure_detail_df = compute_net_exposure(
             flex_positions_path, etf_screened_path, b12_underlyings,
             positions_df=pos_b12,
         )
     else:
         exposure_df = pd.DataFrame(columns=["underlying", "symbols", "net_notional_usd", "gross_notional_usd", "n_legs"])
+        exposure_detail_df = pd.DataFrame(columns=["underlying", "symbol", "net_notional_usd", "gross_notional_usd"])
 
-    if not exposure_df.empty:
-        exposure_b1_df = exposure_df.copy()
-        exposure_b2_df = exposure_df.copy()
-        exposure_b1_df["_ratio"] = exposure_b1_df["underlying"].map(
-            lambda u: _bucket_ratio_entry(u)[0]["b1"]
+    if not exposure_df.empty and not exposure_detail_df.empty:
+        _d = exposure_detail_df.copy()
+        _d["symbol"] = _d["symbol"].astype(str)
+        _d["underlying"] = _d["underlying"].astype(str)
+        _d["_is_etf"] = _d["symbol"].isin(etf_to_beta_map)
+        _d["_beta"] = _d["symbol"].map(etf_to_beta_map)
+        _d["_ratio_b1"] = np.where(
+            _d["_is_etf"],
+            np.where(_d["_beta"] > 1.5, 1.0, 0.0),
+            _d["underlying"].map(lambda u: _bucket_ratio_entry(u)[0]["b1"]),
         )
-        exposure_b2_df["_ratio"] = exposure_b2_df["underlying"].map(
-            lambda u: _bucket_ratio_entry(u)[0]["b2"]
+        _d["_ratio_b2"] = np.where(
+            _d["_is_etf"],
+            np.where((_d["_beta"] > 0) & (_d["_beta"] <= 1.5), 1.0, 0.0),
+            _d["underlying"].map(lambda u: _bucket_ratio_entry(u)[0]["b2"]),
         )
-        for _edf in [exposure_b1_df, exposure_b2_df]:
-            _edf["net_notional_usd"] = _edf["net_notional_usd"] * _edf["_ratio"]
-            _edf["gross_notional_usd"] = _edf["gross_notional_usd"] * _edf["_ratio"]
-        exposure_b1_df = exposure_b1_df[exposure_b1_df["_ratio"] > 0].drop(columns=["_ratio"]).sort_values("net_notional_usd", ascending=False)
-        exposure_b2_df = exposure_b2_df[exposure_b2_df["_ratio"] > 0].drop(columns=["_ratio"]).sort_values("net_notional_usd", ascending=False)
+
+        _b1_detail = _d[_d["_ratio_b1"] > 0].copy()
+        _b1_detail["net_notional_usd"] = _b1_detail["net_notional_usd"] * _b1_detail["_ratio_b1"]
+        _b1_detail["gross_notional_usd"] = _b1_detail["gross_notional_usd"] * _b1_detail["_ratio_b1"]
+        _b2_detail = _d[_d["_ratio_b2"] > 0].copy()
+        _b2_detail["net_notional_usd"] = _b2_detail["net_notional_usd"] * _b2_detail["_ratio_b2"]
+        _b2_detail["gross_notional_usd"] = _b2_detail["gross_notional_usd"] * _b2_detail["_ratio_b2"]
+
+        def _agg_bucket_exposure(_detail: pd.DataFrame) -> pd.DataFrame:
+            if _detail.empty:
+                return pd.DataFrame(columns=["underlying", "symbols", "net_notional_usd", "gross_notional_usd", "n_legs"])
+            return (
+                _detail.groupby("underlying", as_index=False)
+                .agg(
+                    symbols=("symbol", lambda s: ", ".join(sorted(set(s.astype(str))))),
+                    net_notional_usd=("net_notional_usd", "sum"),
+                    gross_notional_usd=("gross_notional_usd", "sum"),
+                    n_legs=("symbol", "nunique"),
+                )
+                .sort_values("net_notional_usd", ascending=False)
+            )
+
+        exposure_b1_df = _agg_bucket_exposure(_b1_detail)
+        exposure_b2_df = _agg_bucket_exposure(_b2_detail)
     else:
         exposure_b1_df = pd.DataFrame(columns=["underlying", "symbols", "net_notional_usd", "gross_notional_usd", "n_legs"])
         exposure_b2_df = pd.DataFrame(columns=["underlying", "symbols", "net_notional_usd", "gross_notional_usd", "n_legs"])
