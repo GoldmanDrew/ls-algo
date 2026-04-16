@@ -1,12 +1,13 @@
 ibkr:
   host: 127.0.0.1
-  port: 7496
-  client_id: 41
+  port: 7497
+  client_id: 31
   prefer_delayed: true
   suppress_error_codes: [10089]
 
 accounting:
   use_yfinance: false           # override Flex markPrice with yfinance close
+  bucket_split_method: held_exposure  # held_exposure | universe_beta
 
 strategy:
   tag: ETF_LS

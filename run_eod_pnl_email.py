@@ -304,40 +304,43 @@ def format_pair_exposure_flags(
 
 def read_bucket_pnl_from_run(run_date_str: str) -> tuple[float, float, float] | None:
     """
-    Bucket YTD-style totals from a prior accounting run, if present.
-    Prefer totals.json bucket_pnl; else sum pnl_bucket_{1,2,3}.csv.
+    Bucket YTD-style totals from a prior accounting run.
+    Requires totals.json with bucket_pnl fields to avoid drifting away from
+    the canonical accounting output used by the email report.
     """
     outdir = RUNS_ROOT / run_date_str / "accounting"
     if not outdir.is_dir():
         return None
 
     totals_path = outdir / "totals.json"
-    if totals_path.exists():
-        try:
-            obj = json.loads(totals_path.read_text(encoding="utf-8"))
-            bp = obj.get("bucket_pnl")
-            if isinstance(bp, dict) and bp:
-                return (
-                    float(bp.get("bucket_1", 0.0)),
-                    float(bp.get("bucket_2", 0.0)),
-                    float(bp.get("bucket_3", 0.0)),
-                )
-        except Exception:
-            pass
-
-    paths = [outdir / f"pnl_bucket_{i}.csv" for i in (1, 2, 3)]
-    if not all(p.exists() for p in paths):
+    if not totals_path.exists():
         return None
-    sums: list[float] = []
-    for p in paths:
-        df = pd.read_csv(p)
-        if df.empty or "total_pnl" not in df.columns:
-            sums.append(0.0)
-        else:
-            sums.append(
-                float(pd.to_numeric(df["total_pnl"], errors="coerce").fillna(0.0).sum())
-            )
-    return sums[0], sums[1], sums[2]
+
+    obj = json.loads(totals_path.read_text(encoding="utf-8"))
+    bp = obj.get("bucket_pnl")
+    if not isinstance(bp, dict):
+        raise RuntimeError(
+            f"Missing or invalid bucket_pnl in {totals_path}; cannot build bucket history."
+        )
+    required = ("bucket_1", "bucket_2", "bucket_3")
+    missing = [k for k in required if k not in bp]
+    if missing:
+        raise RuntimeError(
+            f"Missing bucket keys {missing} in {totals_path}; cannot build bucket history."
+        )
+
+    split_method = str(obj.get("bucket_split_method", "")).strip().lower()
+    if split_method == "pnl_weighted":
+        raise RuntimeError(
+            f"Run {run_date_str} still reports bucket_split_method='pnl_weighted'. "
+            "Re-run accounting with held_exposure before generating email history."
+        )
+
+    return (
+        float(bp.get("bucket_1", 0.0)),
+        float(bp.get("bucket_2", 0.0)),
+        float(bp.get("bucket_3", 0.0)),
+    )
 
 
 def enrich_history_bucket_cols_from_runs(hist: pd.DataFrame) -> pd.DataFrame:

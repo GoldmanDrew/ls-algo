@@ -52,17 +52,21 @@ jobs:
           print(datetime.now(pytz.timezone('America/New_York')).date().isoformat())
           ")
           echo "RUN_DATE=$RUN_DATE"
+          echo "RUN_DATE=$RUN_DATE" >> "$GITHUB_ENV"
           python daily_screener.py --run-date "$RUN_DATE" --skip-ibkr-check
+          python generate_trade_plan.py --run-date "$RUN_DATE"
 
-      - name: Commit screener outputs
+      - name: Commit screener + trade-plan outputs
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/ || true
+          git add data/proposed_trades.csv || true
+          git add "data/runs/${RUN_DATE}/proposed_trades.csv" || true
+          git add data/etf_screened_today.csv || true
           if git diff --cached --quiet; then
-            echo "No screener changes to commit"
+            echo "No screener/trade-plan changes to commit"
           else
-            git commit -m "screener: $(date -u +%Y-%m-%d) run"
+            git commit -m "screener: $(date -u +%Y-%m-%d) refresh + trade plan"
             git pull --no-rebase -X ours origin main || true
             git push
           fi

@@ -754,6 +754,21 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     cfg = yaml.safe_load(config_yml_path.read_text(encoding="utf-8")) or {}
     if use_yfinance is None:
         use_yfinance = bool((cfg.get("accounting", {}) or {}).get("use_yfinance", False))
+    split_method = str(
+        (cfg.get("accounting", {}) or {}).get("bucket_split_method", "held_exposure")
+    ).strip().lower()
+    if split_method == "pnl_weighted":
+        print(
+            "[ACCOUNTING] WARNING: accounting.bucket_split_method='pnl_weighted' "
+            "is deprecated and unsupported; defaulting to 'held_exposure'"
+        )
+        split_method = "held_exposure"
+    if split_method not in {"held_exposure", "universe_beta"}:
+        print(
+            f"[ACCOUNTING] WARNING: unknown accounting.bucket_split_method={split_method!r}; "
+            "defaulting to 'held_exposure'"
+        )
+        split_method = "held_exposure"
 
     etf_screened_path = PROJECT_ROOT / "data" / "etf_screened_today.csv"
     if not etf_screened_path.exists():
@@ -985,8 +1000,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     # bucket_1: ETF beta > 1.5  (levered)
     # bucket_2: ETF beta 0 < β ≤ 1.5  (standard / low-lev)
     # bucket_3: ETF beta < 0  (inverse)
-    # Spot positions (not in etf_to_beta_map) are split pro-rata by the
-    # absolute betas of the ETFs sharing their underlying.
+    # Spot positions (not in etf_to_beta_map) are split pro-rata by
+    # underlying bucket ratios based on held ETF exposure (fallback: ETF beta mix).
     _, etf_to_beta_map = load_etf_beta_map(etf_screened_path)
     neg_beta_syms = {s for s, b in etf_to_beta_map.items() if b < 0}
 
@@ -1090,38 +1105,18 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     else:
         _held_ratio_map = {}
 
-    # Use universe-level ETF beta mix as the structural fallback.
+    # Base split map used for non-ETF rows (spot/fallback attribution).
+    # - universe_beta: use ETF beta mix from screened universe
+    # - held_exposure: held ETF exposure overrides universe fallback (default)
     _ratio_map = dict(_fallback_ratio_map)
+    if split_method == "held_exposure":
+        _ratio_map.update(_held_ratio_map)
     # If an underlying has no ETF mapping at all (orphan spot), attribute it
     # fully to bucket_1 rather than bucket_2.
     _orphan_ratio = {"b1": 1.0, "b2": 0.0}
-    # Build a dynamic per-day ratio map from ETF PnL activity so spot/underlying
-    # attribution follows where ETF PnL actually landed today.
-    _etf_pnl_rows = df[is_etf & (sym_beta > 0)].copy()
-    if not _etf_pnl_rows.empty:
-        _etf_pnl_rows["_bkt"] = np.where(_etf_pnl_rows["symbol"].map(etf_to_beta_map) > 1.5, "bucket_1", "bucket_2")
-        _etf_pnl_rows["_w"] = _etf_pnl_rows["total_pnl"].abs()
-        _pnl_sums = (
-            _etf_pnl_rows.groupby(["underlying", "_bkt"])["_w"]
-            .sum()
-            .reset_index()
-            .pivot(index="underlying", columns="_bkt", values="_w")
-            .fillna(0)
-            .reset_index()
-        )
-        for bc in ["bucket_1", "bucket_2"]:
-            if bc not in _pnl_sums.columns:
-                _pnl_sums[bc] = 0.0
-        _pnl_sums["_total"] = _pnl_sums["bucket_1"] + _pnl_sums["bucket_2"]
-        _pnl_sums = _pnl_sums[_pnl_sums["_total"] > 0].copy()
-        _pnl_sums["ratio_b1"] = _pnl_sums["bucket_1"] / _pnl_sums["_total"]
-        _pnl_sums["ratio_b2"] = 1.0 - _pnl_sums["ratio_b1"]
-        _live_pnl_ratio_map: dict[str, dict[str, float]] = {
-            row["underlying"]: {"b1": float(row["ratio_b1"]), "b2": float(row["ratio_b2"])}
-            for _, row in _pnl_sums.iterrows()
-        }
-    else:
-        _live_pnl_ratio_map = {}
+
+    def _bucket_ratio_for_underlying(underlying: str, ratio_key: str) -> float:
+        return _ratio_map.get(underlying, _orphan_ratio)[ratio_key]
 
     # Assign buckets:
     # - ETFs are ALWAYS bucketed by their own beta (independent of held status)
@@ -1142,7 +1137,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         part = split_source.copy()
         part["bucket"] = bkt_label
         part["_ratio"] = part["underlying"].map(
-            lambda u, rk=ratio_key: _live_pnl_ratio_map.get(u, _ratio_map.get(u, _orphan_ratio))[rk]
+            lambda u, rk=ratio_key: _bucket_ratio_for_underlying(u, rk)
         )
         for col in base_cols:
             part[col] = part[col] * part["_ratio"]
@@ -1248,10 +1243,10 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         exposure_b1_df = exposure_df.copy()
         exposure_b2_df = exposure_df.copy()
         exposure_b1_df["_ratio"] = exposure_b1_df["underlying"].map(
-            lambda u: _live_pnl_ratio_map.get(u, _ratio_map.get(u, _orphan_ratio))["b1"]
+            lambda u: _bucket_ratio_for_underlying(u, "b1")
         )
         exposure_b2_df["_ratio"] = exposure_b2_df["underlying"].map(
-            lambda u: _live_pnl_ratio_map.get(u, _ratio_map.get(u, _orphan_ratio))["b2"]
+            lambda u: _bucket_ratio_for_underlying(u, "b2")
         )
         for _edf in [exposure_b1_df, exposure_b2_df]:
             _edf["net_notional_usd"] = _edf["net_notional_usd"] * _edf["_ratio"]
@@ -1319,6 +1314,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "gross_exposure_bucket_3": float(exposure_b3_df["gross_notional_usd"].sum()) if not exposure_b3_df.empty else 0.0,
         "yfinance_override": bool(use_yfinance),
         "yfinance_symbols_overridden": len(yf_closes),
+        "bucket_split_method": split_method,
+        "bucket_ratio_underlyings_fallback": int(len(_fallback_ratio_map)),
+        "bucket_ratio_underlyings_held": int(len(_held_ratio_map)),
         "bucket_pnl": {
             row["bucket"]: float(row["total_pnl"])
             for _, row in pnl_by_bucket.iterrows()
@@ -1335,6 +1333,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
 
     n_exp = len(exposure_df) if not exposure_df.empty else 0
     print(f"[ACCOUNTING] PnL: {df['symbol'].nunique()} symbols, {df['underlying'].nunique()} underlyings")
+    print(f"[ACCOUNTING] Bucket split method: {split_method}")
     print(f"[ACCOUNTING] Exposure (b12): {n_exp} underlyings, net={totals['net_exposure_total']:,.0f}, gross={totals['gross_exposure_total']:,.0f}")
     print(f"[ACCOUNTING] Bucket 1: net={totals['net_exposure_bucket_1']:,.0f}, gross={totals['gross_exposure_bucket_1']:,.0f}")
     print(f"[ACCOUNTING] Bucket 2: net={totals['net_exposure_bucket_2']:,.0f}, gross={totals['gross_exposure_bucket_2']:,.0f}")
