@@ -3,7 +3,7 @@
   "fifo_summary_present": true,
   "total_realized_pnl": 25375.590833890004,
   "total_unrealized_pnl": 20252.538695999996,
-  "total_dividends": 488.18,
+  "total_dividends": 488.17999999999995,
   "total_withholding_tax": -7.889999999999999,
   "total_pil_dividends": -20218.550000000003,
   "total_borrow_fees": -8965.27,
@@ -16,7 +16,7 @@
   "borrow_total_account_source": -8965.27,
   "borrow_details_file_present": true,
   "borrow_details_rows_cumulative": 292,
-  "universe_source": "/home/runner/work/ls-algo/ls-algo/data/etf_screened_today.csv",
+  "universe_source": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\etf_screened_today.csv",
   "universe_allowed_etfs": 413,
   "universe_allowed_underlyings": 218,
   "kept_symbols": 486,
@@ -33,11 +33,11 @@
   "yfinance_symbols_overridden": 0,
   "bucket_split_method": "held_exposure",
   "bucket_component_split_method": "lot_timed",
-  "bucket_state_path": "/home/runner/work/ls-algo/ls-algo/data/accounting/underlying_bucket_state.csv",
+  "bucket_state_path": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\accounting\\underlying_bucket_state.csv",
   "bucket_realized_underlyings_from_trade_timing": 122,
   "bucket_pnl": {
-    "bucket_2": 7649.176159269414,
-    "bucket_1": 6079.966811924166,
+    "bucket_2": 7649.174700150016,
+    "bucket_1": 6079.968271043562,
     "bucket_3": 5410.646558696425
   }
 }
