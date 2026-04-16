@@ -995,6 +995,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "bond_interest",
         "total_pnl",
     ]
+    df_pre_bucket = df.copy()
 
     # ── Bucket assignment ──
     # bucket_1: ETF beta > 1.5  (levered)
@@ -1115,8 +1116,17 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     # fully to bucket_1 rather than bucket_2.
     _orphan_ratio = {"b1": 1.0, "b2": 0.0}
 
+    def _bucket_ratio_entry(underlying: str) -> tuple[dict[str, float], str]:
+        u = str(underlying)
+        if split_method == "held_exposure" and u in _held_ratio_map:
+            return _held_ratio_map[u], "held_exposure"
+        if u in _fallback_ratio_map:
+            return _fallback_ratio_map[u], "universe_beta_fallback"
+        return _orphan_ratio, "orphan"
+
     def _bucket_ratio_for_underlying(underlying: str, ratio_key: str) -> float:
-        return _ratio_map.get(underlying, _orphan_ratio)[ratio_key]
+        ratio_map, _ = _bucket_ratio_entry(underlying)
+        return ratio_map[ratio_key]
 
     # Assign buckets:
     # - ETFs are ALWAYS bucketed by their own beta (independent of held status)
@@ -1131,20 +1141,63 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     needs_split = (~is_etf) & (df["bucket"] == "")
     fixed_rows = df[~needs_split].copy()
     split_source = df[needs_split].copy()
+    if not split_source.empty:
+        _ratio_meta = split_source["underlying"].astype(str).apply(_bucket_ratio_entry)
+        split_source["_ratio_b1"] = _ratio_meta.map(lambda x: float(x[0]["b1"]))
+        split_source["_ratio_b2"] = _ratio_meta.map(lambda x: float(x[0]["b2"]))
+        split_source["_ratio_source"] = _ratio_meta.map(lambda x: x[1])
 
     split_parts: list[pd.DataFrame] = []
-    for bkt_label, ratio_key in [("bucket_1", "b1"), ("bucket_2", "b2")]:
+    for bkt_label, ratio_col in [("bucket_1", "_ratio_b1"), ("bucket_2", "_ratio_b2")]:
         part = split_source.copy()
         part["bucket"] = bkt_label
-        part["_ratio"] = part["underlying"].map(
-            lambda u, rk=ratio_key: _bucket_ratio_for_underlying(u, rk)
-        )
+        part["_ratio"] = part[ratio_col]
         for col in base_cols:
             part[col] = part[col] * part["_ratio"]
         part = part[part["_ratio"] > 0].drop(columns=["_ratio"])
         split_parts.append(part)
 
     df = pd.concat([fixed_rows] + split_parts, ignore_index=True)
+
+    # Reconciliation checks: split conservation and bucket integrity.
+    tol = 1e-6
+    if not split_source.empty:
+        split_key_cols = ["symbol", "underlying"]
+        orig_non_etf = (
+            split_source.groupby(split_key_cols, as_index=False)[base_cols]
+            .sum()
+            .rename(columns={c: f"{c}_orig" for c in base_cols})
+        )
+        split_non_etf = (
+            df[(~df["symbol"].isin(etf_to_beta_map)) & (df["bucket"].isin(["bucket_1", "bucket_2"]))]
+            .groupby(split_key_cols, as_index=False)[base_cols]
+            .sum()
+            .rename(columns={c: f"{c}_split" for c in base_cols})
+        )
+        per_symbol_check = orig_non_etf.merge(split_non_etf, on=split_key_cols, how="outer").fillna(0.0)
+        for c in base_cols:
+            per_symbol_check[f"{c}_diff"] = per_symbol_check[f"{c}_split"] - per_symbol_check[f"{c}_orig"]
+        max_sym_diff = float(per_symbol_check[[f"{c}_diff" for c in base_cols]].abs().to_numpy().max())
+        if max_sym_diff > tol:
+            raise AssertionError(
+                "Non-ETF split conservation failed; b1+b2 split does not match original non-ETF rows. "
+                f"max_abs_diff={max_sym_diff:.8f}"
+            )
+
+    global_pre = df_pre_bucket[base_cols].sum(numeric_only=True)
+    global_post = df[base_cols].sum(numeric_only=True)
+    global_diff = (global_post - global_pre).abs()
+    max_global_diff = float(global_diff.max()) if not global_diff.empty else 0.0
+    if max_global_diff > tol:
+        raise AssertionError(
+            "Global conservation failed after bucket split. "
+            f"max_abs_diff={max_global_diff:.8f}; diffs={global_diff.to_dict()}"
+        )
+
+    inverse_leak = df[df["symbol"].isin(neg_beta_syms) & (df["bucket"] != "bucket_3")]
+    if not inverse_leak.empty:
+        bad = inverse_leak[["symbol", "bucket"]].drop_duplicates().head(10).to_dict(orient="records")
+        raise AssertionError(f"Inverse ETF bucket leakage detected (expected bucket_3 only): {bad}")
 
     # ── PnL outputs ──
     pnl_by_symbol = (
@@ -1214,6 +1267,13 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         .sum()
         .sort_values("total_pnl", ascending=False)
     )
+    bucket_total_pnl = float(pd.to_numeric(pnl_by_bucket["total_pnl"], errors="coerce").fillna(0.0).sum())
+    total_pnl_from_rows = float(pd.to_numeric(df["total_pnl"], errors="coerce").fillna(0.0).sum())
+    if abs(bucket_total_pnl - total_pnl_from_rows) > tol:
+        raise AssertionError(
+            "Bucket total_pnl tie-out failed. "
+            f"bucket_total={bucket_total_pnl:.8f} vs row_total={total_pnl_from_rows:.8f}"
+        )
 
     pnl_by_symbol.to_csv(outdir / "pnl_by_symbol.csv", index=False)
     pnl_by_underlying.to_csv(outdir / "pnl_by_underlying.csv", index=False)
@@ -1253,6 +1313,38 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             _edf["gross_notional_usd"] = _edf["gross_notional_usd"] * _edf["_ratio"]
         exposure_b1_df = exposure_b1_df[exposure_b1_df["_ratio"] > 0].drop(columns=["_ratio"]).sort_values("net_notional_usd", ascending=False)
         exposure_b2_df = exposure_b2_df[exposure_b2_df["_ratio"] > 0].drop(columns=["_ratio"]).sort_values("net_notional_usd", ascending=False)
+
+        # Make bucket exposure symbol lists explicit: only symbols that actually
+        # contribute to that bucket after bucket assignment/splitting.
+        _b1_sym_map = (
+            df[df["bucket"] == "bucket_1"]
+            .groupby("underlying")["symbol"]
+            .apply(lambda s: ", ".join(sorted(set(s.astype(str)))))
+            .to_dict()
+        )
+        _b2_sym_map = (
+            df[df["bucket"] == "bucket_2"]
+            .groupby("underlying")["symbol"]
+            .apply(lambda s: ", ".join(sorted(set(s.astype(str)))))
+            .to_dict()
+        )
+        _b1_nlegs_map = (
+            df[df["bucket"] == "bucket_1"]
+            .groupby("underlying")["symbol"]
+            .nunique()
+            .to_dict()
+        )
+        _b2_nlegs_map = (
+            df[df["bucket"] == "bucket_2"]
+            .groupby("underlying")["symbol"]
+            .nunique()
+            .to_dict()
+        )
+
+        exposure_b1_df["symbols"] = exposure_b1_df["underlying"].map(_b1_sym_map).fillna("")
+        exposure_b2_df["symbols"] = exposure_b2_df["underlying"].map(_b2_sym_map).fillna("")
+        exposure_b1_df["n_legs"] = exposure_b1_df["underlying"].map(_b1_nlegs_map).fillna(0).astype(int)
+        exposure_b2_df["n_legs"] = exposure_b2_df["underlying"].map(_b2_nlegs_map).fillna(0).astype(int)
     else:
         exposure_b1_df = pd.DataFrame(columns=["underlying", "symbols", "net_notional_usd", "gross_notional_usd", "n_legs"])
         exposure_b2_df = pd.DataFrame(columns=["underlying", "symbols", "net_notional_usd", "gross_notional_usd", "n_legs"])
@@ -1317,6 +1409,15 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "bucket_split_method": split_method,
         "bucket_ratio_underlyings_fallback": int(len(_fallback_ratio_map)),
         "bucket_ratio_underlyings_held": int(len(_held_ratio_map)),
+        "bucket_ratio_underlyings_used_held": int(
+            split_source.loc[split_source["_ratio_source"] == "held_exposure", "underlying"].astype(str).nunique()
+        ) if not split_source.empty else 0,
+        "bucket_ratio_underlyings_used_fallback": int(
+            split_source.loc[split_source["_ratio_source"] == "universe_beta_fallback", "underlying"].astype(str).nunique()
+        ) if not split_source.empty else 0,
+        "bucket_ratio_underlyings_used_orphan": int(
+            split_source.loc[split_source["_ratio_source"] == "orphan", "underlying"].astype(str).nunique()
+        ) if not split_source.empty else 0,
         "bucket_pnl": {
             row["bucket"]: float(row["total_pnl"])
             for _, row in pnl_by_bucket.iterrows()

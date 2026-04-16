@@ -34,6 +34,9 @@
   "bucket_split_method": "held_exposure",
   "bucket_ratio_underlyings_fallback": 204,
   "bucket_ratio_underlyings_held": 68,
+  "bucket_ratio_underlyings_used_held": 67,
+  "bucket_ratio_underlyings_used_fallback": 23,
+  "bucket_ratio_underlyings_used_orphan": 8,
   "bucket_pnl": {
     "bucket_2": 8094.225042332286,
     "bucket_3": -3660.03948458822,
