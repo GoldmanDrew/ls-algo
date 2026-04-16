@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="460" viewBox="0 0 1200 460">
+  <rect width="100%" height="100%" fill="#ffffff" />
+
+  <style>
+    .hdr { font-family: Garamond, "Times New Roman", serif; font-size: 52px; font-weight: 700; fill: #111111; }
+    .row { font-family: Garamond, "Times New Roman", serif; font-size: 46px; font-weight: 400; fill: #111111; }
+    .rule { stroke: #111111; stroke-width: 2.2; }
+  </style>
+
+  <!-- Column centers -->
+  <!-- Labels=160, DiamondCreek=570, SPY=960 -->
+
+  <!-- Header -->
+  <text class="hdr" x="570" y="75" text-anchor="middle">
+    <tspan x="570" dy="0">Diamond Creek</tspan>
+    <tspan x="570" dy="50">ETF Arb Fund</tspan>
+  </text>
+  <text class="hdr" x="960" y="75" text-anchor="middle">SPY</text>
+
+  <!-- Horizontal rules -->
+  <line class="rule" x1="30" y1="138" x2="1170" y2="138" />
+  <line class="rule" x1="30" y1="235" x2="1170" y2="235" />
+  <line class="rule" x1="30" y1="340" x2="1170" y2="340" />
+  <line class="rule" x1="30" y1="445" x2="1170" y2="445" />
+
+  <!-- Row 1 -->
+  <text class="row" x="70" y="190" text-anchor="start">CAGR</text>
+  <text class="row" x="570" y="190" text-anchor="middle">29.5%</text>
+  <text class="row" x="960" y="190" text-anchor="middle">19.4%</text>
+
+  <!-- Row 2 -->
+  <text class="row" x="70" y="295" text-anchor="start">Annual Volatility</text>
+  <text class="row" x="570" y="295" text-anchor="middle">13.2%</text>
+  <text class="row" x="960" y="295" text-anchor="middle">15.3%</text>
+
+  <!-- Row 3 -->
+  <text class="row" x="70" y="400" text-anchor="start">Maximum Drawdown</text>
+  <text class="row" x="570" y="400" text-anchor="middle">(7.2%)</text>
+  <text class="row" x="960" y="400" text-anchor="middle">(18.8%)</text>
+</svg>

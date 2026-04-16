@@ -336,16 +336,11 @@ def read_bucket_pnl_from_run(run_date_str: str) -> tuple[float, float, float] | 
             "Re-run accounting with held_exposure before generating email history."
         )
 
-    vals: dict[str, float] = {}
-    for k in required:
-        try:
-            vals[k] = float(bp.get(k, 0.0))
-        except (TypeError, ValueError) as e:
-            raise RuntimeError(
-                f"Non-numeric {k} in {totals_path}: value={bp.get(k)!r}"
-            ) from e
-
-    return (vals["bucket_1"], vals["bucket_2"], vals["bucket_3"])
+    return (
+        float(bp.get("bucket_1", 0.0)),
+        float(bp.get("bucket_2", 0.0)),
+        float(bp.get("bucket_3", 0.0)),
+    )
 
 
 def enrich_history_bucket_cols_from_runs(hist: pd.DataFrame) -> pd.DataFrame:

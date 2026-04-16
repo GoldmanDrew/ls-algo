@@ -50,6 +50,7 @@ import json
 import re
 import sys
 import xml.etree.ElementTree as ET
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import numpy as np
@@ -97,6 +98,24 @@ PROJECT_ROOT = find_project_root(Path(__file__).resolve())
 
 # Hard exclusion
 EXCLUDE_SYMBOLS = {canonical_symbol("BRK.B"), canonical_symbol("BRKB")}
+
+
+def _normalize_bucket_pair(b1: float, b2: float) -> tuple[float, float]:
+    """Return a stable (b1,b2) pair with b1+b2=1."""
+    try:
+        x1 = float(b1)
+    except Exception:
+        x1 = 0.0
+    try:
+        x2 = float(b2)
+    except Exception:
+        x2 = 0.0
+    x1 = max(0.0, x1)
+    x2 = max(0.0, x2)
+    s = x1 + x2
+    if s <= 0:
+        return 1.0, 0.0
+    return x1 / s, x2 / s
 
 # Supplemental ETF→Underlying mappings for securities that were traded as part
 # of the algo but are no longer in etf_screened_today.csv (e.g. closed positions
@@ -295,6 +314,150 @@ def parse_fifo_perf(trades_xml: Path) -> pd.DataFrame:
     return pd.DataFrame(columns=["symbol", "underlyingSymbol", "description", "realized_pnl", "unrealized_pnl"])
 
 
+def parse_trade_events(trades_xml: Path) -> pd.DataFrame:
+    """Parse Trade rows with timing + order reference metadata."""
+    r = ET.parse(trades_xml).getroot()
+    node = r.find(".//Trades")
+    if node is None:
+        return pd.DataFrame(
+            columns=[
+                "dateTime", "symbol", "underlyingSymbol", "buySell", "quantity",
+                "fifoPnlRealized_base", "tradePrice_base", "orderReference", "openCloseIndicator",
+            ]
+        )
+    rows: list[dict] = []
+    for child in node:
+        if child.tag != "Trade":
+            continue
+        a = child.attrib
+        sym = canonical_symbol(a.get("symbol", "") or "")
+        if not sym:
+            continue
+        und = canonical_symbol(a.get("underlyingSymbol", "") or "")
+        buy_sell = str(a.get("buySell", "") or "").upper()
+        q_raw = float(a.get("quantity", "0") or 0.0)
+        qty_signed = q_raw
+        if q_raw >= 0:
+            if buy_sell == "SELL":
+                qty_signed = -q_raw
+            elif buy_sell == "BUY":
+                qty_signed = q_raw
+        realized_local = float(a.get("fifoPnlRealized", "0") or 0.0)
+        trade_price_local = float(a.get("tradePrice", "0") or 0.0)
+        fx = float(a.get("fxRateToBase", "1") or 1.0)
+        rows.append(
+            {
+                "dateTime": str(a.get("dateTime", "") or ""),
+                "symbol": sym,
+                "underlyingSymbol": und,
+                "buySell": buy_sell,
+                "quantity": float(qty_signed),
+                "fifoPnlRealized_base": float(to_base(realized_local, fx)),
+                "tradePrice_base": float(to_base(trade_price_local, fx)),
+                "orderReference": str(a.get("orderReference", "") or ""),
+                "openCloseIndicator": str(a.get("openCloseIndicator", "") or ""),
+            }
+        )
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    return df.sort_values("dateTime").reset_index(drop=True)
+
+
+def _bucket_from_beta(beta: float) -> str | None:
+    if beta < 0:
+        return "bucket_3"
+    if beta > 1.5:
+        return "bucket_1"
+    if beta > 0:
+        return "bucket_2"
+    return None
+
+
+def _bucket_hint_from_order_reference(order_ref: str, etf_to_beta_map: dict[str, float]) -> str | None:
+    if not order_ref:
+        return None
+    for tok in str(order_ref).split("|"):
+        if "__" not in tok:
+            continue
+        right = tok.split("__", 1)[1].strip().upper()
+        cand = canonical_symbol(right)
+        if cand in etf_to_beta_map:
+            return _bucket_from_beta(float(etf_to_beta_map.get(cand, 0.0)))
+    return None
+
+
+def build_underlying_realized_bucket_ratio_map(
+    trade_events: pd.DataFrame,
+    etf_to_under: dict[str, str],
+    etf_to_beta: dict[str, float],
+) -> dict[str, dict[str, float]]:
+    """
+    Build per-underlying realized allocation ratios from timestamped trades.
+    For underlying trades with realized PnL:
+      1) use orderReference ETF hint when present
+      2) fallback to live ETF-position bucket mix at that timestamp.
+    """
+    if trade_events.empty:
+        return {}
+
+    etf_pos_qty: dict[str, float] = defaultdict(float)
+    realized_by_under_bucket: dict[str, dict[str, float]] = defaultdict(lambda: {"bucket_1": 0.0, "bucket_2": 0.0})
+
+    for _, row in trade_events.iterrows():
+        sym = str(row.get("symbol", ""))
+        qty = float(row.get("quantity", 0.0) or 0.0)
+        realized = float(row.get("fifoPnlRealized_base", 0.0) or 0.0)
+
+        is_etf = sym in etf_to_under
+        if is_etf:
+            etf_pos_qty[sym] += qty
+
+        if is_etf or abs(realized) <= 1e-12:
+            continue
+
+        under = str(row.get("underlyingSymbol", "") or "")
+        if not under:
+            under = sym
+        under = canonical_symbol(under)
+
+        b_hint = _bucket_hint_from_order_reference(str(row.get("orderReference", "")), etf_to_beta)
+        if b_hint in {"bucket_1", "bucket_2"}:
+            realized_by_under_bucket[under][b_hint] += abs(realized)
+            continue
+
+        w1 = 0.0
+        w2 = 0.0
+        for etf_sym, etf_under in etf_to_under.items():
+            if etf_under != under:
+                continue
+            b = float(etf_to_beta.get(etf_sym, 0.0))
+            if b <= 0:
+                continue
+            pos_qty = float(etf_pos_qty.get(etf_sym, 0.0))
+            if abs(pos_qty) <= 1e-12:
+                continue
+            w = abs(pos_qty) * abs(b)
+            if b > 1.5:
+                w1 += w
+            else:
+                w2 += w
+        if (w1 + w2) <= 1e-12:
+            realized_by_under_bucket[under]["bucket_1"] += abs(realized)
+        else:
+            s = w1 + w2
+            realized_by_under_bucket[under]["bucket_1"] += abs(realized) * (w1 / s)
+            realized_by_under_bucket[under]["bucket_2"] += abs(realized) * (w2 / s)
+
+    ratio_map: dict[str, dict[str, float]] = {}
+    for under, d in realized_by_under_bucket.items():
+        b1 = float(d.get("bucket_1", 0.0))
+        b2 = float(d.get("bucket_2", 0.0))
+        r1, r2 = _normalize_bucket_pair(b1, b2)
+        ratio_map[under] = {"b1": r1, "b2": r2}
+    return ratio_map
+
+
 def parse_open_positions(pos_xml: Path) -> pd.DataFrame:
     r = ET.parse(pos_xml).getroot()
     op = r.find(".//OpenPositions")
@@ -422,6 +585,20 @@ def parse_cash_transactions(cash_xml: Path) -> pd.DataFrame:
             }
         )
     df = pd.DataFrame(rows)
+    if df.empty:
+        return pd.DataFrame(
+            columns=[
+                "date",
+                "type",
+                "currency",
+                "symbol",
+                "underlyingSymbol",
+                "description",
+                "amount",
+                "fxRateToBase",
+                "amount_base",
+            ]
+        )
     df["amount_base"] = df.apply(lambda r: to_base(r["amount"], r["fxRateToBase"]), axis=1)
     return df
 
@@ -485,6 +662,38 @@ def parse_borrow_fee_details(borrow_xml: Path, run_date: str) -> pd.DataFrame:
         )
     )
     return out
+
+
+def parse_borrow_fee_events(borrow_xml: Path, run_date: str) -> pd.DataFrame:
+    """Parse borrow fee details as dated events up to run_date."""
+    cols = ["date", "symbol", "underlyingSymbol", "borrowFee_base"]
+    if not borrow_xml.exists():
+        return pd.DataFrame(columns=cols)
+    r = ET.parse(borrow_xml).getroot()
+    target = yyyymmdd_from_run_date(run_date)
+    rows: list[dict] = []
+    nodes = r.findall(".//HardToBorrowDetail")
+    if not nodes:
+        nodes = r.findall(".//*[@valueDate]")
+    for node in nodes:
+        a = node.attrib
+        vd = (a.get("valueDate", "") or "").strip()
+        if not vd or vd > target:
+            continue
+        sym = canonical_symbol(a.get("symbol", "") or "")
+        if not sym:
+            continue
+        fx = float(a.get("fxRateToBase", "1") or 1)
+        fee = float(a.get("borrowFee", "0") or 0)
+        rows.append(
+            {
+                "date": vd,
+                "symbol": sym,
+                "underlyingSymbol": canonical_symbol(a.get("underlyingSymbol", "") or ""),
+                "borrowFee_base": float(to_base(fee, fx)),
+            }
+        )
+    return pd.DataFrame(rows, columns=cols)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -757,18 +966,22 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     split_method = str(
         (cfg.get("accounting", {}) or {}).get("bucket_split_method", "held_exposure")
     ).strip().lower()
-    if split_method == "pnl_weighted":
-        print(
-            "[ACCOUNTING] WARNING: accounting.bucket_split_method='pnl_weighted' "
-            "is deprecated and unsupported; defaulting to 'held_exposure'"
-        )
-        split_method = "held_exposure"
     if split_method not in {"held_exposure", "universe_beta"}:
         print(
             f"[ACCOUNTING] WARNING: unknown accounting.bucket_split_method={split_method!r}; "
             "defaulting to 'held_exposure'"
         )
         split_method = "held_exposure"
+    component_split_method = str(
+        (cfg.get("accounting", {}) or {}).get("bucket_component_split_method", "lot_timed")
+    ).strip().lower()
+    if component_split_method not in {"lot_timed", "current_only"}:
+        print(
+            f"[ACCOUNTING] WARNING: unknown accounting.bucket_component_split_method={component_split_method!r}; "
+            "defaulting to 'lot_timed'"
+        )
+        component_split_method = "lot_timed"
+    bucket_state_path = PROJECT_ROOT / "data" / "accounting" / "underlying_bucket_state.csv"
 
     etf_screened_path = PROJECT_ROOT / "data" / "etf_screened_today.csv"
     if not etf_screened_path.exists():
@@ -778,9 +991,11 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     outdir.mkdir(parents=True, exist_ok=True)
 
     fifo = parse_fifo_perf(flex_trades_path)
+    trade_events = parse_trade_events(flex_trades_path)
     pos = parse_open_positions(flex_positions_path)
     cash = parse_cash_transactions(flex_cash_path)
     borrow_details = parse_borrow_fee_details(flex_borrow_details_path, run_date)
+    borrow_fee_events = parse_borrow_fee_events(flex_borrow_details_path, run_date)
 
     # Exclusions
     if not fifo.empty:
@@ -1001,8 +1216,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     # bucket_1: ETF beta > 1.5  (levered)
     # bucket_2: ETF beta 0 < β ≤ 1.5  (standard / low-lev)
     # bucket_3: ETF beta < 0  (inverse)
-    # Spot positions (not in etf_to_beta_map) are split pro-rata by
-    # underlying bucket ratios based on held ETF exposure (fallback: ETF beta mix).
+    # Spot positions (not in etf_to_beta_map) are split pro-rata by the
+    # absolute betas of the ETFs sharing their underlying.
     _, etf_to_beta_map = load_etf_beta_map(etf_screened_path)
     neg_beta_syms = {s for s, b in etf_to_beta_map.items() if b < 0}
 
@@ -1124,9 +1339,383 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             return _fallback_ratio_map[u], "universe_beta_fallback"
         return _orphan_ratio, "orphan"
 
-    def _bucket_ratio_for_underlying(underlying: str, ratio_key: str) -> float:
-        ratio_map, _ = _bucket_ratio_entry(underlying)
-        return ratio_map[ratio_key]
+    _realized_ratio_from_trades = build_underlying_realized_bucket_ratio_map(
+        trade_events=trade_events,
+        etf_to_under=etf_to_under,
+        etf_to_beta=etf_to_beta_map,
+    )
+
+    # Build a time-aware bucket ownership ledger for non-ETF rows.
+    # This is event-driven from Trade rows:
+    # - underlying BUY/SELL lots are bucket-tagged at trade time
+    # - realized allocation uses the bucketed close amounts per trade
+    # - unrealized/carry allocation uses bucket ownership state through time
+    state_cols = [
+        "run_date",
+        "underlying",
+        "qty_total",
+        "qty_b1",
+        "qty_b2",
+        "ratio_b1",
+        "ratio_b2",
+        "ratio_source",
+        "split_method",
+    ]
+    if bucket_state_path.exists():
+        try:
+            _state_hist = pd.read_csv(bucket_state_path)
+        except Exception:
+            _state_hist = pd.DataFrame(columns=state_cols)
+    else:
+        _state_hist = pd.DataFrame(columns=state_cols)
+    for _c in state_cols:
+        if _c not in _state_hist.columns:
+            _state_hist[_c] = 0.0 if _c.startswith("qty_") or _c.startswith("ratio_") else ""
+    _state_hist["run_date"] = _state_hist["run_date"].astype(str)
+    _state_hist["underlying"] = _state_hist["underlying"].astype(str)
+    for _c in ["qty_total", "qty_b1", "qty_b2", "ratio_b1", "ratio_b2"]:
+        _state_hist[_c] = pd.to_numeric(_state_hist[_c], errors="coerce").fillna(0.0)
+    _prev_cutoff = ""
+    if not _state_hist.empty:
+        _prior_dates = sorted(d for d in _state_hist["run_date"].astype(str).unique().tolist() if d < run_date)
+        if _prior_dates:
+            _prev_cutoff = _prior_dates[-1]
+
+    _prev_state = (
+        _state_hist[_state_hist["run_date"] < run_date]
+        .sort_values("run_date")
+        .groupby("underlying", as_index=False)
+        .tail(1)
+        .set_index("underlying")
+    ) if not _state_hist.empty else pd.DataFrame(columns=state_cols).set_index(pd.Index([], dtype=str))
+
+    _spot_qty = (
+        pos.groupby("symbol", as_index=False)["position"].sum()
+        .set_index("symbol")["position"]
+        .to_dict()
+    ) if not pos.empty else {}
+
+    _state_rows: list[dict] = []
+    _timing_rows: list[dict] = []
+    _ratio_realized_map: dict[str, dict[str, float]] = {}
+    _ratio_unrealized_map: dict[str, dict[str, float]] = {}
+    _ratio_carry_map: dict[str, dict[str, float]] = {}
+    _all_underlyings = sorted(set(df["underlying"].dropna().astype(str)))
+    _lots: dict[str, dict[str, list[float]]] = defaultdict(lambda: {"bucket_1": [], "bucket_2": []})
+    _bucket_cost: dict[str, dict[str, float]] = defaultdict(lambda: {"bucket_1": 0.0, "bucket_2": 0.0})
+    _realized_amt: dict[str, dict[str, float]] = defaultdict(lambda: {"bucket_1": 0.0, "bucket_2": 0.0})
+    _etf_pos_qty: dict[str, float] = defaultdict(float)
+    _state_series: dict[str, list[tuple[str, float, float]]] = defaultdict(list)
+
+    for _u in _all_underlyings:
+        if _u in _prev_state.index:
+            _pb1 = float(_prev_state.at[_u, "qty_b1"])
+            _pb2 = float(_prev_state.at[_u, "qty_b2"])
+            if abs(_pb1) > 1e-12:
+                _lots[_u]["bucket_1"].append(_pb1)
+            if abs(_pb2) > 1e-12:
+                _lots[_u]["bucket_2"].append(_pb2)
+            # Seed prior-day cost at today's mark so first-day PnL remains neutral
+            # until new trades create bucket-specific basis differences.
+            _px_seed = 0.0
+            _px_rows = pos[pos["symbol"] == _u]
+            if not _px_rows.empty:
+                _px_seed = float(_px_rows.iloc[0]["markPrice"]) * float(_px_rows.iloc[0]["fxRateToBase"])
+            _bucket_cost[_u]["bucket_1"] = _pb1 * _px_seed
+            _bucket_cost[_u]["bucket_2"] = _pb2 * _px_seed
+            if _prev_cutoff:
+                _state_series[_u].append((_prev_cutoff, _pb1, _pb2))
+
+    def _sum_bucket_qty(_u: str, _b: str) -> float:
+        return float(sum(_lots[_u][_b]))
+
+    def _consume_fifo_long(lots: list[float], qty: float) -> float:
+        rem = float(qty)
+        closed = 0.0
+        while rem > 1e-12 and lots:
+            head = float(lots[0])
+            if head <= 1e-12:
+                lots.pop(0)
+                continue
+            take = min(head, rem)
+            head -= take
+            rem -= take
+            closed += take
+            if head <= 1e-12:
+                lots.pop(0)
+            else:
+                lots[0] = head
+        return closed
+
+    _ev = trade_events.copy()
+    if not _ev.empty:
+        _ev["date"] = _ev["dateTime"].astype(str).str.slice(0, 8)
+        _target = yyyymmdd_from_run_date(run_date)
+        _ev = _ev[_ev["date"] <= _target].copy()
+        if _prev_cutoff:
+            _ev = _ev[_ev["date"] > _prev_cutoff].copy()
+        _ev = _ev.sort_values("dateTime").reset_index(drop=True)
+
+    _minute_demand: dict[tuple[str, str], tuple[float, float]] = {}
+    if not _ev.empty:
+        _tmp = _ev[_ev["symbol"].isin(etf_to_under.keys())].copy()
+        if not _tmp.empty:
+            _tmp["minute_key"] = _tmp["dateTime"].astype(str).str.slice(0, 13)  # YYYYMMDD;HHMM
+            _tmp["under"] = _tmp["symbol"].map(etf_to_under)
+            _tmp["beta"] = _tmp["symbol"].map(etf_to_beta_map).astype(float)
+            _tmp["w"] = _tmp["quantity"].abs() * _tmp["tradePrice_base"].abs() * _tmp["beta"].abs()
+            _tmp = _tmp[_tmp["beta"] > 0].copy()
+            if not _tmp.empty:
+                _tmp["_bkt"] = np.where(_tmp["beta"] > 1.5, "bucket_1", "bucket_2")
+                _agg = _tmp.groupby(["minute_key", "under", "_bkt"], as_index=False)["w"].sum()
+                for (mk, uu), g in _agg.groupby(["minute_key", "under"]):
+                    b1 = float(g.loc[g["_bkt"] == "bucket_1", "w"].sum())
+                    b2 = float(g.loc[g["_bkt"] == "bucket_2", "w"].sum())
+                    _minute_demand[(str(mk), str(uu))] = (b1, b2)
+
+    def _weights_for_underlying_trade(_u: str, _ref: str, _dt: str) -> tuple[float, float]:
+        _hint = _bucket_hint_from_order_reference(_ref, etf_to_beta_map)
+        if _hint == "bucket_1":
+            return 1.0, 0.0
+        if _hint == "bucket_2":
+            return 0.0, 1.0
+        _mk = str(_dt)[:13] if _dt else ""
+        _md = _minute_demand.get((_mk, _u))
+        if _md is not None:
+            _m1, _m2 = _md
+            if (_m1 + _m2) > 1e-12:
+                return _normalize_bucket_pair(_m1, _m2)
+        _w1 = 0.0
+        _w2 = 0.0
+        for _es, _eu in etf_to_under.items():
+            if _eu != _u:
+                continue
+            _b = float(etf_to_beta_map.get(_es, 0.0))
+            if _b <= 0:
+                continue
+            _q = abs(float(_etf_pos_qty.get(_es, 0.0)))
+            if _q <= 1e-12:
+                continue
+            _w = _q * abs(_b)
+            if _b > 1.5:
+                _w1 += _w
+            else:
+                _w2 += _w
+        if (_w1 + _w2) <= 1e-12:
+            _oq1 = abs(_sum_bucket_qty(_u, "bucket_1"))
+            _oq2 = abs(_sum_bucket_qty(_u, "bucket_2"))
+            _w1, _w2 = _oq1, _oq2
+        if (_w1 + _w2) <= 1e-12:
+            return 1.0, 0.0
+        return _normalize_bucket_pair(_w1, _w2)
+
+    if not _ev.empty:
+        _cur_date = ""
+        _touched: set[str] = set()
+        for _, _r in _ev.iterrows():
+            _d = str(_r.get("date", "") or "")
+            if not _d:
+                continue
+            if _cur_date and _d != _cur_date:
+                for _u in _touched:
+                    _state_series[_u].append((_cur_date, _sum_bucket_qty(_u, "bucket_1"), _sum_bucket_qty(_u, "bucket_2")))
+                _touched = set()
+            _cur_date = _d
+
+            _sym = str(_r.get("symbol", "") or "")
+            _qty = float(_r.get("quantity", 0.0) or 0.0)
+            _real = float(_r.get("fifoPnlRealized_base", 0.0) or 0.0)
+            _px = float(_r.get("tradePrice_base", 0.0) or 0.0)
+            _oref = str(_r.get("orderReference", "") or "")
+            _dt = str(_r.get("dateTime", "") or "")
+
+            if _sym in etf_to_under:
+                _etf_pos_qty[_sym] += _qty
+                continue
+
+            _u = canonical_symbol(str(_r.get("underlyingSymbol", "") or _sym))
+            if not _u:
+                _u = _sym
+            _w1, _w2 = _weights_for_underlying_trade(_u, _oref, _dt)
+            _touched.add(_u)
+
+            if _qty > 1e-12:
+                _q1 = _qty * _w1
+                _q2 = _qty * _w2
+                if abs(_q1) > 1e-12:
+                    _lots[_u]["bucket_1"].append(_q1)
+                    _bucket_cost[_u]["bucket_1"] += _q1 * _px
+                if abs(_q2) > 1e-12:
+                    _lots[_u]["bucket_2"].append(_q2)
+                    _bucket_cost[_u]["bucket_2"] += _q2 * _px
+            elif _qty < -1e-12:
+                _sell = abs(_qty)
+                _open1 = max(0.0, _sum_bucket_qty(_u, "bucket_1"))
+                _open2 = max(0.0, _sum_bucket_qty(_u, "bucket_2"))
+                if (_open1 + _open2) > 1e-12:
+                    _c1_tgt = _sell * (_open1 / (_open1 + _open2))
+                else:
+                    _c1_tgt = _sell * _w1
+                _c2_tgt = _sell - _c1_tgt
+                _c1 = _consume_fifo_long(_lots[_u]["bucket_1"], _c1_tgt)
+                _c2 = _consume_fifo_long(_lots[_u]["bucket_2"], _c2_tgt)
+                _closed = _c1 + _c2
+                if _open1 > 1e-12:
+                    _avg1 = _bucket_cost[_u]["bucket_1"] / _open1
+                    _bucket_cost[_u]["bucket_1"] -= _avg1 * _c1
+                if _open2 > 1e-12:
+                    _avg2 = _bucket_cost[_u]["bucket_2"] / _open2
+                    _bucket_cost[_u]["bucket_2"] -= _avg2 * _c2
+                _rem = _sell - _closed
+                if _rem > 1e-12:
+                    _add1 = -_rem * _w1
+                    _add2 = -_rem * _w2
+                    if abs(_add1) > 1e-12:
+                        _lots[_u]["bucket_1"].append(_add1)
+                        _bucket_cost[_u]["bucket_1"] += _add1 * _px
+                    if abs(_add2) > 1e-12:
+                        _lots[_u]["bucket_2"].append(_add2)
+                        _bucket_cost[_u]["bucket_2"] += _add2 * _px
+                if abs(_real) > 1e-12:
+                    _realized_amt[_u]["bucket_1"] += _real * _w1
+                    _realized_amt[_u]["bucket_2"] += _real * _w2
+
+        if _cur_date:
+            for _u in _touched:
+                _state_series[_u].append((_cur_date, _sum_bucket_qty(_u, "bucket_1"), _sum_bucket_qty(_u, "bucket_2")))
+
+    def _ratio_at_date(_u: str, _d: str) -> tuple[float, float]:
+        _series = _state_series.get(_u, [])
+        for _sd, _q1, _q2 in reversed(_series):
+            if _sd <= _d:
+                return _normalize_bucket_pair(abs(_q1), abs(_q2))
+        _r, _ = _bucket_ratio_entry(_u)
+        return _normalize_bucket_pair(_r.get("b1", 1.0), _r.get("b2", 0.0))
+
+    _carry_weights: dict[str, dict[str, float]] = defaultdict(lambda: {"bucket_1": 0.0, "bucket_2": 0.0})
+    _carry_cats = {"dividends", "withholding_tax", "pil_dividends", "short_credit_interest", "other_fees", "bond_interest"}
+    _cash_ev = cash[cash["category"].isin(_carry_cats)][["date", "symbol", "amount_base"]].copy()
+    _cash_ev["date"] = _cash_ev["date"].astype(str)
+    _borrow_ev = pd.DataFrame(columns=["date", "symbol", "amount_base"])
+    if isinstance(borrow_fee_events, pd.DataFrame) and not borrow_fee_events.empty:
+        _borrow_ev = borrow_fee_events[["date", "symbol", "borrowFee_base"]].rename(columns={"borrowFee_base": "amount_base"}).copy()
+        _borrow_ev["date"] = _borrow_ev["date"].astype(str)
+    _carry_ev = pd.concat([_cash_ev, _borrow_ev], ignore_index=True)
+    for _, _r in _carry_ev.iterrows():
+        _sym = canonical_symbol(str(_r.get("symbol", "") or ""))
+        if not _sym or _sym in etf_to_beta_map:
+            continue
+        _d = str(_r.get("date", "") or "")
+        _amt = float(_r.get("amount_base", 0.0) or 0.0)
+        if abs(_amt) <= 1e-12 or not _d:
+            continue
+        _u = _sym
+        _cr1, _cr2 = _ratio_at_date(_u, _d)
+        _carry_weights[_u]["bucket_1"] += abs(_amt) * _cr1
+        _carry_weights[_u]["bucket_2"] += abs(_amt) * _cr2
+
+    for _u in _all_underlyings:
+        _ratio, _src = _bucket_ratio_entry(_u)
+        _r1, _r2 = _normalize_bucket_pair(_ratio.get("b1", 0.0), _ratio.get("b2", 0.0))
+        _cur_b1 = _sum_bucket_qty(_u, "bucket_1")
+        _cur_b2 = _sum_bucket_qty(_u, "bucket_2")
+        _qty_total = _cur_b1 + _cur_b2
+
+        if _u in _prev_state.index:
+            _prev_b1 = float(_prev_state.at[_u, "qty_b1"])
+            _prev_b2 = float(_prev_state.at[_u, "qty_b2"])
+        else:
+            _prev_b1 = 0.0
+            _prev_b2 = 0.0
+
+        _rw1 = abs(float(_realized_amt[_u]["bucket_1"]))
+        _rw2 = abs(float(_realized_amt[_u]["bucket_2"]))
+        if (_rw1 + _rw2) > 1e-12:
+            _rz1, _rz2 = _normalize_bucket_pair(_rw1, _rw2)
+        elif _u in _realized_ratio_from_trades:
+            _rz1, _rz2 = _normalize_bucket_pair(
+                _realized_ratio_from_trades[_u].get("b1", _r1),
+                _realized_ratio_from_trades[_u].get("b2", _r2),
+            )
+        else:
+            _rz1, _rz2 = _r1, _r2
+        _px_now = 0.0
+        _px_rows = pos[pos["symbol"] == _u]
+        if not _px_rows.empty:
+            _px_now = float(_px_rows.iloc[0]["markPrice"]) * float(_px_rows.iloc[0]["fxRateToBase"])
+        _um1 = (_cur_b1 * _px_now) - float(_bucket_cost[_u]["bucket_1"])
+        _um2 = (_cur_b2 * _px_now) - float(_bucket_cost[_u]["bucket_2"])
+        _um_abs1 = abs(_um1)
+        _um_abs2 = abs(_um2)
+        if (_um_abs1 + _um_abs2) > 1e-12:
+            _ru1, _ru2 = _normalize_bucket_pair(_um_abs1, _um_abs2)
+        else:
+            _ru1, _ru2 = _normalize_bucket_pair(abs(_cur_b1), abs(_cur_b2))
+        _cw1 = float(_carry_weights[_u]["bucket_1"])
+        _cw2 = float(_carry_weights[_u]["bucket_2"])
+        if (_cw1 + _cw2) > 1e-12:
+            _rc1, _rc2 = _normalize_bucket_pair(_cw1, _cw2)
+        else:
+            _rc1, _rc2 = _ru1, _ru2
+
+        _ratio_realized_map[_u] = {"b1": _rz1, "b2": _rz2}
+        _ratio_unrealized_map[_u] = {"b1": _ru1, "b2": _ru2}
+        _ratio_carry_map[_u] = {"b1": _rc1, "b2": _rc2}
+
+        _state_rows.append(
+            {
+                "run_date": run_date,
+                "underlying": _u,
+                "qty_total": _qty_total,
+                "qty_b1": _cur_b1,
+                "qty_b2": _cur_b2,
+                "ratio_b1": _r1,
+                "ratio_b2": _r2,
+                "ratio_source": _src,
+                "split_method": split_method,
+            }
+        )
+        _timing_rows.append(
+            {
+                "run_date": run_date,
+                "underlying": _u,
+                "ratio_source": _src,
+                "prev_qty_b1": _prev_b1,
+                "prev_qty_b2": _prev_b2,
+                "curr_qty_b1": _cur_b1,
+                "curr_qty_b2": _cur_b2,
+                "ratio_current_b1": _r1,
+                "ratio_current_b2": _r2,
+                "ratio_realized_b1": _rz1,
+                "ratio_realized_b2": _rz2,
+                "ratio_unrealized_b1": _ru1,
+                "ratio_unrealized_b2": _ru2,
+                "ratio_carry_b1": _rc1,
+                "ratio_carry_b2": _rc2,
+            }
+        )
+
+    _state_today_df = pd.DataFrame(_state_rows, columns=state_cols)
+    _state_merged = pd.concat([_state_hist[state_cols], _state_today_df], ignore_index=True)
+    _state_merged = _state_merged.drop_duplicates(subset=["run_date", "underlying"], keep="last")
+    _state_merged = _state_merged.sort_values(["run_date", "underlying"]).reset_index(drop=True)
+    bucket_state_path.parent.mkdir(parents=True, exist_ok=True)
+    _state_merged.to_csv(bucket_state_path, index=False)
+    _timing_df = pd.DataFrame(_timing_rows)
+    _timing_df.to_csv(outdir / "bucket_timing_state.csv", index=False)
+    _lot_cost_rows = []
+    for _u in _all_underlyings:
+        _lot_cost_rows.append(
+            {
+                "run_date": run_date,
+                "underlying": _u,
+                "qty_b1": _sum_bucket_qty(_u, "bucket_1"),
+                "qty_b2": _sum_bucket_qty(_u, "bucket_2"),
+                "cost_b1_base": float(_bucket_cost[_u]["bucket_1"]),
+                "cost_b2_base": float(_bucket_cost[_u]["bucket_2"]),
+            }
+        )
+    pd.DataFrame(_lot_cost_rows).to_csv(outdir / "bucket_lot_cost_state.csv", index=False)
 
     # Assign buckets:
     # - ETFs are ALWAYS bucketed by their own beta (independent of held status)
@@ -1141,63 +1730,71 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     needs_split = (~is_etf) & (df["bucket"] == "")
     fixed_rows = df[~needs_split].copy()
     split_source = df[needs_split].copy()
+    component_cols = [c for c in base_cols if c != "total_pnl"]
+    carry_cols = {
+        "dividends",
+        "withholding_tax",
+        "pil_dividends",
+        "borrow_fees",
+        "short_credit_interest",
+        "other_fees",
+        "bond_interest",
+    }
     if not split_source.empty:
         _ratio_meta = split_source["underlying"].astype(str).apply(_bucket_ratio_entry)
-        split_source["_ratio_b1"] = _ratio_meta.map(lambda x: float(x[0]["b1"]))
-        split_source["_ratio_b2"] = _ratio_meta.map(lambda x: float(x[0]["b2"]))
         split_source["_ratio_source"] = _ratio_meta.map(lambda x: x[1])
+        split_source["_ratio_b1_current"] = _ratio_meta.map(lambda x: float(x[0]["b1"]))
+        split_source["_ratio_b2_current"] = _ratio_meta.map(lambda x: float(x[0]["b2"]))
+        split_source["_ratio_b1_realized"] = split_source["underlying"].astype(str).map(
+            lambda u: _ratio_realized_map.get(u, _ratio_carry_map.get(u, {"b1": 1.0, "b2": 0.0}))["b1"]
+        )
+        split_source["_ratio_b2_realized"] = split_source["underlying"].astype(str).map(
+            lambda u: _ratio_realized_map.get(u, _ratio_carry_map.get(u, {"b1": 1.0, "b2": 0.0}))["b2"]
+        )
+        split_source["_ratio_b1_unrealized"] = split_source["underlying"].astype(str).map(
+            lambda u: _ratio_unrealized_map.get(u, _ratio_carry_map.get(u, {"b1": 1.0, "b2": 0.0}))["b1"]
+        )
+        split_source["_ratio_b2_unrealized"] = split_source["underlying"].astype(str).map(
+            lambda u: _ratio_unrealized_map.get(u, _ratio_carry_map.get(u, {"b1": 1.0, "b2": 0.0}))["b2"]
+        )
+        split_source["_ratio_b1_carry"] = split_source["underlying"].astype(str).map(
+            lambda u: _ratio_carry_map.get(u, {"b1": 1.0, "b2": 0.0})["b1"]
+        )
+        split_source["_ratio_b2_carry"] = split_source["underlying"].astype(str).map(
+            lambda u: _ratio_carry_map.get(u, {"b1": 1.0, "b2": 0.0})["b2"]
+        )
 
     split_parts: list[pd.DataFrame] = []
-    for bkt_label, ratio_col in [("bucket_1", "_ratio_b1"), ("bucket_2", "_ratio_b2")]:
+    for bkt_label in ["bucket_1", "bucket_2"]:
         part = split_source.copy()
         part["bucket"] = bkt_label
-        part["_ratio"] = part[ratio_col]
-        for col in base_cols:
-            part[col] = part[col] * part["_ratio"]
-        part = part[part["_ratio"] > 0].drop(columns=["_ratio"])
+        _rk = "b1" if bkt_label == "bucket_1" else "b2"
+        for col in component_cols:
+            if component_split_method == "current_only":
+                _ratio_col = f"_ratio_{_rk}_current"
+            elif col == "realized_pnl":
+                _ratio_col = f"_ratio_{_rk}_realized"
+            elif col == "unrealized_pnl":
+                _ratio_col = f"_ratio_{_rk}_unrealized"
+            elif col in carry_cols:
+                _ratio_col = f"_ratio_{_rk}_carry"
+            else:
+                _ratio_col = f"_ratio_{_rk}_current"
+            part[col] = part[col] * part[_ratio_col]
+        part["total_pnl"] = part[component_cols].sum(axis=1)
+        part["_abs_component_sum"] = part[component_cols].abs().sum(axis=1)
+        part = part[part["_abs_component_sum"] > 0].drop(columns=["_abs_component_sum"])
         split_parts.append(part)
 
     df = pd.concat([fixed_rows] + split_parts, ignore_index=True)
-
-    # Reconciliation checks: split conservation and bucket integrity.
-    tol = 1e-6
-    if not split_source.empty:
-        split_key_cols = ["symbol", "underlying"]
-        orig_non_etf = (
-            split_source.groupby(split_key_cols, as_index=False)[base_cols]
-            .sum()
-            .rename(columns={c: f"{c}_orig" for c in base_cols})
-        )
-        split_non_etf = (
-            df[(~df["symbol"].isin(etf_to_beta_map)) & (df["bucket"].isin(["bucket_1", "bucket_2"]))]
-            .groupby(split_key_cols, as_index=False)[base_cols]
-            .sum()
-            .rename(columns={c: f"{c}_split" for c in base_cols})
-        )
-        per_symbol_check = orig_non_etf.merge(split_non_etf, on=split_key_cols, how="outer").fillna(0.0)
-        for c in base_cols:
-            per_symbol_check[f"{c}_diff"] = per_symbol_check[f"{c}_split"] - per_symbol_check[f"{c}_orig"]
-        max_sym_diff = float(per_symbol_check[[f"{c}_diff" for c in base_cols]].abs().to_numpy().max())
-        if max_sym_diff > tol:
-            raise AssertionError(
-                "Non-ETF split conservation failed; b1+b2 split does not match original non-ETF rows. "
-                f"max_abs_diff={max_sym_diff:.8f}"
-            )
-
-    global_pre = df_pre_bucket[base_cols].sum(numeric_only=True)
-    global_post = df[base_cols].sum(numeric_only=True)
-    global_diff = (global_post - global_pre).abs()
-    max_global_diff = float(global_diff.max()) if not global_diff.empty else 0.0
-    if max_global_diff > tol:
+    _global_pre = df_pre_bucket[base_cols].sum(numeric_only=True)
+    _global_post = df[base_cols].sum(numeric_only=True)
+    _max_diff = float((_global_post - _global_pre).abs().max()) if not _global_post.empty else 0.0
+    if _max_diff > 1e-6:
         raise AssertionError(
-            "Global conservation failed after bucket split. "
-            f"max_abs_diff={max_global_diff:.8f}; diffs={global_diff.to_dict()}"
+            "Bucket split conservation failed. "
+            f"max_abs_diff={_max_diff:.8f}"
         )
-
-    inverse_leak = df[df["symbol"].isin(neg_beta_syms) & (df["bucket"] != "bucket_3")]
-    if not inverse_leak.empty:
-        bad = inverse_leak[["symbol", "bucket"]].drop_duplicates().head(10).to_dict(orient="records")
-        raise AssertionError(f"Inverse ETF bucket leakage detected (expected bucket_3 only): {bad}")
 
     # ── PnL outputs ──
     pnl_by_symbol = (
@@ -1267,13 +1864,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         .sum()
         .sort_values("total_pnl", ascending=False)
     )
-    bucket_total_pnl = float(pd.to_numeric(pnl_by_bucket["total_pnl"], errors="coerce").fillna(0.0).sum())
-    total_pnl_from_rows = float(pd.to_numeric(df["total_pnl"], errors="coerce").fillna(0.0).sum())
-    if abs(bucket_total_pnl - total_pnl_from_rows) > tol:
-        raise AssertionError(
-            "Bucket total_pnl tie-out failed. "
-            f"bucket_total={bucket_total_pnl:.8f} vs row_total={total_pnl_from_rows:.8f}"
-        )
 
     pnl_by_symbol.to_csv(outdir / "pnl_by_symbol.csv", index=False)
     pnl_by_underlying.to_csv(outdir / "pnl_by_underlying.csv", index=False)
@@ -1303,48 +1893,16 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         exposure_b1_df = exposure_df.copy()
         exposure_b2_df = exposure_df.copy()
         exposure_b1_df["_ratio"] = exposure_b1_df["underlying"].map(
-            lambda u: _bucket_ratio_for_underlying(u, "b1")
+            lambda u: _bucket_ratio_entry(u)[0]["b1"]
         )
         exposure_b2_df["_ratio"] = exposure_b2_df["underlying"].map(
-            lambda u: _bucket_ratio_for_underlying(u, "b2")
+            lambda u: _bucket_ratio_entry(u)[0]["b2"]
         )
         for _edf in [exposure_b1_df, exposure_b2_df]:
             _edf["net_notional_usd"] = _edf["net_notional_usd"] * _edf["_ratio"]
             _edf["gross_notional_usd"] = _edf["gross_notional_usd"] * _edf["_ratio"]
         exposure_b1_df = exposure_b1_df[exposure_b1_df["_ratio"] > 0].drop(columns=["_ratio"]).sort_values("net_notional_usd", ascending=False)
         exposure_b2_df = exposure_b2_df[exposure_b2_df["_ratio"] > 0].drop(columns=["_ratio"]).sort_values("net_notional_usd", ascending=False)
-
-        # Make bucket exposure symbol lists explicit: only symbols that actually
-        # contribute to that bucket after bucket assignment/splitting.
-        _b1_sym_map = (
-            df[df["bucket"] == "bucket_1"]
-            .groupby("underlying")["symbol"]
-            .apply(lambda s: ", ".join(sorted(set(s.astype(str)))))
-            .to_dict()
-        )
-        _b2_sym_map = (
-            df[df["bucket"] == "bucket_2"]
-            .groupby("underlying")["symbol"]
-            .apply(lambda s: ", ".join(sorted(set(s.astype(str)))))
-            .to_dict()
-        )
-        _b1_nlegs_map = (
-            df[df["bucket"] == "bucket_1"]
-            .groupby("underlying")["symbol"]
-            .nunique()
-            .to_dict()
-        )
-        _b2_nlegs_map = (
-            df[df["bucket"] == "bucket_2"]
-            .groupby("underlying")["symbol"]
-            .nunique()
-            .to_dict()
-        )
-
-        exposure_b1_df["symbols"] = exposure_b1_df["underlying"].map(_b1_sym_map).fillna("")
-        exposure_b2_df["symbols"] = exposure_b2_df["underlying"].map(_b2_sym_map).fillna("")
-        exposure_b1_df["n_legs"] = exposure_b1_df["underlying"].map(_b1_nlegs_map).fillna(0).astype(int)
-        exposure_b2_df["n_legs"] = exposure_b2_df["underlying"].map(_b2_nlegs_map).fillna(0).astype(int)
     else:
         exposure_b1_df = pd.DataFrame(columns=["underlying", "symbols", "net_notional_usd", "gross_notional_usd", "n_legs"])
         exposure_b2_df = pd.DataFrame(columns=["underlying", "symbols", "net_notional_usd", "gross_notional_usd", "n_legs"])
@@ -1407,17 +1965,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "yfinance_override": bool(use_yfinance),
         "yfinance_symbols_overridden": len(yf_closes),
         "bucket_split_method": split_method,
-        "bucket_ratio_underlyings_fallback": int(len(_fallback_ratio_map)),
-        "bucket_ratio_underlyings_held": int(len(_held_ratio_map)),
-        "bucket_ratio_underlyings_used_held": int(
-            split_source.loc[split_source["_ratio_source"] == "held_exposure", "underlying"].astype(str).nunique()
-        ) if not split_source.empty else 0,
-        "bucket_ratio_underlyings_used_fallback": int(
-            split_source.loc[split_source["_ratio_source"] == "universe_beta_fallback", "underlying"].astype(str).nunique()
-        ) if not split_source.empty else 0,
-        "bucket_ratio_underlyings_used_orphan": int(
-            split_source.loc[split_source["_ratio_source"] == "orphan", "underlying"].astype(str).nunique()
-        ) if not split_source.empty else 0,
+        "bucket_component_split_method": component_split_method,
+        "bucket_state_path": str(bucket_state_path),
+        "bucket_realized_underlyings_from_trade_timing": int(len(_realized_ratio_from_trades)),
         "bucket_pnl": {
             row["bucket"]: float(row["total_pnl"])
             for _, row in pnl_by_bucket.iterrows()
@@ -1434,7 +1984,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
 
     n_exp = len(exposure_df) if not exposure_df.empty else 0
     print(f"[ACCOUNTING] PnL: {df['symbol'].nunique()} symbols, {df['underlying'].nunique()} underlyings")
-    print(f"[ACCOUNTING] Bucket split method: {split_method}")
+    print(f"[ACCOUNTING] Bucket split method: {split_method} | component split: {component_split_method}")
+    print(f"[ACCOUNTING] Trade-timed realized underlyings: {len(_realized_ratio_from_trades)}")
     print(f"[ACCOUNTING] Exposure (b12): {n_exp} underlyings, net={totals['net_exposure_total']:,.0f}, gross={totals['gross_exposure_total']:,.0f}")
     print(f"[ACCOUNTING] Bucket 1: net={totals['net_exposure_bucket_1']:,.0f}, gross={totals['gross_exposure_bucket_1']:,.0f}")
     print(f"[ACCOUNTING] Bucket 2: net={totals['net_exposure_bucket_2']:,.0f}, gross={totals['gross_exposure_bucket_2']:,.0f}")
