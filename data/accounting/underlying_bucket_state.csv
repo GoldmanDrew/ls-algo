@@ -5640,11 +5640,7 @@ run_date,underlying,qty_total,qty_b1,qty_b2,ratio_b1,ratio_b2,ratio_source,split
 2026-04-16,NOK,6350.0,6350.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-16,NOW,620.0,620.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-16,NU,19674.0,19674.0,0.0,1.0,0.0,held_exposure,held_exposure
-<<<<<<< HEAD
-2026-04-16,NVDA,6040.000000000002,2110.0813392387404,3929.918660761261,1.0,0.0,held_exposure,held_exposure
-=======
 2026-04-16,NVDA,6040.000000000002,2025.5221341197591,4014.4778658802425,0.9984174513742684,0.0015825486257317,held_exposure,held_exposure
->>>>>>> bf4a1d7ca3153a2b1b5d5d13b99925e7df425d4f
 2026-04-16,NVTS,13433.0,13433.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-16,OKLO,3288.0,3288.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-16,OKTA,992.0,992.0,0.0,1.0,0.0,held_exposure,held_exposure
@@ -5662,11 +5658,7 @@ run_date,underlying,qty_total,qty_b1,qty_b2,ratio_b1,ratio_b2,ratio_source,split
 2026-04-16,PYPL,1271.0,0.0,1271.0,1.0,0.0,held_exposure,held_exposure
 2026-04-16,QBTS,20660.0,20660.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-16,QCOM,1987.0,1987.0,0.0,1.0,0.0,held_exposure,held_exposure
-<<<<<<< HEAD
-2026-04-16,QQQ,6.0,6.0,0.0,1.0,0.0,held_exposure,held_exposure
-=======
 2026-04-16,QQQ,6.0,6.0,0.0,0.9349885981386138,0.0650114018613862,held_exposure,held_exposure
->>>>>>> bf4a1d7ca3153a2b1b5d5d13b99925e7df425d4f
 2026-04-16,QUBT,12751.0,12751.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-16,RBLX,4132.0,2983.9962902741763,1148.0037097258232,1.0,0.0,held_exposure,held_exposure
 2026-04-16,RCAT,17352.0,17352.0,0.0,1.0,0.0,held_exposure,held_exposure
@@ -5694,13 +5686,8 @@ run_date,underlying,qty_total,qty_b1,qty_b2,ratio_b1,ratio_b2,ratio_source,split
 2026-04-16,SRPT,12524.0,12524.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-16,TEM,4766.0,4766.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-16,TER,1172.0,1172.0,0.0,1.0,0.0,held_exposure,held_exposure
-<<<<<<< HEAD
-2026-04-16,TSLA,1520.0,549.8189043456163,970.1810956543839,1.0,0.0,held_exposure,held_exposure
-2026-04-16,TSM,1411.9999999999998,806.586085043828,605.4139149561718,1.0,0.0,held_exposure,held_exposure
-=======
 2026-04-16,TSLA,1520.0,549.7274653074664,970.2725346925336,0.997811076541408,0.002188923458592,held_exposure,held_exposure
 2026-04-16,TSM,1411.9999999999998,806.5860854062321,605.4139145937677,1.0,0.0,held_exposure,held_exposure
->>>>>>> bf4a1d7ca3153a2b1b5d5d13b99925e7df425d4f
 2026-04-16,TTD,1023.0,1023.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-16,U,4409.0,4409.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-16,UBER,4035.0,4035.0,0.0,1.0,0.0,held_exposure,held_exposure
@@ -5727,27 +5714,27 @@ run_date,underlying,qty_total,qty_b1,qty_b2,ratio_b1,ratio_b2,ratio_source,split
 2026-04-16,ZETA,4030.0,4030.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,AAL,6062.0,6062.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,AAOI,2133.0,2133.0,0.0,1.0,0.0,held_exposure,held_exposure
-2026-04-17,AAPL,2265.0000000000005,1591.8198655909869,673.1801344090135,1.0,0.0,held_exposure,held_exposure
-2026-04-17,ABNB,161.99999999999997,44.86738510293216,117.13261489706781,1.0,0.0,held_exposure,held_exposure
+2026-04-17,AAPL,2265.0,1591.8355828502274,673.1644171497728,1.0,0.0,held_exposure,held_exposure
+2026-04-17,ABNB,162.0,44.86625786345924,117.13374213654075,1.0,0.0,held_exposure,held_exposure
 2026-04-17,ACHR,11126.0,11126.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,ADBE,256.0,256.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,AFRM,810.0,810.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,AI,-40.0,0.0,-40.0,0.0,1.0,universe_beta_fallback,held_exposure
 2026-04-17,ALAB,2654.0,2654.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,ALB,112.0,112.0,0.0,1.0,0.0,universe_beta_fallback,held_exposure
-2026-04-17,AMD,4681.0,4088.8288183596082,592.1711816403916,1.0,0.0,held_exposure,held_exposure
-2026-04-17,AMZN,3054.999999999998,1105.6086263039901,1949.3913736960083,1.0,0.0,held_exposure,held_exposure
+2026-04-17,AMD,4681.0,4088.8285510722667,592.1714489277333,1.0,0.0,held_exposure,held_exposure
+2026-04-17,AMZN,3054.999999999998,1105.6104728457135,1949.389527154285,1.0,0.0,held_exposure,held_exposure
 2026-04-17,APH,404.0,404.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,APP,222.0,222.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,ARKK,808.0,808.0,0.0,1.0,0.0,held_exposure,held_exposure
-2026-04-17,ARM,111.99999999999999,21.038359221944745,90.96164077805524,1.0,0.0,held_exposure,held_exposure
+2026-04-17,ARM,111.99999999999999,21.039226897010973,90.96077310298901,1.0,0.0,held_exposure,held_exposure
 2026-04-17,ASHR,8620.0,8620.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,ASML,150.0,150.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,ASTS,3260.0,3260.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,AVGO,2020.0,2020.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,AXON,62.0,62.0,0.0,1.0,0.0,orphan,held_exposure
 2026-04-17,BA,2810.0,2810.0,0.0,1.0,0.0,held_exposure,held_exposure
-2026-04-17,BABA,2035.999999999999,1507.709978516377,528.290021483622,1.0,0.0,held_exposure,held_exposure
+2026-04-17,BABA,2035.9999999999995,1507.7096551769903,528.2903448230091,1.0,0.0,held_exposure,held_exposure
 2026-04-17,BBAI,21294.0,21294.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,BE,829.0,829.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,BIDU,608.0,608.0,0.0,1.0,0.0,held_exposure,held_exposure
@@ -5764,7 +5751,7 @@ run_date,underlying,qty_total,qty_b1,qty_b2,ratio_b1,ratio_b2,ratio_source,split
 2026-04-17,CMG,6674.0,6674.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,CNC,154.0,154.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,COHR,21.0,21.0,0.0,1.0,0.0,held_exposure,held_exposure
-2026-04-17,COIN,733.0,226.8448611155748,506.15513888442524,1.0,0.0,held_exposure,held_exposure
+2026-04-17,COIN,733.0000000000001,226.84467974197398,506.1553202580261,1.0,0.0,held_exposure,held_exposure
 2026-04-17,COPX,3181.0,3181.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,CORZ,19093.0,19093.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,COST,298.0,298.0,0.0,1.0,0.0,held_exposure,held_exposure
@@ -5803,14 +5790,14 @@ run_date,underlying,qty_total,qty_b1,qty_b2,ratio_b1,ratio_b2,ratio_source,split
 2026-04-17,GLW,35.0,35.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,GLXY,8396.0,8396.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,GME,245.0,245.0,0.0,1.0,0.0,held_exposure,held_exposure
-2026-04-17,GOOGL,2011.0,1047.3307642219263,963.6692357780738,1.0,0.0,held_exposure,held_exposure
+2026-04-17,GOOGL,2011.0000000000002,1047.3308764452381,963.6691235547621,1.0,0.0,held_exposure,held_exposure
 2026-04-17,GRAB,13954.0,13954.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,GSOL,61196.0,61196.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,HIMS,189.0,0.0,189.0,0.0,1.0,held_exposure,held_exposure
 2026-04-17,HL,2990.0,2990.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,HOOD,1917.0,111.45194560160583,1805.5480543983942,1.0,0.0,held_exposure,held_exposure
 2026-04-17,HUT,4182.0,4182.0,0.0,1.0,0.0,held_exposure,held_exposure
-2026-04-17,IBIT,31073.999999999993,5321.52686527732,25752.473134722673,0.813643311691885,0.18635668830811503,held_exposure,held_exposure
+2026-04-17,IBIT,31073.999999999996,5321.631054930036,25752.36894506996,0.8145208020216641,0.1854791979783359,held_exposure,held_exposure
 2026-04-17,IBM,6.0,6.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,INTC,7298.0,7298.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,IONQ,1374.0,1374.0,0.0,1.0,0.0,held_exposure,held_exposure
@@ -5831,23 +5818,23 @@ run_date,underlying,qty_total,qty_b1,qty_b2,ratio_b1,ratio_b2,ratio_source,split
 2026-04-17,LUNR,1745.0,1745.0,0.0,1.0,0.0,universe_beta_fallback,held_exposure
 2026-04-17,MARA,37510.0,0.0,37510.0,0.0,1.0,held_exposure,held_exposure
 2026-04-17,MDB,854.0,854.0,0.0,1.0,0.0,held_exposure,held_exposure
-2026-04-17,META,873.0,236.12390016199313,636.8760998380069,0.5868808624727134,0.4131191375272866,held_exposure,held_exposure
+2026-04-17,META,873.0000000000002,236.12959397271158,636.8704060272886,0.5886354401799802,0.41136455982001985,held_exposure,held_exposure
 2026-04-17,MP,483.0,483.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,MRNA,5972.0,5972.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,MRVL,4582.0,4582.0,0.0,1.0,0.0,held_exposure,held_exposure
-2026-04-17,MSFT,2734.000000000001,2237.010821815404,496.9891781845967,1.0,0.0,held_exposure,held_exposure
-2026-04-17,MSTR,5056.000000000002,395.3336513027704,4660.666348697231,0.0,1.0,held_exposure,held_exposure
+2026-04-17,MSFT,2734.0000000000014,2237.0108598775905,496.9891401224107,1.0,0.0,held_exposure,held_exposure
+2026-04-17,MSTR,5056.000000000001,395.379632785268,4660.620367214733,0.0,1.0,held_exposure,held_exposure
 2026-04-17,MU,674.0,674.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,NBIS,3579.0,3579.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,NEM,561.0,561.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,NET,21.0,21.0,0.0,1.0,0.0,held_exposure,held_exposure
-2026-04-17,NFLX,11192.000000000004,6952.3584326207365,4239.641567379267,1.0,0.0,held_exposure,held_exposure
+2026-04-17,NFLX,11192.000000000004,6952.379775020338,4239.620224979666,1.0,0.0,held_exposure,held_exposure
 2026-04-17,NIO,3157.0,3157.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,NNE,13500.0,13500.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,NOK,6651.0,6651.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,NOW,640.0,640.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,NU,20235.0,20235.0,0.0,1.0,0.0,held_exposure,held_exposure
-2026-04-17,NVDA,6246.0,2115.2988526108074,4130.701147389193,0.9981780807035974,0.0018219192964026298,held_exposure,held_exposure
+2026-04-17,NVDA,6246.000000000002,2199.8847081943213,4046.1152918056805,1.0,0.0,held_exposure,held_exposure
 2026-04-17,NVTS,15781.0,15781.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,OKLO,3410.0,3410.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,OKTA,1024.0,1024.0,0.0,1.0,0.0,held_exposure,held_exposure
@@ -5859,17 +5846,17 @@ run_date,underlying,qty_total,qty_b1,qty_b2,ratio_b1,ratio_b2,ratio_source,split
 2026-04-17,PAAS,747.0,747.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,PANW,4182.0,4182.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,PBR,3707.0,3707.0,0.0,1.0,0.0,universe_beta_fallback,held_exposure
-2026-04-17,PLTR,8059.000000000006,6475.457100949202,1583.5428990508046,1.0,0.0,held_exposure,held_exposure
+2026-04-17,PLTR,8059.000000000007,6475.45638091108,1583.5436190889282,1.0,0.0,held_exposure,held_exposure
 2026-04-17,PLUG,154370.0,154370.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,PONY,5210.0,5210.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,PYPL,1312.0,0.0,1312.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,QBTS,21520.0,21520.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,QCOM,2042.0,2042.0,0.0,1.0,0.0,held_exposure,held_exposure
-2026-04-17,QQQ,9.0,6.0,3.0,0.9285266102527358,0.07147338974726425,held_exposure,held_exposure
+2026-04-17,QQQ,9.0,6.0,3.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,QUBT,15337.0,15337.0,0.0,1.0,0.0,held_exposure,held_exposure
-2026-04-17,RBLX,4257.999999999999,3075.771220783616,1182.2287792163831,1.0,0.0,held_exposure,held_exposure
+2026-04-17,RBLX,4257.999999999999,3075.77123036973,1182.228769630269,1.0,0.0,held_exposure,held_exposure
 2026-04-17,RCAT,18075.0,18075.0,0.0,1.0,0.0,held_exposure,held_exposure
-2026-04-17,RDDT,701.9999999999997,27.36255608479614,674.6374439152036,1.0,0.0,held_exposure,held_exposure
+2026-04-17,RDDT,701.9999999999998,27.36262613814779,674.637373861852,1.0,0.0,held_exposure,held_exposure
 2026-04-17,RDW,12610.0,12610.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,RKT,17291.0,17291.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,RTX,352.0,352.0,0.0,1.0,0.0,held_exposure,held_exposure
@@ -5893,8 +5880,8 @@ run_date,underlying,qty_total,qty_b1,qty_b2,ratio_b1,ratio_b2,ratio_source,split
 2026-04-17,SRPT,12975.0,12975.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,TEM,4919.0,4919.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,TER,1208.0,1208.0,0.0,1.0,0.0,held_exposure,held_exposure
-2026-04-17,TSLA,1570.0,569.5021760670803,1000.4978239329197,0.9975180357475332,0.0024819642524668284,held_exposure,held_exposure
-2026-04-17,TSM,1455.9999999999998,833.0714408612591,622.9285591387406,1.0,0.0,held_exposure,held_exposure
+2026-04-17,TSLA,1570.0,569.593682403656,1000.406317596344,1.0,0.0,held_exposure,held_exposure
+2026-04-17,TSM,1455.9999999999998,833.0715466247957,622.9284533752041,1.0,0.0,held_exposure,held_exposure
 2026-04-17,TTD,1116.0,1116.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,U,4561.0,4561.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,UBER,4154.0,4154.0,0.0,1.0,0.0,held_exposure,held_exposure
@@ -5917,5 +5904,8 @@ run_date,underlying,qty_total,qty_b1,qty_b2,ratio_b1,ratio_b2,ratio_source,split
 2026-04-17,XOP,2267.0,2267.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,XPEV,1726.0,1726.0,0.0,1.0,0.0,held_exposure,held_exposure
 2026-04-17,XRPZ,44762.0,44762.0,0.0,1.0,0.0,held_exposure,held_exposure
-2026-04-17,XYZ,906.0,9.110615122017396,896.8893848779826,1.0,0.0,held_exposure,held_exposure
+2026-04-17,XYZ,906.0,9.110689630878136,896.8893103691219,1.0,0.0,held_exposure,held_exposure
 2026-04-17,ZETA,4160.0,4160.0,0.0,1.0,0.0,held_exposure,held_exposure
+<<<<<<< HEAD,,0.0,0.0,0.0,0.0,0.0,,
+=======,,0.0,0.0,0.0,0.0,0.0,,
+>>>>>>> bf4a1d7ca3153a2b1b5d5d13b99925e7df425d4f,,0.0,0.0,0.0,0.0,0.0,,
