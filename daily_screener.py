@@ -178,7 +178,7 @@ covered_call_pairs = [
 BENCHMARK_MAP = {
     "SPX": "SPY",  "NDX": "QQQ",   "DJIA": "DIA",  "RUT": "IWM",
     "SOX": "SOXX", "FIN": "XLF",   "BIOTECH": "XBI","TECH": "XLK",
-    "WTI": "USO",  "TSLA": "TSLA", "MSTR": "MSTR", "NVDA": "NVDA",
+    "WTI": "USO",  "COIN": "COIN", "TSLA": "TSLA", "MSTR": "MSTR", "NVDA": "NVDA",
     "AMZN": "AMZN",
     "BTC": "IBIT", "ETH": "ETHA",  "CRCL": "CRCL", "CRWV": "CRWV",
     "GDX": "GDX",  "SLV": "SLV",   "XLE": "XLE",   "XOP": "XOP",
@@ -189,6 +189,7 @@ BENCHMARK_MAP = {
 INVERSE_ETF_UNIVERSE = [
     ("SDS",  -2, "SPX"),  ("QID",  -2, "NDX"),  ("DXD",  -2, "DJIA"), ("TWM",  -2, "RUT"),
     ("SCO",  -2, "WTI"),  ("MSTZ", -2, "MSTR"), ("NVDQ", -2, "NVDA"), ("BTCZ", -2, "BTC"),
+    ("CONI", -2, "COIN"), ("MSDD", -2, "MSTR"), ("NVD",  -2, "NVDA"), ("TSDD", -2, "TSLA"),
     ("ETHD", -2, "ETH"),  ("CRCD", -2, "CRCL"), ("CORD", -2, "CRWV"), ("TSLQ", -2, "TSLA"),
     ("ZSL",  -2, "SLV"),  ("SQQQ", -3, "NDX"),  ("SPXS", -3, "SPX"),  ("TZA",  -3, "RUT"),
     ("SOXS", -3, "SOX"),  ("FAZ",  -3, "FIN"),   ("LABD", -3, "BIOTECH"),
@@ -1868,6 +1869,33 @@ def main() -> int:
     med_ms = screened["maint_pct_short"].median()
     print(f"[MARGIN] Estimated margin for {n_margin} rows from leverage factor")
     print(f"[MARGIN] Maint long:  median={med_ml:.0%}  |  Maint short: median={med_ms:.0%}")
+
+    # Bucket labels and Bucket 4 eligibility diagnostics.
+    screened["bucket"] = np.select(
+        [
+            pd.to_numeric(screened.get("Beta"), errors="coerce").lt(0.0),
+            pd.to_numeric(screened.get("Beta"), errors="coerce").gt(1.5),
+            pd.to_numeric(screened.get("Beta"), errors="coerce").gt(0.0),
+        ],
+        ["bucket_4", "bucket_1", "bucket_2"],
+        default="",
+    )
+    screened["bucket4_net_edge_annual"] = np.where(
+        screened["bucket"].eq("bucket_4"),
+        pd.to_numeric(screened.get("net_decay_annual"), errors="coerce"),
+        np.nan,
+    )
+    shares_avail = pd.to_numeric(screened.get("shares_available"), errors="coerce")
+    borrow_cur = pd.to_numeric(screened.get("borrow_current"), errors="coerce")
+    borrow_missing = screened.get(
+        "borrow_missing_from_ftp",
+        pd.Series(False, index=screened.index, dtype=bool),
+    ).fillna(False).astype(bool)
+    screened["inverse_shortable"] = (
+        screened["bucket"].eq("bucket_4")
+        & ((shares_avail > 0) | shares_avail.isna() | borrow_missing)
+        & (borrow_cur.isna() | (borrow_cur >= 0.0))
+    )
 
     # ── Drop helper columns, save ──
     drop_cols = ["Leverage", "ExpectedLeverage"]

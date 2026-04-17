@@ -1889,9 +1889,20 @@ def main() -> None:
         if "purgatory" in plan.columns:
             plan["purgatory"] = plan["purgatory"].fillna(False).astype(bool)
         if "purgatory" in plan.columns:
-            bad = plan[(plan["ETF_U"].isin(purgatory_etfs)) & ((plan["long_usd"].abs() > 1e-9) | (plan["short_usd"].abs() > 1e-9))]
+            under_col = "underlying_target_usd" if "underlying_target_usd" in plan.columns else "long_usd"
+            etf_col = "etf_target_usd" if "etf_target_usd" in plan.columns else "short_usd"
+            bad = plan[
+                (plan["ETF_U"].isin(purgatory_etfs))
+                & (
+                    (pd.to_numeric(plan[under_col], errors="coerce").fillna(0.0).abs() > 1e-9)
+                    | (pd.to_numeric(plan[etf_col], errors="coerce").fillna(0.0).abs() > 1e-9)
+                )
+            ]
             if not bad.empty:
-                raise ValueError(f"[PLAN] Purgatory ETFs have nonzero targets. Refuse. Examples: {bad[['ETF_U','long_usd','short_usd']].head(10).to_dict('records')}")
+                raise ValueError(
+                    "[PLAN] Purgatory ETFs have nonzero targets. Refuse. "
+                    f"Examples: {bad[['ETF_U', under_col, etf_col]].head(10).to_dict('records')}"
+                )
 
         under_to_etfs_all: Dict[str, Set[str]] = {}
         leverage_by_etf_all: Dict[str, float] = {}
@@ -2122,14 +2133,14 @@ def main() -> None:
                 # -------------------------
                 for _, row in grp.iterrows():
                     e_sym = norm_sym(str(row["ETF_U"]))
-                    tu = float(row.get("long_usd", 0.0) or 0.0)
-                    te = float(row.get("short_usd", 0.0) or 0.0)
+                    tu = float(row.get("underlying_target_usd", row.get("long_usd", 0.0)) or 0.0)
+                    te = float(row.get("etf_target_usd", row.get("short_usd", 0.0)) or 0.0)
 
                     if e_sym in purgatory_etfs:
                         if abs(tu) > 1e-9 or abs(te) > 1e-9:
                             raise ValueError(
                                 f"[PLAN] Purgatory ETF {e_sym} has nonzero targets "
-                                f"(long_usd={tu}, short_usd={te}). Refuse."
+                                f"(underlying_target_usd={tu}, etf_target_usd={te}). Refuse."
                             )
                         continue
 

@@ -154,6 +154,101 @@ def _decay_score_weights(
     return final_w / s if s > 0 else eq_w
 
 
+def _first_existing_path(candidates: list[Path]) -> Path | None:
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+
+def load_shares_outstanding_map(paths_cfg: dict) -> tuple[dict[str, float], Path | None]:
+    """
+    Load ETF shares outstanding map from etf-dashboard CSV.
+    Returns (symbol->shares_outstanding, resolved_path).
+    """
+    configured = paths_cfg.get("etf_shares_outstanding_csv")
+    candidates: list[Path] = []
+    if configured:
+        candidates.append(Path(str(configured)))
+    candidates.extend(
+        [
+            Path("../etf-dashboard/data/etf_shares_outstanding.csv"),
+            Path("../etf-dashboard/etf_shares_outstanding.csv"),
+            Path("data/etf_shares_outstanding.csv"),
+        ]
+    )
+    src = _first_existing_path(candidates)
+    if src is None:
+        return {}, None
+
+    try:
+        df = pd.read_csv(src)
+    except Exception:
+        return {}, src
+    if df.empty:
+        return {}, src
+
+    symbol_col = None
+    for c in ["ETF", "ticker", "symbol", "Ticker", "Symbol"]:
+        if c in df.columns:
+            symbol_col = c
+            break
+    shares_col = None
+    for c in [
+        "shares_outstanding",
+        "sharesOutstanding",
+        "SharesOutstanding",
+        "total_shares_outstanding",
+        "totalSharesOutstanding",
+        "shares",
+    ]:
+        if c in df.columns:
+            shares_col = c
+            break
+    if symbol_col is None or shares_col is None:
+        return {}, src
+
+    out: dict[str, float] = {}
+    for _, r in df[[symbol_col, shares_col]].dropna().iterrows():
+        sym = _norm_sym(r[symbol_col])
+        sh = pd.to_numeric(r[shares_col], errors="coerce")
+        if pd.notna(sh) and float(sh) > 0:
+            out[sym] = float(sh)
+    return out, src
+
+
+def _apply_notional_caps_with_redistribution(
+    desired: pd.Series,
+    caps: pd.Series,
+) -> pd.Series:
+    """
+    Cap desired notionals at per-row limits and redistribute excess to uncapped rows.
+    """
+    desired = pd.to_numeric(desired, errors="coerce").fillna(0.0).clip(lower=0.0)
+    caps = pd.to_numeric(caps, errors="coerce")
+    caps = np.where((~np.isfinite(caps)) | (caps <= 0), np.inf, caps)
+    caps_s = pd.Series(caps, index=desired.index, dtype=float)
+
+    alloc = desired.copy()
+    for _ in range(20):
+        over = (alloc - caps_s).clip(lower=0.0)
+        excess = float(over.sum())
+        if excess <= 1e-9:
+            break
+        alloc = np.minimum(alloc, caps_s)
+        headroom_mask = alloc < (caps_s - 1e-9)
+        if not headroom_mask.any():
+            break
+        w = desired[headroom_mask].copy()
+        wsum = float(w.sum())
+        if wsum <= 1e-12:
+            w = pd.Series(1.0, index=w.index)
+            wsum = float(w.sum())
+        alloc.loc[headroom_mask] = alloc.loc[headroom_mask] + excess * (w / wsum)
+    alloc = np.minimum(alloc, caps_s)
+    return alloc
+
+
 def load_blacklist(cfg: dict) -> Set[str]:
     raw = cfg.get("strategy", {}).get("blacklist", []) or []
     return {_norm_sym(sym) for sym in raw if str(sym).strip()}
@@ -273,16 +368,28 @@ def main() -> None:
     # Sleeves
     core = sleeves.get("core_leveraged", {})
     wl   = sleeves.get("whitelist_stock", {})
+    b4   = sleeves.get("inverse_decay_bucket4", {})
     flow = sleeves.get("flow_program", {})
 
     core_w = float(core.get("target_weight", 0.85))
     wl_w   = float(wl.get("target_weight", 0.15))
+    b4_w   = float(b4.get("target_weight", 0.0))
 
     core_beta_min = float(core.get("rules", {}).get("min_beta_used", 1.5))
+    b4_rules = b4.get("rules", {}) or {}
+    b4_min_edge = float(b4_rules.get("min_net_edge_annual", 0.0))
+    b4_partial_hedge_ratio = _clamp01(b4_rules.get("partial_hedge_ratio", 1.0))
+    b4_max_shares_outstanding_frac = _clamp01(b4_rules.get("max_shares_outstanding_frac", 0.20))
+    # Universe-entry floor on underlying realized volatility (annualized).
+    b4_min_underlying_vol = float(b4_rules.get("min_underlying_vol", 0.50))
 
     # Borrow caps (soft vs hard)
     soft_borrow_cap = float(cfg.get("screener", {}).get("borrow_low", 1.0))  # e.g. 0.08
     wl_hard_borrow_cap = float(wl.get("rules", {}).get("hard_borrow_cap", np.inf))
+    # Dedicated Bucket 4 borrow cap (supports legacy hard_borrow_cap key).
+    b4_hard_borrow_cap = float(
+        b4_rules.get("bucket4_borrow_cap", b4_rules.get("hard_borrow_cap", np.inf))
+    )
     flow_hard_borrow_cap = float(flow.get("rules", {}).get("hard_borrow_cap", np.inf))
 
     # Whitelist list order
@@ -293,8 +400,10 @@ def main() -> None:
     # Weighting configs (full dicts, consumed by _decay_score_weights)
     core_weighting_cfg = core.get("weighting", {})
     wl_weighting_cfg   = wl.get("weighting", {})
+    b4_weighting_cfg   = b4.get("weighting", {})
     core_weight_method = str(core_weighting_cfg.get("method", "equal")).lower()
     wl_weight_method   = str(wl_weighting_cfg.get("method", "decay_score")).lower()
+    b4_weight_method   = str(b4_weighting_cfg.get("method", "decay_score")).lower()
 
     # Flow config
     flow_shorts = [_norm_sym(x) for x in (flow.get("universe", {}).get("shorts", []) or [])]
@@ -314,10 +423,31 @@ def main() -> None:
     # Flow ledger paths (new)
     flow_ledger_path = Path(paths.get("flow_ledger_csv", "data/flow_ledger.csv"))
 
-    print(f"[INFO] target_gross_usd=${target_gross_usd:,.0f} | core={core_w:.0%} wl={wl_w:.0%} | beta_floor={beta_floor}")
-    print(f"[INFO] core soft borrow cap={soft_borrow_cap:.1%} | wl hard cap={wl_hard_borrow_cap if np.isfinite(wl_hard_borrow_cap) else 'inf'} | flow hard cap={flow_hard_borrow_cap if np.isfinite(flow_hard_borrow_cap) else 'inf'}")
+    shares_out_map, shares_src = load_shares_outstanding_map(paths)
+    print(
+        f"[INFO] target_gross_usd=${target_gross_usd:,.0f} | "
+        f"core={core_w:.0%} wl={wl_w:.0%} b4={b4_w:.0%} | beta_floor={beta_floor}"
+    )
+    print(
+        f"[INFO] core soft borrow cap={soft_borrow_cap:.1%} | "
+        f"wl hard cap={wl_hard_borrow_cap if np.isfinite(wl_hard_borrow_cap) else 'inf'} | "
+        f"b4 hard cap={b4_hard_borrow_cap if np.isfinite(b4_hard_borrow_cap) else 'inf'} | "
+        f"flow hard cap={flow_hard_borrow_cap if np.isfinite(flow_hard_borrow_cap) else 'inf'}"
+    )
+    print(
+        f"[INFO] b4 universe filters: min_underlying_vol={b4_min_underlying_vol:.0%} | "
+        f"min_net_edge_annual={b4_min_edge:.0%}"
+    )
     print(f"[INFO] whitelist size={len(wl_list)} | flow shorts={len(flow_shorts)}")
-    print(f"[INFO] weighting: core={core_weight_method} wl={wl_weight_method}")
+    print(f"[INFO] weighting: core={core_weight_method} wl={wl_weight_method} b4={b4_weight_method}")
+    if shares_out_map:
+        print(
+            f"[INFO] bucket4 shares-outstanding cap enabled: "
+            f"{b4_max_shares_outstanding_frac:.0%} of float "
+            f"(source={shares_src})"
+        )
+    else:
+        print("[WARN] bucket4 shares-outstanding source not found/usable; cap enforcement skipped.")
 
     if not screened_csv.exists():
         raise FileNotFoundError(f"Screened CSV not found: {screened_csv}")
@@ -370,6 +500,12 @@ def main() -> None:
     keep["strategy_tag"] = tag
     keep["long_usd"] = 0.0
     keep["short_usd"] = 0.0
+    keep["underlying_target_usd"] = 0.0
+    keep["etf_target_usd"] = 0.0
+    keep["underlying_target_from_b12_usd"] = 0.0
+    keep["underlying_target_from_b4_usd"] = 0.0
+    keep["underlying_internalized_usd"] = 0.0
+    keep["underlying_external_trade_usd"] = 0.0
     keep["sleeve"] = ""
 
     # SIZING set: all non-purgatory names. Sleeve membership rules
@@ -414,28 +550,51 @@ def main() -> None:
         # WHITELIST: ALWAYS allow, independent of borrow
         wl_borrow_ok = True
         # (or: pd.Series(True, index=eligible.index))
+        b4_borrow_ok = (~np.isfinite(b)) | (b <= b4_hard_borrow_cap)
 
         # Exclude inverse (β < 0) ETFs — they belong to the flow program, not core/whitelist
         positive_beta = eligible["Beta"].gt(0)
+        negative_beta = eligible["Beta"].lt(0)
+        if "inverse_shortable" in eligible.columns:
+            inverse_shortable = eligible["inverse_shortable"].fillna(False).astype(bool)
+        else:
+            inverse_shortable = negative_beta
+        edge_col = "bucket4_net_edge_annual" if "bucket4_net_edge_annual" in eligible.columns else "net_decay_annual"
+        b4_edge = pd.to_numeric(eligible.get(edge_col), errors="coerce")
+        b4_edge_ok = (~np.isfinite(b4_edge)) | (b4_edge >= b4_min_edge)
+        b4_und_vol = pd.to_numeric(eligible.get("vol_underlying_annual"), errors="coerce")
+        # Require realized underlying vol above the configured floor. Missing vol is treated as
+        # a rejection: we will not admit a pair whose underlying-vol we cannot measure.
+        b4_vol_ok = np.isfinite(b4_und_vol) & (b4_und_vol >= b4_min_underlying_vol)
         eligible["in_core"] = positive_beta & eligible["beta_abs"].ge(core_beta_min) & core_borrow_ok & net_decay_ok
         eligible["in_wl"]   = positive_beta & eligible["in_whitelist"] & wl_borrow_ok & net_decay_ok
+        eligible["in_b4"]   = negative_beta & inverse_shortable & b4_borrow_ok & b4_edge_ok & b4_vol_ok
 
 
         core_names = eligible.loc[eligible["in_core"]].copy()
         wl_names   = eligible.loc[eligible["in_wl"]].copy()
+        b4_names   = eligible.loc[eligible["in_b4"]].copy()
         n_neg_decay_excluded = int((~net_decay_ok).sum())
         if n_neg_decay_excluded:
             print(f"[INFO] Excluded {n_neg_decay_excluded} names with negative net_decay_annual from stock sleeves.")
 
-        # Reallocate sleeve weight if one side empty
-        w_core, w_wl = core_w, wl_w
-        if core_names.empty and not wl_names.empty:
-            w_core, w_wl = 0.0, 1.0
-        elif wl_names.empty and not core_names.empty:
-            w_core, w_wl = 1.0, 0.0
-
-        core_budget = target_gross_usd * w_core
-        wl_budget   = target_gross_usd * w_wl
+        # Budgeting:
+        # - Bucket 4 gets an explicit % of total plan when active.
+        # - Remaining budget is split across core/wl by relative sleeve weights.
+        b4_budget = target_gross_usd * b4_w if (not b4_names.empty and b4_w > 0) else 0.0
+        b4_budget = min(b4_budget, target_gross_usd)
+        remainder_budget = max(0.0, target_gross_usd - b4_budget)
+        stock_weight_sum = 0.0
+        if not core_names.empty:
+            stock_weight_sum += core_w
+        if not wl_names.empty:
+            stock_weight_sum += wl_w
+        if stock_weight_sum > 0:
+            core_budget = remainder_budget * (core_w / stock_weight_sum) if not core_names.empty else 0.0
+            wl_budget = remainder_budget * (wl_w / stock_weight_sum) if not wl_names.empty else 0.0
+        else:
+            core_budget = 0.0
+            wl_budget = 0.0
 
         # -----------------------------
         # Allocate CORE
@@ -465,21 +624,76 @@ def main() -> None:
             wl_names["gross_target_usd"] = wl_budget * w
             wl_names["sleeve"] = "whitelist_stock"
 
-        sized = pd.concat([core_names, wl_names], axis=0, ignore_index=False)
+        # -----------------------------
+        # Allocate BUCKET 4
+        # -----------------------------
+        if not b4_names.empty and b4_budget > 0:
+            if b4_weight_method == "equal":
+                w = np.ones(len(b4_names)) / len(b4_names)
+            else:
+                w = _decay_score_weights(b4_names, b4_weighting_cfg)
+            b4_names["gross_target_usd"] = b4_budget * w
+            # Cap bucket-4 ETF notionals by shares outstanding and reference price.
+            b4_names["shares_outstanding_total"] = b4_names["ETF"].map(shares_out_map)
+            b4_names["price_ref"] = pd.to_numeric(
+                b4_names.get("borrow_price_ref", np.nan), errors="coerce"
+            )
+            b4_names["gross_target_cap_usd"] = (
+                b4_max_shares_outstanding_frac
+                * pd.to_numeric(b4_names["shares_outstanding_total"], errors="coerce")
+                * pd.to_numeric(b4_names["price_ref"], errors="coerce")
+            )
+            if shares_out_map:
+                before_sum = float(pd.to_numeric(b4_names["gross_target_usd"], errors="coerce").fillna(0.0).sum())
+                b4_names["gross_target_usd"] = _apply_notional_caps_with_redistribution(
+                    b4_names["gross_target_usd"],
+                    b4_names["gross_target_cap_usd"],
+                )
+                after_sum = float(pd.to_numeric(b4_names["gross_target_usd"], errors="coerce").fillna(0.0).sum())
+                if after_sum + 1e-6 < before_sum:
+                    print(
+                        "[WARN] bucket4 shares-outstanding caps constrained allocated notional: "
+                        f"requested=${before_sum:,.0f}, capped=${after_sum:,.0f}"
+                    )
+            b4_names["sleeve"] = "inverse_decay_bucket4"
+
+        sized = pd.concat([core_names, wl_names, b4_names], axis=0, ignore_index=False)
         sized = sized[~sized.index.duplicated(keep="first")].copy()
 
         # Now compute long/short for each sized row
         sized["beta_used_abs"] = sized["beta_abs"].clip(lower=beta_floor).fillna(1.0)
         sized["hedge_ratio"] = 1.0 / sized["beta_used_abs"]
-        sized["long_usd"] = sized["gross_target_usd"] / (1.0 + sized["hedge_ratio"])
-        sized["short_usd"] = -(sized["hedge_ratio"] * sized["long_usd"])
+        b4_mask = sized["sleeve"].eq("inverse_decay_bucket4")
+        stock_mask = ~b4_mask
+
+        sized.loc[stock_mask, "long_usd"] = sized.loc[stock_mask, "gross_target_usd"] / (
+            1.0 + sized.loc[stock_mask, "hedge_ratio"]
+        )
+        sized.loc[stock_mask, "short_usd"] = -(
+            sized.loc[stock_mask, "hedge_ratio"] * sized.loc[stock_mask, "long_usd"]
+        )
+
+        # Bucket 4: short inverse ETF and short underlying hedge.
+        sized.loc[b4_mask, "short_usd"] = -sized.loc[b4_mask, "gross_target_usd"]
+        sized.loc[b4_mask, "long_usd"] = -(
+            b4_partial_hedge_ratio
+            * sized.loc[b4_mask, "beta_used_abs"]
+            * sized.loc[b4_mask, "gross_target_usd"]
+        )
+        sized["underlying_target_usd"] = sized["long_usd"]
+        sized["etf_target_usd"] = sized["short_usd"]
 
         # Write sized notionals back into KEEP (purgatory remains 0)
         keep.loc[sized.index, "long_usd"] = sized["long_usd"]
         keep.loc[sized.index, "short_usd"] = sized["short_usd"]
+        keep.loc[sized.index, "underlying_target_usd"] = sized["underlying_target_usd"]
+        keep.loc[sized.index, "etf_target_usd"] = sized["etf_target_usd"]
         keep.loc[sized.index, "sleeve"] = sized["sleeve"]
 
-        print(f"[INFO] sized core={len(core_names)} wl={len(wl_names)} | budgets: core=${core_budget:,.0f} wl=${wl_budget:,.0f}")
+        print(
+            f"[INFO] sized core={len(core_names)} wl={len(wl_names)} b4={len(b4_names)} | "
+            f"budgets: core=${core_budget:,.0f} wl=${wl_budget:,.0f} b4=${b4_budget:,.0f}"
+        )
 
         # Weight diagnostics
         if core_weight_method == "decay_score" and not core_names.empty and core_budget > 0:
@@ -490,6 +704,57 @@ def main() -> None:
             ww = wl_names["gross_target_usd"] / wl_budget
             print(f"[INFO] wl weights: max={ww.max():.3f} min={ww.min():.3f} "
                   f"nonzero={int((ww > 1e-9).sum())}/{len(wl_names)}")
+        if b4_weight_method == "decay_score" and not b4_names.empty and b4_budget > 0:
+            bw = b4_names["gross_target_usd"] / b4_budget
+            print(
+                f"[INFO] b4 weights: max={bw.max():.3f} min={bw.min():.3f} "
+                f"nonzero={int((bw > 1e-9).sum())}/{len(b4_names)}"
+            )
+
+        # Internalization diagnostics by underlying.
+        if not keep.empty:
+            b12_under = (
+                keep[keep["sleeve"].isin(["core_leveraged", "whitelist_stock"])]
+                .groupby("Underlying", as_index=False)["long_usd"]
+                .sum()
+                .rename(columns={"long_usd": "underlying_target_from_b12_usd"})
+            )
+            b4_under = (
+                keep[keep["sleeve"].eq("inverse_decay_bucket4")]
+                .groupby("Underlying", as_index=False)["long_usd"]
+                .sum()
+                .rename(columns={"long_usd": "underlying_target_from_b4_usd"})
+            )
+            by_under = (
+                keep[["Underlying"]]
+                .drop_duplicates()
+                .merge(b12_under, on="Underlying", how="left")
+                .merge(b4_under, on="Underlying", how="left")
+            )
+            by_under["underlying_target_from_b12_usd"] = pd.to_numeric(
+                by_under["underlying_target_from_b12_usd"], errors="coerce"
+            ).fillna(0.0)
+            by_under["underlying_target_from_b4_usd"] = pd.to_numeric(
+                by_under["underlying_target_from_b4_usd"], errors="coerce"
+            ).fillna(0.0)
+            by_under["underlying_internalized_usd"] = np.minimum(
+                by_under["underlying_target_from_b12_usd"].clip(lower=0.0),
+                (-by_under["underlying_target_from_b4_usd"]).clip(lower=0.0),
+            )
+            by_under["underlying_external_trade_usd"] = (
+                by_under["underlying_target_from_b12_usd"] + by_under["underlying_target_from_b4_usd"]
+            )
+            keep = keep.merge(by_under, on="Underlying", how="left", suffixes=("", "_calc"))
+            for col in (
+                "underlying_target_from_b12_usd",
+                "underlying_target_from_b4_usd",
+                "underlying_internalized_usd",
+                "underlying_external_trade_usd",
+            ):
+                calc_col = f"{col}_calc"
+                if calc_col in keep.columns:
+                    keep[col] = pd.to_numeric(keep[calc_col], errors="coerce").fillna(0.0)
+                    keep = keep.drop(columns=[calc_col])
 
         # Output proposed trades:
         proposed = keep.copy()

@@ -30,6 +30,7 @@ paths:
   fills_csv: data/trade_fills.csv
   equity_snapshot_csv: data/equity_snapshot.csv
   flow_ledger_csv: data/flow_ledger.csv
+  etf_shares_outstanding_csv: ../etf-dashboard/data/etf_shares_outstanding.csv
 
 execution:
   parallel_n: 25
@@ -108,9 +109,26 @@ portfolio:
           - RDYY
       weighting:
         <<: *weighting_defaults
-        max_name_weight: 0.3         # 20% cap per underlying
-        eq_blend: 0.05                # 50% equal-weight + 50% decay-score
+        max_name_weight: 0.3         # 30% cap per underlying
+        eq_blend: 0.05                # 5% equal-weight + 95% decay-score
         borrow_aversion: 3.3
+
+    inverse_decay_bucket4:
+      allocation_type: "stock"
+      target_weight: 0.25
+      rules:
+        partial_hedge_ratio: 1.0      # 1.0 = fully hedge inverse beta exposure
+        min_net_edge_annual: 0.0      # require bucket4_net_edge_annual >= this
+        min_underlying_vol: 0.50      # universe entry: require vol_underlying_annual >= 50%
+        bucket4_borrow_cap: 0.90      # dedicated B4 hard borrow cap (annualized)
+        hard_borrow_cap: 0.90         # legacy alias (kept for compatibility)
+        max_shares_outstanding_frac: 0.2
+      weighting:
+        <<: *weighting_defaults
+        method: "decay_score"
+        max_name_weight: 0.2
+        eq_blend: 0.1
+        borrow_aversion: 3.0
     flow_program:
       allocation_type: "flow"
       frequency: "W"

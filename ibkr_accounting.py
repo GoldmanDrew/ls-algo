@@ -364,9 +364,11 @@ def parse_trade_events(trades_xml: Path) -> pd.DataFrame:
     return df.sort_values("dateTime").reset_index(drop=True)
 
 
-def _bucket_from_beta(beta: float) -> str | None:
-    if beta < 0:
+def _bucket_from_beta(beta: float, *, force_bucket3: bool = False) -> str | None:
+    if force_bucket3:
         return "bucket_3"
+    if beta < 0:
+        return "bucket_4"
     if beta > 1.5:
         return "bucket_1"
     if beta > 0:
@@ -374,7 +376,12 @@ def _bucket_from_beta(beta: float) -> str | None:
     return None
 
 
-def _bucket_hint_from_order_reference(order_ref: str, etf_to_beta_map: dict[str, float]) -> str | None:
+def _bucket_hint_from_order_reference(
+    order_ref: str,
+    etf_to_beta_map: dict[str, float],
+    flow_low_beta_bucket3_syms: set[str] | None = None,
+) -> str | None:
+    forced = flow_low_beta_bucket3_syms or set()
     if not order_ref:
         return None
     for tok in str(order_ref).split("|"):
@@ -383,7 +390,7 @@ def _bucket_hint_from_order_reference(order_ref: str, etf_to_beta_map: dict[str,
         right = tok.split("__", 1)[1].strip().upper()
         cand = canonical_symbol(right)
         if cand in etf_to_beta_map:
-            return _bucket_from_beta(float(etf_to_beta_map.get(cand, 0.0)))
+            return _bucket_from_beta(float(etf_to_beta_map.get(cand, 0.0)), force_bucket3=(cand in forced))
     return None
 
 
@@ -391,6 +398,7 @@ def build_underlying_realized_bucket_ratio_map(
     trade_events: pd.DataFrame,
     etf_to_under: dict[str, str],
     etf_to_beta: dict[str, float],
+    flow_low_beta_bucket3_syms: set[str] | None = None,
 ) -> dict[str, dict[str, float]]:
     """
     Build per-underlying realized allocation ratios from timestamped trades.
@@ -401,6 +409,7 @@ def build_underlying_realized_bucket_ratio_map(
     if trade_events.empty:
         return {}
 
+    forced = flow_low_beta_bucket3_syms or set()
     etf_pos_qty: dict[str, float] = defaultdict(float)
     realized_by_under_bucket: dict[str, dict[str, float]] = defaultdict(lambda: {"bucket_1": 0.0, "bucket_2": 0.0})
 
@@ -421,7 +430,11 @@ def build_underlying_realized_bucket_ratio_map(
             under = sym
         under = canonical_symbol(under)
 
-        b_hint = _bucket_hint_from_order_reference(str(row.get("orderReference", "")), etf_to_beta)
+        b_hint = _bucket_hint_from_order_reference(
+            str(row.get("orderReference", "")),
+            etf_to_beta,
+            flow_low_beta_bucket3_syms=forced,
+        )
         if b_hint in {"bucket_1", "bucket_2"}:
             realized_by_under_bucket[under][b_hint] += abs(realized)
             continue
@@ -432,7 +445,7 @@ def build_underlying_realized_bucket_ratio_map(
             if etf_under != under:
                 continue
             b = float(etf_to_beta.get(etf_sym, 0.0))
-            if b <= 0:
+            if b <= 0 or etf_sym in forced:
                 continue
             pos_qty = float(etf_pos_qty.get(etf_sym, 0.0))
             if abs(pos_qty) <= 1e-12:
@@ -961,6 +974,12 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
 
     # Resolve use_yfinance from config if not explicitly passed
     cfg = yaml.safe_load(config_yml_path.read_text(encoding="utf-8")) or {}
+    portfolio_cfg = cfg.get("portfolio", {}) or {}
+    sleeves_cfg = portfolio_cfg.get("sleeves", {}) or {}
+    flow_cfg = sleeves_cfg.get("flow_program", {}) or {}
+    flow_universe_cfg = flow_cfg.get("universe", {}) or {}
+    flow_shorts_cfg = flow_universe_cfg.get("shorts", []) or []
+    flow_short_set = {canonical_symbol(x) for x in flow_shorts_cfg if str(x).strip()}
     if use_yfinance is None:
         use_yfinance = bool((cfg.get("accounting", {}) or {}).get("use_yfinance", False))
     split_method = str(
@@ -1219,7 +1238,11 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     # Spot positions (not in etf_to_beta_map) are split pro-rata by the
     # absolute betas of the ETFs sharing their underlying.
     _, etf_to_beta_map = load_etf_beta_map(etf_screened_path)
+    flow_low_beta_bucket3_syms = {
+        s for s in flow_short_set if 0 < float(etf_to_beta_map.get(s, 0.0)) <= 1.0
+    }
     neg_beta_syms = {s for s, b in etf_to_beta_map.items() if b < 0}
+    bucket3_etf_syms = set(neg_beta_syms) | set(flow_low_beta_bucket3_syms)
 
     is_etf = df["symbol"].isin(etf_to_beta_map)
     sym_beta = df["symbol"].map(etf_to_beta_map)
@@ -1240,6 +1263,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     _all_rows = []
     for _s, _b in etf_to_beta_map.items():
         if _b <= 0:
+            continue
+        if _s in flow_low_beta_bucket3_syms:
             continue
         _all_rows.append(
             {
@@ -1280,7 +1305,10 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     # Weight by beta-adjusted absolute notional so the spot split reflects
     # current exposure. This map overrides the universe fallback above.
     _held_etf_syms = set(pos["symbol"].unique()) & set(etf_to_beta_map.keys())
-    _held_positive = {s for s in _held_etf_syms if etf_to_beta_map.get(s, 0) > 0}
+    _held_positive = {
+        s for s in _held_etf_syms
+        if etf_to_beta_map.get(s, 0) > 0 and s not in flow_low_beta_bucket3_syms
+    }
 
     _held_rows = []
     for _s in _held_positive:
@@ -1343,6 +1371,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         trade_events=trade_events,
         etf_to_under=etf_to_under,
         etf_to_beta=etf_to_beta_map,
+        flow_low_beta_bucket3_syms=flow_low_beta_bucket3_syms,
     )
 
     # Build a time-aware bucket ownership ledger for non-ETF rows.
@@ -1465,6 +1494,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             _tmp["beta"] = _tmp["symbol"].map(etf_to_beta_map).astype(float)
             _tmp["w"] = _tmp["quantity"].abs() * _tmp["tradePrice_base"].abs() * _tmp["beta"].abs()
             _tmp = _tmp[_tmp["beta"] > 0].copy()
+            _tmp = _tmp[~_tmp["symbol"].isin(flow_low_beta_bucket3_syms)].copy()
             if not _tmp.empty:
                 _tmp["_bkt"] = np.where(_tmp["beta"] > 1.5, "bucket_1", "bucket_2")
                 _agg = _tmp.groupby(["minute_key", "under", "_bkt"], as_index=False)["w"].sum()
@@ -1474,7 +1504,11 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                     _minute_demand[(str(mk), str(uu))] = (b1, b2)
 
     def _weights_for_underlying_trade(_u: str, _ref: str, _dt: str) -> tuple[float, float]:
-        _hint = _bucket_hint_from_order_reference(_ref, etf_to_beta_map)
+        _hint = _bucket_hint_from_order_reference(
+            _ref,
+            etf_to_beta_map,
+            flow_low_beta_bucket3_syms=flow_low_beta_bucket3_syms,
+        )
         if _hint == "bucket_1":
             return 1.0, 0.0
         if _hint == "bucket_2":
@@ -1491,7 +1525,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             if _eu != _u:
                 continue
             _b = float(etf_to_beta_map.get(_es, 0.0))
-            if _b <= 0:
+            if _b <= 0 or _es in flow_low_beta_bucket3_syms:
                 continue
             _q = abs(float(_etf_pos_qty.get(_es, 0.0)))
             if _q <= 1e-12:
@@ -1719,12 +1753,21 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
 
     # Assign buckets:
     # - ETFs are ALWAYS bucketed by their own beta (independent of held status)
-    # - Inverse ETFs (beta < 0) → bucket_3
+    # - Inverse ETFs (beta < 0):
+    #     * flow program shorts -> bucket_3
+    #     * all others          -> bucket_4
     # - Spot positions (non-ETF rows) split using ratio map by underlying
     df["bucket"] = ""
-    df.loc[is_etf & (sym_beta < 0), "bucket"] = "bucket_3"
+    neg_etf = is_etf & (sym_beta < 0)
+    neg_flow = neg_etf & df["symbol"].isin(flow_short_set)
+    neg_non_flow = neg_etf & (~df["symbol"].isin(flow_short_set))
+    df.loc[neg_flow, "bucket"] = "bucket_3"
+    df.loc[neg_non_flow, "bucket"] = "bucket_4"
     df.loc[is_etf & (sym_beta > 1.5), "bucket"] = "bucket_1"
     df.loc[is_etf & (sym_beta > 0) & (sym_beta <= 1.5), "bucket"] = "bucket_2"
+    # Flow sleeve low-beta ETFs behave as inverse sleeve for attribution:
+    # keep their ETF PnL/exposure in bucket_3 and remove their influence from bucket_2 splits.
+    df.loc[is_etf & df["symbol"].isin(flow_low_beta_bucket3_syms), "bucket"] = "bucket_3"
 
     # Only non-ETF rows split pro-rata by underlying bucket ratios.
     needs_split = (~is_etf) & (df["bucket"] == "")
@@ -1858,6 +1901,10 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         df[df["bucket"] == "bucket_3"][["symbol", "description"] + base_cols]
         .sort_values("total_pnl", ascending=False)
     )
+    pnl_bucket_4 = (
+        df[df["bucket"] == "bucket_4"][["symbol", "description"] + base_cols]
+        .sort_values("total_pnl", ascending=False)
+    )
 
     pnl_by_bucket = (
         df.groupby("bucket", as_index=False)[base_cols]
@@ -1870,6 +1917,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     pnl_bucket_1.to_csv(outdir / "pnl_bucket_1.csv", index=False)
     pnl_bucket_2.to_csv(outdir / "pnl_bucket_2.csv", index=False)
     pnl_bucket_3.to_csv(outdir / "pnl_bucket_3.csv", index=False)
+    pnl_bucket_4.to_csv(outdir / "pnl_bucket_4.csv", index=False)
     pnl_by_bucket.to_csv(outdir / "pnl_by_bucket.csv", index=False)
 
     # ── Net exposure (beta-normalized) ──
@@ -1879,7 +1927,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     # Build combined bucket 1+2 exposure first, then split by proportional
     # bucket ratios per underlying. This keeps exposure attribution consistent
     # with PnL attribution for all underlyings (not just spot-only legs).
-    pos_b12 = pos[(~pos["symbol"].isin(neg_beta_syms))].copy()
+    pos_b12 = pos[(~pos["symbol"].isin(bucket3_etf_syms))].copy()
     b12_underlyings = set(pnl_by_underlying["underlying"].dropna().astype(str)) if not pnl_by_underlying.empty else set()
     if not pos_b12.empty and b12_underlyings:
         exposure_df, exposure_detail_df = compute_net_exposure(
@@ -1903,7 +1951,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         )
         _d["_ratio_b2"] = np.where(
             _d["_is_etf"],
-            np.where((_d["_beta"] > 0) & (_d["_beta"] <= 1.5), 1.0, 0.0),
+            np.where(((_d["_beta"] > 0) & (_d["_beta"] <= 1.5)) & (~_d["symbol"].isin(flow_low_beta_bucket3_syms)), 1.0, 0.0),
             _d["underlying"].map(lambda u: _bucket_ratio_entry(u)[0]["b2"]),
         )
 
@@ -1939,8 +1987,28 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     exposure_df = exposure_df.sort_values("net_notional_usd", ascending=False)
     exposure_df.to_csv(outdir / "net_exposure_by_underlying.csv", index=False)
 
-    # Bucket 3 exposure (negative-beta ETF positions, keyed by ETF symbol not underlying)
-    pos_b3 = pos[pos["symbol"].isin(neg_beta_syms)].copy()
+    # Bucket 3/4 exposure (negative-beta ETF positions, keyed by ETF symbol not underlying)
+    pos_neg = pos[pos["symbol"].isin(neg_beta_syms)].copy()
+    pos_b3 = pos_neg[pos_neg["symbol"].isin(flow_short_set)].copy()
+    pos_b4 = pos_neg[~pos_neg["symbol"].isin(flow_short_set)].copy()
+    pos_b3_pos_beta_flow = pos[pos["symbol"].isin(flow_low_beta_bucket3_syms)].copy()
+    if not pos_b3_pos_beta_flow.empty:
+        pos_b3 = pd.concat([pos_b3, pos_b3_pos_beta_flow], ignore_index=True)
+    if not pos_b4.empty:
+        pos_b4["beta"] = pos_b4["symbol"].map(etf_to_beta_map).fillna(1.0)
+        pos_b4["mv_base"] = pos_b4["position"] * pos_b4["beta"] * pos_b4["markPrice"] * pos_b4["fxRateToBase"]
+        pos_b4["gross_mv_base"] = pos_b4["mv_base"].abs()
+        exposure_b4_df = (
+            pos_b4.groupby("symbol", as_index=False)
+            .agg(
+                net_notional_usd=("mv_base", "sum"),
+                gross_notional_usd=("gross_mv_base", "sum"),
+                n_legs=("symbol", "nunique"),
+            )
+            .sort_values("net_notional_usd", ascending=False)
+        )
+    else:
+        exposure_b4_df = pd.DataFrame(columns=["symbol", "net_notional_usd", "gross_notional_usd", "n_legs"])
     if not pos_b3.empty:
         pos_b3["beta"] = pos_b3["symbol"].map(etf_to_beta_map).fillna(1.0)
         pos_b3["mv_base"] = pos_b3["position"] * pos_b3["beta"] * pos_b3["markPrice"] * pos_b3["fxRateToBase"]
@@ -1957,6 +2025,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     else:
         exposure_b3_df = pd.DataFrame(columns=["symbol", "net_notional_usd", "gross_notional_usd", "n_legs"])
     exposure_b3_df.to_csv(outdir / "net_exposure_bucket_3.csv", index=False)
+    exposure_b4_df.to_csv(outdir / "net_exposure_bucket_4.csv", index=False)
 
     totals = {
         "run_date": run_date,
@@ -1989,10 +2058,13 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "gross_exposure_bucket_2": float(exposure_b2_df["gross_notional_usd"].sum()) if not exposure_b2_df.empty else 0.0,
         "net_exposure_bucket_3": float(exposure_b3_df["net_notional_usd"].sum()) if not exposure_b3_df.empty else 0.0,
         "gross_exposure_bucket_3": float(exposure_b3_df["gross_notional_usd"].sum()) if not exposure_b3_df.empty else 0.0,
+        "net_exposure_bucket_4": float(exposure_b4_df["net_notional_usd"].sum()) if not exposure_b4_df.empty else 0.0,
+        "gross_exposure_bucket_4": float(exposure_b4_df["gross_notional_usd"].sum()) if not exposure_b4_df.empty else 0.0,
         "yfinance_override": bool(use_yfinance),
         "yfinance_symbols_overridden": len(yf_closes),
         "bucket_split_method": split_method,
         "bucket_component_split_method": component_split_method,
+        "bucket3_flow_low_beta_symbols": sorted(flow_low_beta_bucket3_syms),
         "bucket_state_path": str(bucket_state_path),
         "bucket_realized_underlyings_from_trade_timing": int(len(_realized_ratio_from_trades)),
         "bucket_pnl": {
@@ -2017,6 +2089,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     print(f"[ACCOUNTING] Bucket 1: net={totals['net_exposure_bucket_1']:,.0f}, gross={totals['gross_exposure_bucket_1']:,.0f}")
     print(f"[ACCOUNTING] Bucket 2: net={totals['net_exposure_bucket_2']:,.0f}, gross={totals['gross_exposure_bucket_2']:,.0f}")
     print(f"[ACCOUNTING] Bucket 3: net={totals['net_exposure_bucket_3']:,.0f}, gross={totals['gross_exposure_bucket_3']:,.0f}")
+    print(f"[ACCOUNTING] Bucket 4: net={totals['net_exposure_bucket_4']:,.0f}, gross={totals['gross_exposure_bucket_4']:,.0f}")
 
     return 0
 

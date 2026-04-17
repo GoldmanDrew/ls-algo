@@ -204,6 +204,50 @@ def format_bucket_3_pnl(pnl_b3_csv: Path) -> tuple[str, float]:
     return "\n".join(lines), total
 
 
+def format_bucket_4_pnl(pnl_b4_csv: Path) -> tuple[str, float]:
+    """
+    Format Bucket 4 (inverse decay basket) PnL as a plain-text table by symbol.
+    Returns (table_str, total).
+    """
+    if not pnl_b4_csv.exists():
+        return "(no bucket 4 data)", 0.0
+
+    df = pd.read_csv(pnl_b4_csv)
+    if df.empty or "total_pnl" not in df.columns:
+        return "(no bucket 4 positions)", 0.0
+
+    df["total_pnl"] = pd.to_numeric(df["total_pnl"], errors="coerce").fillna(0.0)
+    df = df.dropna(subset=["symbol"]).copy()
+    df["symbol"] = df["symbol"].astype(str)
+    df = df.sort_values("total_pnl", ascending=False)
+    total = float(df["total_pnl"].sum())
+
+    all_labels = list(df["symbol"]) + ["TOTAL"]
+    label_width = max(12, max(len(s) for s in all_labels))
+    all_pnl = [f"{v:,.2f}" for v in list(df["total_pnl"]) + [total]]
+    pnl_width = max(12, max(len(s) for s in all_pnl))
+
+    lines: list[str] = []
+    header = f"{'SYMBOL'.ljust(label_width)}  {'TOTAL_PNL'.rjust(pnl_width)}"
+    lines.append(header)
+    lines.append("-" * (label_width + 2 + pnl_width))
+
+    for _, r in df.iterrows():
+        sym = str(r["symbol"])
+        pnl_str = f"{float(r['total_pnl']):,.2f}"
+        detail = ""
+        if "realized_pnl" in r and "unrealized_pnl" in r:
+            r_pnl = float(r["realized_pnl"])
+            u_pnl = float(r["unrealized_pnl"])
+            detail = f"  (r: {r_pnl:,.2f}  u: {u_pnl:,.2f})"
+        lines.append(f"{sym.ljust(label_width)}  {pnl_str.rjust(pnl_width)}{detail}")
+
+    lines.append("-" * (label_width + 2 + pnl_width))
+    lines.append(f"{'TOTAL'.ljust(label_width)}  {f'{total:,.2f}'.rjust(pnl_width)}")
+
+    return "\n".join(lines), total
+
+
 def format_bucket_table(pnl_bucket_csv: Path) -> str:
     """
     Returns a formatted plain-text table of PnL by bucket, with symbol lists.
@@ -223,6 +267,7 @@ def format_bucket_table(pnl_bucket_csv: Path) -> str:
         "bucket_1":  "Bucket 1 — Levered (β > 1.5)",
         "bucket_2":  "Bucket 2 — Standard (0 < β ≤ 1.5)",
         "bucket_3":  "Bucket 3 — Inverse / Hedge (β < 0)",
+        "bucket_4":  "Bucket 4 — Inverse Decay Internalized (β < 0)",
         # Legacy keys
         "bucket_12": "Bucket 1&2 — Long/Short (β ≥ 0)",
     }
@@ -243,7 +288,7 @@ def ensure_ledger_dir() -> None:
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
 
 
-PNL_HISTORY_BUCKET_COLS = ("pnl_bucket_1", "pnl_bucket_2", "pnl_bucket_3")
+PNL_HISTORY_BUCKET_COLS = ("pnl_bucket_1", "pnl_bucket_2", "pnl_bucket_3", "pnl_bucket_4")
 
 
 def format_pair_exposure_flags(
@@ -302,7 +347,7 @@ def format_pair_exposure_flags(
     return "\n".join(lines)
 
 
-def read_bucket_pnl_from_run(run_date_str: str) -> tuple[float, float, float] | None:
+def read_bucket_pnl_from_run(run_date_str: str) -> tuple[float, float, float, float] | None:
     """
     Bucket YTD-style totals from a prior accounting run.
     Requires totals.json with bucket_pnl fields to avoid drifting away from
@@ -340,6 +385,7 @@ def read_bucket_pnl_from_run(run_date_str: str) -> tuple[float, float, float] | 
         float(bp.get("bucket_1", 0.0)),
         float(bp.get("bucket_2", 0.0)),
         float(bp.get("bucket_3", 0.0)),
+        float(bp.get("bucket_4", 0.0)),
     )
 
 
@@ -352,7 +398,7 @@ def enrich_history_bucket_cols_from_runs(hist: pd.DataFrame) -> pd.DataFrame:
         return hist
 
     start_dt = pd.to_datetime(START_DATE)
-    updates: dict[str, tuple[float, float, float]] = {}
+    updates: dict[str, tuple[float, float, float, float]] = {}
     for child in RUNS_ROOT.iterdir():
         if not child.is_dir():
             continue
@@ -382,13 +428,14 @@ def enrich_history_bucket_cols_from_runs(hist: pd.DataFrame) -> pd.DataFrame:
 
     date_key = hist["date"].dt.strftime("%Y-%m-%d")
     new_rows: list[dict] = []
-    for ds, (b1, b2, b3) in updates.items():
-        tot = b1 + b2 + b3
+    for ds, (b1, b2, b3, b4) in updates.items():
+        tot = b1 + b2 + b3 + b4
         m = date_key == ds
         if m.any():
             hist.loc[m, "pnl_bucket_1"] = b1
             hist.loc[m, "pnl_bucket_2"] = b2
             hist.loc[m, "pnl_bucket_3"] = b3
+            hist.loc[m, "pnl_bucket_4"] = b4
             hist.loc[m, "total_pnl"] = tot
         else:
             new_rows.append(
@@ -397,6 +444,7 @@ def enrich_history_bucket_cols_from_runs(hist: pd.DataFrame) -> pd.DataFrame:
                     "pnl_bucket_1": b1,
                     "pnl_bucket_2": b2,
                     "pnl_bucket_3": b3,
+                    "pnl_bucket_4": b4,
                     "total_pnl": tot,
                 }
             )
@@ -415,6 +463,7 @@ def update_pnl_history(
     b1: float,
     b2: float,
     b3: float,
+    b4: float,
 ) -> pd.DataFrame:
     """
     Appends (or overwrites) a row in pnl_history.csv for the given run_date.
@@ -423,7 +472,7 @@ def update_pnl_history(
     """
     ensure_ledger_dir()
 
-    total_pnl = float(b1) + float(b2) + float(b3)
+    total_pnl = float(b1) + float(b2) + float(b3) + float(b4)
     row = pd.DataFrame(
         [
             {
@@ -431,6 +480,7 @@ def update_pnl_history(
                 "pnl_bucket_1": float(b1),
                 "pnl_bucket_2": float(b2),
                 "pnl_bucket_3": float(b3),
+                "pnl_bucket_4": float(b4),
                 "total_pnl": total_pnl,
             }
         ]
@@ -475,6 +525,7 @@ _PNL_LABEL_STYLE: dict[str, tuple[float, float, str, str]] = {
     "#1f77b4": (11, 7, "left", "bottom"),   # Bucket 1 — levered
     "#ff7f0e": (0, 9, "center", "bottom"),  # Bucket 2 — standard
     "#2ca02c": (-11, 7, "right", "bottom"),  # Bucket 3 — inverse
+    "#d62728": (-2, -9, "center", "top"),  # Bucket 4 — inverse decay
 }
 _PNL_LABEL_LEGACY_STYLE = (0, -9, "center", "top")  # below marker, away from bucket labels above
 
@@ -523,6 +574,7 @@ def make_pnl_plot(history: pd.DataFrame) -> Path:
         ("pnl_bucket_1", "Bucket 1 — Levered", "#1f77b4"),
         ("pnl_bucket_2", "Bucket 2 — Standard", "#ff7f0e"),
         ("pnl_bucket_3", "Bucket 3 — Inverse", "#2ca02c"),
+        ("pnl_bucket_4", "Bucket 4 — Inverse Decay", "#d62728"),
     )
 
     if history.empty:
@@ -952,6 +1004,7 @@ def main() -> int:
     pnl_b1_csv = outdir / "pnl_bucket_1.csv"
     pnl_b2_csv = outdir / "pnl_bucket_2.csv"
     pnl_b3_csv = outdir / "pnl_bucket_3.csv"
+    pnl_b4_csv = outdir / "pnl_bucket_4.csv"
 
     # Bucket 1 PnL (levered ETFs + pro-rata spot)
     b1_pnl_total = 0.0
@@ -996,12 +1049,14 @@ def main() -> int:
 
     # Bucket 3 PnL (inverse/hedge by symbol)
     b3_pnl_table, b3_pnl_total = format_bucket_3_pnl(pnl_b3_csv)
+    b4_pnl_table, b4_pnl_total = format_bucket_4_pnl(pnl_b4_csv)
 
     # 4b) Load pre-computed exposure tables from accounting outputs
     exposure_csv_path = outdir / "net_exposure_by_underlying.csv"
     exposure_b1_csv_path = outdir / "net_exposure_bucket_1.csv"
     exposure_b2_csv_path = outdir / "net_exposure_bucket_2.csv"
     exposure_b3_csv_path = outdir / "net_exposure_bucket_3.csv"
+    exposure_b4_csv_path = outdir / "net_exposure_bucket_4.csv"
 
     # Combined bucket 1+2 exposure
     exposure_table_str = "(exposure data unavailable)"
@@ -1050,10 +1105,21 @@ def main() -> int:
         except Exception as e:
             b3_exposure_table_str = f"(bucket 3 exposure error: {e})"
 
+    # Bucket 4 exposure
+    b4_exposure_table_str = "(no bucket 4 exposure data)"
+    b4_net = 0.0
+    b4_gross = 0.0
+    if exposure_b4_csv_path.exists():
+        try:
+            exposure_b4_df = pd.read_csv(exposure_b4_csv_path)
+            b4_exposure_table_str, b4_net, b4_gross = format_exposure_table(exposure_b4_df)
+        except Exception as e:
+            b4_exposure_table_str = f"(bucket 4 exposure error: {e})"
+
     # 5) Update history + plot since START_DATE
-    grand_total = b1_pnl_total + b2_pnl_total + b3_pnl_total
+    grand_total = b1_pnl_total + b2_pnl_total + b3_pnl_total + b4_pnl_total
     hist = update_pnl_history(
-        run_date, b1=b1_pnl_total, b2=b2_pnl_total, b3=b3_pnl_total
+        run_date, b1=b1_pnl_total, b2=b2_pnl_total, b3=b3_pnl_total, b4=b4_pnl_total
     )
     plot_path = make_pnl_plot(hist)
 
@@ -1078,7 +1144,8 @@ def main() -> int:
 
     subject = (
         f"EOD PnL — {run_date} — "
-        f"B1: {b1_pnl_total:,.2f} | B2: {b2_pnl_total:,.2f} | B3: {b3_pnl_total:,.2f} | "
+        f"B1: {b1_pnl_total:,.2f} | B2: {b2_pnl_total:,.2f} | "
+        f"B3: {b3_pnl_total:,.2f} | B4: {b4_pnl_total:,.2f} | "
         f"Total: {grand_total:,.2f}"
     )
 
@@ -1091,6 +1158,7 @@ def main() -> int:
                 f"B1: {float(last['pnl_bucket_1']):,.2f} | "
                 f"B2: {float(last['pnl_bucket_2']):,.2f} | "
                 f"B3: {float(last['pnl_bucket_3']):,.2f} | "
+                f"B4: {float(last['pnl_bucket_4']):,.2f} | "
                 f"Total: {float(last['total_pnl']):,.2f}\n"
             )
         else:
@@ -1118,6 +1186,7 @@ def main() -> int:
         f"  Bucket 1 (Levered, β > 1.5):    {b1_pnl_total:,.2f}\n"
         f"  Bucket 2 (Standard, 0 < β ≤ 1.5): {b2_pnl_total:,.2f}\n"
         f"  Bucket 3 (Inverse, β < 0):       {b3_pnl_total:,.2f}\n\n"
+        f"  Bucket 4 (Inverse decay, β < 0): {b4_pnl_total:,.2f}\n\n"
         "════════════════════════════════════════\n"
         "PnL Bucket 1 — Levered (β > 1.5) by underlying:\n"
         "----------------------------------------\n"
@@ -1130,6 +1199,10 @@ def main() -> int:
         "PnL Bucket 3 — Inverse / Hedge (by symbol):\n"
         "----------------------------------------\n"
         f"{b3_pnl_table}\n"
+        "----------------------------------------\n\n"
+        "PnL Bucket 4 — Inverse Decay / Internalized (by symbol):\n"
+        "----------------------------------------\n"
+        f"{b4_pnl_table}\n"
         "----------------------------------------\n\n"
         "PnL by underlying (Bucket 1&2 combined):\n"
         "----------------------------------------\n"
@@ -1157,6 +1230,12 @@ def main() -> int:
         "----------------------------------------\n"
         f"{b3_exposure_table_str}\n"
         "----------------------------------------\n\n"
+        f"NET EXPOSURE Bucket 4 — Inverse Decay:\n"
+        f"  Net notional:   {b4_net:,.2f}\n"
+        f"  Gross notional: {b4_gross:,.2f}\n"
+        "----------------------------------------\n"
+        f"{b4_exposure_table_str}\n"
+        "----------------------------------------\n\n"
         f"NET EXPOSURE by underlying (Bucket 1&2 combined, beta-normalized):\n"
         f"  Net notional:   {total_net:,.2f}\n"
         f"  Gross notional: {total_gross:,.2f}\n"
@@ -1174,6 +1253,7 @@ def main() -> int:
         "- pnl_bucket_1.csv\n"
         "- pnl_bucket_2.csv\n"
         "- pnl_bucket_3.csv\n"
+        "- pnl_bucket_4.csv\n"
         "- pnl_by_symbol.csv\n"
         "- pnl_by_bucket.csv\n"
         "- totals.json\n"
@@ -1184,16 +1264,17 @@ def main() -> int:
         "- net_exposure_bucket_1.csv\n"
         "- net_exposure_bucket_2.csv\n"
         "- net_exposure_bucket_3.csv\n"
+        "- net_exposure_bucket_4.csv\n"
     )
 
     # 7) Send (attach all CSVs + totals + plot + exposure)
     attachments = [pnl_under_csv, totals_json_path, plot_path, discrepancy_plot_path, discrepancy_csv_path]
     if pnl_symbol_csv.exists():
         attachments.insert(1, pnl_symbol_csv)
-    for csv_path in [pnl_b1_csv, pnl_b2_csv, pnl_b3_csv, pnl_bucket_csv]:
+    for csv_path in [pnl_b1_csv, pnl_b2_csv, pnl_b3_csv, pnl_b4_csv, pnl_bucket_csv]:
         if csv_path.exists():
             attachments.append(csv_path)
-    for csv_path in [exposure_csv_path, exposure_b1_csv_path, exposure_b2_csv_path, exposure_b3_csv_path]:
+    for csv_path in [exposure_csv_path, exposure_b1_csv_path, exposure_b2_csv_path, exposure_b3_csv_path, exposure_b4_csv_path]:
         if csv_path.exists():
             attachments.append(csv_path)
 
