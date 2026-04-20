@@ -134,6 +134,14 @@ new_pairs = [
     ("COHX", "COHR"), ("AXPG", "AXP"),  ("FCXG", "FCX"), ("GLWG", "GLW"),
     ("SNDU", "SNDK"), ("PAAU", "PAAS"),
     ("BITX", "IBIT"), ("ETHU", "ETHA"), ("XXRP", "XRPZ"),
+    # Tradr 2X long
+    ("ONDL", "ONDS"), ("MSTX", "MSTR"), ("SMCX", "SMCI"), ("ORCX", "ORCL"),
+    ("IONX", "IONQ"), ("HIMZ", "HIMS"), ("IRE", "IREN"), ("AVGX", "AVGO"),
+    ("RKLX", "RKLB"), ("RGTX", "RGTI"), ("SOFX", "SOFI"), ("NVOX", "NVO"),
+    ("LLYX", "LLY"), ("SOUX", "SOUN"), ("QPUX", "IONQ"), ("HOOX", "HOOD"),
+    ("RIOX", "RIOT"), ("QSU", "QS"), ("MPL", "MP"), ("OSCX", "OSCR"),
+    ("DKNX", "DKNG"), ("ANEL", "ANET"), ("VSTL", "VST"), ("CVNX", "CVNA"),
+    ("LMNX", "LMND"), ("AVXX", "AVAV"), ("BU", "B"), ("PLU", "PL"),
     # 2026-03 launches (Direxion + Tradr)
     ("ADBU", "ADBE"), ("PYPU", "PYPL"), ("TXNU", "TXN"),  ("UNHU", "UNH"),
     ("AAOX", "AAOI"), ("HLXX", "HL"),   ("IBX",  "IBM"),
@@ -185,7 +193,10 @@ BENCHMARK_MAP = {
     "BTC": "IBIT", "ETH": "ETHA",  "CRCL": "CRCL", "CRWV": "CRWV",
     "GDX": "GDX",  "SLV": "SLV",   "XLE": "XLE",   "XOP": "XOP",
     "TLT": "TLT",  "MSCIJP": "EWJ","APLD": "APLD", "CLSK": "CLSK",
-    "IREN": "IREN", "BE": "BE", "NBIS": "NBIS", "SMR": "SMR", "SPHB": "SPHB"
+    "IREN": "IREN", "BE": "BE", "NBIS": "NBIS", "SMR": "SMR", "SPHB": "SPHB",
+    "AMD": "AMD", "ASTS": "ASTS", "BMNR": "BMNR", "HOOD": "HOOD", "IONQ": "IONQ",
+    "OKLO": "OKLO", "PLTR": "PLTR", "QBTS": "QBTS", "RGTI": "RGTI", "RKLB": "RKLB",
+    "SMCI": "SMCI", "TSM": "TSM",
 }
 
 INVERSE_ETF_UNIVERSE = [
@@ -203,7 +214,10 @@ INVERSE_ETF_UNIVERSE = [
     ("EWV",  -2, "MSCIJP"), ("APLZ", -2, "APLD"), ("AMZO", -2, "AMZN"),
     ("BEZ", -2, "BE"), ("NBIZ", -2, "NBIS"), ("SMZ", -2, "SMR"),
     ("QBTZ", -2, "QBTS"), ("IONZ", -2, "IONQ"),
-    ("HIBS", -3, "SPHB"),  ("CLSZ", -2, "CLSK"), ("IREZ", -2, "IREN")
+    ("HIBS", -3, "SPHB"),  ("CLSZ", -2, "CLSK"), ("IREZ", -2, "IREN"),
+    ("RGTZ", -2, "RGTI"), ("PLTZ", -2, "PLTR"), ("SMST", -2, "MSTR"), ("SMCZ", -2, "SMCI"),
+    ("BMNZ", -2, "BMNR"), ("HOOZ", -2, "HOOD"), ("DAMD", -2, "AMD"), ("RKLZ", -2, "RKLB"),
+    ("STSM", -2, "TSM"), ("OKLS", -2, "OKLO"), ("ASTN", -2, "ASTS"),
 ]
 
 
