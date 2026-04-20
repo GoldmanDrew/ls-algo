@@ -126,7 +126,7 @@ new_pairs = [
     ("UPSX", "UPST"), ("VOYX", "VOYG"), ("WULX", "WULF"), ("CRMU", "CRML"),
     ("UECG", "UEC"),  ("DNNG", "DNN"),  ("RCAX", "RCAT"), ("RDWU", "RDW"),
     ("OKLL", "OKLO"), ("GDXU", "GDX"),  ("MRNX", "MRNA"), ("ZETX", "ZETA"),
-    ("LITX", "LITE"), ("SNXX", "SNDX"), ("WDCX", "WDC"),  ("LNOK", "NOK"),
+    ("LITX", "LITE"), ("SNXX", "SNDK"), ("WDCX", "WDC"),  ("LNOK", "NOK"),
     ("USGG", "USAR"), ("ONDG", "ONDS"), ("PLUL", "PLUG"), ("ALBG", "ALB"),
     ("UUUG", "UUUU"), ("HUTG", "HUT"),  ("XPEG", "XPEV"), ("ORLG", "ORLY"),
     ("LUNL", "LUNR"), ("RKTL", "RKT"),  ("EOSU", "EOSE"), ("BTFL", "KEEL"),
@@ -1406,7 +1406,8 @@ def enrich_with_decay_and_vol(df: pd.DataFrame, tr_map: dict[str, pd.Series],
 
     NEW columns added (on top of existing gross/net decay):
       - expected_gross_decay_annual  : theoretical 0.5×|β|×|β−1|×σ²×252
-      - blended_gross_decay          : weighted mix of realized + expected
+      - blended_gross_decay          : weighted mix of realized + expected (for β≤0 or β>1.5);
+                                       for 0<β≤1.5, realized gross decay only (no expected term)
       - decay_score                  : blended gross decay minus borrow (for sizing)
     """
     print("[DECAY] Computing decay + volatility ...")
@@ -1560,13 +1561,22 @@ def enrich_with_decay_and_vol(df: pd.DataFrame, tr_map: dict[str, pd.Series],
         print(f"[DECAY] Applied targeted split repairs to {repaired} ticker(s)")
 
 
-    # Blended gross decay: trust realized more as n_obs grows
+    # Blended gross decay: trust realized more as n_obs grows.
+    # For 0 < β ≤ 1.5 (beta-hedgeable single-stock sleeves), use realized only —
+    # do not mix in theoretical expected decay.
     # w_realized = min(1.0, n_obs / realized_trust_days)
     blended = []
     for _, row in df.iterrows():
         realized = row["gross_decay_annual"]
         expected = row["expected_gross_decay_annual"]
         n_obs = row["Beta_n_obs"] if pd.notna(row.get("Beta_n_obs")) else 0
+        beta_f = row.get("Beta")
+        beta_f = float(beta_f) if pd.notna(beta_f) else np.nan
+        realized_only = pd.notna(beta_f) and (beta_f > 0) and (beta_f <= 1.5)
+
+        if realized_only:
+            blended.append(realized if pd.notna(realized) else np.nan)
+            continue
 
         if pd.notna(realized) and pd.notna(expected):
             w_realized = min(1.0, n_obs / realized_trust_days)
