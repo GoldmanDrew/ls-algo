@@ -171,6 +171,8 @@ covered_call_pairs = [
     ("QYLD", "QQQ"),  ("QYLG", "QQQ"),  ("QQQX", "QQQ"),  ("JEPQ", "QQQ"),
     ("XYLD", "SPY"),  ("XYLG", "SPY"),  ("JEPI", "SPY"),  ("SPYI", "SPY"),
     ("RYLD", "IWM"),
+    # GraniteShares YieldBOOST (single-stock income; 1x overlay, hedge vs underlying)
+    ("MUYY", "MU"), ("TMYY", "TSM"), ("CWY", "CRWV"),
 ]
 
 
@@ -194,7 +196,7 @@ INVERSE_ETF_UNIVERSE = [
     ("ZSL",  -2, "SLV"),  ("SQQQ", -3, "NDX"),  ("SPXS", -3, "SPX"),  ("TZA",  -3, "RUT"),
     ("SOXS", -3, "SOX"),  ("FAZ",  -3, "FIN"),   ("LABD", -3, "BIOTECH"),
     ("TECS", -3, "TECH"), ("SDOW", -3, "DJIA"), ("DUST", -3, "GDX"),
-    ("TTXD", -2, "TECH"), ("TSXD", -2, "SOX"),  ("WEBS", -3, "TECH"), ("FNGD", -3, "TECH"),
+    ("WEBS", -3, "TECH"), ("FNGD", -3, "TECH"),
     ("REW",  -2, "TECH"), ("SKF",  -2, "FIN"),   ("SPXU", -3, "SPX"),
     ("DUG",  -2, "XLE"),  ("DRIP", -2, "XOP"),  ("TMV",  -3, "TLT"),
     ("TBT",  -2, "TLT"),  ("TBX",  -2, "TLT"),  ("NVDS", -1.5, "NVDA"),
