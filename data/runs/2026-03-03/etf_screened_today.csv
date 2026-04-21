@@ -148,7 +148,7 @@ ORLG,ORLY,2.010686,30,ols,0.117906,-0.08150600000000001,0.199412,100,0.199412,Fa
 LUNL,LUNR,2.018545,33,ols,,,,0,,False,True,False,,False,True,False,False,False,False,True,True,False,1.113078,2.868929,0.243815,
 RKTL,RKT,1.935297,33,ols,0.039165,-0.002765,0.041929999999999995,1000,0.041929999999999995,False,False,False,,True,False,False,False,True,False,False,False,False,0.565199,1.369207,0.475305,0.43337499999999995
 EOSU,EOSE,1.982432,32,ols,,,,0,,False,True,False,,False,True,False,False,False,False,True,True,False,1.122515,2.941058,0.488087,
-BTFL,BITF,2.015432,42,ols,0.309925,-0.273525,0.58345,500,0.58345,False,False,False,,False,True,False,False,False,False,True,True,False,0.984631,2.193314,0.349461,-0.233989
+BTFL,KEEL,2.015432,42,ols,0.309925,-0.273525,0.58345,500,0.58345,False,False,False,,False,True,False,False,False,False,True,True,False,0.984631,2.193314,0.349461,-0.233989
 FGRU,FIGR,1.972477,9,ols_short_history,0.11312,-0.07672,0.18984,3000,0.18984,False,False,False,,False,True,False,False,False,False,True,False,False,1.154184,4.258541,0.192371,0.0025309999999999777
 APHU,APH,1.654305,9,ols_short_history,,,,0,,False,True,False,,False,True,False,False,False,False,True,True,False,0.363877,0.96999,-1.127147,
 COPZ,COPX,1.998979,9,ols_short_history,,,,0,,False,True,False,,False,True,False,False,False,False,True,True,False,0.372354,1.194086,0.208075,

@@ -1,0 +1,277 @@
+# Hardcoded from DC_Universe_Map_Filtered.xlsx (sheet "Universe Map") — all ETF slots, |β| rounded to 3dp.
+CANDIDATES = [
+    ("SMU", "SMR", 1.986),   ("SMUP", "SMR", 2.058),  ("QBTX", "QBTS", 1.993),
+    ("BMNU", "BMNR", 1.944), ("BMNG", "BMNR", 1.993), ("ASTX", "ASTS", 1.990),
+    ("CRWG", "CRWV", 1.997), ("CWVX", "CRWV", 1.990), ("WULX", "WULF", 1.997),
+    ("NEBX", "NBIS", 1.999), ("NBIL", "NBIS", 1.998), ("NBIG", "NBIS", 2.009),
+    ("SMCL", "SMCI", 1.990), ("CRCA", "CRCL", 1.978), ("CRCG", "CRCL", 1.990),
+    ("LABX", "ALAB", 1.994), ("BEX", "BE", 1.977),    ("CLSX", "CLSK", 1.999),
+    ("GLXU", "GLXY", 2.012), ("XXRP", "XRPZ", 2.020), ("XRPT", "XRPZ", 2.018),
+    ("ETHU", "ETHA", 2.001), ("ETHT", "ETHA", 1.991), ("ETU", "ETHA", 1.990),
+    ("CRDU", "CRDO", 1.988), ("FIGG", "FIG", 1.996),  ("SOLT", "SOEZ", 2.014),
+    ("CONL", "COIN", 1.987), ("APPX", "APP", 1.984),  ("UUUG", "UUUU", 1.995),
+    ("SOXL", "SOXX", 2.960), ("ROBN", "HOOD", 2.012), ("HOOG", "HOOD", 2.007),
+    ("LITX", "LITE", 1.980), ("INTW", "INTC", 1.988), ("UPSX", "UPST", 1.989),
+    ("CSEX", "CLS", 1.998),  ("MUU", "MU", 1.994),    ("MULL", "MU", 1.997),
+    ("ARCX", "ACHR", 1.989), ("SATG", "SATS", 2.010), ("VRTL", "VRT", 1.982),
+    ("GDXU", "GDX", 3.043),  ("NUGT", "GDX", 1.981),  ("TEMT", "TEM", 1.985),
+    ("RDTL", "RDDT", 1.982), ("RBLU", "RBLX", 2.019), ("AMDL", "AMD", 1.997),
+    ("AMUU", "AMD", 2.008),  ("AMDG", "AMD", 2.003),  ("TSLL", "TSLA", 1.993),
+    ("TSLT", "TSLA", 1.993), ("TSLR", "TSLA", 1.999), ("TSLG", "TSLA", 1.991),
+    ("BITX", "IBIT", 2.005), ("BITU", "IBIT", 1.992), ("BTCL", "IBIT", 2.007),
+    ("YINN", "FXI", 2.974),  ("MVLL", "MRVL", 1.992), ("URAA", "URA", 1.933),
+    ("SNOU", "SNOW", 2.024), ("BULG", "BULL", 1.985), ("PLTU", "PLTR", 1.992),
+    ("PTIR", "PLTR", 1.997), ("PLTG", "PLTR", 1.996), ("BABX", "BABA", 2.006),
+    ("NVDL", "NVDA", 1.988), ("NVDU", "NVDA", 1.986), ("NVDX", "NVDA", 1.997),
+    ("NVDG", "NVDA", 1.969), ("LRCU", "LRCX", 2.045), ("ARMG", "ARM", 1.997),
+    ("TSMU", "TSM", 1.990),  ("TSMG", "TSM", 1.979),  ("GEVX", "GEV", 1.993),
+    ("KTUP", "KTOS", 2.026), ("AVL", "AVGO", 1.987),  ("AVGG", "AVGO", 1.999),
+    ("AVGU", "AVGO", 1.992), ("UBRL", "UBER", 1.995), ("CRMG", "CRM", 1.984),
+    ("UNHG", "UNH", 1.996),  ("MEXX", "EWW", 2.958),  ("JNUG", "GDXJ", 1.974),
+    ("NFLU", "NFLX", 1.990), ("CWEB", "KWEB", 1.987), ("CEGX", "CEG", 1.979),
+    ("GGLL", "GOOGL", 1.992),("GOOX", "GOOGL", 1.984),("KORU", "EWY", 2.931),
+    ("TERG", "TER", 1.996),  ("DLLL", "DELL", 1.986), ("METU", "META", 1.999),
+    ("FBL", "META", 1.997),  ("AMZU", "AMZN", 1.987), ("AMZZ", "AMZN", 1.992),
+    ("PALU", "PANW", 2.006), ("ASMG", "ASML", 1.984), ("WDCX", "WDC", 2.055),
+    ("CRWL", "CRWD", 1.997), ("ELIL", "LLY", 1.991),  ("PYPG", "PYPL", 1.995),
+    ("BOEU", "BA", 1.987),   ("MSFU", "MSFT", 1.991), ("MSFL", "MSFT", 1.992),
+    ("MSFX", "MSFT", 2.007), ("CHAU", "ASHR", 1.967), ("NOWL", "NOW", 1.996),
+    ("ERX", "XLE", 1.988),   ("GUSH", "XOP", 2.011),  ("SHPU", "SHOP", 2.012),
+    ("XOMX", "XOM", 1.969),  ("ORCU", "ORCL", 2.006), ("ADBG", "ADBE", 1.992),
+    ("AAPU", "AAPL", 1.984), ("AAPB", "AAPL", 1.991), ("AAPX", "AAPL", 1.995),
+    ("TARK", "ARKK", 1.978), ("LABU", "XBI", 2.988),  ("CSCL", "CSCO", 2.027),
+    ("LMTL", "LMT", 1.984),  ("COTG", "COST", 1.987),
+]
+
+# Bucket 3 pairs (inverse ETF + underlying), handled with short-inverse + short-underlying leg construction.
+BUCKET3_CANDIDATES = [
+    ("APLZ", "APLD"),
+    ("CLSZ", "CLSK"),
+    ("IREZ", "IREN"),
+    ("BEZ", "BE"),
+    ("NBIZ", "NBIS"),
+    ("SMZ", "SMR"),
+    ("MSTZ", "MSTR"),
+    ("TSLQ", "TSLA"),
+    ("NVDQ", "NVDA"),
+    ("SOXS", "SOXX"),
+]
+BUCKET3_ETFS = {e for e, _ in BUCKET3_CANDIDATES}
+BUCKET3_UNDERLYINGS = {u for _, u in BUCKET3_CANDIDATES}
+
+BASE_CANDIDATE_KEYS = {(e, u) for e, u, _ in CANDIDATES}
+
+# Add all remaining screened pairs not already in the base map.
+screen_paths = [Path("../data/etf_screened_today.csv"), Path("data/etf_screened_today.csv")]
+_screen_path = next((p for p in screen_paths if p.exists()), None)
+_added = 0
+if _screen_path is not None:
+    _sc = pd.read_csv(_screen_path)
+    _sc.columns = [str(c).strip() for c in _sc.columns]
+    req = {"ETF", "Underlying", "Beta"}
+    if req.issubset(_sc.columns):
+        _sc["ETF"] = _sc["ETF"].astype(str).str.upper().str.strip()
+        _sc["Underlying"] = _sc["Underlying"].astype(str).str.upper().str.strip()
+        _sc["Beta"] = pd.to_numeric(_sc["Beta"], errors="coerce")
+
+        for r in _sc.itertuples(index=False):
+            e = r.ETF
+            u = r.Underlying
+            b = float(r.Beta) if pd.notna(r.Beta) else np.nan
+            if not e or not u or not np.isfinite(b):
+                continue
+            key = (e, u)
+            if key in BASE_CANDIDATE_KEYS:
+                continue
+            CANDIDATES.append((e, u, round(abs(b), 3)))
+            BASE_CANDIDATE_KEYS.add(key)
+            _added += 1
+
+EXTRA_ETFS = {e for e, u, _ in CANDIDATES if (e, u) not in {(x, y) for x, y, _ in [
+    ("SMU", "SMR", 1),   ("SMUP", "SMR", 1),  ("QBTX", "QBTS", 1),
+    ("BMNU", "BMNR", 1), ("BMNG", "BMNR", 1), ("ASTX", "ASTS", 1),
+    ("CRWG", "CRWV", 1), ("CWVX", "CRWV", 1), ("WULX", "WULF", 1),
+    ("NEBX", "NBIS", 1), ("NBIL", "NBIS", 1), ("NBIG", "NBIS", 1),
+    ("SMCL", "SMCI", 1), ("CRCA", "CRCL", 1), ("CRCG", "CRCL", 1),
+    ("LABX", "ALAB", 1), ("BEX", "BE", 1),    ("CLSX", "CLSK", 1),
+    ("GLXU", "GLXY", 1), ("XXRP", "XRPZ", 1), ("XRPT", "XRPZ", 1),
+    ("ETHU", "ETHA", 1), ("ETHT", "ETHA", 1), ("ETU", "ETHA", 1),
+    ("CRDU", "CRDO", 1), ("FIGG", "FIG", 1),  ("SOLT", "SOEZ", 1),
+    ("CONL", "COIN", 1), ("APPX", "APP", 1),  ("UUUG", "UUUU", 1),
+    ("SOXL", "SOXX", 1), ("ROBN", "HOOD", 1), ("HOOG", "HOOD", 1),
+    ("LITX", "LITE", 1), ("INTW", "INTC", 1), ("UPSX", "UPST", 1),
+    ("CSEX", "CLS", 1),  ("MUU", "MU", 1),    ("MULL", "MU", 1),
+    ("ARCX", "ACHR", 1), ("SATG", "SATS", 1), ("VRTL", "VRT", 1),
+    ("GDXU", "GDX", 1),  ("NUGT", "GDX", 1),  ("TEMT", "TEM", 1),
+    ("RDTL", "RDDT", 1), ("RBLU", "RBLX", 1), ("AMDL", "AMD", 1),
+    ("AMUU", "AMD", 1),  ("AMDG", "AMD", 1),  ("TSLL", "TSLA", 1),
+    ("TSLT", "TSLA", 1), ("TSLR", "TSLA", 1), ("TSLG", "TSLA", 1),
+    ("BITX", "IBIT", 1), ("BITU", "IBIT", 1), ("BTCL", "IBIT", 1),
+    ("YINN", "FXI", 1),  ("MVLL", "MRVL", 1), ("URAA", "URA", 1),
+    ("SNOU", "SNOW", 1), ("BULG", "BULL", 1), ("PLTU", "PLTR", 1),
+    ("PTIR", "PLTR", 1), ("PLTG", "PLTR", 1), ("BABX", "BABA", 1),
+    ("NVDL", "NVDA", 1), ("NVDU", "NVDA", 1), ("NVDX", "NVDA", 1),
+    ("NVDG", "NVDA", 1), ("LRCU", "LRCX", 1), ("ARMG", "ARM", 1),
+    ("TSMU", "TSM", 1),  ("TSMG", "TSM", 1),  ("GEVX", "GEV", 1),
+    ("KTUP", "KTOS", 1), ("AVL", "AVGO", 1),  ("AVGG", "AVGO", 1),
+    ("AVGU", "AVGO", 1), ("UBRL", "UBER", 1), ("CRMG", "CRM", 1),
+    ("UNHG", "UNH", 1),  ("MEXX", "EWW", 1),  ("JNUG", "GDXJ", 1),
+    ("NFLU", "NFLX", 1), ("CWEB", "KWEB", 1), ("CEGX", "CEG", 1),
+    ("GGLL", "GOOGL", 1),("GOOX", "GOOGL", 1),("KORU", "EWY", 1),
+    ("TERG", "TER", 1),  ("DLLL", "DELL", 1), ("METU", "META", 1),
+    ("FBL", "META", 1),  ("AMZU", "AMZN", 1), ("AMZZ", "AMZN", 1),
+    ("PALU", "PANW", 1), ("ASMG", "ASML", 1), ("WDCX", "WDC", 1),
+    ("CRWL", "CRWD", 1), ("ELIL", "LLY", 1),  ("PYPG", "PYPL", 1),
+    ("BOEU", "BA", 1),   ("MSFU", "MSFT", 1), ("MSFL", "MSFT", 1),
+    ("MSFX", "MSFT", 1), ("CHAU", "ASHR", 1), ("NOWL", "NOW", 1),
+    ("ERX", "XLE", 1),   ("GUSH", "XOP", 1),  ("SHPU", "SHOP", 1),
+    ("XOMX", "XOM", 1),  ("ORCU", "ORCL", 1), ("ADBG", "ADBE", 1),
+    ("AAPU", "AAPL", 1), ("AAPB", "AAPL", 1), ("AAPX", "AAPL", 1),
+    ("TARK", "ARKK", 1), ("LABU", "XBI", 1),  ("CSCL", "CSCO", 1),
+    ("LMTL", "LMT", 1),  ("COTG", "COST", 1),
+]}}
+
+# Rebuild additions with explicit Beta filter: include only screened ETFs with Beta > 1.5.
+_base_keys = {(e, u) for e, u, _ in CANDIDATES if e not in EXTRA_ETFS}
+base_candidates = [t for t in CANDIDATES if (t[0], t[1]) in _base_keys]
+
+extra_candidates = []
+EXTRA_ETFS = set()
+if _screen_path is not None and req.issubset(_sc.columns):
+    for r in _sc.itertuples(index=False):
+        e = str(r.ETF).upper().strip()
+        u = str(r.Underlying).upper().strip()
+        b = float(r.Beta) if pd.notna(r.Beta) else np.nan
+        if not e or not u or not np.isfinite(b):
+            continue
+        if b <= 1.5:
+            continue
+        key = (e, u)
+        if key in _base_keys:
+            continue
+        extra_candidates.append((e, u, round(b, 3)))
+        EXTRA_ETFS.add(e)
+
+# Deduplicate while preserving order.
+_seen = set()
+CANDIDATES = []
+for e, u, b in base_candidates + extra_candidates:
+    k = (e, u)
+    if k in _seen:
+        continue
+    _seen.add(k)
+    CANDIDATES.append((e, u, b))
+
+# Load whitelist ETF universe from strategy_config.yml (keep even if beta < cutoff).
+WHITELIST_ETFS = set()
+cfg_candidates = [Path("config/strategy_config.yml"), Path("../config/strategy_config.yml")]
+cfg_path = next((p for p in cfg_candidates if p.exists()), None)
+if cfg_path is not None:
+    try:
+        import yaml
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            _cfg_obj = yaml.safe_load(f) or {}
+        _wl = (((_cfg_obj.get("portfolio", {}) or {}).get("sleeves", {}) or {}).get("whitelist_stock", {}) or {}).get("universe", {}).get("etfs", [])
+        WHITELIST_ETFS = {
+            str(x).upper().strip().replace(".", "-")
+            for x in (_wl or [])
+            if str(x).strip()
+        }
+    except Exception:
+        WHITELIST_ETFS = set()
+
+# Add whitelist pairs even when beta <= cutoff.
+_base_etf_to_und = {}
+for _e0, _u0, _b0 in base_candidates:
+    _base_etf_to_und.setdefault(str(_e0).upper().strip().replace(".", "-"), str(_u0).upper().strip())
+
+_screen_etf_to_und = {}
+if _screen_path is not None and req.issubset(_sc.columns):
+    _tmp_sc = _sc[["ETF", "Underlying"]].dropna().copy()
+    _tmp_sc["ETF"] = _tmp_sc["ETF"].astype(str).str.upper().str.strip().str.replace(".", "-", regex=False)
+    _tmp_sc["Underlying"] = _tmp_sc["Underlying"].astype(str).str.upper().str.strip()
+    _tmp_sc = _tmp_sc[(_tmp_sc["ETF"] != "") & (_tmp_sc["Underlying"] != "")]
+    _tmp_sc = _tmp_sc.drop_duplicates(subset=["ETF"], keep="first")
+    _screen_etf_to_und = dict(zip(_tmp_sc["ETF"], _tmp_sc["Underlying"]))
+
+_added_wl = 0
+for _e in sorted(WHITELIST_ETFS):
+    _u = _screen_etf_to_und.get(_e, _base_etf_to_und.get(_e, ""))
+    if not _u:
+        continue
+    _k = (_e, _u)
+    if _k in _seen:
+        continue
+    CANDIDATES.append((_e, _u, 1.0))
+    _seen.add(_k)
+    _added_wl += 1
+if _added_wl > 0:
+    print(f"[V15] Added whitelist pairs: {_added_wl}")
+
+# Add bucket 3 pairs even when beta <= cutoff.
+_added_b3 = 0
+for _e, _u in BUCKET3_CANDIDATES:
+    _e = str(_e).upper().strip().replace(".", "-")
+    _u = str(_u).upper().strip()
+    _k = (_e, _u)
+    if _k in _seen:
+        continue
+    _b3_beta = 1.0
+    CANDIDATES.append((_e, _u, round(float(_b3_beta), 3)))
+    _seen.add(_k)
+    _added_b3 += 1
+if _added_b3 > 0:
+    print(f"[V15] Added bucket3 pairs: {_added_b3}")
+
+# Global beta filter for the entire v9 backtest universe.
+MIN_BETA_ABS = 1.5
+pair_beta_from_screen = {}
+etf_beta_from_screen = {}
+if _screen_path is not None and req.issubset(_sc.columns):
+    for r in _sc.itertuples(index=False):
+        e = str(r.ETF).upper().strip()
+        u = str(r.Underlying).upper().strip()
+        b = float(r.Beta) if pd.notna(r.Beta) else np.nan
+        if not e or not u or not np.isfinite(b):
+            continue
+        pair_beta_from_screen[(e, u)] = abs(b)
+        etf_beta_from_screen[e] = abs(b)
+
+_before = len(CANDIDATES)
+_filtered = []
+for e, u, b in CANDIDATES:
+    b_abs = pair_beta_from_screen.get((e, u), etf_beta_from_screen.get(e, abs(float(b))))
+    _etf_norm = str(e).upper().strip().replace(".", "-")
+    _is_whitelist = _etf_norm in WHITELIST_ETFS
+    _is_bucket3 = _etf_norm in BUCKET3_ETFS
+    if (not _is_whitelist) and (not _is_bucket3) and (not np.isfinite(b_abs) or b_abs <= MIN_BETA_ABS):
+        continue
+    _filtered.append((e, u, round(float(b_abs), 3)))
+CANDIDATES = _filtered
+
+# v15 clearstreet override: keep ETFs present in rates file; preserve whitelist + bucket3 pairs.
+if globals().get("V15_ETFS2_OVERRIDE_ACTIVE", globals().get("V13_ETFS2_OVERRIDE_ACTIVE", False)):
+    _etfs2_ok = {
+        str(x).upper().strip().replace(".", "-")
+        for x in globals().get("V15_ETFS2_TICKERS_WITH_RATES", globals().get("V13_ETFS2_TICKERS_WITH_RATES", set()))
+    }
+    if _etfs2_ok:
+        _before_etfs2 = len(CANDIDATES)
+        CANDIDATES = [
+            (e, u, b)
+            for e, u, b in CANDIDATES
+            if (
+                str(e).upper().strip().replace(".", "-") in _etfs2_ok
+                or str(e).upper().strip().replace(".", "-") in WHITELIST_ETFS
+                or str(e).upper().strip().replace(".", "-") in BUCKET3_ETFS
+            )
+        ]
+        print(f"[V15] Applied clearstreet ticker/rate filter: {_before_etfs2} -> {len(CANDIDATES)} pairs")
+
+print(
+    f"Total candidate pairs: {len(CANDIDATES)} | Added from screener (positive Beta>{MIN_BETA_ABS}): {len(extra_candidates)} "
+    f"| Dropped by global beta filter: {_before - len(CANDIDATES)}"
+)
+print(f"Additional ETF names (capacity-sized only): {len(EXTRA_ETFS)}")
+print(f"[V15] Whitelist ETFs loaded from config: {len(WHITELIST_ETFS)}")
+print(f"[V15] Bucket3 ETFs configured: {len(BUCKET3_ETFS)}")

@@ -4,6 +4,11 @@ Diamond Creek v15 — per-pair daily ledger Excel export.
 README (run after backtest in notebooks/Diamond_Creek_Backtest_v15.ipynb):
 - ref leverage: pass ALL_PAIR_DAILY / ALL_BT key (e.g. max(LEVERAGE_RUNS)).
 - export_start / export_end: default **2023-01-01 .. 2023-01-31** (January 2023 only). Override to expand.
+- full_date_range: if True, set export window to min/max dates in ``pair_daily`` (ignores default Jan-2023 window).
+- include_only_active_pairs: if True, after clipping the date window, keep only pair rows where the pair
+  has non-trivial ``|daily_pair_gross_trading_pnl|`` sum in the window (stale rows of exactly zero
+  for the whole month are dropped). Sums in ``reconciliation_daily`` then match a full-universe
+  run if dropped rows are identically zero.
 - ATTRIBUTION_BASE_CAPITAL: same as Joel White Bay attribution / CFG capital (default 10M).
 - Reconciliation: max |sum(pair daily_net) - NAV daily change| over dates should be <~1 USD
   (floating noise); portfolio margin flows match ALL_BT cum_margin_debit/cum_margin_credit
@@ -136,6 +141,24 @@ def _safe_sheet_name(name: str) -> str:
     return out[:31] if len(out) > 31 else out
 
 
+def _active_pair_ids(
+    d: pd.DataFrame,
+    *,
+    min_abs_gross_sum: float = 0.5,
+) -> set[str]:
+    """
+    Pairs to keep: sum of |daily pair gross| over the (already date-clipped) window exceeds threshold.
+    Pairs with only zeros for the month are dropped from ALL_PAIRS / per-pair tabs.
+    """
+    c = "daily_pair_gross_trading_pnl_usd"
+    if d.empty or "pair" not in d.columns or c not in d.columns:
+        return set()
+    gn = d.groupby("pair", sort=True)[c].apply(
+        lambda s: float(s.dropna().abs().sum()) if s is not None and len(s) else 0.0
+    )
+    return {str(p) for p, v in gn.items() if v >= min_abs_gross_sum}
+
+
 def _implied_prices(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
     """Close-implied prices for standard long-underlying / short-ETF pairs; NaN if ambiguous (e.g. both legs short)."""
     ls = pd.to_numeric(df["long_sh"], errors="coerce")
@@ -160,6 +183,9 @@ def build_pair_ledger_frames(
     *,
     export_start: pd.Timestamp | None = None,
     export_end: pd.Timestamp | None = None,
+    full_date_range: bool = False,
+    include_only_active_pairs: bool = False,
+    active_min_abs_gross_sum_usd: float = 0.5,
     attribution_base_capital: float | None = None,
 ) -> dict[str, Any]:
     """
@@ -168,22 +194,30 @@ def build_pair_ledger_frames(
       portfolio: daily portfolio financing + NAV bridge from ALL_BT
       reconciliation: one-row metrics + optional daily diff table
 
-    Default date window: January 2023 only (LEDGER_EXPORT_START_DEFAULT / LEDGER_EXPORT_END_DEFAULT).
-    Cumulative columns on pair rows are recomputed within that window (month-to-date in export).
+    Date window: unless ``full_date_range=True``, defaults to January 2023 only
+    (LEDGER_EXPORT_START_DEFAULT / LEDGER_EXPORT_END_DEFAULT). With ``full_date_range``,
+    uses min/max dates present in ``pair_daily``. Cumulative columns on pair rows are
+    recomputed within the export window.
     Book flows for the portfolio sheet use incremental deltas from full ALL_BT on the same calendar dates.
     """
     if pair_daily is None or pair_daily.empty:
         raise ValueError("pair_daily is empty")
-    export_start = (
-        pd.to_datetime(export_start) if export_start is not None else LEDGER_EXPORT_START_DEFAULT
-    )
-    export_end = (
-        pd.to_datetime(export_end) if export_end is not None else LEDGER_EXPORT_END_DEFAULT
-    )
 
     d = pair_daily.copy()
     d["date"] = pd.to_datetime(d["date"], errors="coerce")
     d = d[d["date"].notna()].sort_values(["date", "etf"]).reset_index(drop=True)
+
+    if full_date_range:
+        export_start = pd.to_datetime(d["date"].min())
+        export_end = pd.to_datetime(d["date"].max())
+    else:
+        export_start = (
+            pd.to_datetime(export_start) if export_start is not None else LEDGER_EXPORT_START_DEFAULT
+        )
+        export_end = (
+            pd.to_datetime(export_end) if export_end is not None else LEDGER_EXPORT_END_DEFAULT
+        )
+
     d = d.loc[(d["date"] >= export_start) & (d["date"] <= export_end)].copy()
     if d.empty:
         raise ValueError(
@@ -210,6 +244,19 @@ def build_pair_ledger_frames(
         if c not in d.columns:
             d[c] = 0.0
         d[c] = pd.to_numeric(d[c], errors="coerce").fillna(0.0)
+
+    n_pairs_before = int(d["pair"].nunique()) if "pair" in d.columns else 0
+    if include_only_active_pairs:
+        _active = _active_pair_ids(d, min_abs_gross_sum=active_min_abs_gross_sum_usd)
+        if not _active:
+            raise ValueError(
+                "include_only_active_pairs is True but no pair passed the gross-activity filter; "
+                f"try lowering active_min_abs_gross_sum_usd (currently {active_min_abs_gross_sum_usd})."
+            )
+        d = d.loc[d["pair"].isin(_active)].copy()
+    n_pairs_after = int(d["pair"].nunique()) if "pair" in d.columns else 0
+    if d.empty:
+        raise ValueError("No pair rows after active-pair filter; disable include_only_active_pairs.")
 
     if "daily_net_financing_cost_usd" in d.columns:
         d["daily_net_financing_cost_usd"] = pd.to_numeric(
@@ -354,31 +401,42 @@ def build_pair_ledger_frames(
 
     tol = 1.0
     tol_book = 1e-6
-    metrics = {
-        "max_abs_diff_attribution_vs_book_net_usd": float(
-            merged["diff_attribution_net_vs_book_components_usd"].abs().max()
-        ),
-        "max_abs_diff_net_vs_nav_usd_legacy_pair_txn": float(
-            merged["diff_net_pnl_vs_nav_usd"].abs().max()
-        ),
-        "max_abs_diff_attribution_net_vs_nav_usd": float(
-            merged["diff_attribution_net_vs_nav_usd"].abs().max()
-        ),
-        "max_abs_diff_gross_usd": float(merged["diff_gross_vs_book_usd"].abs().max()),
-        "max_abs_diff_txn_pair_sum_vs_book_usd": float(
-            merged["diff_txn_vs_book_usd"].abs().max()
-        ),
-        "max_abs_diff_borrow_usd": float(merged["diff_borrow_vs_book_usd"].abs().max()),
-        "max_abs_diff_margin_debit_usd": float(merged["diff_margin_debit_vs_book_usd"].abs().max()),
-        "max_abs_diff_short_credit_usd": float(
-            merged["diff_short_credit_vs_book_usd"].abs().max()
-        ),
-        "reconciliation_tolerance_usd": tol,
-        "reconciliation_tolerance_book_identity_usd": tol_book,
-        "attribution_base_capital_usd": float(base) if np.isfinite(base) else None,
-        "export_start": str(export_start.date()),
-        "export_end": str(export_end.date()),
+    metrics: dict[str, Any] = {
+        "n_active_universe_pairs": n_pairs_after,
+        "n_pairs_in_window_before_filter": n_pairs_before,
     }
+    if include_only_active_pairs and n_pairs_before and n_pairs_after is not None:
+        metrics["n_dropped_inactive_universe_pairs"] = n_pairs_before - n_pairs_after
+
+    metrics.update(
+        {
+            "max_abs_diff_attribution_vs_book_net_usd": float(
+                merged["diff_attribution_net_vs_book_components_usd"].abs().max()
+            ),
+            "max_abs_diff_net_vs_nav_usd_legacy_pair_txn": float(
+                merged["diff_net_pnl_vs_nav_usd"].abs().max()
+            ),
+            "max_abs_diff_attribution_net_vs_nav_usd": float(
+                merged["diff_attribution_net_vs_nav_usd"].abs().max()
+            ),
+            "max_abs_diff_gross_usd": float(merged["diff_gross_vs_book_usd"].abs().max()),
+            "max_abs_diff_txn_pair_sum_vs_book_usd": float(
+                merged["diff_txn_vs_book_usd"].abs().max()
+            ),
+            "max_abs_diff_borrow_usd": float(merged["diff_borrow_vs_book_usd"].abs().max()),
+            "max_abs_diff_margin_debit_usd": float(
+                merged["diff_margin_debit_vs_book_usd"].abs().max()
+            ),
+            "max_abs_diff_short_credit_usd": float(
+                merged["diff_short_credit_vs_book_usd"].abs().max()
+            ),
+            "reconciliation_tolerance_usd": tol,
+            "reconciliation_tolerance_book_identity_usd": tol_book,
+            "attribution_base_capital_usd": float(base) if np.isfinite(base) else None,
+            "export_start": str(export_start.date()),
+            "export_end": str(export_end.date()),
+        }
+    )
     metrics["pass_tol_attribution_vs_book_net"] = (
         metrics["max_abs_diff_attribution_vs_book_net_usd"] <= tol_book
     )
@@ -419,15 +477,23 @@ def export_v15_pair_ledger_to_excel(
     *,
     export_start: pd.Timestamp | None = None,
     export_end: pd.Timestamp | None = None,
+    full_date_range: bool = False,
+    include_only_active_pairs: bool = False,
+    active_min_abs_gross_sum_usd: float = 0.5,
     attribution_base_capital: float | None = None,
     ref_leverage: float | None = None,
     include_per_pair_sheets: bool = True,
-) -> dict[str, Any]:
+    return_artifacts: bool = False,
+) -> Any:
     """
     Writes ALL_PAIRS, portfolio_financing, reconciliation_daily, summary; optional one sheet per pair.
-    Returns metrics dict from build_pair_ledger_frames.
 
-    Defaults: January 2023 only (see LEDGER_EXPORT_*_DEFAULT).
+    Defaults: January 2023 only (see LEDGER_EXPORT_*_DEFAULT). Pass ``full_date_range=True`` for
+    all dates in ``pair_daily``.
+
+    If ``return_artifacts`` is True, returns
+    ``{"metrics": m, "reconciliation_daily": recon, "all_pairs": a, "portfolio": p, "output_path": path}``.
+    Otherwise returns only the metrics dict (backward compatible).
     """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -437,6 +503,9 @@ def export_v15_pair_ledger_to_excel(
         bt,
         export_start=export_start,
         export_end=export_end,
+        full_date_range=full_date_range,
+        include_only_active_pairs=include_only_active_pairs,
+        active_min_abs_gross_sum_usd=active_min_abs_gross_sum_usd,
         attribution_base_capital=attribution_base_capital,
     )
     all_pairs = built["all_pairs"]
@@ -459,4 +528,12 @@ def export_v15_pair_ledger_to_excel(
             for (pair_id, sub), sh in zip(groups, sheet_names):
                 sub.to_excel(writer, sheet_name=sh, index=False)
 
+    if return_artifacts:
+        return {
+            "metrics": metrics,
+            "reconciliation_daily": recon,
+            "all_pairs": all_pairs,
+            "portfolio": portfolio,
+            "output_path": str(out_path.resolve()),
+        }
     return metrics
