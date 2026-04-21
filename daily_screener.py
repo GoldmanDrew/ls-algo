@@ -47,9 +47,31 @@ import requests
 import yaml
 import yfinance as yf
 
+from expense_ratios import fetch_expense_ratios
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 TRADING_DAYS = 252
+RISK_FREE_FALLBACK = 0.045  # ~13-week T-bill fallback when ^IRX fetch fails
+
+
+def _fetch_risk_free_rate(default: float = RISK_FREE_FALLBACK) -> float:
+    """Live 13-week T-bill yield (annualised decimal) via yfinance ^IRX.
+
+    ^IRX quotes yield as a percentage (e.g. 4.52 → 4.52 %). Returns *default*
+    on any failure so the pipeline never blocks on a data-source hiccup.
+    """
+    try:
+        hist = yf.Ticker("^IRX").history(period="10d", auto_adjust=False)
+        if hist is not None and "Close" in hist.columns:
+            close = pd.to_numeric(hist["Close"], errors="coerce").dropna()
+            if len(close):
+                v = float(close.iloc[-1])
+                if 0.0 < v < 20.0:
+                    return round(v / 100.0, 6)
+    except Exception as e:
+        print(f"[RF] Failed to fetch ^IRX ({e}); falling back to {default:.3%}")
+    return default
 
 # ── Optional core package integration ──
 # If core/ is available, use shared norm_sym and expected_gross_decay.
@@ -1295,6 +1317,15 @@ def _annualized_vol(tr_series: pd.Series, min_days: int = 60,
     Capping the lookback to 1 year (252 trading days) prevents stale
     high-vol regimes from inflating expected-decay estimates for
     underlyings whose recent vol is much lower.
+
+    NOTE: This is the *legacy* σ estimator:
+        σ = std(pct_change(TR)) · √252
+    i.e. centered (subtracts sample mean) and built from simple returns.
+    For feeding ``expected_gross_decay`` — which is an Itô identity in
+    log space — use :func:`_annualized_second_moment_log` instead, which
+    returns ``√( mean(ln(TR_t/TR_{t-1})²) · 252 )``. The two disagree by
+    the drift term μ² and by a log/simple wedge that is small at daily
+    frequency but grows with vol. See docs/decay_methodology.md.
     """
     tr = tr_series.dropna()
     if len(tr) < min_days + 1: return None
@@ -1307,20 +1338,117 @@ def _annualized_vol(tr_series: pd.Series, min_days: int = 60,
     return round(vol, 6)
 
 
-def expected_gross_decay(beta: float, sigma_annual: float) -> float:
-    """Theoretical annualized volatility drag: 0.5 × |β| × |β−1| × σ²_annual.
+def _annualized_second_moment_log(
+    tr_series: pd.Series,
+    min_days: int = 60,
+    cap: float = _VOL_CAP_ANNUAL,
+    max_days: int = TRADING_DAYS,
+) -> float | None:
+    """Annualized σ aligned with the Itô decay identity.
 
-    *sigma_annual* is the annualized vol of the underlying (from _annualized_vol).
-    Works for bull (β>0) and inverse (β<0) ETFs.
-    For β=2, σ_annual=0.30:  0.5 × 2 × 1 × 0.09 = 0.09  (9%)
-    For β=−2, σ_annual=0.30: 0.5 × 2 × 3 × 0.09 = 0.27  (27%)
-    For β=1, any σ:           0.5 × 1 × 0 × σ²   = 0     (no drag for 1x)
+    Returns ``σ = √( mean(r_t²) · 252 )`` where r_t is the DAILY LOG
+    return of *tr_series*. This is the σ that makes
+
+        0.5 · |β| · |β−1| · σ²
+
+    equal — in expectation — to the realized daily hedge drag
+
+        mean( β · ln(1+r_und_t) − ln(1+r_etf_t) ) · 252
+
+    under a noise-free β× daily-rebalance tracker. The key properties
+    that distinguish it from :func:`_annualized_vol`:
+
+    1. **Log returns**, not simple returns.  ln(1+r) is what appears on
+       both legs of the realized decay identity.
+    2. **Uncentered second moment** ``mean(r²)`` instead of ``std(r)²``.
+       The Itô correction term is quadratic in the realization r, so
+       μ² must stay in — subtracting it (as .std does) systematically
+       understates expected decay for high-drift names (MSTR, NVDA,
+       COIN …).
+    3. Same 252 annualization factor used elsewhere — keeps realized
+       and expected on the same clock.
+
+    Parameters mirror :func:`_annualized_vol` so the two are drop-in
+    comparable.
+    """
+    tr = tr_series.dropna()
+    if len(tr) < min_days + 1:
+        return None
+    tr = tr.iloc[-max_days - 1:]
+    r = np.log(tr / tr.shift(1)).dropna()
+    r = r[np.isfinite(r)]
+    if len(r) < min_days:
+        return None
+    m2 = float((r ** 2).mean())
+    if m2 <= 0:
+        return None
+    sigma = float(np.sqrt(m2 * TRADING_DAYS))
+    if cap and sigma > cap:
+        sigma = cap
+    return round(sigma, 6)
+
+
+def expected_gross_decay(
+    beta: float,
+    sigma_annual: float,
+    *,
+    expense_ratio: float = 0.0,
+    risk_free_rate: float = 0.0,
+    mgr_borrow_on_underlying: float = 0.0,
+) -> float:
+    """Theoretical annualized gross decay per $1 ETF short (total carry).
+
+    Closed-form from Avellaneda–Zhang (2009) for a β× daily-reset LETF. The
+    realized estimator in ``_compute_gross_decay`` captures *all four* terms
+    below; prior versions of this function returned only the first, which made
+    ``blended_gross_decay`` an apples-to-oranges mix. We now return the full
+    expression so realized and expected live in the same units:
+
+        expected = 0.5·|β|·|β−1|·σ²            (volatility drag)
+                 + f                           (LETF expense ratio)
+                 + (β − 1)·r                   (financing term)
+                 + |β|·λ̄_mgr    if β<0        (manager's borrow on underlying)
+
+    Sign convention: **positive = accrues to the short seller** (same as
+    realized decay). A β=2 bull LETF at σ=30 %, r=4.5 %, f=1 % returns
+    0.09 + 0.01 + 0.045 = 14.5 %/yr. A β=−2 inverse at σ=30 %, r=4.5 %, f=1 %,
+    λ̄_mgr=0 returns 0.27 + 0.01 − 0.135 = 14.5 %/yr.
+
+    Parameters
+    ----------
+    beta : float
+        LETF leverage (signed). e.g. +2, +3, −1, −2.
+    sigma_annual : float
+        Annualised vol of the **underlying** (decimal, e.g. 0.30 for 30 %).
+    expense_ratio : float, default 0.0
+        LETF management fee (decimal). Pass 0.0 to fall back to pre-fix behaviour.
+    risk_free_rate : float, default 0.0
+        Annualised risk-free rate (decimal, e.g. 0.045). Typically sourced
+        from ^IRX (13-week T-bill) at runtime.
+    mgr_borrow_on_underlying : float, default 0.0
+        For inverse LETFs (β<0): the borrow fee the fund's manager pays to
+        short the underlying, as an annualised decimal. 0.0 when unknown —
+        caller should set ``expected_gross_decay_reliable`` accordingly.
     """
     if _HAS_CORE:
-        return _expected_gross_decay(beta, sigma_annual)
+        try:
+            return _expected_gross_decay(
+                beta,
+                sigma_annual,
+                expense_ratio=expense_ratio,
+                risk_free_rate=risk_free_rate,
+                mgr_borrow_on_underlying=mgr_borrow_on_underlying,
+            )
+        except TypeError:
+            # core/ hasn't been upgraded to the extended signature — recompute
+            # locally instead of silently dropping the extra terms.
+            pass
     abs_b = abs(beta)
     abs_bm1 = abs(beta - 1.0)
-    return round(0.5 * abs_b * abs_bm1 * sigma_annual ** 2, 6)
+    drag = 0.5 * abs_b * abs_bm1 * sigma_annual ** 2
+    fin = (beta - 1.0) * risk_free_rate
+    mgr = abs_b * mgr_borrow_on_underlying if beta < 0 else 0.0
+    return round(drag + expense_ratio + fin + mgr, 6)
 
 
 _WEEKS_PER_YEAR = 52
@@ -1352,7 +1480,7 @@ def _split_suspect_week_ends(prices: pd.Series) -> set[pd.Timestamp]:
     return suspect_weeks
 
 
-def _compute_gross_decay(
+def _compute_gross_decay_weekly(
     etf_tr: pd.Series,
     und_tr: pd.Series,
     beta: float,
@@ -1361,23 +1489,19 @@ def _compute_gross_decay(
     drop_split_suspect_weeks: bool = False,
 ) -> float | None:
     """
-    Gross annualized decay per $1 ETF short, measured at WEEKLY frequency.
+    LEGACY: gross annualized decay per $1 ETF short, WEEKLY frequency × 52.
 
-    Using weekly (Friday-to-Friday) returns × 52 instead of daily × 252
-    reduces microstructure noise (bid-ask bounce, closing auctions,
-    illiquid names) that inflates daily hedge-PnL estimates.
+    Kept for A/B comparison against :func:`_compute_gross_decay_daily`.
+    Introduces a +3.2 % annualization wedge vs the daily × 252 estimator
+    (52·5 = 260 ≠ 252) which systematically inflates realized decay
+    relative to the Itô identity. Do not use for new production code —
+    call :func:`_compute_gross_decay` instead (which aliases the daily
+    version).
 
     LOG RETURNS are used for BOTH bull and inverse ETFs:
 
         weekly_pnl = β × ln(1+r_und_w) − ln(1+r_etf_w)
-
-    Why log returns for bull too?  A β× daily tracker has r_etf = β×r_und,
-    so the simple-return hedge PnL (β×r_und − r_etf) is *identically zero*
-    at daily frequency and ~zero at weekly — it cannot capture vol drag.
-    In log space, β×ln(1+r) − ln(1+βr) ≈ 0.5×β(β−1)×r² > 0, which is
-    exactly the compounding drag we want to measure.
-
-    gross_decay_annual = mean(weekly_pnl) × 52
+        gross_decay_annual = mean(weekly_pnl) × 52
     """
     etf_tr = etf_tr[~etf_tr.index.duplicated(keep='last')]
     und_tr = und_tr[~und_tr.index.duplicated(keep='last')]
@@ -1415,20 +1539,144 @@ def _compute_gross_decay(
     return round(float(weekly_pnl.mean()) * _WEEKS_PER_YEAR, 6)
 
 
-def enrich_with_decay_and_vol(df: pd.DataFrame, tr_map: dict[str, pd.Series],
-                              min_days: int = 60,
-                              realized_trust_days: int = 252) -> pd.DataFrame:
+_MIN_DAYS_DECAY = 60  # ~3 months of daily observations
+
+
+def _compute_gross_decay_daily(
+    etf_tr: pd.Series,
+    und_tr: pd.Series,
+    beta: float,
+    min_days: int = _MIN_DAYS_DECAY,
+    label: str | None = None,
+    drop_split_suspect_days: bool = False,
+) -> float | None:
+    """Realized gross annualized decay per $1 ETF short — DAILY log form.
+
+    Algebraic identity used:
+
+        daily_drag_t = β · ln(1+r_und_t) − ln(1+r_etf_t)
+        gross_decay_annual = mean(daily_drag_t) · 252
+
+    For a noise-free β× daily-rebalance tracker this identity equals
+    ``0.5·β·(β−1) · mean(r_und_t²) · 252`` (discrete Itô), which is
+    exactly the quantity returned by
+    ``expected_gross_decay(beta, _annualized_second_moment_log(und_tr))``.
+
+    Using daily frequency × 252 — rather than weekly × 52 — eliminates
+    the 260 vs 252 annualization wedge that biased the legacy weekly
+    estimator upward by ~3.2 %. Using log returns on both legs (not just
+    the underlying) keeps the estimator algebraically matched to the
+    expected-decay formula.
+
+    Notes
+    -----
+    * We intentionally do NOT resample or winsorize by default. Daily
+      microstructure noise (bid-ask bounce) is mean-zero and washes out
+      over the averaging window; the old weekly resample suppressed it
+      at the cost of an annualization bias.
+    * Split-suspect day dropping is available as an opt-in via
+      ``drop_split_suspect_days`` for the targeted split-repair path.
+    """
+    etf_tr = etf_tr[~etf_tr.index.duplicated(keep='last')]
+    und_tr = und_tr[~und_tr.index.duplicated(keep='last')]
+    combined = pd.concat(
+        [etf_tr.rename("etf"), und_tr.rename("und")], axis=1
+    ).dropna()
+    if len(combined) < min_days + 1:
+        return None
+    if abs(float(beta)) < 0.1:
+        return None
+
+    r_etf = np.log(combined["etf"] / combined["etf"].shift(1))
+    r_und = np.log(combined["und"] / combined["und"].shift(1))
+    valid = r_etf.notna() & r_und.notna() & np.isfinite(r_etf) & np.isfinite(r_und)
+    r_etf, r_und = r_etf[valid], r_und[valid]
+    if len(r_etf) < min_days:
+        return None
+
+    daily_drag = float(beta) * r_und - r_etf
+
+    if drop_split_suspect_days:
+        # |ln ratio| ≥ _JUMP_FLOOR is the same gate _split_suspect_week_ends
+        # uses; drop days where the UNDERLYING jumped like a split, since
+        # those days dominate the squared-return term and usually indicate
+        # unadjusted corporate actions rather than tradable volatility.
+        keep = np.abs(r_und) < _JUMP_FLOOR
+        if keep.sum() >= min_days:
+            dropped = int((~keep).sum())
+            daily_drag = daily_drag[keep]
+            if dropped > 0 and label:
+                print(
+                    f"[DECAY][split-guard] {label}: dropped {dropped} "
+                    f"split-suspect day(s)"
+                )
+
+    return round(float(daily_drag.mean()) * TRADING_DAYS, 6)
+
+
+def _compute_gross_decay(
+    etf_tr: pd.Series,
+    und_tr: pd.Series,
+    beta: float,
+    min_weeks: int | None = None,
+    label: str | None = None,
+    drop_split_suspect_weeks: bool = False,
+    drop_split_suspect_days: bool = False,
+    min_days: int = _MIN_DAYS_DECAY,
+) -> float | None:
+    """Default realized-decay estimator.
+
+    Aliases :func:`_compute_gross_decay_daily` (the new, Itô-aligned
+    estimator). The legacy weekly form is preserved at
+    :func:`_compute_gross_decay_weekly` for A/B regressions. Existing
+    callers that pass ``drop_split_suspect_weeks=True`` get translated
+    into ``drop_split_suspect_days=True`` on the daily path, which
+    performs the equivalent split-guard at daily granularity.
+    """
+    # Preserve legacy kwarg name: weekly split-suspect flag maps to the
+    # daily equivalent (both drop days where |ln r_und| ≥ _JUMP_FLOOR).
+    drop_days = drop_split_suspect_days or drop_split_suspect_weeks
+    return _compute_gross_decay_daily(
+        etf_tr,
+        und_tr,
+        beta,
+        min_days=min_days,
+        label=label,
+        drop_split_suspect_days=drop_days,
+    )
+
+
+def enrich_with_decay_and_vol(
+    df: pd.DataFrame,
+    tr_map: dict[str, pd.Series],
+    min_days: int = 60,
+    realized_trust_days: int = 252,
+    expense_ratios: dict[str, tuple[float | None, str]] | None = None,
+    risk_free_rate: float = 0.0,
+    underlying_borrow_map: dict[str, float] | None = None,
+) -> pd.DataFrame:
     """Add vol + decay columns using pre-downloaded TR series.
 
-    NEW columns added (on top of existing gross/net decay):
-      - expected_gross_decay_annual  : theoretical 0.5×|β|×|β−1|×σ²×252
-      - blended_gross_decay          : weighted mix of realized + expected (for β≤0 or β>1.5);
-                                       for 0<β≤1.5, realized gross decay only (no expected term)
-      - decay_score                  : blended gross decay minus borrow (for sizing)
+    Columns added / overwritten
+    ---------------------------
+      - expense_ratio_annual         : LETF management fee (decimal)
+      - expense_ratio_source         : provenance tag from expense_ratios.py
+      - risk_free_rate_used          : RF rate used for this row's expected-decay calc
+      - underlying_borrow_annual     : manager's borrow on underlying (inverse ETFs only)
+      - expected_gross_decay_annual  : full 4-term Avellaneda–Zhang decay
+      - expected_gross_decay_reliable: False if β<0 and we had to zero out λ̄_mgr
+      - blended_gross_decay          : weighted mix of realized + expected
+                                       (β≤0 or β>1.5); realized-only for 0<β≤1.5
+      - net_decay_annual             : realized − ETF borrow
+      - decay_score                  : blended − ETF borrow
     """
+    expense_ratios = expense_ratios or {}
+    underlying_borrow_map = underlying_borrow_map or {}
     print("[DECAY] Computing decay + volatility ...")
-    vols_etf_raw = []
-    decays = []
+    vols_etf_raw = []        # NEW Itô-aligned σ (log, uncentered)
+    vols_etf_legacy = []     # legacy σ (simple, centered) kept for diagnostics
+    decays = []              # NEW daily-log realized decay
+    decays_legacy = []       # legacy weekly × 52 realized decay
     betas_out, beta_nobs_out = [], []
     ok_decay = ok_vol = ok_expected = betas_computed = 0
 
@@ -1448,20 +1696,38 @@ def enrich_with_decay_and_vol(df: pd.DataFrame, tr_map: dict[str, pd.Series],
         betas_out.append(beta_f)
         beta_nobs_out.append(n_obs_i)
 
-        vol_etf = _annualized_vol(tr_map[etf], min_days) if etf in tr_map else None
+        # Itô-aligned σ: √(mean(log-return²) · 252). Matches the measure
+        # used by the realized-decay estimator (daily log returns), so the
+        # Itô identity 0.5·|β|·|β−1|·σ² ≡ mean(daily_drag)·252 holds.
+        vol_etf = _annualized_second_moment_log(tr_map[etf], min_days) if etf in tr_map else None
         vols_etf_raw.append(vol_etf)
 
-        # Realized gross decay (path-dependent, weekly frequency)
+        # Keep the legacy centered-simple σ in parallel for diagnostics.
+        vol_etf_legacy = _annualized_vol(tr_map[etf], min_days) if etf in tr_map else None
+        vols_etf_legacy.append(vol_etf_legacy)
+
+        # Realized gross decay — daily log-return form (aliased via
+        # _compute_gross_decay → _compute_gross_decay_daily). Legacy
+        # weekly × 52 retained in a diagnostic column below.
         decay = None
         if beta_f and abs(beta_f) >= 0.1 and und and etf in tr_map and und in tr_map:
             decay = _compute_gross_decay(tr_map[etf], tr_map[und], beta_f, label=etf)
         decays.append(decay)
         if decay is not None: ok_decay += 1
 
+        decay_legacy = None
+        if beta_f and abs(beta_f) >= 0.1 and und and etf in tr_map and und in tr_map:
+            decay_legacy = _compute_gross_decay_weekly(
+                tr_map[etf], tr_map[und], beta_f, label=etf
+            )
+        decays_legacy.append(decay_legacy)
+
     df["Beta"] = betas_out
     df["Beta_n_obs"] = beta_nobs_out
     df["vol_etf_annual"] = vols_etf_raw
+    df["vol_etf_annual_legacy"] = vols_etf_legacy
     df["gross_decay_annual"] = decays
+    df["gross_decay_annual_legacy_weekly"] = decays_legacy
 
     # ── PASS 2: resolve underlying vol per ticker ──
     # For each underlying, compute raw vol from its price series, then
@@ -1474,11 +1740,14 @@ def enrich_with_decay_and_vol(df: pd.DataFrame, tr_map: dict[str, pd.Series],
 
     # Group rows by underlying
     und_syms = df["Underlying"].dropna().apply(_norm_sym).unique()
-    resolved_vol_und = {}  # underlying → final vol
+    resolved_vol_und = {}         # underlying → final (Itô-aligned) σ
+    resolved_vol_und_legacy = {}  # underlying → legacy centered-simple σ
 
     for und in und_syms:
-        # Raw vol from the underlying's own price series
-        raw_vol = _annualized_vol(tr_map[und], min_days) if und in tr_map else None
+        # Raw σ of underlying, Itô-aligned: √(mean(log-return²) · 252).
+        # Using the new estimator keeps expected = 0.5·|β|·|β−1|·σ² in the
+        # same measure as the realized daily-drag estimator in Pass 1.
+        raw_vol = _annualized_second_moment_log(tr_map[und], min_days) if und in tr_map else None
 
         # Collect implied vols from all ETFs on this underlying
         mask = df["Underlying"].apply(
@@ -1513,23 +1782,113 @@ def enrich_with_decay_and_vol(df: pd.DataFrame, tr_map: dict[str, pd.Series],
         else:
             resolved_vol_und[und] = raw_vol
 
-    # Assign resolved vol_und to each row + compute expected decay
-    vols_und, expected_decays = [], []
+    # ── Parallel legacy-σ resolution (diagnostics only) ──
+    # Mirrors the resolution logic above but fed from the centered,
+    # simple-return σ estimator so downstream tools can reproduce the
+    # pre-fix behaviour exactly. Runs as its own loop so that
+    # underlyings for which the new loop hits `continue` (no implied
+    # candidates) still get a legacy σ emitted.
+    for und in und_syms:
+        raw_vol_legacy = _annualized_vol(tr_map[und], min_days) if und in tr_map else None
+        mask = df["Underlying"].apply(
+            lambda x, u=und: _norm_sym(x) == u if pd.notna(x) else False)
+        implied_candidates_legacy = []
+        for idx in df.index[mask]:
+            b = betas_out[idx]
+            ve = vols_etf_legacy[idx]
+            nobs = beta_nobs_out[idx]
+            if b and abs(b) >= 0.5 and ve and ve > 0 and nobs:
+                implied_candidates_legacy.append((ve / abs(b), nobs * abs(b)))
+        if implied_candidates_legacy:
+            tw = sum(w for _, w in implied_candidates_legacy)
+            bi = sum(v * w for v, w in implied_candidates_legacy) / tw
+            if raw_vol_legacy is None or raw_vol_legacy <= 0:
+                resolved_vol_und_legacy[und] = round(bi, 6)
+            elif bi > 0 and raw_vol_legacy / bi > _VOL_RATIO_MAX:
+                resolved_vol_und_legacy[und] = round(bi, 6)
+            else:
+                resolved_vol_und_legacy[und] = raw_vol_legacy
+        else:
+            resolved_vol_und_legacy[und] = raw_vol_legacy
+
+    # Assign resolved vol_und to each row + compute expected decay (4 terms).
+    # expense_ratios / underlying_borrow_map were passed in from main(); missing
+    # entries fall back to 0.0 with a reliability flag so downstream consumers
+    # can choose to de-weight those rows.
+    vols_und, vols_und_legacy, expected_decays = [], [], []
+    expected_decays_legacy = []
+    er_vals, er_sources = [], []
+    mgr_borrows, reliables, rf_vals = [], [], []
     for i, row in df.iterrows():
+        etf = _norm_sym(row["ETF"]) if pd.notna(row.get("ETF")) else None
         und = _norm_sym(row["Underlying"]) if pd.notna(row.get("Underlying")) else None
         vol_und = resolved_vol_und.get(und) if und else None
+        vol_und_legacy = resolved_vol_und_legacy.get(und) if und else None
         vols_und.append(vol_und)
+        vols_und_legacy.append(vol_und_legacy)
         if vol_und is not None: ok_vol += 1
 
+        er_val, er_src = (None, "missing")
+        if etf and etf in expense_ratios:
+            er_val, er_src = expense_ratios[etf]
+        er_vals.append(er_val)
+        er_sources.append(er_src)
+
         beta_f = betas_out[i]
+        mgr_borrow = 0.0
+        reliable = True
+        if beta_f is not None and beta_f < 0:
+            # Inverse LETF — manager pays borrow on the underlying. If we have
+            # the underlying's borrow from IBKR FTP, use it; otherwise flag
+            # the row as not-fully-reliable and fall back to 0.0.
+            if und and und in underlying_borrow_map:
+                raw = underlying_borrow_map[und]
+                if raw is not None and np.isfinite(raw):
+                    mgr_borrow = float(raw)
+                else:
+                    reliable = False
+            else:
+                reliable = False
+        mgr_borrows.append(mgr_borrow)
+        reliables.append(reliable)
+        rf_vals.append(risk_free_rate)
+
         exp_decay = None
         if beta_f and abs(beta_f) >= 0.1 and vol_und is not None and vol_und > 0:
-            exp_decay = expected_gross_decay(beta_f, vol_und)
+            f_used = float(er_val) if er_val is not None else 0.0
+            exp_decay = expected_gross_decay(
+                beta_f,
+                vol_und,
+                expense_ratio=f_used,
+                risk_free_rate=risk_free_rate,
+                mgr_borrow_on_underlying=mgr_borrow,
+            )
             ok_expected += 1
         expected_decays.append(exp_decay)
 
+        # Legacy (simple-σ) expected decay — diagnostic only, so downstream
+        # regressions can reproduce the old behaviour exactly.
+        exp_decay_legacy = None
+        if beta_f and abs(beta_f) >= 0.1 and vol_und_legacy is not None and vol_und_legacy > 0:
+            f_used = float(er_val) if er_val is not None else 0.0
+            exp_decay_legacy = expected_gross_decay(
+                beta_f,
+                vol_und_legacy,
+                expense_ratio=f_used,
+                risk_free_rate=risk_free_rate,
+                mgr_borrow_on_underlying=mgr_borrow,
+            )
+        expected_decays_legacy.append(exp_decay_legacy)
+
     df["vol_underlying_annual"] = vols_und
+    df["vol_underlying_annual_legacy"] = vols_und_legacy
+    df["expense_ratio_annual"] = er_vals
+    df["expense_ratio_source"] = er_sources
+    df["underlying_borrow_annual"] = mgr_borrows
+    df["risk_free_rate_used"] = rf_vals
     df["expected_gross_decay_annual"] = expected_decays
+    df["expected_gross_decay_annual_legacy"] = expected_decays_legacy
+    df["expected_gross_decay_reliable"] = reliables
 
     # Targeted split repair: only when realized vs expected is abnormally far apart.
     repaired = 0
@@ -1824,9 +2183,16 @@ def main() -> int:
     print(f"[BETA] Saved: {beta_csv}")
 
     # ── Step 3: Fetch borrow data ──
+    # Pull borrow for BOTH ETFs and their underlyings in a single FTP call —
+    # the underlying borrow feeds the |β|·λ̄_mgr term in expected_gross_decay
+    # for inverse LETFs (see Avellaneda–Zhang 2009).
     print("\n" + "─" * 70)
     print("STEP 3 — Fetch IBKR Borrow Data")
     print("─" * 70)
+    underlying_syms_all = sorted({
+        _norm_sym(u) for u in universe["Underlying"].dropna().unique()
+        if str(u).strip()
+    })
     if args.skip_ftp:
         print("[FTP] Skipped (--skip-ftp)")
         borrow_df = pd.DataFrame({"ETF": universe["ETF"].unique()})
@@ -1835,6 +2201,7 @@ def main() -> int:
         borrow_df["shares_available"] = 0
         borrow_df["borrow_missing_from_ftp"] = True
         borrow_df["borrow_spiking"] = False
+        underlying_borrow_map: dict[str, float] = {}
     else:
         # Ensure protected ETFs are in universe
         missing_prot = sorted([t for t in protected if t not in set(universe["ETF"].values)])
@@ -1845,7 +2212,22 @@ def main() -> int:
             print(f"[FTP] Added {len(missing_prot)} protected ETFs to universe")
 
         try:
-            borrow_df = get_ibkr_borrow_snapshot(universe["ETF"].unique())
+            combined_syms = sorted(
+                set(universe["ETF"].unique().tolist()) | set(underlying_syms_all)
+            )
+            combined_borrow = get_ibkr_borrow_snapshot(combined_syms)
+            etf_set = set(universe["ETF"].unique().tolist())
+            borrow_df = combined_borrow[combined_borrow["ETF"].isin(etf_set)].reset_index(drop=True)
+            # Build underlying borrow map from the same FTP pull.
+            under_borrow = combined_borrow[~combined_borrow["ETF"].isin(etf_set)]
+            underlying_borrow_map = {
+                r["ETF"]: float(r["borrow_current"])
+                for _, r in under_borrow.iterrows()
+                if pd.notna(r.get("borrow_current"))
+            }
+            hit = sum(1 for v in underlying_borrow_map.values() if v is not None)
+            print(f"[FTP] Underlying borrow rates collected for "
+                  f"{hit}/{len(underlying_syms_all)} underlyings")
         except (ConnectionError, OSError) as e:
             print(f"[FTP] ⚠ Borrow fetch failed: {e}")
             print("[FTP] Continuing with empty borrow data (all positions will show borrow_current=NaN)")
@@ -1855,6 +2237,7 @@ def main() -> int:
             borrow_df["shares_available"] = 0
             borrow_df["borrow_missing_from_ftp"] = True
             borrow_df["borrow_spiking"] = False
+            underlying_borrow_map = {}
 
     metrics = universe.merge(borrow_df, on="ETF", how="left")
     metrics = apply_sub2_borrow_floor(
@@ -1880,8 +2263,25 @@ def main() -> int:
                      .get("weighting", {}))
     realized_trust_days = int(weighting_cfg.get("realized_trust_days", 252))
 
-    screened = enrich_with_decay_and_vol(screened, tr_map, min_days=min_beta_days,
-                                         realized_trust_days=realized_trust_days)
+    # Expense ratios: issuer scrape → yfinance → manual override.
+    # Risk-free: live 13-week T-bill yield (^IRX) with fallback.
+    # Both are needed so expected_gross_decay matches what realized measures.
+    etf_tickers_for_er = sorted({
+        _norm_sym(t) for t in screened["ETF"].dropna().unique() if str(t).strip()
+    })
+    expense_map = fetch_expense_ratios(etf_tickers_for_er)
+    risk_free_rate = _fetch_risk_free_rate()
+    print(f"[RF]  Risk-free rate (^IRX 13w) = {risk_free_rate:.3%}")
+
+    screened = enrich_with_decay_and_vol(
+        screened,
+        tr_map,
+        min_days=min_beta_days,
+        realized_trust_days=realized_trust_days,
+        expense_ratios=expense_map,
+        risk_free_rate=risk_free_rate,
+        underlying_borrow_map=underlying_borrow_map,
+    )
 
     # ------------------------------------------------------------------
     # STEP 6 — Estimate Margin Requirements

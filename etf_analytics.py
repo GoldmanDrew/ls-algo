@@ -271,11 +271,12 @@ _VOL_CAP_ANNUAL = 5.0   # 500 % — loose backstop for truly broken data
 
 def _annualized_vol(tr_series: pd.Series, min_days: int = 60,
                     cap: float = _VOL_CAP_ANNUAL) -> float | None:
-    """Annualized realized vol from a total-return price series.
+    """LEGACY: centered, simple-return annualized vol.
 
-    Split artifacts are handled upstream by _clean_split_artifacts().
-    A loose cap (500 %) is kept as a last-resort backstop for any
-    remaining data anomalies beyond splits.
+    Kept for diagnostics. New callers should use
+    :func:`_annualized_second_moment_log`, which is the σ that aligns
+    algebraically with the Itô decay identity on log returns. See
+    notes in daily_screener.py.
     """
     tr = tr_series.dropna()
     if len(tr) < min_days + 1:
@@ -289,36 +290,58 @@ def _annualized_vol(tr_series: pd.Series, min_days: int = 60,
     return round(vol, 6)
 
 
+def _annualized_second_moment_log(
+    tr_series: pd.Series,
+    min_days: int = 60,
+    cap: float = _VOL_CAP_ANNUAL,
+) -> float | None:
+    """σ = √( mean(log_return_t²) · 252 ).
+
+    The σ that makes ``0.5·|β|·|β−1|·σ²`` equal (in expectation) to the
+    realized daily drag ``mean( β·ln(1+r_u) − ln(1+r_e) ) · 252`` under
+    a noise-free β× daily tracker. Three deliberate differences from
+    :func:`_annualized_vol`:
+
+    1. Log returns, not simple returns (matches the realized-drag form).
+    2. Uncentered second moment — keeps μ² in, since it IS part of
+       E[r²] in the Itô correction.
+    3. Same 252 annualization factor used everywhere else.
+    """
+    tr = tr_series.dropna()
+    if len(tr) < min_days + 1:
+        return None
+    r = np.log(tr / tr.shift(1)).dropna()
+    r = r[np.isfinite(r)]
+    if len(r) < min_days:
+        return None
+    m2 = float((r ** 2).mean())
+    if m2 <= 0:
+        return None
+    sigma = float(np.sqrt(m2 * TRADING_DAYS))
+    if cap and sigma > cap:
+        sigma = cap
+    return round(sigma, 6)
+
+
 # ──────────────────────────────────────────────
-# Gross decay — per $1 ETF short, weekly × 52
+# Gross decay — per $1 ETF short
 # ──────────────────────────────────────────────
 _WEEKS_PER_YEAR = 52
-_MIN_WEEKS = 12   # ~60 trading days
+_MIN_WEEKS = 12            # ~60 trading days (legacy)
+_MIN_DAYS_DECAY = 60       # ~3 months (new default)
 
 
-def _compute_gross_decay(
+def _compute_gross_decay_weekly(
     etf_tr: pd.Series,
     und_tr: pd.Series,
     beta: float,
     min_weeks: int = _MIN_WEEKS,
 ) -> float | None:
-    """
-    Gross annualized decay per $1 of ETF short notional.
-    Measured at WEEKLY frequency (Friday-to-Friday) × 52 to reduce
-    microstructure noise that inflates daily hedge-PnL estimates.
+    """LEGACY weekly × 52 realized-decay estimator — kept for diagnostics.
 
-    LOG RETURNS are used for BOTH bull and inverse ETFs:
-
-        weekly_pnl = β × ln(1+r_und_w) − ln(1+r_etf_w)
-
-    Why log returns for bull too?  A β× daily tracker has r_etf = β×r_und,
-    so the simple-return hedge PnL (β×r_und − r_etf) is *identically zero*
-    at daily frequency and ~zero at weekly — it cannot capture vol drag.
-    In log space, β×ln(1+r) − ln(1+βr) ≈ 0.5×β(β−1)×r² > 0, which is
-    exactly the compounding drag we want to measure.
-
-    gross_decay_annual = mean(weekly_pnl) × 52
-    net_decay = gross_decay − borrow_current (no scaling needed).
+    Carries a +3.2 % annualization wedge vs the daily × 252 form
+    (52·5 = 260 ≠ 252). Do not use for new production code; use
+    :func:`_compute_gross_decay` (aliased to the daily form).
     """
     combined = pd.concat([etf_tr.rename("etf"), und_tr.rename("und")], axis=1).dropna()
     if len(combined) < min_weeks * 5:
@@ -327,12 +350,10 @@ def _compute_gross_decay(
     if abs(float(beta)) < 0.1:
         return None
 
-    # Resample to weekly (last trading day of each week)
     weekly = combined.resample("W-FRI").last().dropna()
     if len(weekly) < min_weeks + 1:
         return None
 
-    # Log returns for both bull and inverse
     r_etf = np.log(weekly["etf"] / weekly["etf"].shift(1))
     r_und = np.log(weekly["und"] / weekly["und"].shift(1))
 
@@ -345,6 +366,56 @@ def _compute_gross_decay(
 
     weekly_pnl = float(beta) * r_und - r_etf
     return round(float(weekly_pnl.mean()) * _WEEKS_PER_YEAR, 6)
+
+
+def _compute_gross_decay_daily(
+    etf_tr: pd.Series,
+    und_tr: pd.Series,
+    beta: float,
+    min_days: int = _MIN_DAYS_DECAY,
+) -> float | None:
+    """Realized gross annualized decay — daily log form, Itô-aligned.
+
+        daily_drag_t = β · ln(1+r_und_t) − ln(1+r_etf_t)
+        gross_decay_annual = mean(daily_drag_t) · 252
+
+    Matches ``0.5·β·(β−1) · mean(r_und_t²) · 252`` in expectation under
+    a noise-free β× daily-rebalance tracker, where ``mean(r_und_t²)``
+    is the non-central second moment produced by
+    :func:`_annualized_second_moment_log` squared over 252.
+    """
+    combined = pd.concat(
+        [etf_tr.rename("etf"), und_tr.rename("und")], axis=1
+    ).dropna()
+    if len(combined) < min_days + 1:
+        return None
+    if abs(float(beta)) < 0.1:
+        return None
+
+    r_etf = np.log(combined["etf"] / combined["etf"].shift(1))
+    r_und = np.log(combined["und"] / combined["und"].shift(1))
+    valid = r_etf.notna() & r_und.notna() & np.isfinite(r_etf) & np.isfinite(r_und)
+    r_etf, r_und = r_etf[valid], r_und[valid]
+    if len(r_etf) < min_days:
+        return None
+
+    daily_drag = float(beta) * r_und - r_etf
+    return round(float(daily_drag.mean()) * TRADING_DAYS, 6)
+
+
+def _compute_gross_decay(
+    etf_tr: pd.Series,
+    und_tr: pd.Series,
+    beta: float,
+    min_weeks: int | None = None,
+    min_days: int = _MIN_DAYS_DECAY,
+) -> float | None:
+    """Default realized-decay estimator (aliases the daily form).
+
+    Kept as the public name so existing callers keep working. The
+    legacy weekly form is available at :func:`_compute_gross_decay_weekly`.
+    """
+    return _compute_gross_decay_daily(etf_tr, und_tr, beta, min_days=min_days)
 
 
 # ──────────────────────────────────────────────
@@ -414,7 +485,9 @@ def enrich_with_decay_and_vol(
         betas_out.append(beta_f)
         beta_nobs_out.append(n_obs_i)
 
-        vol_etf = _annualized_vol(tr_map[etf], min_days) if etf in tr_map else None
+        # Itô-aligned σ: √(mean(log_return²) · 252). Matches the measure
+        # used by the new _compute_gross_decay (daily log form).
+        vol_etf = _annualized_second_moment_log(tr_map[etf], min_days) if etf in tr_map else None
         vols_etf_raw.append(vol_etf)
 
         # ── Gross decay ──
@@ -450,7 +523,7 @@ def enrich_with_decay_and_vol(
     resolved_vol_und = {}
 
     for und in unique_unds:
-        raw_vol = _annualized_vol(tr_map[und], min_days) if und in tr_map else None
+        raw_vol = _annualized_second_moment_log(tr_map[und], min_days) if und in tr_map else None
 
         mask = df["Underlying"].apply(
             lambda x, u=und: norm(x) == u if pd.notna(x) else False)
