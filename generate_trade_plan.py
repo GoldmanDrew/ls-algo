@@ -20,6 +20,14 @@ Implements:
     * OUTPUT purgatory rows with 0 targets so execution won’t auto-close.
     * Does NOT allocate new exposure to purgatory.
 
+- inverse_decay_bucket4: optional ``enabled: false`` on the sleeve — disables all B4 targets; core/wl
+  split the full gross budget.
+
+- core_leveraged (bucket-1 style core): optional ``min_net_decay_annual`` and ``net_decay_hysteresis`` in
+  YAML rules — tighter net-decay selectivity for core only; whitelist unchanged. If ``min_net_decay_annual``
+  > 0 it is a **hard floor** (always enforced, including over hysteresis and missing-data paths).
+  Hysteresis uses ``paths.core_leveraged_decay_state_json`` to reduce pairs bouncing in/out when decay oscillates.
+
 - Flow overlay (tracked, not "sized into" the 85/15 stock budgets):
     * weekly_add_usd = (annual_deployment_rate / 52) * deployment_base
       where deployment_base is "current_equity" or "initial_equity"
@@ -43,9 +51,11 @@ Notes:
 from __future__ import annotations
 
 import argparse
+import json
+from copy import deepcopy
 from datetime import date
 from pathlib import Path
-from typing import Dict, Set, Tuple
+from typing import Any, Dict, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -80,6 +90,114 @@ def _norm_sym(x: str) -> str:
 
 def _clamp01(x: float) -> float:
     return max(0.0, min(1.0, float(x)))
+
+
+def _load_core_decay_state(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"version": 1, "by_etf": {}}
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d, dict) and isinstance(d.get("by_etf"), dict):
+            out = {"version": int(d.get("version", 1)), "by_etf": dict(d["by_etf"])}
+            return out
+    except Exception:
+        pass
+    return {"version": 1, "by_etf": {}}
+
+
+def _save_core_decay_state(path: Path, by_etf: dict[str, Any], run_date: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"version": 1, "updated_run_date": run_date, "by_etf": by_etf}
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, sort_keys=True)
+    tmp.replace(path)
+
+
+def _core_net_decay_gate_for_core(
+    eligible: pd.DataFrame,
+    *,
+    core_pre_decay: pd.Series,
+    core_neg_decay_reset: pd.Series,
+    net_decay_non_negative: pd.Series,
+    core_rules: dict,
+    state_path: Path,
+    run_date: str,
+) -> pd.Series:
+    """Extra core-only gate from net_decay_annual (bucket-1 selectivity).
+
+    ``core_neg_decay_reset``: structural core shape (beta, borrow) but **negative** net decay —
+    clears that ETF's sticky flag so a later recovery requires the enter threshold again.
+
+    Only rows satisfying ``core_pre_decay`` (structural core candidate + non-negative decay) can
+    be gated off; all other rows return pass-through True so whitelist-only names do not corrupt
+    sticky state.
+
+    - If hysteresis disabled and min_net_decay_annual <= 0: all-True.
+    - If hysteresis disabled and min_net_decay_annual > 0: require finite net_decay >= min on
+      ``core_pre_decay`` rows.
+    - If hysteresis enabled: sticky per ETF in ``state_path``; ``enter_above`` > ``exit_below``.
+      Missing decay: if sticky was on, keep on (data-gap churn guard); otherwise off.
+    - Whenever ``min_net_decay_annual`` > 0, that floor is **always** applied last: no NaN bypass,
+      no hysteresis carry can admit core below the minimum (``sticky_in`` in state matches final).
+    """
+    nd = pd.to_numeric(eligible["net_decay_annual"], errors="coerce")
+    min_nd = float(core_rules.get("min_net_decay_annual", 0.0) or 0.0)
+    hyst_cfg = core_rules.get("net_decay_hysteresis") or {}
+    hyst_on = bool(hyst_cfg.get("enabled", False))
+
+    gate = pd.Series(True, index=eligible.index)
+    idx_core = eligible.loc[core_pre_decay.fillna(False)].index
+
+    if not hyst_on:
+        if min_nd <= 0:
+            return gate
+        gate.loc[idx_core] = np.isfinite(nd.loc[idx_core]) & (nd.loc[idx_core] >= min_nd)
+        return gate
+
+    enter = float(hyst_cfg.get("enter_above", 0.0))
+    exit_b = float(hyst_cfg.get("exit_below", -1.0))
+    if enter <= exit_b:
+        raise ValueError(
+            "portfolio.sleeves.core_leveraged.rules.net_decay_hysteresis: "
+            "enter_above must be strictly greater than exit_below"
+        )
+
+    doc = _load_core_decay_state(state_path)
+    by_etf: dict[str, Any] = deepcopy(doc.get("by_etf", {}))
+
+    for idx in eligible.loc[core_neg_decay_reset.fillna(False)].index:
+        etf = _norm_sym(str(eligible.loc[idx, "ETF"]))
+        by_etf[etf] = {"sticky_in": False}
+
+    for idx in idx_core:
+        etf = _norm_sym(str(eligible.loc[idx, "ETF"]))
+        v_raw = nd.loc[idx]
+        v = float(v_raw) if pd.notna(v_raw) else float("nan")
+        prev_entry = by_etf.get(etf, {})
+        prev = prev_entry.get("sticky_in") if isinstance(prev_entry, dict) else None
+        prev_on = prev is True
+
+        if not bool(net_decay_non_negative.loc[idx]):
+            raw = False
+        elif not np.isfinite(v):
+            raw = prev_on
+        elif prev_on:
+            raw = bool(v >= exit_b)
+        else:
+            raw = bool(v >= enter)
+
+        if min_nd > 0.0:
+            meets_min = bool(np.isfinite(v) and v >= min_nd)
+        else:
+            meets_min = True
+        final_in = bool(raw) and meets_min
+        gate.loc[idx] = final_in
+        by_etf[etf] = {"sticky_in": final_in}
+
+    _save_core_decay_state(state_path, by_etf, run_date)
+    return gate
 
 
 def _zipf_weights(n: int, exponent: float = 1.0) -> np.ndarray:
@@ -350,6 +468,9 @@ def main() -> None:
 
     cfg = load_config()
     paths = cfg["paths"]
+    core_decay_state_path = Path(
+        paths.get("core_leveraged_decay_state_json", "data/core_leveraged_decay_state.json")
+    )
     strategy = cfg["strategy"]
     sleeves = cfg.get("portfolio", {}).get("sleeves", {})
 
@@ -374,8 +495,10 @@ def main() -> None:
     core_w = float(core.get("target_weight", 0.85))
     wl_w   = float(wl.get("target_weight", 0.15))
     b4_w   = float(b4.get("target_weight", 0.0))
+    b4_enabled = bool(b4.get("enabled", True))
 
-    core_beta_min = float(core.get("rules", {}).get("min_beta_used", 1.5))
+    core_rules = core.get("rules", {}) or {}
+    core_beta_min = float(core_rules.get("min_beta_used", 1.5))
     b4_rules = b4.get("rules", {}) or {}
     b4_min_edge = float(b4_rules.get("min_net_edge_annual", 0.0))
     b4_partial_hedge_ratio = _clamp01(b4_rules.get("partial_hedge_ratio", 1.0))
@@ -426,7 +549,7 @@ def main() -> None:
     shares_out_map, shares_src = load_shares_outstanding_map(paths)
     print(
         f"[INFO] target_gross_usd=${target_gross_usd:,.0f} | "
-        f"core={core_w:.0%} wl={wl_w:.0%} b4={b4_w:.0%} | beta_floor={beta_floor}"
+        f"core={core_w:.0%} wl={wl_w:.0%} b4={b4_w:.0%} (enabled={b4_enabled}) | beta_floor={beta_floor}"
     )
     print(
         f"[INFO] core soft borrow cap={soft_borrow_cap:.1%} | "
@@ -438,6 +561,21 @@ def main() -> None:
         f"[INFO] b4 universe filters: min_underlying_vol={b4_min_underlying_vol:.0%} | "
         f"min_net_edge_annual={b4_min_edge:.0%}"
     )
+    _core_nd_min = float(core_rules.get("min_net_decay_annual", 0.0) or 0.0)
+    _core_hyst = core_rules.get("net_decay_hysteresis") or {}
+    if _core_nd_min > 0 or bool(_core_hyst.get("enabled", False)):
+        print(
+            f"[INFO] core (bucket-1) net-decay selectivity: min_net_decay_annual={_core_nd_min:.2%} | "
+            f"hysteresis_enabled={bool(_core_hyst.get('enabled', False))} | "
+            f"state_file={core_decay_state_path}"
+        )
+        if bool(_core_hyst.get("enabled", False)):
+            print(
+                f"[INFO]   hysteresis enter_above={float(_core_hyst.get('enter_above', 0)):.2%} "
+                f"exit_below={float(_core_hyst.get('exit_below', 0)):.2%}"
+            )
+    if not b4_enabled:
+        print("[INFO] inverse_decay_bucket4 disabled — no B4 allocation or targets in proposed trades")
     print(f"[INFO] whitelist size={len(wl_list)} | flow shorts={len(flow_shorts)}")
     print(f"[INFO] weighting: core={core_weight_method} wl={wl_weight_method} b4={b4_weight_method}")
     if shares_out_map:
@@ -533,9 +671,8 @@ def main() -> None:
         # -----------------------------
         # core: |beta| >= min_beta_used AND passes soft borrow cap (unless also whitelist)
         eligible["in_whitelist"] = eligible["ETF"].isin(wl_set)
-        # Hard rule: negative net decay names are excluded from stock sleeves.
-        # This guarantees 0 target weight regardless of eq_blend.
-        net_decay_ok = ~(eligible["net_decay_annual"] < 0)
+        # Hard rule: negative net decay names are excluded from stock sleeves (core + whitelist).
+        net_decay_non_negative = ~(eligible["net_decay_annual"] < 0)
 
         # Borrow cap predicates
         # - soft cap applies to core ONLY when NOT whitelist
@@ -566,17 +703,48 @@ def main() -> None:
         # Require realized underlying vol above the configured floor. Missing vol is treated as
         # a rejection: we will not admit a pair whose underlying-vol we cannot measure.
         b4_vol_ok = np.isfinite(b4_und_vol) & (b4_und_vol >= b4_min_underlying_vol)
-        eligible["in_core"] = positive_beta & eligible["beta_abs"].ge(core_beta_min) & core_borrow_ok & net_decay_ok
-        eligible["in_wl"]   = positive_beta & eligible["in_whitelist"] & wl_borrow_ok & net_decay_ok
+        core_pre_decay = (
+            positive_beta
+            & eligible["beta_abs"].ge(core_beta_min)
+            & core_borrow_ok
+            & net_decay_non_negative
+        )
+        core_neg_decay_reset = (
+            positive_beta
+            & eligible["beta_abs"].ge(core_beta_min)
+            & core_borrow_ok
+            & ~net_decay_non_negative
+        )
+        try:
+            core_decay_gate = _core_net_decay_gate_for_core(
+                eligible,
+                core_pre_decay=core_pre_decay,
+                core_neg_decay_reset=core_neg_decay_reset,
+                net_decay_non_negative=net_decay_non_negative,
+                core_rules=core_rules,
+                state_path=core_decay_state_path,
+                run_date=args.run_date,
+            )
+        except ValueError as e:
+            raise SystemExit(str(e)) from e
+        eligible["in_core"] = core_pre_decay & core_decay_gate
+        eligible["in_wl"] = positive_beta & eligible["in_whitelist"] & wl_borrow_ok & net_decay_non_negative
         eligible["in_b4"]   = negative_beta & inverse_shortable & b4_borrow_ok & b4_edge_ok & b4_vol_ok
-
 
         core_names = eligible.loc[eligible["in_core"]].copy()
         wl_names   = eligible.loc[eligible["in_wl"]].copy()
         b4_names   = eligible.loc[eligible["in_b4"]].copy()
-        n_neg_decay_excluded = int((~net_decay_ok).sum())
+        if not b4_enabled:
+            b4_names = eligible.loc[[]].copy()
+        n_neg_decay_excluded = int((~net_decay_non_negative).sum())
         if n_neg_decay_excluded:
             print(f"[INFO] Excluded {n_neg_decay_excluded} names with negative net_decay_annual from stock sleeves.")
+        n_core_decay_blocked = int((core_pre_decay & ~core_decay_gate).sum())
+        if n_core_decay_blocked:
+            print(
+                f"[INFO] Excluded {n_core_decay_blocked} core (bucket-1) candidate row(s) "
+                f"via min_net_decay_annual / hysteresis gate."
+            )
 
         # Budgeting:
         # - Bucket 4 gets an explicit % of total plan when active.

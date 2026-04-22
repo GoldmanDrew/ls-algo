@@ -1,0 +1,125 @@
+# ETF expense-ratio manual overrides
+#
+# Values may be written as decimals (0.0115) or percents (1.15). Both are
+# accepted; the loader normalises anything > 15 %-equivalent as percent.
+#
+# Priority in expense_ratios.py is:
+#   1. THIS FILE
+#   2. Issuer scrape (YieldMax / ProShares / REX / Roundhill / TRADR)
+#   3. yfinance .info['annualReportExpenseRatio']
+#
+# Use this file when:
+#   - yfinance returns a stale or wrong number for a ticker you trust.
+#   - The issuer page is JavaScript-rendered and we can't scrape it
+#     (GraniteShares, Direxion, Leverage Shares, Defiance as of 2026).
+#
+# Keep entries sorted alphabetically inside each block to make diffs readable.
+
+overrides:
+  # ─── GraniteShares 2x ETFs (all 1.15 % unless noted) ──────────────────
+  AAPB: 0.0115
+  AMDL: 0.0115
+  AMZZ: 0.0115
+  AVGU: 0.0115
+  BABX: 0.0115
+  BULX: 0.0115
+  CONL: 0.0115
+  CRWL: 0.0115
+  DLLL: 0.0115
+  ETRL: 0.0115
+  FBL:  0.0115
+  GOU:  0.0115
+  INTW: 0.0115
+  IONL: 0.0115
+  ISUL: 0.0115
+  LCDL: 0.0115
+  MRAL: 0.0115
+  MSFL: 0.0115
+  MSTP: 0.0115
+  MULL: 0.0115
+  MVLL: 0.0115
+  NBIL: 0.0115
+  NOWL: 0.0115
+  NVDL: 0.0115
+  PDDL: 0.0115
+  PTIR: 0.0115
+  QCML: 0.0115
+  RDTL: 0.0115
+  RVNL: 0.0115
+  SMCL: 0.0115
+  TSLR: 0.0115
+  TSMU: 0.0115
+  UBRL: 0.0115
+  VRTL: 0.0115
+
+  # ─── GraniteShares YieldBOOST (-YY suffix, all 1.25 %) ────────────────
+  AMYY: 0.0125
+  AZYY: 0.0125
+  BBYY: 0.0125
+  COYY: 0.0125
+  FBYY: 0.0125
+  HMYY: 0.0125
+  HOYY: 0.0125
+  IOYY: 0.0125
+  MAAY: 0.0125
+  MTYY: 0.0125
+  MUYY: 0.0125
+  NVYY: 0.0125
+  PLYY: 0.0125
+  RGYY: 0.0125
+  RTYY: 0.0125
+  SEMY: 0.0125
+  SMYY: 0.0125
+  TMYY: 0.0125
+  TSYY: 0.0125
+  XBTY: 0.0125
+
+  # ─── Leverage Shares 2x (-G suffix) ────────────────────────────────────
+  AALG: 0.0075
+  ABNG: 0.0075
+  ADBG: 0.0075
+  AMDG: 0.0075
+  ARMG: 0.0075
+  ASMG: 0.0075
+  AVGG: 0.0075
+  BAIG: 0.0075
+  BMNG: 0.0075
+  BOEG: 0.0075
+  BULG: 0.0075
+  CIFG: 0.0075
+  COIG: 0.0075
+  CRCG: 0.0075
+  CRMG: 0.0075
+  CRWG: 0.0075
+  DUOG: 0.0075
+  FUTG: 0.0075
+  GEVG: 0.0075
+  HOOG: 0.0075
+  IREG: 0.0075
+  LACG: 0.0075
+  LULG: 0.0075
+  MPG:  0.0075
+  NBIG: 0.0075
+  NETG: 0.0075
+  NVDG: 0.0075
+  OKTG: 0.0075
+  OPEG: 0.0075
+  PANG: 0.0075
+  PLTG: 0.0075
+  RTXG: 0.0075
+  SNAG: 0.0075
+  SPOG: 0.0075
+  TSLG: 0.0075
+  TSMG: 0.0075
+  UNHG: 0.0075
+  XYZG: 0.0075
+
+  # ─── Direxion daily 3x (headers blocked, yfinance usually correct) ─────
+  # Kept here only for the few that yfinance misses or disagrees with.
+  # Add entries as you encounter them.
+
+  # ─── Defiance income-option ETFs ───────────────────────────────────────
+  QQQY: 0.0099
+  IWMY: 0.0099
+  JEPY: 0.0099
+  WDTE: 0.0099

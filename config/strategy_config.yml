@@ -31,6 +31,8 @@ paths:
   equity_snapshot_csv: data/equity_snapshot.csv
   flow_ledger_csv: data/flow_ledger.csv
   etf_shares_outstanding_csv: ../etf-dashboard/data/etf_shares_outstanding.csv
+  # Sticky core (bucket-1) net-decay gate; updated each generate_trade_plan run when hysteresis is on
+  core_leveraged_decay_state_json: data/core_leveraged_decay_state.json
 
 execution:
   parallel_n: 25
@@ -80,9 +82,19 @@ portfolio:
   sleeves:
     core_leveraged:
       allocation_type: "stock"
-      target_weight: 0.8
+      target_weight: 0.675
       rules:
         min_beta_used: 1.50
+        # Core = accounting bucket-1 style levered longs. Optional net-decay floor (annual fraction).
+        # If min_net_decay_annual > 0: ALWAYS enforced (hard cap) even when hysteresis is ON — no bypass.
+        # With hysteresis OFF: require net_decay_annual >= min_net_decay_annual (still never < 0).
+        # With hysteresis ON: persist per-ETF sticky flag in core_leveraged_decay_state_json — enter
+        # only when decay >= enter_above; once in, stay until decay < exit_below (enter_above > exit_below).
+        min_net_decay_annual: 0.0
+        net_decay_hysteresis:
+          enabled: true
+          enter_above: 0.12
+          exit_below: 0.08
       weighting:
         <<: *weighting_defaults
         max_name_weight: 0.15         # 12% cap per underlying
@@ -91,7 +103,7 @@ portfolio:
 
     whitelist_stock:
       allocation_type: "stock"
-      target_weight: 0.2
+      target_weight: 0.20
       universe:
         etfs:
           - MTYY
@@ -102,11 +114,13 @@ portfolio:
           - QBY
           - IOYY
           - COYY
-          - AZYY
+          - CWY
+          - MUYY
           - GMEY
           - DRAY
-          - PLYY
           - RDYY
+          - SMYY
+          - AIYY
       weighting:
         <<: *weighting_defaults
         max_name_weight: 0.3         # 30% cap per underlying
@@ -115,7 +129,8 @@ portfolio:
 
     inverse_decay_bucket4:
       allocation_type: "stock"
-      target_weight: 0.25
+      enabled: false                 # false = no Bucket 4 rows in proposed trades; core/wl use full gross budget
+      target_weight: 0.125
       rules:
         partial_hedge_ratio: 1.0      # 1.0 = fully hedge inverse beta exposure
         min_net_edge_annual: 0.0      # require bucket4_net_edge_annual >= this
@@ -153,22 +168,29 @@ portfolio:
           - NVYY
           - AMZO
           - AZYY
+          - ETHD
+          - PLTZ
+          - PLYY
       weighting:
         method: "fixed"
         normalize: true
         weights:
-          SDS: 0.2113
-          EWV: 0.1729
-          SQQQ: 0.1440
-          TQQY: 0.0672
-          LABD: 0.0768
-          SOXS: 0.0480
-          FAZ: 0.0768
-          DUST: 0.0288
-          ZSL: 0.0096
-          TSLQ: 0.0384
-          TSYY: 0.0192
-          NVDQ: 0.0384
-          NVYY: 0.0288
-          AMZO: 0.0297
-          AZYY: 0.01
+          SDS: 0.2317
+          EWV: 0.1871
+          SQQQ: 0.1558
+          TQQY: 0.0610
+          LABD: 0.0779
+          SOXS: 0.0482
+          FAZ: 0.0787
+          DUST: 0.0245
+          ZSL: 0.0079
+          TSLQ: 0.0267
+          TSYY: 0.0145
+          NVDQ: 0.0267
+          NVYY: 0.0212
+          AMZO: 0.0207
+          AZYY: 0.0072
+          ETHD: 0.0034
+          PLTZ: 0.0034
+          PLYY: 0.0034
+
