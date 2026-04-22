@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+"""Harvest under-exposed ETF shorts using position vs plan gaps.
+
+By default, builds the discrepancy table from **live IBKR positions** (strategy shares × snapshot
+marks) vs **proposed_trades.csv** — same merge rules as ``run_eod_pnl_email.load_position_discrepancies``
+(Flex is not required). If IB is unreachable or live build fails, falls back to an existing
+``position_discrepancies_all.csv`` (dated run or ``data/`` latest). Pass ``--discrepancy-csv`` to
+force a specific file.
+"""
 from __future__ import annotations
 
 import argparse
@@ -7,6 +15,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from execute_trade_plan import (
@@ -26,8 +35,157 @@ from execute_trade_plan import (
     today_str,
 )
 from generate_trade_plan import load_blacklist
-from ibkr_accounting import load_etf_beta_map
+from ibkr_accounting import (
+    EXCLUDE_SYMBOLS,
+    SUPPLEMENTAL_ETF_MAP,
+    canonical_symbol,
+    load_etf_beta_map,
+    load_universe_from_screened,
+)
 from strategy_config import load_config
+
+
+def resolve_proposed_trades_path(run_date: str, paths_cfg: dict) -> Path:
+    dated = run_dir(run_date) / "proposed_trades.csv"
+    if dated.exists():
+        return dated
+    p = paths_cfg.get("proposed_trades_csv")
+    if p:
+        pp = Path(str(p))
+        if pp.exists():
+            return pp
+    fb = Path("data") / "proposed_trades.csv"
+    if fb.exists():
+        return fb
+    raise FileNotFoundError(
+        "Could not locate proposed_trades.csv (try dated data/runs/<run-date>/proposed_trades.csv "
+        "or paths.proposed_trades_csv in config)."
+    )
+
+
+def _position_discrepancy_merge(
+    plan: pd.DataFrame,
+    actual: pd.DataFrame,
+    screened_csv: Path,
+    cfg: dict,
+) -> pd.DataFrame:
+    """Match ``run_eod_pnl_email.load_position_discrepancies`` merge (ETF-universe filter on symbols)."""
+    strategy_tag = str((cfg.get("strategy", {}) or {}).get("tag", "")).strip()
+    if strategy_tag and plan is not None and not plan.empty and "strategy_tag" in plan.columns:
+        plan = plan[plan["strategy_tag"].astype(str) == strategy_tag].copy()
+
+    if plan is None or plan.empty:
+        return pd.DataFrame(
+            columns=[
+                "symbol",
+                "target_net_usd",
+                "actual_net_usd",
+                "discrepancy_usd",
+                "abs_discrepancy_usd",
+                "target_gross_usd",
+                "actual_gross_usd",
+                "gross_gap_usd",
+                "under_exposed",
+            ]
+        )
+
+    for c in ("ETF", "Underlying"):
+        if c not in plan.columns:
+            raise ValueError(f"proposed_trades.csv missing required column: {c}")
+    plan = plan.copy()
+    plan["ETF"] = plan["ETF"].astype(str).map(canonical_symbol)
+    plan["Underlying"] = plan["Underlying"].astype(str).map(canonical_symbol)
+    plan["long_usd"] = pd.to_numeric(plan.get("long_usd", 0.0), errors="coerce").fillna(0.0)
+    plan["short_usd"] = pd.to_numeric(plan.get("short_usd", 0.0), errors="coerce").fillna(0.0)
+
+    target_under = (
+        plan.groupby("Underlying", as_index=False)["long_usd"]
+        .sum()
+        .rename(columns={"Underlying": "symbol", "long_usd": "target_net_usd"})
+    )
+    target_etf = (
+        plan.groupby("ETF", as_index=False)["short_usd"]
+        .sum()
+        .rename(columns={"ETF": "symbol", "short_usd": "target_net_usd"})
+    )
+    target = pd.concat([target_under, target_etf], ignore_index=True)
+    target = target[target["symbol"].astype(bool)].copy()
+    target = target.groupby("symbol", as_index=False)["target_net_usd"].sum()
+
+    if actual is None or actual.empty:
+        actual_df = pd.DataFrame(columns=["symbol", "actual_net_usd"])
+    else:
+        actual_df = actual.copy()
+        actual_df["symbol"] = actual_df["symbol"].astype(str).map(canonical_symbol)
+        actual_df["actual_net_usd"] = pd.to_numeric(actual_df["actual_net_usd"], errors="coerce").fillna(0.0)
+        actual_df = actual_df.groupby("symbol", as_index=False)["actual_net_usd"].sum()
+
+    allowed_etfs, _ = load_universe_from_screened(screened_csv)
+    allowed_etfs |= set(SUPPLEMENTAL_ETF_MAP.keys())
+
+    etf_to_under = load_etf_to_under_map(screened_csv)
+    for e_sym, u_sym in SUPPLEMENTAL_ETF_MAP.items():
+        etf_to_under.setdefault(e_sym, u_sym)
+
+    blacklist_raw = ((cfg.get("strategy", {}) or {}).get("blacklist", [])) or []
+    blacklist = {canonical_symbol(str(s)) for s in blacklist_raw if str(s).strip()}
+    blocked_etfs = {s for s in blacklist if s in allowed_etfs}
+    blocked_etfs |= {e for e, u in etf_to_under.items() if u in blacklist}
+
+    merged = target.merge(actual_df, on="symbol", how="outer")
+    merged["target_net_usd"] = pd.to_numeric(merged["target_net_usd"], errors="coerce").fillna(0.0)
+    merged["actual_net_usd"] = pd.to_numeric(merged["actual_net_usd"], errors="coerce").fillna(0.0)
+    merged["symbol"] = merged["symbol"].astype(str).map(canonical_symbol)
+    merged = merged[merged["symbol"].isin(allowed_etfs)].copy()
+    if blocked_etfs:
+        merged = merged[~merged["symbol"].isin(blocked_etfs)].copy()
+
+    merged["discrepancy_usd"] = merged["actual_net_usd"] - merged["target_net_usd"]
+    merged["abs_discrepancy_usd"] = merged["discrepancy_usd"].abs()
+    merged["target_gross_usd"] = merged["target_net_usd"].abs()
+    merged["actual_gross_usd"] = merged["actual_net_usd"].abs()
+    merged["gross_gap_usd"] = merged["actual_gross_usd"] - merged["target_gross_usd"]
+    merged["under_exposed"] = merged["gross_gap_usd"] < -1e-9
+    return merged.sort_values("abs_discrepancy_usd", ascending=False).reset_index(drop=True)
+
+
+def build_discrepancy_from_live_ib(
+    ib: Any,
+    *,
+    run_date: str,
+    cfg: dict,
+    screened_csv: Path,
+    baseline_csv: Path,
+    prefer_delayed: bool,
+    paths_cfg: dict,
+) -> pd.DataFrame:
+    """Actual notionals from strategy-only IB positions × snapshot marks vs proposed plan."""
+    proposed_path = resolve_proposed_trades_path(run_date, paths_cfg)
+    plan = pd.read_csv(proposed_path)
+
+    baseline = load_baseline_qty(baseline_csv)
+    ib_pos = current_ib_positions(ib)
+    strat = strategy_position_only(ib_pos, baseline)
+
+    rows: list[dict[str, Any]] = []
+    for sym_raw, sh in strat.items():
+        sh_f = float(sh)
+        if abs(sh_f) < 1e-9:
+            continue
+        sym = canonical_symbol(norm_sym(str(sym_raw)))
+        if sym in EXCLUDE_SYMBOLS:
+            continue
+        try:
+            px = float(get_snapshot_price(ib, sym_raw, prefer_delayed=prefer_delayed))
+        except Exception:
+            px = float("nan")
+        if not (np.isfinite(px) and px > 0):
+            tprint(f"[HARVEST] LIVE_DISC: skip {sym} (no snapshot price; shares={sh_f:g})")
+            continue
+        rows.append({"symbol": sym, "actual_net_usd": sh_f * px})
+
+    actual_df = pd.DataFrame(rows)
+    return _position_discrepancy_merge(plan, actual_df, screened_csv, cfg)
 
 
 def resolve_discrepancy_csv(run_date: str, explicit_path: str | None = None) -> Path:
@@ -83,6 +241,11 @@ def main() -> int:
         help="Deprecated flag (live is now default).",
     )
     ap.add_argument("--dry-run", action="store_true", help="Force dry-run mode.")
+    ap.add_argument(
+        "--file-discrepancies-only",
+        action="store_true",
+        help="Skip live IB discrepancy build; use position_discrepancies_all.csv (dated or data/).",
+    )
     args = ap.parse_args()
 
     run_date = args.run_date or os.environ.get("RUN_DATE") or today_str()
@@ -112,7 +275,6 @@ def main() -> int:
     max_retries = int(exec_cfg.get("max_retries", 3))
     max_short_usd_per_etf = float(args.max_short_usd_per_etf or 0.0)
 
-    discrepancy_csv = resolve_discrepancy_csv(run_date, args.discrepancy_csv)
     screened_csv = Path(paths_cfg.get("screened_csv", "data/etf_screened_today.csv"))
     baseline_csv = Path(paths_cfg.get("baseline_csv", "data/baseline_snapshot.csv"))
     if not screened_csv.exists():
@@ -124,10 +286,50 @@ def main() -> int:
     attempted_path = outdir / "harvest_attempted_trades.csv"
     fills_path = outdir / "harvest_fills.csv"
     summary_path = outdir / "harvest_post_trade_summary.csv"
+    disc_source_path = outdir / "harvest_discrepancy_source.txt"
+    disc_input_path = outdir / "harvest_discrepancies_input.csv"
 
-    disc = pd.read_csv(discrepancy_csv)
+    disc: pd.DataFrame
+    disc_source = ""
+    if args.discrepancy_csv:
+        discrepancy_csv = resolve_discrepancy_csv(run_date, args.discrepancy_csv)
+        disc = pd.read_csv(discrepancy_csv)
+        disc_source = f"explicit_file:{discrepancy_csv}"
+    elif args.file_discrepancies_only:
+        discrepancy_csv = resolve_discrepancy_csv(run_date, None)
+        disc = pd.read_csv(discrepancy_csv)
+        disc_source = f"file_only:{discrepancy_csv}"
+    else:
+        try:
+            ib_pre = connect_ib(host, port, client_id + 510, coordinator=False)
+            try:
+                disc = build_discrepancy_from_live_ib(
+                    ib_pre,
+                    run_date=run_date,
+                    cfg=cfg,
+                    screened_csv=screened_csv,
+                    baseline_csv=baseline_csv,
+                    prefer_delayed=prefer_delayed,
+                    paths_cfg=paths_cfg,
+                )
+                disc_source = "live_ib"
+            finally:
+                try:
+                    ib_pre.disconnect()
+                except Exception:
+                    pass
+        except Exception as ex:
+            tprint(
+                f"[HARVEST] Live discrepancy build failed ({ex}); "
+                f"falling back to position_discrepancies_all.csv."
+            )
+            discrepancy_csv = resolve_discrepancy_csv(run_date, None)
+            disc = pd.read_csv(discrepancy_csv)
+            disc_source = f"file_fallback:{discrepancy_csv}"
+
+    disc_source_path.write_text(disc_source.strip() + "\n", encoding="utf-8")
     if disc.empty:
-        tprint(f"[HARVEST] Discrepancy CSV has no rows: {discrepancy_csv}")
+        tprint(f"[HARVEST] Discrepancy table has no rows (source={disc_source})")
         pd.DataFrame().to_csv(candidates_path, index=False)
         pd.DataFrame().to_csv(attempted_path, index=False)
         pd.DataFrame().to_csv(fills_path, index=False)
@@ -136,18 +338,20 @@ def main() -> int:
 
     for col in ("symbol", "abs_discrepancy_usd", "gross_gap_usd", "under_exposed"):
         if col not in disc.columns:
-            raise ValueError(f"Discrepancy CSV missing required column: {col}")
+            raise ValueError(f"Discrepancy table missing required column: {col}")
 
-    disc["symbol"] = disc["symbol"].astype(str).map(norm_sym)
+    disc["symbol"] = disc["symbol"].astype(str).map(canonical_symbol)
     disc["abs_discrepancy_usd"] = pd.to_numeric(disc["abs_discrepancy_usd"], errors="coerce").fillna(0.0)
     disc["gross_gap_usd"] = pd.to_numeric(disc["gross_gap_usd"], errors="coerce").fillna(0.0)
     disc["under_exposed"] = to_bool_series(disc["under_exposed"])
+    disc.to_csv(disc_input_path, index=False)
+    tprint(f"[HARVEST] Discrepancy input ({disc_source}) -> {disc_input_path}")
 
     _etf_to_under_raw, _etf_to_beta_raw = load_etf_beta_map(screened_csv)
-    etf_to_under = {norm_sym(k): norm_sym(v) for k, v in _etf_to_under_raw.items()}
-    etf_to_beta = {norm_sym(k): float(v) for k, v in _etf_to_beta_raw.items()}
+    etf_to_under = {canonical_symbol(str(k)): canonical_symbol(str(v)) for k, v in _etf_to_under_raw.items()}
+    etf_to_beta = {canonical_symbol(str(k)): float(v) for k, v in _etf_to_beta_raw.items()}
 
-    blacklist = {norm_sym(s) for s in load_blacklist(cfg)}
+    blacklist = {canonical_symbol(str(s)) for s in load_blacklist(cfg)}
     blocked_by_under = {etf for etf, und in etf_to_under.items() if und in blacklist}
     blocked_symbols = blacklist | blocked_by_under
 
