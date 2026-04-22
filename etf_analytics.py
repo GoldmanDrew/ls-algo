@@ -328,7 +328,7 @@ def _annualized_second_moment_log(
 # ──────────────────────────────────────────────
 _WEEKS_PER_YEAR = 52
 _MIN_WEEKS = 12            # ~60 trading days (legacy)
-_MIN_DAYS_DECAY = 60       # ~3 months (new default)
+_MIN_DAYS_DECAY = 40       # min aligned daily returns for realized gross decay
 
 
 def _compute_gross_decay_weekly(

@@ -1539,7 +1539,7 @@ def _compute_gross_decay_weekly(
     return round(float(weekly_pnl.mean()) * _WEEKS_PER_YEAR, 6)
 
 
-_MIN_DAYS_DECAY = 60  # ~3 months of daily observations
+_MIN_DAYS_DECAY = 40  # min aligned daily returns for realized gross decay (daily × 252)
 
 
 def _compute_gross_decay_daily(
@@ -1624,17 +1624,16 @@ def _compute_gross_decay(
     drop_split_suspect_days: bool = False,
     min_days: int = _MIN_DAYS_DECAY,
 ) -> float | None:
-    """Default realized-decay estimator.
+    """Realized gross decay — daily log-drag × 252 only (no weekly fallback).
 
-    Aliases :func:`_compute_gross_decay_daily` (the new, Itô-aligned
-    estimator). The legacy weekly form is preserved at
-    :func:`_compute_gross_decay_weekly` for A/B regressions. Existing
-    callers that pass ``drop_split_suspect_weeks=True`` get translated
-    into ``drop_split_suspect_days=True`` on the daily path, which
-    performs the equivalent split-guard at daily granularity.
+    When aligned history has fewer than ``min_days`` observations,
+    returns ``None``. :func:`enrich_with_decay_and_vol` then uses
+    **100 % expected** decay in ``blended_gross_decay`` (see module
+    constant ``_MIN_DAYS_DECAY`` and ``Beta_n_obs`` gate there).
+
+    Existing callers that pass ``drop_split_suspect_weeks=True`` get
+    translated into ``drop_split_suspect_days=True`` on the daily path.
     """
-    # Preserve legacy kwarg name: weekly split-suspect flag maps to the
-    # daily equivalent (both drop days where |ln r_und| ≥ _JUMP_FLOOR).
     drop_days = drop_split_suspect_days or drop_split_suspect_weeks
     return _compute_gross_decay_daily(
         etf_tr,
@@ -1666,7 +1665,9 @@ def enrich_with_decay_and_vol(
       - expected_gross_decay_annual  : full 4-term Avellaneda–Zhang decay
       - expected_gross_decay_reliable: False if β<0 and we had to zero out λ̄_mgr
       - blended_gross_decay          : weighted mix of realized + expected
-                                       (β≤0 or β>1.5); realized-only for 0<β≤1.5
+                                       (β≤0 or β>1.5); realized-only for 0<β≤1.5.
+                                       If ``Beta_n_obs`` < ``_MIN_DAYS_DECAY``
+                                       (40), blend uses **100 % expected** only.
       - net_decay_annual             : realized − ETF borrow
       - decay_score                  : blended − ETF borrow
     """
@@ -1675,7 +1676,7 @@ def enrich_with_decay_and_vol(
     print("[DECAY] Computing decay + volatility ...")
     vols_etf_raw = []        # NEW Itô-aligned σ (log, uncentered)
     vols_etf_legacy = []     # legacy σ (simple, centered) kept for diagnostics
-    decays = []              # NEW daily-log realized decay
+    decays = []              # daily-log realized decay (None if < _MIN_DAYS_DECAY obs)
     decays_legacy = []       # legacy weekly × 52 realized decay
     betas_out, beta_nobs_out = [], []
     ok_decay = ok_vol = ok_expected = betas_computed = 0
@@ -1939,18 +1940,29 @@ def enrich_with_decay_and_vol(
     # Blended gross decay: trust realized more as n_obs grows.
     # For 0 < β ≤ 1.5 (beta-hedgeable single-stock sleeves), use realized only —
     # do not mix in theoretical expected decay.
-    # w_realized = min(1.0, n_obs / realized_trust_days)
+    # If Beta_n_obs < _MIN_DAYS_DECAY (40): insufficient history for the daily
+    # realized estimator — use **100 % expected** in the blend (not weekly).
+    # w_realized = min(1.0, n_obs / realized_trust_days) when n_obs >= _MIN_DAYS_DECAY.
     blended = []
     for _, row in df.iterrows():
         realized = row["gross_decay_annual"]
         expected = row["expected_gross_decay_annual"]
-        n_obs = row["Beta_n_obs"] if pd.notna(row.get("Beta_n_obs")) else 0
+        n_obs = int(row["Beta_n_obs"]) if pd.notna(row.get("Beta_n_obs")) else 0
         beta_f = row.get("Beta")
         beta_f = float(beta_f) if pd.notna(beta_f) else np.nan
         realized_only = pd.notna(beta_f) and (beta_f > 0) and (beta_f <= 1.5)
 
         if realized_only:
             blended.append(realized if pd.notna(realized) else np.nan)
+            continue
+
+        if n_obs < _MIN_DAYS_DECAY:
+            if pd.notna(expected):
+                blended.append(round(float(expected), 6))
+            elif pd.notna(realized):
+                blended.append(realized)
+            else:
+                blended.append(np.nan)
             continue
 
         if pd.notna(realized) and pd.notna(expected):
