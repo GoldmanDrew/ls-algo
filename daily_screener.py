@@ -197,12 +197,17 @@ leverage_pairs_capped_accel = [
     ("PLOO", "PLTR"), ("TSLO", "TSLA"),
 ]
 
+# GraniteShares YieldBOOST (1x overlay vs underlying) — realized β lands in bucket_2 in screening.
+YIELDBOOST_BUCKET2_PAIRS = [
+    ("MUYY", "MU"),
+    ("TMYY", "TSM"),
+    ("CWY", "CRWV"),
+]
+
 covered_call_pairs = [
     ("QYLD", "QQQ"),  ("QYLG", "QQQ"),  ("QQQX", "QQQ"),  ("JEPQ", "QQQ"),
     ("XYLD", "SPY"),  ("XYLG", "SPY"),  ("JEPI", "SPY"),  ("SPYI", "SPY"),
     ("RYLD", "IWM"),
-    # GraniteShares YieldBOOST (single-stock income; 1x overlay, hedge vs underlying)
-    ("MUYY", "MU"), ("TMYY", "TSM"), ("CWY", "CRWV"),
 ]
 
 
@@ -219,6 +224,8 @@ BENCHMARK_MAP = {
     "AMD": "AMD", "ASTS": "ASTS", "BMNR": "BMNR", "HOOD": "HOOD", "IONQ": "IONQ",
     "OKLO": "OKLO", "PLTR": "PLTR", "QBTS": "QBTS", "RGTI": "RGTI", "RKLB": "RKLB",
     "SMCI": "SMCI", "TSM": "TSM",
+    # Volatility pair: UVIX (−2× daily vs SVIX) hedged to SVIX; both legs short in book.
+    "SVIX": "SVIX",
 }
 
 INVERSE_ETF_UNIVERSE = [
@@ -240,6 +247,7 @@ INVERSE_ETF_UNIVERSE = [
     ("RGTZ", -2, "RGTI"), ("PLTZ", -2, "PLTR"), ("SMST", -2, "MSTR"), ("SMCZ", -2, "SMCI"),
     ("BMNZ", -2, "BMNR"), ("HOOZ", -2, "HOOD"), ("DAMD", -2, "AMD"), ("RKLZ", -2, "RKLB"),
     ("STSM", -2, "TSM"), ("OKLS", -2, "OKLO"), ("ASTN", -2, "ASTS"),
+    ("UVIX", -2, "SVIX"),
 ]
 
 
@@ -399,8 +407,11 @@ def build_full_universe(skip_scrape: bool = False, skip_inverse: bool = False) -
     dx_df["Leverage"] = 2.0
     print(f"[UNIVERSE] Leveraged pairs: {len(dx_df)}")
 
-    # 2. Covered call pairs (1x)
-    cc_df = pd.DataFrame(covered_call_pairs, columns=["ETF", "Underlying"])
+    # 2. Covered-call / income sleeve (1x): QYLD family + YieldBOOST bucket-2 names
+    cc_df = pd.DataFrame(
+        covered_call_pairs + YIELDBOOST_BUCKET2_PAIRS,
+        columns=["ETF", "Underlying"],
+    )
     cc_df["Leverage"] = 1.0
 
     # 3. Scraped income products
