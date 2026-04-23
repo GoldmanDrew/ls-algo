@@ -23,6 +23,9 @@ Run daily:
   python daily_screener.py --lookback 1y             # shorter history for faster runs
   python daily_screener.py --output my_output.csv    # custom output path
 
+Screener schema v2 (uncertainty + product_class) is applied after decay enrichment
+(see screener_v2_fields.py); all new columns are add-only for downstream CSV/JSON.
+
 """
 from __future__ import annotations
 
@@ -2304,6 +2307,13 @@ def main() -> int:
         expense_ratios=expense_map,
         risk_free_rate=risk_free_rate,
         underlying_borrow_map=underlying_borrow_map,
+    )
+
+    # Step 5b — Schema v2 (uncertainty bands, product_class; add-only columns)
+    from screener_v2_fields import enrich_screener_v2_fields
+
+    screened = enrich_screener_v2_fields(
+        screened, tr_map, min_days=min_beta_days
     )
 
     # ------------------------------------------------------------------
