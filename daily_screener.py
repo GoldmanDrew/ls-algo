@@ -22,6 +22,8 @@ Run daily:
   python daily_screener.py --skip-inverse            # skip inverse ETF universe (bucket C)
   python daily_screener.py --lookback 1y             # shorter history for faster runs
   python daily_screener.py --output my_output.csv    # custom output path
+  python daily_screener.py --borrow-history-path ../etf-dashboard/data/borrow_history.json
+      # optional: weighted borrow resampling for net_edge_* (see README in etf-dashboard)
 
 Screener schema v2 (uncertainty + product_class) is applied after decay enrichment
 (``screener_v2_fields.enrich_screener_v2_fields``); all new columns are add-only for downstream CSV/JSON.
@@ -32,6 +34,7 @@ from __future__ import annotations
 import argparse
 import builtins
 import ftplib
+import json
 import io
 import random
 import os
@@ -51,7 +54,7 @@ import yaml
 import yfinance as yf
 
 from expense_ratios import fetch_expense_ratios
-from screener_v2_fields import enrich_screener_v2_fields
+from screener_v2_fields import enrich_screener_v2_fields, load_borrow_history_json
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -2099,6 +2102,20 @@ def main() -> int:
     ap.add_argument("--min-beta-days", type=int, default=None,
                     help="Min overlapping days for OLS beta (default: from config or 20)")
     ap.add_argument("--config", default=None, help="Path to strategy_config.yml")
+    ap.add_argument(
+        "--borrow-history-path",
+        default=None,
+        help=(
+            "Path to etf-dashboard borrow_history.json (or set BORROW_HISTORY_PATH). "
+            "Enables weighted resampling of borrow for net_edge_* block bootstrap."
+        ),
+    )
+    ap.add_argument(
+        "--borrow-weight-halflife-days",
+        type=float,
+        default=90.0,
+        help="Calendar-day half-life for 0.5**(age/H) borrow weights (default: 90)",
+    )
     args = ap.parse_args()
 
     run_date = args.run_date
@@ -2161,6 +2178,28 @@ def main() -> int:
     min_beta_days = (args.min_beta_days
                      or int(screener_cfg.get("min_beta_days", _FALLBACK["min_beta_days"])))
     print(f"[CONFIG] min_beta_days={min_beta_days}")
+
+    borrow_hist_path = args.borrow_history_path or os.environ.get("BORROW_HISTORY_PATH")
+    borrow_history_map = None
+    if borrow_hist_path:
+        bh = Path(borrow_hist_path).expanduser()
+        if bh.is_file():
+            try:
+                borrow_history_map = load_borrow_history_json(bh)
+                print(
+                    f"[BORROW] Loaded weighted-resample history: {bh} "
+                    f"({len(borrow_history_map)} symbols)"
+                )
+            except (OSError, ValueError, json.JSONDecodeError) as e:
+                print(f"[BORROW] ⚠ Failed to load borrow history ({e}); using point-in-time borrow")
+                borrow_history_map = None
+        else:
+            print(f"[BORROW] ⚠ borrow history path not found: {bh}")
+
+    try:
+        asof_for_v2 = date.fromisoformat(str(run_date)[:10])
+    except ValueError:
+        asof_for_v2 = date.today()
 
     # ── Step 1: Build universe ──
     print("\n" + "─" * 70)
@@ -2322,7 +2361,12 @@ def main() -> int:
 
     # Step 5b — Schema v2 (uncertainty bands, product_class; add-only columns)
     screened = enrich_screener_v2_fields(
-        screened, tr_map, min_days=min_beta_days
+        screened,
+        tr_map,
+        min_days=min_beta_days,
+        borrow_history_map=borrow_history_map,
+        borrow_weight_halflife_days=float(args.borrow_weight_halflife_days),
+        asof_date=asof_for_v2,
     )
 
     # ------------------------------------------------------------------

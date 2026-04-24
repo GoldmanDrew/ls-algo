@@ -1,8 +1,12 @@
 # screener_v2_fields — schema v2 uncertainty + product_class for daily_screener export
-# Spec: v2.0 (block bootstrap on mean daily log-drag; stress borrow rho grid when sigma_b>0)
+# Spec: v2.1 (block bootstrap on mean daily log-drag; optional weighted borrow resample
+#       from full history; stress borrow rho grid when sigma_b>0)
 from __future__ import annotations
 
 import datetime as _dt
+import json
+import os
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -41,6 +45,29 @@ def _extract_daily_drag(
     return daily_drag
 
 
+def _block_bootstrap_annual_gross_draws(
+    daily_drag: np.ndarray,
+    *,
+    n_boot: int = _BOOT_N,
+    block_len: int = _BLOCK_LEN_DEFAULT,
+    seed: int = 42,
+) -> np.ndarray | None:
+    """Return length-`n_boot` array of annualized gross from block-resampled mean(drag)*252."""
+    x = np.asarray(daily_drag, dtype=float)
+    t = int(x.size)
+    if t < _MIN_DAYS_DECAY:
+        return None
+    b = min(block_len, max(5, t // 5))
+    n_blocks = int(np.ceil(t / b))
+    rng = np.random.default_rng(seed)
+    out = np.empty(n_boot, dtype=float)
+    for i in range(n_boot):
+        parts = [rng.choice(x, size=b, replace=True) for _ in range(n_blocks)]
+        samp = np.concatenate(parts)[:t]
+        out[i] = float(np.mean(samp)) * TRADING_DAYS
+    return out
+
+
 def _block_bootstrap_annual_gross(
     daily_drag: np.ndarray,
     *,
@@ -50,20 +77,94 @@ def _block_bootstrap_annual_gross(
 ) -> tuple[float, float, float, float] | None:
     """Return (p05, p50, p95, mean) of *annualized* gross from resampled mean(drag)*252."""
     x = np.asarray(daily_drag, dtype=float)
-    t = int(x.size)
-    if t < _MIN_DAYS_DECAY:
+    draws = _block_bootstrap_annual_gross_draws(
+        x, n_boot=n_boot, block_len=block_len, seed=seed
+    )
+    if draws is None:
         return None
-    b = min(block_len, max(5, t // 5))
-    n_blocks = int(np.ceil(t / b))
-    rng = np.random.default_rng(seed)
-    out = np.empty(n_boot, dtype=float)
     mean0 = float(np.mean(x)) * TRADING_DAYS
-    for i in range(n_boot):
-        parts = [rng.choice(x, size=b, replace=True) for _ in range(n_blocks)]
-        samp = np.concatenate(parts)[:t]
-        out[i] = float(np.mean(samp)) * TRADING_DAYS
-    p05, p50, p95 = np.percentile(out, [5, 50, 95]).tolist()
+    p05, p50, p95 = np.percentile(draws, [5, 50, 95]).tolist()
     return float(p05), float(p50), float(p95), float(mean0)
+
+
+def load_borrow_history_json(path: str | os.PathLike[str]) -> dict[str, list]:
+    """Load etf-dashboard ``borrow_history.json`` (top-level ``symbols`` map).
+
+    Keys are normalized to upper-case stripped tickers. Values are the original
+    per-symbol lists of observation dicts.
+    """
+    p = Path(path)
+    with p.open(encoding="utf-8") as f:
+        doc = json.load(f)
+    raw = doc.get("symbols", doc)
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, list] = {}
+    for k, v in raw.items():
+        sym = str(k).strip().upper()
+        if sym and isinstance(v, list):
+            out[sym] = v
+    return out
+
+
+def _weighted_borrow_values_probs(
+    history_rows: list,
+    asof: _dt.date,
+    halflife_days: float,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Build (values, normalized_probs) for weighted resampling of borrow_current.
+
+    Weight per observation: ``0.5 ** (age_calendar_days / halflife_days)`` where
+    ``age`` is ``asof - observation_date`` (observations strictly after ``asof``
+    are skipped). If ``halflife_days`` is non-finite or <= 0, uses uniform weights.
+    """
+    if not history_rows or halflife_days is None:
+        return None
+    dates: list[_dt.date] = []
+    vals: list[float] = []
+    for row in history_rows:
+        if not isinstance(row, dict):
+            continue
+        ds = row.get("date")
+        if ds is None:
+            continue
+        try:
+            if isinstance(ds, _dt.date) and not isinstance(ds, _dt.datetime):
+                d = ds
+            else:
+                d = _dt.date.fromisoformat(str(ds)[:10])
+        except (TypeError, ValueError):
+            continue
+        if d > asof:
+            continue
+        br = row.get("borrow_current")
+        if br is None or (isinstance(br, float) and np.isnan(br)):
+            continue
+        try:
+            fv = float(br)
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(fv):
+            continue
+        age = (asof - d).days
+        if age < 0:
+            continue
+        dates.append(d)
+        vals.append(fv)
+    n = len(vals)
+    if n == 0:
+        return None
+    v_arr = np.asarray(vals, dtype=float)
+    if not np.isfinite(halflife_days) or float(halflife_days) <= 0.0:
+        w = np.ones(n, dtype=float)
+    else:
+        ages = np.asarray([(asof - d).days for d in dates], dtype=float)
+        w = np.power(0.5, ages / float(halflife_days))
+    s = float(w.sum())
+    if s <= 0.0 or not np.isfinite(s):
+        return None
+    p = (w / s).astype(float)
+    return v_arr, p
 
 
 def _ar1(series: np.ndarray) -> float | None:
@@ -133,12 +234,22 @@ def enrich_screener_v2_fields(
     tr_map: dict[str, pd.Series],
     *,
     min_days: int = _MIN_DAYS_DECAY,
+    borrow_history_map: dict[str, list] | None = None,
+    borrow_weight_halflife_days: float = 90.0,
+    asof_date: _dt.date | None = None,
+    bootstrap_seed: int = 42,
 ) -> pd.DataFrame:
     """
     Add schema v2 columns (add-only). `primary_edge_annual` matches net_decay_annual
     (short-favourable: higher = better for structural short on decay).
+
+    When ``borrow_history_map`` is provided (etf-dashboard ``borrow_history.json``),
+    net-edge percentiles use independent weighted resampling of historical
+    ``borrow_current`` (recent-heavy half-life in calendar days); otherwise the
+    legacy point-in-time ``borrow_current`` subtraction is used.
     """
-    asof = _dt.date.today().isoformat()
+    asof_d = asof_date if asof_date is not None else _dt.date.today()
+    asof = asof_d.isoformat()
     n = len(df)
     (
         pclass,
@@ -165,6 +276,9 @@ def enrich_screener_v2_fields(
         rwarn,
         hirk,
         dnote,
+        bhalf,
+        bnpts,
+        bmode,
     ) = (
         [""] * n,
         [""] * n,
@@ -189,6 +303,9 @@ def enrich_screener_v2_fields(
         [np.nan] * n,
         [""] * n,
         [False] * n,
+        [""] * n,
+        [np.nan] * n,
+        [np.nan] * n,
         [""] * n,
     )
 
@@ -249,23 +366,66 @@ def enrich_screener_v2_fields(
         if etf in tr_map and und in tr_map and not _nanf(beta) and abs(float(beta)) >= 0.1:
             drag = _extract_daily_drag(tr_map[etf], tr_map[und], float(beta), min_days=min_days)
 
-        boot = _block_bootstrap_annual_gross(drag) if drag is not None else None
-        g_real = row.get("gross_decay_annual")
-        if boot is not None:
-            g05, g50, g95, _ = boot
-            p05[j] = g05 - bcur
-            p50[j] = g50 - bcur
-            p95[j] = g95 - bcur
-            blen[j] = float(_BLOCK_LEN_DEFAULT)
-            breps[j] = float(_BOOT_N)
-            akey[j] = "trading_days_252"
-            cnote[j] = "block_bootstrap_daily_drag; borrow_point_in_time"
-            ctype[j] = "empirical_block_marginal"
-            sigb[j] = 0.0
-            srho[j] = 0.0
-            p05[j] = p05_stress(
-                p05[j], 0.0, _STRESS_BORROW_RHOS
+        gross_draws = (
+            _block_bootstrap_annual_gross_draws(
+                drag,
+                n_boot=_BOOT_N,
+                block_len=_BLOCK_LEN_DEFAULT,
+                seed=bootstrap_seed,
             )
+            if drag is not None
+            else None
+        )
+        g_real = row.get("gross_decay_annual")
+        if gross_draws is not None:
+            rng_borrow = np.random.default_rng(int(bootstrap_seed) + 1_000_003)
+            etf_key = etf.strip().upper()
+            hist = None
+            if borrow_history_map:
+                hist = borrow_history_map.get(etf_key)
+                if hist is None and etf != etf_key:
+                    hist = borrow_history_map.get(etf.strip())
+            wb = (
+                _weighted_borrow_values_probs(
+                    hist, asof_d, float(borrow_weight_halflife_days)
+                )
+                if (hist and borrow_history_map)
+                else None
+            )
+            if wb is not None:
+                vals, probs = wb
+                idx = rng_borrow.choice(vals.size, size=gross_draws.size, p=probs, replace=True)
+                b_draws = vals[idx]
+                net_draws = gross_draws - b_draws
+                p05[j], p50[j], p95[j] = np.percentile(net_draws, [5, 50, 95]).tolist()
+                blen[j] = float(_BLOCK_LEN_DEFAULT)
+                breps[j] = float(_BOOT_N)
+                akey[j] = "trading_days_252"
+                cnote[j] = (
+                    "block_bootstrap_daily_drag;"
+                    "weighted_borrow_resample_full_history;"
+                    f"halflife_cal_days={float(borrow_weight_halflife_days):g}"
+                )
+                ctype[j] = "empirical_block_marginal_x_weighted_borrow_marginal"
+                sigb[j] = 0.0
+                srho[j] = 0.0
+                bhalf[j] = float(borrow_weight_halflife_days)
+                bnpts[j] = float(vals.size)
+                bmode[j] = "weighted_empirical"
+            else:
+                net_draws = gross_draws - bcur
+                p05[j], p50[j], p95[j] = np.percentile(net_draws, [5, 50, 95]).tolist()
+                blen[j] = float(_BLOCK_LEN_DEFAULT)
+                breps[j] = float(_BOOT_N)
+                akey[j] = "trading_days_252"
+                cnote[j] = "block_bootstrap_daily_drag; borrow_point_in_time"
+                ctype[j] = "empirical_block_marginal"
+                sigb[j] = 0.0
+                srho[j] = 0.0
+                bhalf[j] = np.nan
+                bnpts[j] = np.nan
+                bmode[j] = "point_in_time"
+            p05[j] = p05_stress(float(p05[j]), 0.0, _STRESS_BORROW_RHOS)
         else:
             p05[j] = np.nan
             p50[j] = np.nan
@@ -273,10 +433,13 @@ def enrich_screener_v2_fields(
             blen[j] = np.nan
             breps[j] = np.nan
             akey[j] = "trading_days_252" if g_real is not None and pd.notna(g_real) else ""
-            cnote[j] = "insufficient_history_for_bootstrap" if boot is None else ""
+            cnote[j] = "insufficient_history_for_bootstrap" if gross_draws is None else ""
             ctype[j] = "none"
             sigb[j] = 0.0
             srho[j] = np.nan
+            bhalf[j] = np.nan
+            bnpts[j] = np.nan
+            bmode[j] = ""
 
         if pclass[j] == "income_put_spread":
             dnote[j] = "income_dist_missing"
@@ -318,6 +481,9 @@ def enrich_screener_v2_fields(
     out["regime_warning"] = rwarn
     out["high_intraday_risk"] = hirk
     out["decomposition_note"] = dnote
+    out["borrow_weight_halflife_days"] = bhalf
+    out["borrow_history_points_used"] = bnpts
+    out["borrow_resample_mode"] = bmode
     out["schema_v"] = 2
     out["edge_sign_convention"] = "short_favorable_positive"
     return out
