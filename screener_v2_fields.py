@@ -125,6 +125,24 @@ def _net_edge_hist_json(net_draws: np.ndarray, n_bins: int = 20) -> str | None:
     )
 
 
+def _borrow_history_row_usable_for_resample(row: dict, borrow_fv: float) -> bool:
+    """Exclude placeholder quotes: ~zero fee when shares_available is zero (not shortable).
+
+    Rows without ``shares_available`` are kept (legacy history); true 0%% with positive
+    shares (easy to borrow) are kept.
+    """
+    if abs(float(borrow_fv)) > 1e-12:
+        return True
+    sh = row.get("shares_available")
+    if sh is None:
+        return True
+    try:
+        si = int(float(sh))
+    except (TypeError, ValueError):
+        return True
+    return si > 0
+
+
 def _weighted_borrow_values_probs(
     history_rows: list,
     asof: _dt.date,
@@ -135,6 +153,9 @@ def _weighted_borrow_values_probs(
     Weight per observation: ``0.5 ** (age_calendar_days / halflife_days)`` where
     ``age`` is ``asof - observation_date`` (observations strictly after ``asof``
     are skipped). If ``halflife_days`` is non-finite or <= 0, uses uniform weights.
+
+    Observations with ~zero ``borrow_current`` and ``shares_available`` <= 0 are
+    dropped (IBKR-style placeholder when nothing is available to short).
     """
     if not history_rows or halflife_days is None:
         return None
@@ -163,6 +184,8 @@ def _weighted_borrow_values_probs(
         except (TypeError, ValueError):
             continue
         if not np.isfinite(fv):
+            continue
+        if not _borrow_history_row_usable_for_resample(row, fv):
             continue
         age = (asof - d).days
         if age < 0:

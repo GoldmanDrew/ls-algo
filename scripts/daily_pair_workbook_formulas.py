@@ -303,18 +303,24 @@ def apply_portfolio_level_cost_model(
     *,
     verify_identities: bool = True,
     tol_usd: float = 1e-6,
+    zero_pair_level_books: bool = True,
 ) -> pd.DataFrame:
     """
-    Enforce portfolio-level transaction/margin accounting on pair rows.
+    Enforce portfolio-level transaction/margin accounting on pair rows (optional).
 
     Recomputes signed leg notionals, **LMB** / **SFB**, and gross/net notional
     from shares and prices (same as ``_inject_all_pairs_formulas``; see module
     docstring).
 
-    Pair rows keep leg P&L and borrow costs. Pair txn, pair margin debit, and
-    short-credit income are set to zero; pair net is recomputed as:
+    When ``zero_pair_level_books`` is **True** (default): pair txn, pair margin
+    debit, short-credit, and per-pair **net** financing (the combined “after
+    margin & credit” line) are set to **zero**; daily pair net is:
 
     ``long + short - borrow - underlying_borrow``.
+
+    When **False** (e.g. DC ETF pairwise Excel export), those columns keep
+    **engine** values; daily pair net is
+    ``long + short - borrow - underlying_borrow - daily_net_financing - txn``.
     """
     if all_pairs.empty:
         return all_pairs.copy()
@@ -354,14 +360,22 @@ def apply_portfolio_level_cost_model(
     sp = pd.to_numeric(out["daily_short_pnl_usd"], errors="coerce").fillna(0.0)
     bor = pd.to_numeric(out["daily_borrow_cost_usd"], errors="coerce").fillna(0.0)
     ubor = pd.to_numeric(out["daily_underlying_borrow_cost_usd"], errors="coerce").fillna(0.0)
-    out["daily_margin_debit_cost_usd"] = 0.0
-    out["daily_short_credit_income_usd"] = 0.0
-    out["daily_txn_cost_usd"] = 0.0
-    out["daily_net_financing_cost_usd"] = 0.0
+    nfin = pd.to_numeric(out["daily_net_financing_cost_usd"], errors="coerce").fillna(0.0)
+    txn = pd.to_numeric(out["daily_txn_cost_usd"], errors="coerce").fillna(0.0)
     out["daily_pair_gross_trading_pnl_usd"] = lp + sp
-    out["daily_pair_net_pnl_usd"] = out["daily_pair_gross_trading_pnl_usd"] - bor - ubor
-    out["daily_pair_net_ex_txn_usd"] = out["daily_pair_net_pnl_usd"]
-    if verify_identities:
+    if zero_pair_level_books:
+        out["daily_margin_debit_cost_usd"] = 0.0
+        out["daily_short_credit_income_usd"] = 0.0
+        out["daily_txn_cost_usd"] = 0.0
+        out["daily_net_financing_cost_usd"] = 0.0
+        out["daily_pair_net_pnl_usd"] = out["daily_pair_gross_trading_pnl_usd"] - bor - ubor
+        out["daily_pair_net_ex_txn_usd"] = out["daily_pair_net_pnl_usd"]
+    else:
+        out["daily_pair_net_pnl_usd"] = (
+            out["daily_pair_gross_trading_pnl_usd"] - bor - ubor - nfin - txn
+        )
+        out["daily_pair_net_ex_txn_usd"] = out["daily_pair_gross_trading_pnl_usd"] - bor - ubor - nfin
+    if verify_identities and zero_pair_level_books:
         if float(np.abs(pd.to_numeric(out["daily_short_credit_income_usd"], errors="coerce").fillna(0.0)).max()) > tol_usd:
             raise ValueError("daily_short_credit_income_usd must be zero under portfolio-level model")
         if float(np.abs(pd.to_numeric(out["daily_margin_debit_cost_usd"], errors="coerce").fillna(0.0)).max()) > tol_usd:
@@ -609,7 +623,13 @@ def _inject_all_pairs_leg_pnl_borrow_excel(
     return True
 
 
-def _inject_all_pairs_formulas(ws, *, data_start: int = 2, data_end: int) -> None:
+def _inject_all_pairs_formulas(
+    ws,
+    *,
+    data_start: int = 2,
+    data_end: int,
+    zero_pair_cost_columns: bool = True,
+) -> None:
     h = _header_map(ws, 1)
     c_lsh = _col_letter(h, "long_sh")
     c_ssh = _col_letter(h, "short_sh")
@@ -641,17 +661,28 @@ def _inject_all_pairs_formulas(ws, *, data_start: int = 2, data_end: int) -> Non
         ws[f"{c_sn}{r}"] = f"={e}{r}*{g}{r}"
         ws[f"{c_gr}{r}"] = f"=ABS({d}{r})*{f}{r}+ABS({e}{r})*{g}{r}"
         ws[f"{c_nt}{r}"] = f"={c_ln}{r}+{c_sn}{r}"
-        if c_mar:
-            ws[f"{c_mar}{r}"] = 0.0
-        if c_sci:
-            ws[f"{c_sci}{r}"] = 0.0
-        if c_nfin:
-            ws[f"{c_nfin}{r}"] = 0.0
-        if c_txn:
-            ws[f"{c_txn}{r}"] = 0.0
+        if zero_pair_cost_columns:
+            if c_mar:
+                ws[f"{c_mar}{r}"] = 0.0
+            if c_sci:
+                ws[f"{c_sci}{r}"] = 0.0
+            if c_nfin:
+                ws[f"{c_nfin}{r}"] = 0.0
+            if c_txn:
+                ws[f"{c_txn}{r}"] = 0.0
         ws[f"{c_grossp}{r}"] = f"={c_lp}{r}+{c_sp}{r}"
-        ws[f"{c_netp}{r}"] = f"={c_grossp}{r}-{c_bor}{r}-{c_ubor}{r}"
-        ws[f"{c_extxn}{r}"] = f"={c_netp}{r}"
+        if (
+            zero_pair_cost_columns
+            or c_nfin is None
+            or c_txn is None
+        ):
+            ws[f"{c_netp}{r}"] = f"={c_grossp}{r}-{c_bor}{r}-{c_ubor}{r}"
+            ws[f"{c_extxn}{r}"] = f"={c_netp}{r}"
+        else:
+            ws[f"{c_netp}{r}"] = (
+                f"={c_grossp}{r}-{c_bor}{r}-{c_ubor}{r}-{c_nfin}{r}-{c_txn}{r}"
+            )
+            ws[f"{c_extxn}{r}"] = f"={c_grossp}{r}-{c_bor}{r}-{c_ubor}{r}-{c_nfin}{r}"
 
 
 def _inject_all_pairs_pnl_net_of_borrow(ws, *, data_start: int, data_end: int) -> None:
@@ -910,6 +941,7 @@ def inject_daily_pair_workbook_formulas(
     checks_data_rows: int,
     inject_per_pair_sumifs: bool = True,
     inject_leg_pnl_borrow: bool = True,
+    zero_pair_cost_columns: bool = True,
     verbose: bool = True,
     financing_daycount: float = 360.0,
     include_portfolio_ledger_dc: bool = True,
@@ -923,6 +955,9 @@ def inject_daily_pair_workbook_formulas(
     :param inject_leg_pnl_borrow: when ``True`` and trade-cash columns + rates exist, rewrite
         per-row leg P&L and borrow.  Set ``False`` when the caller has pre-filled borrow from
         a book-level or net-by-under model (e.g. ETF arb pairwise export).
+    :param zero_pair_cost_columns: when ``True`` (default), sets margin/short-credit/net-fin/txn
+        to zero on each row and net = gross - borrow. When ``False``, leaves those cells as
+        written and net = gross - borrow - net_financing - txn (``export_dc_etf_arb_pairwise_workbook``).
     :param financing_daycount: accrual divisor for the simplified portfolio margin column
         ``daily_portfolio_margin_usd`` (``B*E/daycount``); default ``360`` matches the
         Diamond Creek notebook ``CFG['financing_daycount']``.
@@ -943,7 +978,12 @@ def inject_daily_pair_workbook_formulas(
             ws_ap, data_start=2, data_end=1 + all_pairs_data_rows
         ):
             h_ap = _header_map(ws_ap, 1)
-        _inject_all_pairs_formulas(ws_ap, data_start=2, data_end=1 + all_pairs_data_rows)
+        _inject_all_pairs_formulas(
+            ws_ap,
+            data_start=2,
+            data_end=1 + all_pairs_data_rows,
+            zero_pair_cost_columns=zero_pair_cost_columns,
+        )
         h_ap = _header_map(ws_ap, 1)
         if include_portfolio_ledger_dc:
             _inject_all_pairs_pnl_net_of_borrow(ws_ap, data_start=2, data_end=1 + all_pairs_data_rows)

@@ -279,6 +279,7 @@ class TestLpFeeExcelFormulas(unittest.TestCase):
         self.assertIn("book_raw", f["D"])
         self.assertIn("MAXIFS", f["F"])
         self.assertIn("dc_pairwise_params!$B$3/4", f["B"])
+        self.assertIn("ABS", f["B"])
 
 
 class TestEomV15Books(unittest.TestCase):

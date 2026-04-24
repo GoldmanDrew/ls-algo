@@ -10,9 +10,13 @@ published history.
 
 With ``use_excel_formulas=True`` (default), the workbook also embeds ``ALL_PAIRS``,
 ``book_raw`` (values), ``book_daily`` (formulas to ``book_raw``), and ``LP_FEE``.
-**Management** in ``LP_FEE!B`` is **Excel** (quarterly, last trading day in the
-quarter in ``book_raw``; hidden ``LP_FEE`` helper columns D–F). **Performance** in
-``LP_FEE!C`` is still **values** from ``lp_fees_v15`` (pass-2 annual allocation).
+**Management** in ``LP_FEE!B`` is **Excel** (quarterly cash on the last
+``book_raw`` date in each quarter; last trading day in Mar/Jun/Sep/Dec on a normal
+calendar; hidden D–F helpers; ``ABS(A–F)``-style date match for robustness).
+**Performance** in ``LP_FEE!C`` is still **values** from ``lp_fees_v15`` (pass-2 annual allocation).
+Per-pair **margin** / **short-credit** / **net financing** / **txn** in ``ALL_PAIRS`` keep
+**engine** values (not the portfolio-zeros path), and daily pair net/Ex-txn formulas
+subtract borrow, net financing, and txn accordingly.
 Leg PnL / borrow
 / notionals on ``ALL_PAIRS`` are formula-driven
 (``inject_daily_pair_workbook_formulas``). ``DAILY_CALC`` looks up
@@ -24,14 +28,12 @@ Leg PnL / borrow
   ``underlying_price``; ``short_notional_usd = short_sh * etf_price``. Use these
   for *signed* economics and for ``gross_notional_usd = ABS(long_sh)*PU+ABS(ssh)*ETF``
   after ``_inject_all_pairs_formulas`` (see ``scripts/daily_pair_workbook_formulas.py``).
-* **Long book (Monthly col E) / short financing book (Monthly col G):** v15
-  **LMB** and **SFB** via ``SUMIFS(…, ALL_PAIRS!$A, $C)`` on the EOM in col **C**; col
-  **F** is not used by the exporter (template may leave it blank). These are
-  *not* the signed leg notionals; they are
-  ``SUM( long_margin_basis_usd )`` and
-  ``SUM( short_financing_basis_usd )`` on the EOM in col **C** — same as
-  ``_inject_all_pairs_formulas`` / :func:`apply_portfolio_level_cost_model`:
-  ``LMB = MAX(long_sh,0)*PU``; ``SFB = MAX(-long_sh,0)*PU+MAX(-short_sh,0)*ET``.
+* **Monthly notional (cols E–F–G):** ``SUMIFS`` of **signed** ``long_notional_usd``,
+  ``short_notional_usd``, and ``gross_notional_usd`` on the EOM date in col **C**
+  (last ``ALL_PAIRS`` date in the month via ``MAXIFS``). **Pre-fee** is col **M**
+  ``=SUM(H:I)-SUM(J:L)`` (J–L = book T-cost, pair borrow, book margin). **Fees:**
+  **N** = management (monthly sum of ``DAILY_CALC`` col C), **O** = incentive,
+  **P** ``=N+O``, **Q** ``=M-P`` (net).
 * **Borrow in Excel (``ALL_PAIRS``) vs Python rollups:** with ``inject_leg_pnl_borrow``,
   daily borrow in the workbook is the **per-row** short-leg accrual in
   ``_inject_all_pairs_leg_pnl_borrow_excel``. **Before** that, Python runs
@@ -131,6 +133,28 @@ def _daily_pair_rollups(pair_daily: pd.DataFrame) -> pd.DataFrame:
     g["sum_gross_trading_usd"] = g["sum_long_pnl_usd"] + g["sum_short_pnl_usd"]
     g["pairwise_daily_net_pnl_usd"] = g["sum_gross_trading_usd"] - g["sum_borrow_usd"] - g["sum_underlying_borrow_usd"]
     return g
+
+
+def _eom_notional_sums(pdw: pd.DataFrame, d0: pd.Timestamp) -> tuple[float, float, float]:
+    """
+    EOM snapshot: sums of signed / gross pair notionals (all rows for ``d0``).
+    """
+    t = pd.to_datetime(pdw["date"], errors="coerce").dt.normalize()
+    s = pdw[t == pd.Timestamp(d0).normalize()]
+    if s.empty:
+        return 0.0, 0.0, 0.0
+    ln = float(pd.to_numeric(s["long_notional_usd"], errors="coerce").fillna(0.0).sum())
+    sn = float(pd.to_numeric(s["short_notional_usd"], errors="coerce").fillna(0.0).sum())
+    if "gross_notional_usd" in s.columns:
+        g = pd.to_numeric(s["gross_notional_usd"], errors="coerce")
+        if g.notna().any():
+            return ln, sn, float(g.fillna(0.0).sum())
+    lsh = pd.to_numeric(s["long_sh"], errors="coerce").fillna(0.0)
+    ssh = pd.to_numeric(s["short_sh"], errors="coerce").fillna(0.0)
+    pu = pd.to_numeric(s["underlying_price"], errors="coerce").fillna(0.0)
+    pe = pd.to_numeric(s["etf_price"], errors="coerce").fillna(0.0)
+    gr = (np.abs(lsh) * pu + np.abs(ssh) * pe).sum()
+    return ln, sn, float(gr)
 
 
 def _eom_v15_monthly_books(pdw: pd.DataFrame, d0: pd.Timestamp) -> tuple[float, float]:
@@ -247,7 +271,8 @@ def _lp_fee_row_formulas(row: int, *, daily_pnl_b_row: int) -> dict[str, str]:
     )
     b = (
         f"=IF(OR(dc_pairwise_params!$B$2=0,dc_pairwise_params!$B$3=0),0,"
-        f"IF({a}=F{row},(dc_pairwise_params!$B$3/4)*E{row},0))"
+        f"IF(AND(F{row}<>0,ABS({a}-F{row})<0.5),"
+        f"(dc_pairwise_params!$B$3/4)*E{row},0))"
     )
     return {
         "A": f"='Daily PnL'!{bdp}",
@@ -260,20 +285,21 @@ def _lp_fee_row_formulas(row: int, *, daily_pnl_b_row: int) -> dict[str, str]:
 
 def _eomax_trading_date_all_pairs(r: int) -> str:
     """
-    Last ``ALL_PAIRS`` **date** in the month of ``B{r}`` (``yyyy-mm`` in B).
+    Last ``ALL_PAIRS`` **trading** date in the month of ``B{r}`` (``yyyy-mm`` in B).
 
-    Uses **MAX( IF( … ) )** instead of ``MAXIFS`` so the workbook does not show
-    ``#NAME?`` in Excel 2013 and earlier (or builds without ``MAXIFS``).
-    Assumes EOMONTH (Excel 2007+); if that errors, the template is too old to support.
+    Uses ``MAXIFS`` (Excel 2016+ / Microsoft 365) for reliable EOM = last row date
+    in the month, so **SUMIFS(..., A, C)** in ``Monthly Attribution`` matches
+    ``ALL_PAIRS!A`` when column **C** references this EOM. ``MAX( IF( … ) )`` can
+    evaluate to 0 in some client builds when the month string or date serials
+    do not line up, which leaves notionals and fee rollups at zero.
     """
     be = f"B{r}"
     a = "'ALL_PAIRS'!$A$2:$A$200000"
     return (
         f"IFERROR("
-        f"MAX( IF( "
-        f"({a}>=DATE(LEFT({be},4),MID({be},6,2),1))*"
-        f"({a}<=EOMONTH(DATE(LEFT({be},4),MID({be},6,2),1),0)) ,"
-        f"{a},0) ),0)"
+        f"MAXIFS({a},"
+        f"{a},\">=\"&DATE(LEFT({be},4),MID({be},6,2),1),"
+        f"{a},\"<=\"&EOMONTH(DATE(LEFT({be},4),MID({be},6,2),1),0)),0)"
     )
 
 
@@ -380,6 +406,7 @@ def _export_dc_etf_excel_bodies(
         checks_data_rows=0,
         inject_per_pair_sumifs=False,
         inject_leg_pnl_borrow=True,
+        zero_pair_cost_columns=False,
         verbose=False,
         financing_daycount=360.0,
         include_portfolio_ledger_dc=False,
@@ -392,8 +419,9 @@ def _export_dc_etf_excel_bodies(
     c_dsp = _col_let(h_ap, "daily_short_pnl_usd")
     c_dbor = _col_let(h_ap, "daily_borrow_cost_usd")
     c_fed = _col_let(h_ap, "fed_funds_rate")
-    c_lmb = _col_let(h_ap, "long_margin_basis_usd")
-    c_sfb = _col_let(h_ap, "short_financing_basis_usd")
+    c_ln = _col_let(h_ap, "long_notional_usd")
+    c_sn = _col_let(h_ap, "short_notional_usd")
+    c_gr = _col_let(h_ap, "gross_notional_usd")
 
     a_last = 1 + n_d
     ws_d = wb["Daily PnL"]
@@ -462,11 +490,15 @@ def _export_dc_etf_excel_bodies(
             f"\"<=\"&EOMONTH(DATE(LEFT(B{r},4),MID(B{r},6,2),1),0))"
         )
         wsm[f"E{r}"] = (
-            f"=SUMIFS('ALL_PAIRS'!${c_lmb}$2:${c_lmb}$200000,"
+            f"=SUMIFS('ALL_PAIRS'!${c_ln}$2:${c_ln}$200000,"
+            f"'ALL_PAIRS'!$A$2:$A$200000,{c_eom})"
+        )
+        wsm[f"F{r}"] = (
+            f"=SUMIFS('ALL_PAIRS'!${c_sn}$2:${c_sn}$200000,"
             f"'ALL_PAIRS'!$A$2:$A$200000,{c_eom})"
         )
         wsm[f"G{r}"] = (
-            f"=SUMIFS('ALL_PAIRS'!${c_sfb}$2:${c_sfb}$200000,"
+            f"=SUMIFS('ALL_PAIRS'!${c_gr}$2:${c_gr}$200000,"
             f"'ALL_PAIRS'!$A$2:$A$200000,{c_eom})"
         )
         wsm[
@@ -476,31 +508,29 @@ def _export_dc_etf_excel_bodies(
             f"I{r}"
         ] = f"=SUMIFS('ALL_PAIRS'!${c_dsp}$2:${c_dsp}$200000,'ALL_PAIRS'!$A$2:$A$200000," f"\">=\"&DATE(LEFT(B{r},4),MID(B{r},6,2),1)," f"'ALL_PAIRS'!$A$2:$A$200000," f"\"<=\"&EOMONTH(DATE(LEFT(B{r},4),MID(B{r},6,2),1),0))"
         wsm[
-            f"K{r}"
+            f"J{r}"
         ] = f"=SUMIFS(book_daily!$C$2:$C$200000,book_daily!$A$2:$A$200000," f"\">=\"&DATE(LEFT(B{r},4),MID(B{r},6,2),1),book_daily!$A$2:$A$200000," f"\"<=\"&EOMONTH(DATE(LEFT(B{r},4),MID(B{r},6,2),1),0))"
         wsm[
-            f"L{r}"
+            f"K{r}"
         ] = f"=SUMIFS('ALL_PAIRS'!${c_dbor}$2:${c_dbor}$200000,'ALL_PAIRS'!$A$2:$A$200000," f"\">=\"&DATE(LEFT(B{r},4),MID(B{r},6,2),1)," f"'ALL_PAIRS'!$A$2:$A$200000," f"\"<=\"&EOMONTH(DATE(LEFT(B{r},4),MID(B{r},6,2),1),0))"
         wsm[
-            f"M{r}"
+            f"L{r}"
         ] = f"=SUMIFS(book_daily!$G$2:$G$200000,book_daily!$A$2:$A$200000," f"\">=\"&DATE(LEFT(B{r},4),MID(B{r},6,2),1),book_daily!$A$2:$A$200000," f"\"<=\"&EOMONTH(DATE(LEFT(B{r},4),MID(B{r},6,2),1),0))"
-        wsm[
-            f"P{r}"
-        ] = (
+        wsm[f"M{r}"] = f"=SUM(H{r}:I{r})-SUM(J{r}:L{r})"
+        wsm[f"N{r}"] = (
             f"=IF(OR(dc_pairwise_params!$B$2=0,dc_pairwise_params!$B$3=0),0,"
             f"SUMPRODUCT((TEXT(DAILY_CALC!$A$2:$A${a_last},\"yyyy-mm\")=B{r})*"
             f"DAILY_CALC!$C$2:$C${a_last}))"
         )
-        wsm[
-            f"Q{r}"
-        ] = (
+        wsm[f"O{r}"] = (
             f"=IF(OR(dc_pairwise_params!$B$2=0,dc_pairwise_params!$B$5=0),0,"
             f"SUMPRODUCT((TEXT(DAILY_CALC!$A$2:$A${a_last},\"yyyy-mm\")=B{r})*"
             f"DAILY_CALC!$D$2:$D${a_last}))"
         )
-        wsm[f"N{r}"] = f"=SUM(H{r}:I{r})-SUM(K{r}:M{r})"
-        wsm[f"R{r}"] = f"=P{r}+Q{r}"
-        wsm[f"T{r}"] = f"=N{r}-R{r}"
+        wsm[f"P{r}"] = f"=N{r}+O{r}"
+        wsm[f"Q{r}"] = f"=M{r}-P{r}"
+        for c_empty in (18, 19, 20):
+            wsm.cell(r, c_empty, None)
     wb.save(out_path)
     wb.close()
 
@@ -544,7 +574,9 @@ def export_dc_etf_arb_pairwise_workbook(
     if pd_work.empty:
         raise ValueError("pair_daily is empty after prep (check asof_end filter)")
     pd_work = reallocate_net_underlying_borrow_by_under(pd_work, trading_days=trading_days)
-    pd_work = apply_portfolio_level_cost_model(pd_work, verify_identities=True)
+    pd_work = apply_portfolio_level_cost_model(
+        pd_work, verify_identities=True, zero_pair_level_books=False
+    )
     pd_work["date"] = normalize_series_for_book_merge(pd_work["date"])
     daily = _daily_pair_rollups(pd_work)
     book = build_book_daily_dataframe(
@@ -614,6 +646,15 @@ def export_dc_etf_arb_pairwise_workbook(
     msum["eom_short_financing_book_usd"] = msum.index.map(
         lambda per: _eom_v15_monthly_books(pd_work, eom.loc[per, "date"])[1]
     )
+    msum["eom_long_notional_usd"] = msum.index.map(
+        lambda per: _eom_notional_sums(pd_work, eom.loc[per, "date"])[0]
+    )
+    msum["eom_short_notional_usd"] = msum.index.map(
+        lambda per: _eom_notional_sums(pd_work, eom.loc[per, "date"])[1]
+    )
+    msum["eom_gross_notional_usd"] = msum.index.map(
+        lambda per: _eom_notional_sums(pd_work, eom.loc[per, "date"])[2]
+    )
     msum["pre_fee_monthly_pnl_usd"] = (
         msum["sum_long_pnl_usd"]
         + msum["sum_short_pnl_usd"]
@@ -673,18 +714,19 @@ def export_dc_etf_arb_pairwise_workbook(
         ws_m.cell(r, 2, row.month_str)
         ws_m.cell(r, 3, _eom_d)
         ws_m.cell(r, 4, float(row.mean_fed_funds) if np.isfinite(row.mean_fed_funds) else 0.0)
-        ws_m.cell(r, 5, float(row.eom_long_book_usd))
-        ws_m.cell(r, 7, float(row.eom_short_financing_book_usd))
+        ws_m.cell(r, 5, float(row.eom_long_notional_usd))
+        ws_m.cell(r, 6, float(row.eom_short_notional_usd))
+        ws_m.cell(r, 7, float(row.eom_gross_notional_usd))
         ws_m.cell(r, 8, float(row.sum_long_pnl_usd))
         ws_m.cell(r, 9, float(row.sum_short_pnl_usd))
-        ws_m.cell(r, 11, float(row.sum_book_txn_usd))
-        ws_m.cell(r, 12, float(row.sum_borrow_usd))
-        ws_m.cell(r, 13, float(row.sum_book_margin_usd))
-        ws_m[f"N{r}"] = f"=SUM(H{r}:I{r})-SUM(K{r}:M{r})"
-        ws_m.cell(r, 16, float(row.sum_management_fee_usd))
-        ws_m.cell(r, 17, float(row.incentive_fee_usd))
-        ws_m[f"R{r}"] = f"=P{r}+Q{r}"
-        ws_m[f"T{r}"] = f"=N{r}-R{r}"
+        ws_m.cell(r, 10, float(row.sum_book_txn_usd))
+        ws_m.cell(r, 11, float(row.sum_borrow_usd))
+        ws_m.cell(r, 12, float(row.sum_book_margin_usd))
+        ws_m.cell(r, 13, float(row.pre_fee_monthly_pnl_usd))
+        ws_m.cell(r, 14, float(row.sum_management_fee_usd))
+        ws_m.cell(r, 15, float(row.incentive_fee_usd))
+        ws_m[f"P{r}"] = f"=N{r}+O{r}"
+        ws_m[f"Q{r}"] = f"=M{r}-P{r}"
     wb.save(out_path)
     wb.close()
     return out_path
