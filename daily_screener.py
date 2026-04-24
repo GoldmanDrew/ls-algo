@@ -109,7 +109,9 @@ leverage_pairs = [
     ("LABU", "XBI"),  ("SOXL", "SOXX"),
     # --- 2X Thematic / Equity --
     ("CHAU", "ASHR"), ("CWEB", "KWEB"), ("ERX",  "XLE"),  ("NUGT", "GDX"),
-    ("JNUG", "GDXJ"), ("GUSH", "XOP"), ("URAA", "URA"), ("TQQQ", "QQQ"), ("SPXL", "SPY"), ("URTY", "IWM"),
+    ("JNUG", "GDXJ"), ("GUSH", "XOP"),     ("URAA", "URA"), ("TQQQ", "QQQ"), ("SPXL", "SPY"), ("URTY", "IWM"),
+    # 2X commodities vs futures-proxy underlyings (ProShares)
+    ("BOIL", "UNG"), ("UCO", "USO"),
 ]
 
 leverage_pairs_leverageshares = [
@@ -223,7 +225,7 @@ covered_call_pairs = [
 BENCHMARK_MAP = {
     "SPX": "SPY",  "NDX": "QQQ",   "DJIA": "DIA",  "RUT": "IWM",
     "SOX": "SOXX", "FIN": "XLF",   "BIOTECH": "XBI","TECH": "XLK",
-    "WTI": "USO",  "COIN": "COIN", "TSLA": "TSLA", "MSTR": "MSTR", "NVDA": "NVDA",
+    "WTI": "USO",  "NG": "UNG",   "COIN": "COIN", "TSLA": "TSLA", "MSTR": "MSTR", "NVDA": "NVDA",
     "AMZN": "AMZN",
     "LITE": "LITE", "SNDK": "SNDK",
     "BTC": "IBIT", "ETH": "ETHA",  "CRCL": "CRCL", "CRWV": "CRWV",
@@ -239,7 +241,7 @@ BENCHMARK_MAP = {
 
 INVERSE_ETF_UNIVERSE = [
     ("SDS",  -2, "SPX"),  ("QID",  -2, "NDX"),  ("DXD",  -2, "DJIA"), ("TWM",  -2, "RUT"),
-    ("SCO",  -2, "WTI"),  ("MSTZ", -2, "MSTR"), ("NVDQ", -2, "NVDA"), ("BTCZ", -2, "BTC"),
+    ("SCO",  -2, "WTI"),  ("KOLD", -2, "NG"), ("MSTZ", -2, "MSTR"), ("NVDQ", -2, "NVDA"), ("BTCZ", -2, "BTC"),
     ("CONI", -2, "COIN"), ("MSDD", -2, "MSTR"), ("NVD",  -2, "NVDA"), ("TSDD", -2, "TSLA"),
     ("ETHD", -2, "ETH"),  ("CRCD", -2, "CRCL"), ("CORD", -2, "CRWV"), ("TSLQ", -2, "TSLA"),
     ("ZSL",  -2, "SLV"),  ("SQQQ", -3, "NDX"),  ("SPXS", -3, "SPX"),  ("TZA",  -3, "RUT"),
