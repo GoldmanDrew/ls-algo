@@ -22,8 +22,7 @@ Run daily:
   python daily_screener.py --skip-inverse            # skip inverse ETF universe (bucket C)
   python daily_screener.py --lookback 1y             # shorter history for faster runs
   python daily_screener.py --output my_output.csv    # custom output path
-  python daily_screener.py --borrow-history-path ../etf-dashboard/data/borrow_history.json
-      # optional: weighted borrow resampling for net_edge_* (see README in etf-dashboard)
+  # borrow_history.json is auto-discovered when present (see discover_default_borrow_history_json).
 
 Screener schema v2 (uncertainty + product_class) is applied after decay enrichment
 (``screener_v2_fields.enrich_screener_v2_fields``); all new columns are add-only for downstream CSV/JSON.
@@ -2088,6 +2087,30 @@ def estimate_margin_requirements(df: pd.DataFrame) -> pd.DataFrame:
 # SECTION 8 — MAIN PIPELINE
 # ══════════════════════════════════════════════════════════════════
 
+def discover_default_borrow_history_json() -> Path | None:
+    """Resolve ``borrow_history.json`` when no CLI/env path is set.
+
+    Search order:
+      1. ``ETF_DASHBOARD_ROOT``/data/borrow_history.json
+      2. Sibling checkout: ``<ls-algo>/../etf-dashboard/data/borrow_history.json``
+      3. In-repo copy: ``<ls-algo>/data/borrow_history.json`` (e.g. CI curl)
+    """
+    root = Path(__file__).resolve().parent
+    candidates: list[Path] = []
+    env_root = (os.environ.get("ETF_DASHBOARD_ROOT") or "").strip()
+    if env_root:
+        candidates.append(Path(env_root) / "data" / "borrow_history.json")
+    candidates.append(root.parent / "etf-dashboard" / "data" / "borrow_history.json")
+    candidates.append(root / "data" / "borrow_history.json")
+    for p in candidates:
+        try:
+            if p.is_file():
+                return p
+        except OSError:
+            continue
+    return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Daily ETF screener pipeline")
     ap.add_argument("--run-date", default=date.today().isoformat())
@@ -2180,6 +2203,11 @@ def main() -> int:
     print(f"[CONFIG] min_beta_days={min_beta_days}")
 
     borrow_hist_path = args.borrow_history_path or os.environ.get("BORROW_HISTORY_PATH")
+    if not borrow_hist_path:
+        auto_bh = discover_default_borrow_history_json()
+        if auto_bh is not None:
+            borrow_hist_path = str(auto_bh)
+            print(f"[BORROW] Auto-discovered borrow history: {borrow_hist_path}")
     borrow_history_map = None
     if borrow_hist_path:
         bh = Path(borrow_hist_path).expanduser()

@@ -107,6 +107,24 @@ def load_borrow_history_json(path: str | os.PathLike[str]) -> dict[str, list]:
     return out
 
 
+def _net_edge_hist_json(net_draws: np.ndarray, n_bins: int = 20) -> str | None:
+    """Compact JSON for dashboard mini-histogram: ``{\"e\":[edges],\"c\":[counts]}``."""
+    a = np.asarray(net_draws, dtype=float)
+    if a.size < 2:
+        return None
+    nb = int(n_bins) if int(n_bins) > 2 else 10
+    lo, hi = np.percentile(a, [1.0, 99.0])
+    if not np.isfinite(lo) or not np.isfinite(hi) or lo >= hi:
+        lo, hi = float(np.min(a)), float(np.max(a))
+    if lo >= hi:
+        hi = lo + 1e-8
+    counts, edges = np.histogram(a, bins=nb, range=(float(lo), float(hi)))
+    return json.dumps(
+        {"e": [round(float(x), 6) for x in edges], "c": [int(x) for x in counts]},
+        separators=(",", ":"),
+    )
+
+
 def _weighted_borrow_values_probs(
     history_rows: list,
     asof: _dt.date,
@@ -279,6 +297,9 @@ def enrich_screener_v2_fields(
         bhalf,
         bnpts,
         bmode,
+        p25,
+        p75,
+        nehist,
     ) = (
         [""] * n,
         [""] * n,
@@ -303,6 +324,9 @@ def enrich_screener_v2_fields(
         [np.nan] * n,
         [""] * n,
         [False] * n,
+        [""] * n,
+        [np.nan] * n,
+        [np.nan] * n,
         [""] * n,
         [np.nan] * n,
         [np.nan] * n,
@@ -397,38 +421,38 @@ def enrich_screener_v2_fields(
                 idx = rng_borrow.choice(vals.size, size=gross_draws.size, p=probs, replace=True)
                 b_draws = vals[idx]
                 net_draws = gross_draws - b_draws
-                p05[j], p50[j], p95[j] = np.percentile(net_draws, [5, 50, 95]).tolist()
-                blen[j] = float(_BLOCK_LEN_DEFAULT)
-                breps[j] = float(_BOOT_N)
-                akey[j] = "trading_days_252"
                 cnote[j] = (
                     "block_bootstrap_daily_drag;"
                     "weighted_borrow_resample_full_history;"
                     f"halflife_cal_days={float(borrow_weight_halflife_days):g}"
                 )
                 ctype[j] = "empirical_block_marginal_x_weighted_borrow_marginal"
-                sigb[j] = 0.0
-                srho[j] = 0.0
                 bhalf[j] = float(borrow_weight_halflife_days)
                 bnpts[j] = float(vals.size)
                 bmode[j] = "weighted_empirical"
             else:
                 net_draws = gross_draws - bcur
-                p05[j], p50[j], p95[j] = np.percentile(net_draws, [5, 50, 95]).tolist()
-                blen[j] = float(_BLOCK_LEN_DEFAULT)
-                breps[j] = float(_BOOT_N)
-                akey[j] = "trading_days_252"
                 cnote[j] = "block_bootstrap_daily_drag; borrow_point_in_time"
                 ctype[j] = "empirical_block_marginal"
-                sigb[j] = 0.0
-                srho[j] = 0.0
                 bhalf[j] = np.nan
                 bnpts[j] = np.nan
                 bmode[j] = "point_in_time"
+            blen[j] = float(_BLOCK_LEN_DEFAULT)
+            breps[j] = float(_BOOT_N)
+            akey[j] = "trading_days_252"
+            sigb[j] = 0.0
+            srho[j] = 0.0
+            p05[j], p25[j], p50[j], p75[j], p95[j] = np.percentile(
+                net_draws, [5, 25, 50, 75, 95]
+            ).tolist()
             p05[j] = p05_stress(float(p05[j]), 0.0, _STRESS_BORROW_RHOS)
+            hj = _net_edge_hist_json(net_draws)
+            nehist[j] = hj if hj is not None else ""
         else:
             p05[j] = np.nan
+            p25[j] = np.nan
             p50[j] = np.nan
+            p75[j] = np.nan
             p95[j] = np.nan
             blen[j] = np.nan
             breps[j] = np.nan
@@ -440,6 +464,7 @@ def enrich_screener_v2_fields(
             bhalf[j] = np.nan
             bnpts[j] = np.nan
             bmode[j] = ""
+            nehist[j] = ""
 
         if pclass[j] == "income_put_spread":
             dnote[j] = "income_dist_missing"
@@ -462,8 +487,11 @@ def enrich_screener_v2_fields(
     out["borrow_for_net_annual"] = bfor
     out["borrow_median_60d"] = bmed
     out["net_edge_p05_annual"] = p05
+    out["net_edge_p25_annual"] = p25
     out["net_edge_p50_annual"] = p50
+    out["net_edge_p75_annual"] = p75
     out["net_edge_p95_annual"] = p95
+    out["net_edge_hist_json"] = nehist
     out["mechanical_decay_annual"] = mech
     out["realized_tracking_component_annual"] = rtrack
     out["slippage_proxy_annual"] = slp

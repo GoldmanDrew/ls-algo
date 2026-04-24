@@ -44,6 +44,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Fetch borrow history (etf-dashboard) for weighted net edge
+        run: |
+          mkdir -p data
+          if curl -fsSL --connect-timeout 15 --max-time 120 \
+            -o data/borrow_history.json \
+            "https://raw.githubusercontent.com/GoldmanDrew/etf-dashboard/main/data/borrow_history.json"
+          then
+            echo "borrow_history.json: $(wc -c < data/borrow_history.json) bytes"
+          else
+            echo "Note: borrow_history fetch failed; screener uses point-in-time borrow for net edge"
+            rm -f data/borrow_history.json
+          fi
+
       - name: Run daily screener
         run: |
           RUN_DATE=$(python -c "
