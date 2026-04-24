@@ -143,6 +143,46 @@ def _borrow_history_row_usable_for_resample(row: dict, borrow_fv: float) -> bool
     return si > 0
 
 
+def _borrow_history_usable_currents_sorted(
+    history_rows: list,
+    asof: _dt.date,
+) -> list[float]:
+    """All ``borrow_current`` values on or before ``asof``, sorted by date (oldest first).
+
+    Excludes the same placeholder rows as weighted resampling (~0 fee with ``shares_available`` <= 0).
+    """
+    dated_vals: list[tuple[_dt.date, float]] = []
+    for row in history_rows:
+        if not isinstance(row, dict):
+            continue
+        ds = row.get("date")
+        if ds is None:
+            continue
+        try:
+            if isinstance(ds, _dt.date) and not isinstance(ds, _dt.datetime):
+                d = ds
+            else:
+                d = _dt.date.fromisoformat(str(ds)[:10])
+        except (TypeError, ValueError):
+            continue
+        if d > asof:
+            continue
+        br = row.get("borrow_current")
+        if br is None or (isinstance(br, float) and np.isnan(br)):
+            continue
+        try:
+            fv = float(br)
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(fv):
+            continue
+        if not _borrow_history_row_usable_for_resample(row, fv):
+            continue
+        dated_vals.append((d, fv))
+    dated_vals.sort(key=lambda x: x[0])
+    return [v for _, v in dated_vals]
+
+
 def _weighted_borrow_values_probs(
     history_rows: list,
     asof: _dt.date,
@@ -288,6 +328,10 @@ def enrich_screener_v2_fields(
     net-edge percentiles use independent weighted resampling of historical
     ``borrow_current`` (recent-heavy half-life in calendar days); otherwise the
     legacy point-in-time ``borrow_current`` subtraction is used.
+
+    ``borrow_avg_annual`` and ``borrow_median_60d`` are computed from that same
+    history (chronological mean and median of the last up to 60 usable points),
+    excluding ~0%% borrow rows with ``shares_available`` <= 0 (not shortable).
     """
     asof_d = asof_date if asof_date is not None else _dt.date.today()
     asof = asof_d.isoformat()
@@ -299,6 +343,7 @@ def enrich_screener_v2_fields(
         gprim,
         bfor,
         bmed,
+        bavg,
         p05,
         p50,
         p95,
@@ -339,6 +384,7 @@ def enrich_screener_v2_fields(
         [np.nan] * n,
         [np.nan] * n,
         [np.nan] * n,
+        [np.nan] * n,
         [""] * n,
         [np.nan] * n,
         [np.nan] * n,
@@ -364,6 +410,25 @@ def enrich_screener_v2_fields(
         pclass[j] = _product_class(lev, beta)
         bcur = float(row["borrow_current"]) if not _nanf(row.get("borrow_current")) else 0.0
         bfor[j] = bcur
+
+        hist = None
+        if borrow_history_map:
+            etf_key = etf.strip().upper()
+            hist = borrow_history_map.get(etf_key)
+            if hist is None and etf != etf_key:
+                hist = borrow_history_map.get(etf.strip())
+        usable_borrows: list[float] = (
+            _borrow_history_usable_currents_sorted(hist, asof_d)
+            if hist
+            else []
+        )
+        if usable_borrows:
+            bavg[j] = float(np.mean(usable_borrows))
+            tail = usable_borrows[-60:]
+            bmed[j] = float(np.median(tail))
+        else:
+            bavg[j] = np.nan
+            bmed[j] = np.nan
 
         n_obs = int(row["Beta_n_obs"]) if not _nanf(row.get("Beta_n_obs")) else 0
         realized_ok = bool(
@@ -398,7 +463,6 @@ def enrich_screener_v2_fields(
                 float(gprim[j]) - bcur
                 if not _nanf(gprim[j]) else np.nan
             )
-        bmed[j] = np.nan
 
         mech[j] = float(g_exp) if not _nanf(g_exp) else np.nan
         if not _nanf(g_real) and not _nanf(g_exp):
@@ -426,12 +490,6 @@ def enrich_screener_v2_fields(
         g_real = row.get("gross_decay_annual")
         if gross_draws is not None:
             rng_borrow = np.random.default_rng(int(bootstrap_seed) + 1_000_003)
-            etf_key = etf.strip().upper()
-            hist = None
-            if borrow_history_map:
-                hist = borrow_history_map.get(etf_key)
-                if hist is None and etf != etf_key:
-                    hist = borrow_history_map.get(etf.strip())
             wb = (
                 _weighted_borrow_values_probs(
                     hist, asof_d, float(borrow_weight_halflife_days)
@@ -508,6 +566,7 @@ def enrich_screener_v2_fields(
     out["primary_edge_annual"] = primary
     out["gross_for_primary_annual"] = gprim
     out["borrow_for_net_annual"] = bfor
+    out["borrow_avg_annual"] = bavg
     out["borrow_median_60d"] = bmed
     out["net_edge_p05_annual"] = p05
     out["net_edge_p25_annual"] = p25
