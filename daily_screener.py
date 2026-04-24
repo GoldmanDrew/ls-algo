@@ -24,7 +24,7 @@ Run daily:
   python daily_screener.py --output my_output.csv    # custom output path
 
 Screener schema v2 (uncertainty + product_class) is applied after decay enrichment
-(see screener_v2_fields.py); all new columns are add-only for downstream CSV/JSON.
+(``screener_v2_fields.enrich_screener_v2_fields``); all new columns are add-only for downstream CSV/JSON.
 
 """
 from __future__ import annotations
@@ -51,6 +51,7 @@ import yaml
 import yfinance as yf
 
 from expense_ratios import fetch_expense_ratios
+from screener_v2_fields import enrich_screener_v2_fields
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -170,6 +171,8 @@ new_pairs = [
     # 2026-03 launches (Direxion + Tradr)
     ("ADBU", "ADBE"), ("PYPU", "PYPL"), ("TXNU", "TXN"),  ("UNHU", "UNH"),
     ("AAOX", "AAOI"), ("HLXX", "HL"),   ("IBX",  "IBM"),
+    # 2026-04-24 Tradr 2X long (AXT, Coupang, Monolithic Power, Seagate)
+    ("AXTX", "AXT"), ("CPNX", "CPNG"), ("MPWX", "MPWR"), ("STXX", "STX"),
 ]
 
 proshares_pairs_levered = [
@@ -220,6 +223,7 @@ BENCHMARK_MAP = {
     "SOX": "SOXX", "FIN": "XLF",   "BIOTECH": "XBI","TECH": "XLK",
     "WTI": "USO",  "COIN": "COIN", "TSLA": "TSLA", "MSTR": "MSTR", "NVDA": "NVDA",
     "AMZN": "AMZN",
+    "LITE": "LITE", "SNDK": "SNDK",
     "BTC": "IBIT", "ETH": "ETHA",  "CRCL": "CRCL", "CRWV": "CRWV",
     "GDX": "GDX",  "SLV": "SLV",   "XLE": "XLE",   "XOP": "XOP",
     "TLT": "TLT",  "MSCIJP": "EWJ","APLD": "APLD", "CLSK": "CLSK",
@@ -249,7 +253,9 @@ INVERSE_ETF_UNIVERSE = [
     ("HIBS", -3, "SPHB"),  ("CLSZ", -2, "CLSK"), ("IREZ", -2, "IREN"),
     ("RGTZ", -2, "RGTI"), ("PLTZ", -2, "PLTR"), ("SMST", -2, "MSTR"), ("SMCZ", -2, "SMCI"),
     ("BMNZ", -2, "BMNR"), ("HOOZ", -2, "HOOD"), ("DAMD", -2, "AMD"), ("RKLZ", -2, "RKLB"),
-    ("STSM", -2, "TSM"), ("OKLS", -2, "OKLO"), ("ASTN", -2, "ASTS"),
+    ("STSM", -2, "TSM"), ("OKLS", -2, "OKLO"),     ("ASTN", -2, "ASTS"),
+    # 2026-04-23 Tradr 2X inverse (Lumentum, SanDisk — underlying SNDK)
+    ("LITZ", -2, "LITE"), ("SNDQ", -2, "SNDK"),
     ("UVIX", -2, "SVIX"),
 ]
 
@@ -460,6 +466,7 @@ def build_full_universe(skip_scrape: bool = False, skip_inverse: bool = False) -
         "LYFX",   # LYFT — closed 2026-03-03
         "NETX",   # NET  — closed 2026-03-13
         "NWMX",   # NEM  — closed 2026-01-30
+        "NNEX",   # NNE  — delisted
         "OKTX",   # OKTA — closed 2026-02-04
         "PXIU",   # UPXI — closed 2026-03-16
         "QSX",    # QS   — closed 2026-01-30
@@ -988,7 +995,9 @@ def compute_beta_ols(etf_tr: pd.Series, und_tr: pd.Series,
     """OLS: r_etf = alpha + beta × r_und. Returns (beta, n_obs)."""
     etf_tr = etf_tr[~etf_tr.index.duplicated(keep='last')]
     und_tr = und_tr[~und_tr.index.duplicated(keep='last')]
-    df = pd.concat([etf_tr.rename("etf"), und_tr.rename("und")], axis=1).dropna()
+    df = pd.concat(
+        [etf_tr.rename("etf"), und_tr.rename("und")], axis=1, sort=True
+    ).dropna()
     if len(df) < min_days + 1:
         return None, 0
     r_etf = df["etf"].pct_change().dropna()
@@ -1519,7 +1528,9 @@ def _compute_gross_decay_weekly(
     """
     etf_tr = etf_tr[~etf_tr.index.duplicated(keep='last')]
     und_tr = und_tr[~und_tr.index.duplicated(keep='last')]
-    combined = pd.concat([etf_tr.rename("etf"), und_tr.rename("und")], axis=1).dropna()
+    combined = pd.concat(
+        [etf_tr.rename("etf"), und_tr.rename("und")], axis=1, sort=True
+    ).dropna()
     if len(combined) < min_weeks * 5:  # need enough daily points to form weeks
         return None
     if abs(float(beta)) < 0.1:
@@ -1594,7 +1605,7 @@ def _compute_gross_decay_daily(
     etf_tr = etf_tr[~etf_tr.index.duplicated(keep='last')]
     und_tr = und_tr[~und_tr.index.duplicated(keep='last')]
     combined = pd.concat(
-        [etf_tr.rename("etf"), und_tr.rename("und")], axis=1
+        [etf_tr.rename("etf"), und_tr.rename("und")], axis=1, sort=True
     ).dropna()
     if len(combined) < min_days + 1:
         return None
@@ -2310,8 +2321,6 @@ def main() -> int:
     )
 
     # Step 5b — Schema v2 (uncertainty bands, product_class; add-only columns)
-    from screener_v2_fields import enrich_screener_v2_fields
-
     screened = enrich_screener_v2_fields(
         screened, tr_map, min_days=min_beta_days
     )

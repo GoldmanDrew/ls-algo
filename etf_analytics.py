@@ -236,7 +236,9 @@ def _compute_beta_ols(
 
     Returns (beta, n_obs).  beta is None if insufficient data.
     """
-    df = pd.concat([etf_tr.rename("etf"), und_tr.rename("und")], axis=1).dropna()
+    df = pd.concat(
+        [etf_tr.rename("etf"), und_tr.rename("und")], axis=1, sort=True
+    ).dropna()
     if len(df) < min_days + 1:
         return None, 0
 
@@ -343,7 +345,9 @@ def _compute_gross_decay_weekly(
     (52·5 = 260 ≠ 252). Do not use for new production code; use
     :func:`_compute_gross_decay` (aliased to the daily form).
     """
-    combined = pd.concat([etf_tr.rename("etf"), und_tr.rename("und")], axis=1).dropna()
+    combined = pd.concat(
+        [etf_tr.rename("etf"), und_tr.rename("und")], axis=1, sort=True
+    ).dropna()
     if len(combined) < min_weeks * 5:
         return None
 
@@ -385,7 +389,7 @@ def _compute_gross_decay_daily(
     :func:`_annualized_second_moment_log` squared over 252.
     """
     combined = pd.concat(
-        [etf_tr.rename("etf"), und_tr.rename("und")], axis=1
+        [etf_tr.rename("etf"), und_tr.rename("und")], axis=1, sort=True
     ).dropna()
     if len(combined) < min_days + 1:
         return None
