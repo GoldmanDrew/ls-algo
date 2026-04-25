@@ -161,6 +161,7 @@ def mirror_generate_trade_plan_sizing(
     b4_partial_hedge_ratio = _clamp01(b4_rules.get("partial_hedge_ratio", 1.0))
     b4_max_shares_outstanding_frac = _clamp01(b4_rules.get("max_shares_outstanding_frac", 0.20))
     b4_min_underlying_vol = float(b4_rules.get("min_underlying_vol", 0.50))
+    b4_excluded_etfs = {_norm_sym(x) for x in (b4_rules.get("excluded_etfs") or [])}
 
     soft_borrow_cap = float((cfg.get("screener") or {}).get("borrow_low", 1.0))
     b4_hard_borrow_cap = float(
@@ -263,8 +264,9 @@ def mirror_generate_trade_plan_sizing(
 
     eligible["in_core"] = core_pre_decay & core_decay_gate
     eligible["in_wl"] = positive_beta & eligible["in_whitelist"] & wl_borrow_ok & net_decay_non_negative
+    b4_not_excluded = ~eligible["ETF"].isin(b4_excluded_etfs)
     eligible["in_b4"] = (
-        negative_beta & inverse_shortable & b4_borrow_ok & b4_edge_ok & b4_vol_ok
+        negative_beta & inverse_shortable & b4_borrow_ok & b4_edge_ok & b4_vol_ok & b4_not_excluded
         if b4_enabled
         else pd.Series(False, index=eligible.index)
     )

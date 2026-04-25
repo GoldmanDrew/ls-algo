@@ -505,6 +505,7 @@ def main() -> None:
     b4_max_shares_outstanding_frac = _clamp01(b4_rules.get("max_shares_outstanding_frac", 0.20))
     # Universe-entry floor on underlying realized volatility (annualized).
     b4_min_underlying_vol = float(b4_rules.get("min_underlying_vol", 0.50))
+    b4_excluded_etfs = {_norm_sym(x) for x in (b4_rules.get("excluded_etfs") or [])}
 
     # Borrow caps (soft vs hard)
     soft_borrow_cap = float(cfg.get("screener", {}).get("borrow_low", 1.0))  # e.g. 0.08
@@ -561,6 +562,8 @@ def main() -> None:
         f"[INFO] b4 universe filters: min_underlying_vol={b4_min_underlying_vol:.0%} | "
         f"min_net_edge_annual={b4_min_edge:.0%}"
     )
+    if b4_excluded_etfs:
+        print(f"[INFO] b4 excluded_etfs ({len(b4_excluded_etfs)}): {', '.join(sorted(b4_excluded_etfs))}")
     _core_nd_min = float(core_rules.get("min_net_decay_annual", 0.0) or 0.0)
     _core_hyst = core_rules.get("net_decay_hysteresis") or {}
     if _core_nd_min > 0 or bool(_core_hyst.get("enabled", False)):
@@ -729,7 +732,10 @@ def main() -> None:
             raise SystemExit(str(e)) from e
         eligible["in_core"] = core_pre_decay & core_decay_gate
         eligible["in_wl"] = positive_beta & eligible["in_whitelist"] & wl_borrow_ok & net_decay_non_negative
-        eligible["in_b4"]   = negative_beta & inverse_shortable & b4_borrow_ok & b4_edge_ok & b4_vol_ok
+        b4_not_excluded = ~eligible["ETF"].isin(b4_excluded_etfs)
+        eligible["in_b4"] = (
+            negative_beta & inverse_shortable & b4_borrow_ok & b4_edge_ok & b4_vol_ok & b4_not_excluded
+        )
 
         core_names = eligible.loc[eligible["in_core"]].copy()
         wl_names   = eligible.loc[eligible["in_wl"]].copy()

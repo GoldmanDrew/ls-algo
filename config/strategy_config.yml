@@ -52,7 +52,7 @@ execution:
   cancel_client_id: 99         # dedicated client for cancel coordinator
 
 screener:
-  borrow_low: 0.35
+  borrow_low: 0.80              # max annual borrow (decimal) for core soft gate; NaN = allow
   purgatory_margin: 0.15
   whitelist_hard_borrow_cap: 0.4
   flow_hard_borrow_cap: 0.45
@@ -135,8 +135,10 @@ portfolio:
         partial_hedge_ratio: 1.0      # 1.0 = fully hedge inverse beta exposure
         min_net_edge_annual: 0.0      # require bucket4_net_edge_annual >= this
         min_underlying_vol: 0.50      # universe entry: require vol_underlying_annual >= 50%
-        bucket4_borrow_cap: 0.90      # dedicated B4 hard borrow cap (annualized)
-        hard_borrow_cap: 0.90         # legacy alias (kept for compatibility)
+        bucket4_borrow_cap: 0.80      # B4: max annual borrow (decimal) for inverse sleeve
+        hard_borrow_cap: 0.80         # legacy alias (kept for compatibility)
+        excluded_etfs:                # never allocate inverse_decay_bucket4 to these tickers
+          - KOLD
         max_shares_outstanding_frac: 0.2
       weighting:
         <<: *weighting_defaults
