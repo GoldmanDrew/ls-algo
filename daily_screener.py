@@ -52,6 +52,7 @@ import requests
 import yaml
 import yfinance as yf
 
+from decay_distribution import enrich_with_decay_distribution
 from expense_ratios import fetch_expense_ratios
 from screener_v2_fields import enrich_screener_v2_fields, load_borrow_history_json
 
@@ -109,9 +110,7 @@ leverage_pairs = [
     ("LABU", "XBI"),  ("SOXL", "SOXX"),
     # --- 2X Thematic / Equity --
     ("CHAU", "ASHR"), ("CWEB", "KWEB"), ("ERX",  "XLE"),  ("NUGT", "GDX"),
-    ("JNUG", "GDXJ"), ("GUSH", "XOP"),     ("URAA", "URA"), ("TQQQ", "QQQ"), ("SPXL", "SPY"), ("URTY", "IWM"),
-    # 2X commodities vs futures-proxy underlyings (ProShares)
-    ("BOIL", "UNG"), ("UCO", "USO"),
+    ("JNUG", "GDXJ"), ("GUSH", "XOP"), ("URAA", "URA"), ("TQQQ", "QQQ"), ("SPXL", "SPY"), ("URTY", "IWM"),
 ]
 
 leverage_pairs_leverageshares = [
@@ -207,12 +206,25 @@ leverage_pairs_capped_accel = [
     ("PLOO", "PLTR"), ("TSLO", "TSLA"),
 ]
 
-# GraniteShares YieldBOOST (1x overlay vs underlying) — realized β lands in bucket_2 in screening.
+# GraniteShares YieldBOOST (1x put-spread income overlay vs underlying) —
+# realized β lands in bucket_2 in screening, but these are not 2x LETFs.
 YIELDBOOST_BUCKET2_PAIRS = [
-    ("MUYY", "MU"),
-    ("TMYY", "TSM"),
-    ("CWY", "CRWV"),
+    ("AMYY", "AMD"), ("AZYY", "AMZN"), ("BBYY", "BABA"), ("COYY", "COIN"),
+    ("CWY", "CRWV"), ("HMYY", "HIMS"), ("HOYY", "HOOD"), ("IOYY", "IONQ"),
+    ("MAAY", "MARA"), ("FBYY", "META"), ("MTYY", "MSTR"), ("MUYY", "MU"),
+    ("NUGY", "GDX"), ("NVYY", "NVDA"), ("PLYY", "PLTR"), ("QBY", "QBTS"),
+    ("RGYY", "RGTI"), ("RTYY", "RIOT"), ("SEMY", "SOXX"), ("SMYY", "SMCI"),
+    ("TMYY", "TSM"), ("TQQY", "QQQ"), ("TSYY", "TSLA"), ("XBTY", "IBIT"),
+    ("YSPY", "SPY"),
 ]
+
+# VIX futures ETPs are not clean LETFs on a primitive spot underlying.  The
+# simple Itô LETF expected-decay identity misses roll yield, vol risk premium,
+# jumps, and mean reversion, so keep a separate model class for them.
+VOLATILITY_ETP_SYMBOLS = {
+    "UVIX", "SVIX", "UVXY", "SVXY", "VXX", "VIXY", "VIXM",
+    "VIX", "VIX1D", "VIX3M",
+}
 
 covered_call_pairs = [
     ("QYLD", "QQQ"),  ("QYLG", "QQQ"),  ("QQQX", "QQQ"),  ("JEPQ", "QQQ"),
@@ -225,7 +237,7 @@ covered_call_pairs = [
 BENCHMARK_MAP = {
     "SPX": "SPY",  "NDX": "QQQ",   "DJIA": "DIA",  "RUT": "IWM",
     "SOX": "SOXX", "FIN": "XLF",   "BIOTECH": "XBI","TECH": "XLK",
-    "WTI": "USO",  "NG": "UNG",   "COIN": "COIN", "TSLA": "TSLA", "MSTR": "MSTR", "NVDA": "NVDA",
+    "WTI": "USO",  "COIN": "COIN", "TSLA": "TSLA", "MSTR": "MSTR", "NVDA": "NVDA",
     "AMZN": "AMZN",
     "LITE": "LITE", "SNDK": "SNDK",
     "BTC": "IBIT", "ETH": "ETHA",  "CRCL": "CRCL", "CRWV": "CRWV",
@@ -241,7 +253,7 @@ BENCHMARK_MAP = {
 
 INVERSE_ETF_UNIVERSE = [
     ("SDS",  -2, "SPX"),  ("QID",  -2, "NDX"),  ("DXD",  -2, "DJIA"), ("TWM",  -2, "RUT"),
-    ("SCO",  -2, "WTI"),  ("KOLD", -2, "NG"), ("MSTZ", -2, "MSTR"), ("NVDQ", -2, "NVDA"), ("BTCZ", -2, "BTC"),
+    ("SCO",  -2, "WTI"),  ("MSTZ", -2, "MSTR"), ("NVDQ", -2, "NVDA"), ("BTCZ", -2, "BTC"),
     ("CONI", -2, "COIN"), ("MSDD", -2, "MSTR"), ("NVD",  -2, "NVDA"), ("TSDD", -2, "TSLA"),
     ("ETHD", -2, "ETH"),  ("CRCD", -2, "CRCL"), ("CORD", -2, "CRWV"), ("TSLQ", -2, "TSLA"),
     ("ZSL",  -2, "SLV"),  ("SQQQ", -3, "NDX"),  ("SPXS", -3, "SPX"),  ("TZA",  -3, "RUT"),
@@ -416,6 +428,11 @@ def build_full_universe(skip_scrape: bool = False, skip_inverse: bool = False) -
         + proshares_pairs_levered
         + graniteshares_pairs_leveraged
     )
+    yieldboost_etfs = {_norm_sym(etf) for etf, _ in YIELDBOOST_BUCKET2_PAIRS}
+    all_levered = [
+        (etf, und) for etf, und in all_levered
+        if _norm_sym(etf) not in yieldboost_etfs
+    ]
     dx_df = pd.DataFrame(all_levered, columns=["ETF", "Underlying"])
     dx_df["Leverage"] = 2.0
     print(f"[UNIVERSE] Leveraged pairs: {len(dx_df)}")
@@ -449,6 +466,15 @@ def build_full_universe(skip_scrape: bool = False, skip_inverse: bool = False) -
     all_df = all_df.drop_duplicates(subset=["ETF"]).reset_index(drop=True)
     all_df["ETF"] = all_df["ETF"].apply(_norm_sym)
     all_df["Underlying"] = all_df["Underlying"].apply(_norm_sym)
+    yieldboost_pairs = {
+        (_norm_sym(etf), _norm_sym(und)) for etf, und in YIELDBOOST_BUCKET2_PAIRS
+    }
+    is_yieldboost = all_df.apply(
+        lambda r: (r["ETF"], r["Underlying"]) in yieldboost_pairs,
+        axis=1,
+    )
+    all_df["is_yieldboost"] = is_yieldboost
+    all_df["scenario_style"] = np.where(is_yieldboost, "income_style", "")
 
     # Filter out known bad tickers (scraped erroneously, delisted, etc.)
     # Delisted Tradr ETFs are hardcoded here so the screener produces a
@@ -1478,6 +1504,62 @@ def expected_gross_decay(
     return round(drag + expense_ratio + fin + mgr, 6)
 
 
+def _is_volatility_etp_symbol(symbol: object, underlying: object = "") -> bool:
+    sym = _norm_sym(symbol) if symbol is not None and str(symbol).strip() else ""
+    und = _norm_sym(underlying) if underlying is not None and str(underlying).strip() else ""
+    return sym in VOLATILITY_ETP_SYMBOLS or und in VOLATILITY_ETP_SYMBOLS
+
+
+def apply_volatility_etp_expected_decay_adjustment(df: pd.DataFrame) -> pd.DataFrame:
+    """Use a model-aware expected-decay value for VIX futures ETPs.
+
+    ``expected_gross_decay_annual`` originally contains the simple daily-LETF
+    Itô identity.  For products like UVIX/SVIX that identity is incomplete: the
+    dominant expected behavior also includes futures roll, vol risk premium,
+    jumps, and mean reversion.  Schema v2 already computes the empirical gap as
+    ``realized_tracking_component_annual = realized - simple_ito``.  Preserve the
+    simple value in a separate column, then make the displayed expected value
+    simple Itô + empirical adjustment for volatility ETPs.
+    """
+    out = df.copy()
+    if "expected_gross_decay_annual" not in out.columns:
+        return out
+
+    simple = pd.to_numeric(out["expected_gross_decay_annual"], errors="coerce")
+    out["expected_gross_decay_simple_ito_annual"] = simple
+    if "expected_gross_decay_adjusted_annual" not in out.columns:
+        out["expected_gross_decay_adjusted_annual"] = np.nan
+    if "expected_decay_adjustment_annual" not in out.columns:
+        out["expected_decay_adjustment_annual"] = np.nan
+    if "expected_decay_model" not in out.columns:
+        out["expected_decay_model"] = "simple_ito"
+
+    adjustment = pd.to_numeric(
+        out.get("realized_tracking_component_annual", pd.Series(np.nan, index=out.index)),
+        errors="coerce",
+    )
+    realized = pd.to_numeric(
+        out.get("gross_decay_annual", pd.Series(np.nan, index=out.index)),
+        errors="coerce",
+    )
+    is_vol = out.apply(
+        lambda r: _is_volatility_etp_symbol(r.get("ETF"), r.get("Underlying")),
+        axis=1,
+    )
+    adjusted = simple + adjustment
+    adjusted = adjusted.where(adjusted.notna(), realized)
+
+    out.loc[is_vol, "expected_gross_decay_adjusted_annual"] = adjusted[is_vol].round(6)
+    out.loc[is_vol, "expected_decay_adjustment_annual"] = adjustment[is_vol].round(6)
+    out.loc[is_vol, "expected_decay_model"] = "volatility_etp_empirical_roll_adjusted"
+    out.loc[is_vol & adjusted.notna(), "expected_gross_decay_annual"] = adjusted[is_vol & adjusted.notna()].round(6)
+    if "expected_gross_decay_reliable" in out.columns:
+        out.loc[is_vol, "expected_gross_decay_reliable"] = False
+    if "product_class" in out.columns:
+        out.loc[is_vol, "product_class"] = "volatility_etp"
+    return out
+
+
 _WEEKS_PER_YEAR = 52
 _MIN_WEEKS = 4    # ~20 trading days
 
@@ -2397,6 +2479,19 @@ def main() -> int:
         borrow_history_map=borrow_history_map,
         borrow_weight_halflife_days=float(args.borrow_weight_halflife_days),
         asof_date=asof_for_v2,
+    )
+    screened = apply_volatility_etp_expected_decay_adjustment(screened)
+
+    # Step 5c — Distributional forecast of gross decay (HARQ-Log on the
+    # underlying's realised variance + empirical lognormal aggregation
+    # to a 1y horizon). Adds expected_gross_decay_{p10,p50,p90,mean}_annual
+    # alongside the existing point estimate. See decay_distribution.py for
+    # the model and the PLAN_decay_distribution_from_underlying_vol.md note.
+    screened = enrich_with_decay_distribution(
+        screened,
+        tr_map,
+        horizon_days=TRADING_DAYS,
+        norm_sym=_norm_sym,
     )
 
     # ------------------------------------------------------------------
