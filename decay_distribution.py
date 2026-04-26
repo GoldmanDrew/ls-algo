@@ -54,6 +54,11 @@ from typing import Dict, Mapping, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+from yieldboost_decay import (
+    yieldboost_decay_distribution,
+    yieldboost_decay_point_estimate,
+)
+
 
 # ─── module-level constants ────────────────────────────────────────────────
 
@@ -166,6 +171,33 @@ def _realized_variance_panel(tr_series: pd.Series) -> Optional[pd.DataFrame]:
     if len(panel) < _MIN_DAYS_FOR_HAR:
         return None
     return panel
+
+
+def _trailing_realised_sigma(
+    tr_series: Optional[pd.Series],
+    *,
+    window_days: int = 252,
+    min_days: int = 60,
+) -> Optional[float]:
+    """Trailing annualised realised σ from log-returns of a TR series.
+
+    Used as a fallback σ source for the YieldBOOST put-spread point estimate
+    when the underlying has too thin a panel for the empirical-lognormal
+    anchor. Returns ``None`` if the series is missing or too short.
+    """
+    if tr_series is None:
+        return None
+    s = pd.to_numeric(tr_series, errors="coerce").dropna()
+    if len(s) < min_days + 1:
+        return None
+    log_ret = np.log(s / s.shift(1)).replace([np.inf, -np.inf], np.nan).dropna()
+    tail = log_ret.iloc[-window_days:]
+    if len(tail) < min_days:
+        return None
+    sigma_d = float(tail.std(ddof=1))
+    if not np.isfinite(sigma_d) or sigma_d <= 0:
+        return None
+    return sigma_d * math.sqrt(TRADING_DAYS)
 
 
 # ─── HARQ-Log regression ───────────────────────────────────────────────────
@@ -471,13 +503,17 @@ def enrich_with_decay_distribution(
     underlying_col: str = "Underlying",
     beta_col: str = "Beta",
     fallback_col: str = "expected_gross_decay_annual",
+    yieldboost_col: str = "is_yieldboost",
     norm_sym: Optional[callable] = None,
 ) -> pd.DataFrame:
     """Add ``expected_gross_decay_{p10,p50,p90,mean}_annual`` per row.
 
     The forecast is computed **once per unique underlying** (matching the
     existing ``enrich_with_decay_and_vol`` pattern), then applied to every
-    ETF with that underlying using its own β.
+    ETF with that underlying using its own β. **YieldBOOST rows** dispatch
+    to the put-spread Monte Carlo in ``yieldboost_decay`` instead of the
+    Avellaneda-Zhang Itô mapping; see that module's docstring for why
+    the LETF identity collapses on β ≈ 0.5 income-strategy ETFs.
 
     The function never mutates ``expected_gross_decay_annual``; it adds
     sibling columns so downstream consumers can opt in incrementally.
@@ -563,40 +599,77 @@ def enrich_with_decay_distribution(
                 }
 
         cache = und_cache[und]
+        # NaN-safe: ``bool(np.nan)`` is True; coerce missing values to False
+        # so inverse / fallback rows with a NaN-merged ``is_yieldboost`` are
+        # not accidentally dispatched to the put-spread Monte Carlo.
+        _yb_raw = row.get(yieldboost_col) if yieldboost_col in out.columns else None
+        is_yb = bool(_yb_raw) if pd.notna(_yb_raw) else False
         if cache is not None and cache.get("model") is not None:
-            mapped = _lognormal_decay_from_logiv(
-                cache["mu_log_iv"],
-                cache["sigma_log_iv"],
-                beta,
-                quantiles,
-            )
-            model = cache["model"]
-            n_obs = cache["n_obs"]
-            if model == "harq_log_anchored":
+            if is_yb:
+                yb_out = yieldboost_decay_distribution(
+                    mu_log_iv_annual=cache["mu_log_iv"],
+                    sigma_log_iv_annual=cache["sigma_log_iv"],
+                )
+                if yb_out is None:
+                    n_skip += 1
+                    continue
+                mapped = yb_out
+                model = "yieldboost_put_spread"
+                n_obs = cache["n_obs"]
                 n_har += 1
             else:
-                n_fallback_a += 1
+                mapped = _lognormal_decay_from_logiv(
+                    cache["mu_log_iv"],
+                    cache["sigma_log_iv"],
+                    beta,
+                    quantiles,
+                )
+                model = cache["model"]
+                n_obs = cache["n_obs"]
+                if model == "harq_log_anchored":
+                    n_har += 1
+                else:
+                    n_fallback_a += 1
         else:
             fb = row.get(fallback_col) if fallback_col in out.columns else None
             try:
                 fb_val = float(fb) if fb is not None and pd.notna(fb) else None
             except (TypeError, ValueError):
                 fb_val = None
-            if fb_val is None or not np.isfinite(fb_val):
-                n_skip += 1
-                continue
-            cb = _c_beta(beta)
-            if cb <= 0:
-                n_skip += 1
-                continue
-            iv_implied = max(fb_val / cb, _RV_FLOOR)
-            mu_log_iv = _cap_mu_log_iv(math.log(iv_implied), horizon_days)
-            mapped = _lognormal_decay_from_logiv(
-                mu_log_iv, 0.0, beta, quantiles,
-            )
-            model = "simple_ito_fallback"
-            n_obs = cache["n_obs"] if cache is not None else 0.0
-            n_fallback_b += 1
+            if is_yb:
+                # YB thin-history fallback: use trailing realised σ if we can
+                # estimate it; otherwise emit nothing (consumer treats as N/A).
+                tr_series = tr_map.get(und) if isinstance(tr_map, Mapping) else None
+                sigma_realised = _trailing_realised_sigma(tr_series)
+                if sigma_realised is None:
+                    n_skip += 1
+                    continue
+                yb_out = yieldboost_decay_point_estimate(
+                    sigma_annual=sigma_realised,
+                )
+                if yb_out is None:
+                    n_skip += 1
+                    continue
+                mapped = yb_out
+                model = "yieldboost_put_spread_point"
+                n_obs = cache["n_obs"] if cache is not None else 0.0
+                n_fallback_b += 1
+            else:
+                if fb_val is None or not np.isfinite(fb_val):
+                    n_skip += 1
+                    continue
+                cb = _c_beta(beta)
+                if cb <= 0:
+                    n_skip += 1
+                    continue
+                iv_implied = max(fb_val / cb, _RV_FLOOR)
+                mu_log_iv = _cap_mu_log_iv(math.log(iv_implied), horizon_days)
+                mapped = _lognormal_decay_from_logiv(
+                    mu_log_iv, 0.0, beta, quantiles,
+                )
+                model = "simple_ito_fallback"
+                n_obs = cache["n_obs"] if cache is not None else 0.0
+                n_fallback_b += 1
 
         out.at[idx, "expected_gross_decay_p10_annual"] = mapped.get("p10", np.nan)
         out.at[idx, "expected_gross_decay_p50_annual"] = mapped.get("p50", np.nan)

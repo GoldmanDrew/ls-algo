@@ -354,10 +354,14 @@ def _gross_edge_definition(
     if n_obs < _MIN_DAYS_DECAY or not realized_ok:
         return "expected_only"
     if is_yieldboost:
-        # YieldBOOST income strategies: realized log-drag on the 2× ETF
-        # captures the put-spread NAV decay net of any tracking residuals
-        # without dragging in the (zero by Itô identity) "expected" term.
-        return "realized_daily_log_drag"
+        # YieldBOOST income strategies: blend realized log-drag with the
+        # put-spread Monte Carlo expected decay (yieldboost_decay module).
+        # Realized captures last year's actual NAV decay; expected captures
+        # the forward-looking put-spread cost under HARQ-Log σ uncertainty.
+        # The bootstrap fan (below) anchor-shifts to the expected p50, so
+        # net edge becomes a forward-looking pair-trade EV consistent with
+        # how LETF rows are treated.
+        return "blended_realized_expected"
     if beta is not None and pd.notna(beta) and not _nanf(beta):
         b = float(beta)
         if 0 < b <= 1.5:
@@ -460,12 +464,19 @@ def enrich_screener_v2_fields(
     )
 
     expected_avail: list[bool] = [True] * n
+    anchor_shift_arr: list[float] = [np.nan] * n
+    anchor_target_arr: list[float] = [np.nan] * n
+    anchor_source_arr: list[str] = [""] * n
     for j, (_, row) in enumerate(df.iterrows()):
         etf = str(row.get("ETF", "")).strip()
         und = str(row.get("Underlying", "")).strip() if pd.notna(row.get("Underlying")) else ""
         beta = row.get("Beta")
         lev = row.get("Leverage") if "Leverage" in row else np.nan
-        is_yb = bool(row.get("is_yieldboost")) if "is_yieldboost" in row else False
+        # NaN-safe coercion: ``bool(np.nan)`` is True in Python, which has
+        # historically mis-tagged inverse ETFs (where ``is_yieldboost`` was
+        # written as NaN by upstream merges) as YieldBOOST products.
+        _yb_raw = row.get("is_yieldboost") if "is_yieldboost" in row else None
+        is_yb = bool(_yb_raw) if pd.notna(_yb_raw) else False
         pclass[j] = _product_class(lev, beta, is_yieldboost=is_yb)
         expected_avail[j] = _expected_decay_available(pclass[j])
         bcur = float(row["borrow_current"]) if not _nanf(row.get("borrow_current")) else 0.0
@@ -507,12 +518,21 @@ def enrich_screener_v2_fields(
         g_real = row.get("gross_decay_annual")
         g_exp = row.get("expected_gross_decay_annual")
         g_blend = row.get("blended_gross_decay")
+        # Distributional p50 from decay_distribution.py (LETF/Inverse) or
+        # yieldboost_decay.py (YB). Preferred forward-looking forecast for
+        # ``blended_realized_expected``; the legacy ``expected_gross_decay_annual``
+        # is the simple-Itô point estimate which collapses to ~0 on YB rows.
+        g_dist_p50 = row.get("expected_gross_decay_p50_annual")
         if gdef[j] == "realized_daily_log_drag" and not _nanf(g_real):
             gprim[j] = float(g_real)
         elif gdef[j] == "expected_only" and not _nanf(g_exp):
             gprim[j] = float(g_exp)
+        elif gdef[j] == "blended_realized_expected" and not _nanf(g_dist_p50) and not _nanf(g_real):
+            gprim[j] = 0.5 * (float(g_real) + float(g_dist_p50))
         elif not _nanf(g_blend):
             gprim[j] = float(g_blend)
+        elif not _nanf(g_dist_p50):
+            gprim[j] = float(g_dist_p50)
         elif not _nanf(g_real):
             gprim[j] = float(g_real)
         else:
@@ -551,6 +571,40 @@ def enrich_screener_v2_fields(
             else None
         )
         g_real = row.get("gross_decay_annual")
+
+        # Anchor-shift the realized gross draws onto the expected (model-based)
+        # p50 when the latter is available. Net edge then becomes the spread
+        # between a *forward-looking* gross-decay distribution and the borrow
+        # distribution, while still preserving the empirical block-bootstrap
+        # shape (autocorrelation, vol-regime mixing) of the realized series.
+        # See README + AGENTS.md "anchor-shift bootstrap" section.
+        anchor_p50 = row.get("expected_gross_decay_p50_annual")
+        anchor_shift_val = 0.0
+        anchor_applied = False
+        # Only anchor-shift when an expected forecast is meaningful for this
+        # product class (i.e. ``expected_decay_available`` is True). For
+        # ``passive_low_beta`` rows the simple-Itô identity collapses to ~0
+        # and ``daily_screener`` Step 5d nulls the distributional columns;
+        # we skip the shift here regardless of CSV column state.
+        if (
+            gross_draws is not None
+            and expected_avail[j]
+            and not _nanf(anchor_p50)
+        ):
+            mean_realized = float(np.mean(gross_draws))
+            try:
+                anchor_target = float(anchor_p50)
+            except (TypeError, ValueError):
+                anchor_target = float("nan")
+            if np.isfinite(anchor_target) and np.isfinite(mean_realized):
+                anchor_shift_val = anchor_target - mean_realized
+                gross_draws = gross_draws + anchor_shift_val
+                anchor_applied = True
+                anchor_shift_arr[j] = float(anchor_shift_val)
+                anchor_target_arr[j] = float(anchor_target)
+                src = row.get("expected_gross_decay_dist_model")
+                anchor_source_arr[j] = "" if src is None or pd.isna(src) else str(src)
+
         if gross_draws is not None:
             rng_borrow = np.random.default_rng(int(bootstrap_seed) + 1_000_003)
             wb = (
@@ -560,6 +614,11 @@ def enrich_screener_v2_fields(
                 if (hist and borrow_history_map)
                 else None
             )
+            anchor_note = (
+                f"anchor_shift_to_expected_p50={anchor_shift_val:+.4f};"
+                if anchor_applied
+                else ""
+            )
             if wb is not None:
                 vals, probs = wb
                 idx = rng_borrow.choice(vals.size, size=gross_draws.size, p=probs, replace=True)
@@ -567,6 +626,7 @@ def enrich_screener_v2_fields(
                 net_draws = gross_draws - b_draws
                 cnote[j] = (
                     "block_bootstrap_daily_drag;"
+                    f"{anchor_note}"
                     "weighted_borrow_resample_full_history;"
                     f"halflife_cal_days={float(borrow_weight_halflife_days):g}"
                 )
@@ -576,7 +636,9 @@ def enrich_screener_v2_fields(
                 bmode[j] = "weighted_empirical"
             else:
                 net_draws = gross_draws - bcur
-                cnote[j] = "block_bootstrap_daily_drag; borrow_point_in_time"
+                cnote[j] = (
+                    f"block_bootstrap_daily_drag;{anchor_note}borrow_point_in_time"
+                )
                 ctype[j] = "empirical_block_marginal"
                 bhalf[j] = np.nan
                 bnpts[j] = np.nan
@@ -610,8 +672,17 @@ def enrich_screener_v2_fields(
             bmode[j] = ""
             nehist[j] = ""
 
-        if pclass[j] in ("income_put_spread", "income_yieldboost"):
+        if pclass[j] == "income_put_spread":
             dnote[j] = "income_dist_missing"
+        elif pclass[j] == "income_yieldboost":
+            # YB now has a put-spread Monte-Carlo distribution from
+            # yieldboost_decay.py; the income-distribution side (weekly
+            # cash payouts) is still tracked separately. Mark "ok" once
+            # the gross-decay distribution is present.
+            dnote[j] = (
+                "ok" if not _nanf(row.get("expected_gross_decay_p50_annual"))
+                else "income_dist_missing"
+            )
         else:
             dnote[j] = "ok"
         if und in tr_map:
@@ -658,6 +729,9 @@ def enrich_screener_v2_fields(
     out["borrow_weight_halflife_days"] = bhalf
     out["borrow_history_points_used"] = bnpts
     out["borrow_resample_mode"] = bmode
+    out["gross_anchor_shift_annual"] = anchor_shift_arr
+    out["gross_anchor_target_annual"] = anchor_target_arr
+    out["gross_anchor_source"] = anchor_source_arr
     out["schema_v"] = 2
     out["edge_sign_convention"] = "short_favorable_positive"
     return out

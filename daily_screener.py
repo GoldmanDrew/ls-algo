@@ -523,10 +523,19 @@ def build_full_universe(skip_scrape: bool = False, skip_inverse: bool = False) -
                                  "Leverage": lev})
         if inv_rows:
             inv_df = pd.DataFrame(inv_rows)
+            # Inverse ETFs are by definition not YieldBOOST income strategies;
+            # default the columns set above for the leveraged + income paths
+            # so the downstream merged frame never carries NaN booleans (which
+            # silently coerce to True via ``bool(np.nan)`` and mis-route rows
+            # to the YB put-spread Monte Carlo).
+            inv_df["is_yieldboost"] = False
+            inv_df["scenario_style"] = ""
             all_df = pd.concat([all_df, inv_df], ignore_index=True)
             print(f"[UNIVERSE] Inverse ETFs added: {len(inv_rows)}")
 
     all_df = all_df.drop_duplicates(subset=["ETF"]).reset_index(drop=True)
+    if "is_yieldboost" in all_df.columns:
+        all_df["is_yieldboost"] = all_df["is_yieldboost"].fillna(False).astype(bool)
     print(f"[UNIVERSE] Total universe: {len(all_df)} ETFs")
     return all_df
 
@@ -2471,7 +2480,25 @@ def main() -> int:
         underlying_borrow_map=underlying_borrow_map,
     )
 
-    # Step 5b — Schema v2 (uncertainty bands, product_class; add-only columns)
+    # Step 5b — Distributional forecast of gross decay. Runs *before* the
+    # schema-v2 enrichment so the bootstrap below can anchor-shift its
+    # realized-drag draws onto the model-based ``expected_gross_decay_p50_annual``.
+    # LETF / Inverse rows go through the HARQ-Log empirical-lognormal mapping;
+    # YieldBOOST rows dispatch into the put-spread Monte Carlo
+    # (yieldboost_decay.yieldboost_decay_distribution). See
+    # decay_distribution.py and yieldboost_decay.py for the models.
+    screened = enrich_with_decay_distribution(
+        screened,
+        tr_map,
+        horizon_days=TRADING_DAYS,
+        norm_sym=_norm_sym,
+    )
+
+    # Step 5c — Schema v2 (product_class, gross_edge_definition, anchor-shifted
+    # net-edge bootstrap). The bootstrap reads ``expected_gross_decay_p50_annual``
+    # from Step 5b to forward-anchor its realized block-bootstrap draws; rows
+    # without a meaningful expected forecast (passive_low_beta) skip the shift
+    # via the ``expected_decay_available`` gate inside enrich_screener_v2_fields.
     screened = enrich_screener_v2_fields(
         screened,
         tr_map,
@@ -2481,18 +2508,6 @@ def main() -> int:
         asof_date=asof_for_v2,
     )
     screened = apply_volatility_etp_expected_decay_adjustment(screened)
-
-    # Step 5c — Distributional forecast of gross decay (HARQ-Log on the
-    # underlying's realised variance + empirical lognormal aggregation
-    # to a 1y horizon). Adds expected_gross_decay_{p10,p50,p90,mean}_annual
-    # alongside the existing point estimate. See decay_distribution.py for
-    # the model and the PLAN_decay_distribution_from_underlying_vol.md note.
-    screened = enrich_with_decay_distribution(
-        screened,
-        tr_map,
-        horizon_days=TRADING_DAYS,
-        norm_sym=_norm_sym,
-    )
 
     # Step 5d — Apply the "expected decay = N/A" policy for passive low-β
     # rows. The simple Itô identity says (β² − β)/2·σ² ≈ 0 around β ≈ 1, so
