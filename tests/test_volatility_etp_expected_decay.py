@@ -12,7 +12,7 @@ def test_volatility_etp_expected_decay_uses_empirical_adjustment():
             {
                 "ETF": "UVIX",
                 "Underlying": "SVIX",
-                "product_class": "standard_letf",
+                "product_class": "letf",
                 "expected_gross_decay_annual": 1.059371,
                 "gross_decay_annual": 2.162183,
                 "realized_tracking_component_annual": 1.102812,

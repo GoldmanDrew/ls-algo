@@ -280,15 +280,61 @@ def _regime_warning(und_tr: pd.Series, min_points: int = 60) -> tuple[float | No
     return float(phi), "none"
 
 
-def _product_class(lev: Any, beta: Any) -> str:
+def _product_class(
+    lev: Any,
+    beta: Any,
+    *,
+    is_yieldboost: bool = False,
+) -> str:
+    """Refined product taxonomy used by the dashboard router.
+
+    The new taxonomy distinguishes:
+      * ``income_yieldboost``  — covered weekly 95/88 put-spread on a 2× ETF;
+        decay must come from the put-spread NAV-decay model (intrinsic decay),
+        not the LETF Itô identity (which gives ~0 at β≈1).
+      * ``passive_low_beta``   — Bucket-2 fund with 0 < β ≤ 1.5 and no income
+        overlay. The Itô identity says expected decay is ~0; using realized
+        drag is the only honest signal. Dashboard renders Exp. decay = "—".
+      * ``letf``               — standard 2×/3× LETF (β > 1.5).
+      * ``inverse``            — β < 0.
+      * ``income_put_spread``  — legacy / non-yieldboost 1× covered-call sleeve.
+        Kept for backwards-compatible CSV consumers.
+      * ``other_structured``   — fallback when classification is ambiguous.
+    """
+    if is_yieldboost:
+        return "income_yieldboost"
+    if beta is not None and pd.notna(beta) and not _nanf(beta) and float(beta) < 0:
+        return "inverse"
+    if beta is not None and pd.notna(beta) and not _nanf(beta):
+        b = float(beta)
+        # Bucket-1 / standard LETF cutoff matches daily_screener bucket logic.
+        if b > 1.5:
+            return "letf"
+        if 0.0 < b <= 1.5:
+            return "passive_low_beta"
     if lev is not None and pd.notna(lev) and not _nanf(lev):
         l = float(lev)
         if abs(l - 1.0) < 0.01:
             return "income_put_spread"
-        return "standard_letf"
-    if beta is not None and pd.notna(beta) and not _nanf(beta) and float(beta) < 0:
-        return "standard_letf"
+        return "letf"
     return "other_structured"
+
+
+# Product classes for which a model-based "expected gross decay" is meaningful.
+# ``passive_low_beta`` deliberately maps to ``False`` so the screener emits NaN
+# for the distributional decay columns and the dashboard falls back to the
+# realized measure / renders "—" rather than a misleading near-zero Itô number.
+_EXPECTED_DECAY_CLASSES = {
+    "letf",
+    "inverse",
+    "income_yieldboost",
+    "income_put_spread",
+    "volatility_etp",
+}
+
+
+def _expected_decay_available(product_class: str) -> bool:
+    return str(product_class) in _EXPECTED_DECAY_CLASSES
 
 
 def _nanf(v) -> bool:
@@ -299,13 +345,24 @@ def _nanf(v) -> bool:
 
 
 def _gross_edge_definition(
-    n_obs: int, beta: Any, realized_ok: bool
+    n_obs: int,
+    beta: Any,
+    realized_ok: bool,
+    *,
+    is_yieldboost: bool = False,
 ) -> str:
     if n_obs < _MIN_DAYS_DECAY or not realized_ok:
         return "expected_only"
+    if is_yieldboost:
+        # YieldBOOST income strategies: realized log-drag on the 2× ETF
+        # captures the put-spread NAV decay net of any tracking residuals
+        # without dragging in the (zero by Itô identity) "expected" term.
+        return "realized_daily_log_drag"
     if beta is not None and pd.notna(beta) and not _nanf(beta):
         b = float(beta)
         if 0 < b <= 1.5:
+            # Passive low-beta and other 0 < β ≤ 1.5 funds: realized-only
+            # drives both the headline edge and the bootstrap distribution.
             return "realized_daily_log_drag"
     return "blended_realized_expected"
 
@@ -402,12 +459,15 @@ def enrich_screener_v2_fields(
         [""] * n,
     )
 
+    expected_avail: list[bool] = [True] * n
     for j, (_, row) in enumerate(df.iterrows()):
         etf = str(row.get("ETF", "")).strip()
         und = str(row.get("Underlying", "")).strip() if pd.notna(row.get("Underlying")) else ""
         beta = row.get("Beta")
         lev = row.get("Leverage") if "Leverage" in row else np.nan
-        pclass[j] = _product_class(lev, beta)
+        is_yb = bool(row.get("is_yieldboost")) if "is_yieldboost" in row else False
+        pclass[j] = _product_class(lev, beta, is_yieldboost=is_yb)
+        expected_avail[j] = _expected_decay_available(pclass[j])
         bcur = float(row["borrow_current"]) if not _nanf(row.get("borrow_current")) else 0.0
         bfor[j] = bcur
 
@@ -438,7 +498,10 @@ def enrich_screener_v2_fields(
             and abs(float(beta)) >= 0.1
         )
         gdef[j] = _gross_edge_definition(
-            n_obs, beta, realized_ok and n_obs >= min_days
+            n_obs,
+            beta,
+            realized_ok and n_obs >= min_days,
+            is_yieldboost=is_yb,
         )
 
         g_real = row.get("gross_decay_annual")
@@ -547,7 +610,7 @@ def enrich_screener_v2_fields(
             bmode[j] = ""
             nehist[j] = ""
 
-        if pclass[j] == "income_put_spread":
+        if pclass[j] in ("income_put_spread", "income_yieldboost"):
             dnote[j] = "income_dist_missing"
         else:
             dnote[j] = "ok"
@@ -562,6 +625,7 @@ def enrich_screener_v2_fields(
     out = df.copy()
     out["asof_date"] = asof
     out["product_class"] = pclass
+    out["expected_decay_available"] = expected_avail
     out["gross_edge_definition"] = gdef
     out["primary_edge_annual"] = primary
     out["gross_for_primary_annual"] = gprim

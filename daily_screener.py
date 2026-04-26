@@ -2494,6 +2494,52 @@ def main() -> int:
         norm_sym=_norm_sym,
     )
 
+    # Step 5d — Apply the "expected decay = N/A" policy for passive low-β
+    # rows. The simple Itô identity says (β² − β)/2·σ² ≈ 0 around β ≈ 1, so
+    # any "expected decay" we report there is at best noise. The distributional
+    # forecast inherits the same problem (the cb factor multiplies the
+    # lognormal IV quantiles by ~0). For the dashboard to consistently render
+    # "—" for passive_low_beta and fall back to the realized measure, we
+    # null-out the entire family of expected/distributional decay columns
+    # for those rows here. See screener_v2_fields._product_class for the
+    # taxonomy and _expected_decay_available for the policy.
+    if "product_class" in screened.columns:
+        passive_mask = screened["product_class"].astype(str).eq("passive_low_beta")
+    else:
+        passive_mask = pd.Series(False, index=screened.index)
+    if passive_mask.any():
+        passive_null_cols = [
+            "expected_gross_decay_annual",
+            "expected_gross_decay_annual_legacy",
+            "expected_gross_decay_adjusted_annual",
+            "expected_gross_decay_simple_ito_annual",
+            "expected_decay_adjustment_annual",
+            "blended_gross_decay",
+            "expected_gross_decay_p10_annual",
+            "expected_gross_decay_p50_annual",
+            "expected_gross_decay_p90_annual",
+            "expected_gross_decay_mean_annual",
+            "expected_logIV_mu_annual",
+            "expected_logIV_sigma_annual",
+            "expected_gross_decay_dist_n_obs",
+            "expected_gross_decay_dist_horizon_days",
+            "mechanical_decay_annual",
+        ]
+        for col in passive_null_cols:
+            if col in screened.columns:
+                screened.loc[passive_mask, col] = np.nan
+        if "expected_gross_decay_dist_model" in screened.columns:
+            screened.loc[passive_mask, "expected_gross_decay_dist_model"] = (
+                "passive_low_beta_na"
+            )
+        if "expected_gross_decay_reliable" in screened.columns:
+            screened.loc[passive_mask, "expected_gross_decay_reliable"] = False
+        n_passive = int(passive_mask.sum())
+        print(
+            f"[DECAY-DIST] passive_low_beta policy applied: nulled expected "
+            f"decay columns on {n_passive} row(s); dashboard falls back to realized."
+        )
+
     # ------------------------------------------------------------------
     # STEP 6 — Estimate Margin Requirements
     # ------------------------------------------------------------------
