@@ -24,8 +24,13 @@ import numpy as np
 import pandas as pd
 
 from decay_distribution import (
+    TRADING_DAYS,
+    _HORIZON_PANEL_RATIO_MIN,
+    _LOG_IV_SIGMA_ANNUAL_CAP,
+    _R2_WINSOR_CAP,
     _acklam_inv_normal,
     _c_beta,
+    _cap_mu_log_iv,
     _empirical_log_iv_moments,
     _fit_harq_log,
     _harq_log_conditional_shift,
@@ -249,3 +254,159 @@ def test_enrich_falls_back_to_simple_ito_when_underlying_missing():
         out["expected_gross_decay_p90_annual"].iloc[0]
         - out["expected_gross_decay_p10_annual"].iloc[0]
     ) < 1e-6
+
+
+# ─── plausibility / sample-size guard rails (Phase 1.1) ────────────────────
+
+def test_short_panel_with_spike_falls_back_to_simple_ito():
+    """Pre-fix this would (mis-)report a ~280% σ HARQ-Log forecast.
+
+    Build an underlying with only ~1.5× horizon of history (well below
+    K_min · horizon = 2.5 · 252 = 630 days) plus a single ±60 % spike day
+    that, before winsorisation + threshold, would dominate the empirical
+    rolling-1y-IV. The new threshold should recognise the panel is too
+    short and fall back to the simple-Itô point estimate.
+    """
+    # ~1.5 years of moderate-vol GBM (well below 2.5y threshold)
+    panel_len = int(1.5 * TRADING_DAYS)
+    rng = np.random.default_rng(123)
+    sigma = 0.40
+    dt = 1.0 / TRADING_DAYS
+    shocks = rng.normal(0.0, sigma * math.sqrt(dt), size=panel_len)
+    shocks[panel_len // 2] = 0.6  # +60% single-day spike
+    levels = np.exp(np.cumsum(shocks))
+    idx = pd.bdate_range(end=pd.Timestamp("2024-12-31"), periods=panel_len)
+    tr = pd.Series(levels, index=idx, name="SPIKEY")
+
+    out = forecast_decay_distribution(
+        tr, beta=2.0, horizon_days=252,
+        fallback_expected_decay=0.16,  # plausible 1·0.40² simple-Itô
+    )
+    assert out is not None
+    assert out["model"] == "simple_ito_fallback", (
+        f"expected fallback, got {out['model']} "
+        f"(panel_len={panel_len}, threshold={int(_HORIZON_PANEL_RATIO_MIN * 252)})"
+    )
+    # Quantiles collapse to the simple-Itô point.
+    assert abs(out["p10"] - out["p50"]) < 1e-6
+    assert abs(out["p90"] - out["p50"]) < 1e-6
+    assert abs(out["p50"] - 0.16) < 1e-3
+
+
+def test_cap_mu_log_iv_clamps_extreme_centres_at_sigma_max():
+    horizon = 252
+    # Centre that implies σ_T = 3.0 (300% annualised) — past the cap.
+    mu_extreme = math.log(3.0 ** 2)
+    capped = _cap_mu_log_iv(mu_extreme, horizon)
+    expected_cap = math.log(_LOG_IV_SIGMA_ANNUAL_CAP ** 2)
+    assert abs(capped - expected_cap) < 1e-9
+
+    # Centre below the cap is left alone.
+    mu_quiet = math.log(0.20 ** 2)
+    assert _cap_mu_log_iv(mu_quiet, horizon) == mu_quiet
+
+
+def test_lognormal_decay_p50_is_bounded_when_centre_hits_cap():
+    """Even when the implied σ would otherwise be 300 %, p50 must stay
+    within ``c(β) · σ_max² · horizon_years`` after the cap.
+
+    This is the SBTU-style case: the legacy model produced p50 = 8.27
+    (≈ 283 % implied σ) on a thin-history single-name. With the cap, p50
+    is bounded at c(β=2) · 1.5² = 2.25 (still extreme, but plausible).
+    """
+    out = forecast_decay_distribution.__globals__["_lognormal_decay_from_logiv"](
+        _cap_mu_log_iv(math.log(8.0), 252),    # would imply σ = 283 %
+        sigma_log_iv=0.07,
+        beta=2.0,
+        quantiles=(0.10, 0.50, 0.90),
+    )
+    bound = 1.0 * (_LOG_IV_SIGMA_ANNUAL_CAP ** 2) * 1.0
+    assert out["p50"] <= bound + 1e-6, (
+        f"p50={out['p50']} exceeded bound={bound}"
+    )
+
+
+def test_realized_variance_panel_winsorises_extreme_daily_returns():
+    """A single 100 % up-day must not push RV above the winsor cap.
+
+    Otherwise that one observation rolls through 252 consecutive 1y
+    rolling sums and dominates the empirical anchor on thin-history
+    single-name underlyings.
+    """
+    rng = np.random.default_rng(42)
+    n = 800
+    dt = 1.0 / TRADING_DAYS
+    shocks = rng.normal(0.0, 0.20 * math.sqrt(dt), size=n)
+    shocks[400] = 1.0  # +172 % single-day move (log-return = 1.0)
+    levels = np.exp(np.cumsum(shocks))
+    idx = pd.bdate_range(end=pd.Timestamp("2024-12-31"), periods=n)
+    tr = pd.Series(levels, index=idx, name="SPIKE")
+
+    panel = _realized_variance_panel(tr)
+    assert panel is not None
+    # No single RV observation in the panel may exceed the winsor cap.
+    assert panel["RV"].max() <= _R2_WINSOR_CAP + 1e-12
+
+
+def test_threshold_blocks_panel_just_under_K_min_horizon():
+    """A panel with ``len < K_min · horizon`` must not produce empirical
+    moments. We test directly so the threshold change is locked in.
+    """
+    # Just below the 2.5 · 252 = 630 threshold.
+    just_below = int(_HORIZON_PANEL_RATIO_MIN * 252) - 1
+    tr = _gbm_total_return(n_days=just_below + 30, sigma_annual=0.25, seed=8)
+    panel = _realized_variance_panel(tr)
+    if panel is None or len(panel) >= int(_HORIZON_PANEL_RATIO_MIN * 252):
+        # Synthesised path was trimmed differently than expected; build
+        # one explicitly at the boundary.
+        rng = np.random.default_rng(9)
+        n = just_below
+        dt = 1.0 / TRADING_DAYS
+        shocks = rng.normal(0.0, 0.25 * math.sqrt(dt), size=n)
+        levels = np.exp(np.cumsum(shocks))
+        idx = pd.bdate_range(end=pd.Timestamp("2024-12-31"), periods=n)
+        tr2 = pd.Series(levels, index=idx)
+        panel = _realized_variance_panel(tr2)
+        assert panel is not None and len(panel) < int(_HORIZON_PANEL_RATIO_MIN * 252)
+    moments = _empirical_log_iv_moments(panel, horizon_days=252)
+    assert moments is None, (
+        f"empirical moments should be blocked under threshold "
+        f"(panel_len={len(panel)}, threshold={int(_HORIZON_PANEL_RATIO_MIN * 252)})"
+    )
+
+
+def test_threshold_passes_panel_above_K_min_horizon():
+    tr = _gbm_total_return(n_days=int(_HORIZON_PANEL_RATIO_MIN * TRADING_DAYS) + 100,
+                            sigma_annual=0.25, seed=13)
+    panel = _realized_variance_panel(tr)
+    assert panel is not None
+    moments = _empirical_log_iv_moments(panel, horizon_days=252)
+    assert moments is not None
+
+
+def test_simple_ito_fallback_records_panel_length_in_n_obs():
+    """When we fall back due to short history, ``n_obs`` should report
+    the panel length we *did* see (not 0), so the dashboard can tell
+    'no history at all' apart from 'history below threshold'.
+    """
+    panel_len = int(1.5 * TRADING_DAYS)
+    rng = np.random.default_rng(77)
+    dt = 1.0 / TRADING_DAYS
+    shocks = rng.normal(0.0, 0.30 * math.sqrt(dt), size=panel_len)
+    levels = np.exp(np.cumsum(shocks))
+    idx = pd.bdate_range(end=pd.Timestamp("2024-12-31"), periods=panel_len)
+    tr = pd.Series(levels, index=idx, name="SHORT")
+
+    df = pd.DataFrame([
+        {"ETF": "TSHORT", "Underlying": "SHORT", "Beta": 2.0,
+         "expected_gross_decay_annual": 0.09},
+    ])
+    out = enrich_with_decay_distribution(df, {"SHORT": tr}, horizon_days=252)
+    assert out["expected_gross_decay_dist_model"].iloc[0] == "simple_ito_fallback"
+    n_obs = float(out["expected_gross_decay_dist_n_obs"].iloc[0])
+    assert n_obs > 0, "panel length should be reported on fallback"
+    # Allow some slack for the panel trimming inside _realized_variance_panel.
+    assert n_obs < int(_HORIZON_PANEL_RATIO_MIN * 252), (
+        f"reported n_obs={n_obs} should still be below threshold "
+        f"{int(_HORIZON_PANEL_RATIO_MIN * 252)}"
+    )

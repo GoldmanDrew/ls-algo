@@ -67,6 +67,28 @@ _RV_FLOOR = 1e-10                            # avoid log(0) on quiet days
 _LOG_IV_SIGMA_CAP = 2.0                      # ≈ 7× span at p90, sane bound
 _DECAY_SIGN_POSITIVE = True                  # match expected_gross_decay sign
 
+# ─── plausibility / sample-size guard rails ────────────────────────────────
+#
+# The empirical anchor relies on "rolling sums of overlapping daily RV". With
+# horizon T and panel length N, the number of rolling windows is N - T + 1,
+# but consecutive windows differ by only 1 day out of T → the *effective*
+# sample size scales with (N / T), not N itself. For a 1-year horizon this
+# means we need at least ~2.5 years of underlying history before the
+# rolling-window mean and dispersion are honest forecasts; below that, the
+# anchor essentially memorises a single regime (e.g. one parabolic spike) and
+# projects it forward as steady state.
+#
+# We therefore (a) require ``len(panel) >= K_min · horizon_days`` to engage
+# the empirical / HARQ-Log anchor, falling back to the simple-Itô point
+# estimate otherwise, and (b) hard-cap the lognormal centre at the variance
+# implied by an annualised σ ceiling of ``_LOG_IV_SIGMA_ANNUAL_CAP``. We also
+# winsorise individual daily ``r²`` contributions at ``_R2_WINSOR_CAP`` so a
+# single ±71%+ move (split / circuit-breaker / data error) cannot dominate
+# 252 consecutive rolling windows.
+_HORIZON_PANEL_RATIO_MIN = 2.5
+_LOG_IV_SIGMA_ANNUAL_CAP = 1.50              # 150% σ — already past LETF zero
+_R2_WINSOR_CAP = 0.5                         # corresponds to |Δlog| ≤ 0.71
+
 
 # ─── inverse normal (Acklam 2003) ──────────────────────────────────────────
 
@@ -128,8 +150,11 @@ def _realized_variance_panel(tr_series: pd.Series) -> Optional[pd.DataFrame]:
     if len(log_ret) < _MIN_DAYS_FOR_HAR:
         return None
 
-    rv = (log_ret ** 2).clip(lower=_RV_FLOOR)
-    rq = (log_ret ** 4).clip(lower=_RV_FLOOR ** 2)
+    # Winsorise daily r² so a single extreme move (split / circuit-breaker /
+    # data error / parabolic spike) cannot dominate 252 consecutive rolling
+    # windows in the empirical anchor.
+    rv = (log_ret ** 2).clip(lower=_RV_FLOOR, upper=_R2_WINSOR_CAP)
+    rq = (log_ret ** 4).clip(lower=_RV_FLOOR ** 2, upper=_R2_WINSOR_CAP ** 2)
 
     panel = pd.DataFrame({
         "RV": rv,
@@ -235,7 +260,15 @@ def _empirical_log_iv_moments(
     if panel is None or horizon_days < 5:
         return None
     rv = panel["RV"]
-    if len(rv) < horizon_days + _MIN_DAYS_FOR_EMPIRICAL_SIGMA:
+    # Require ``len(panel) >= K_min · horizon_days`` so we have at least
+    # ~(K_min - 1) non-overlapping rolling windows of integrated variance.
+    # With K_min = 2.5 and T = 252d, that is ~630 trading days (~2.5y) of
+    # underlying history. Below this, the rolling 1y-IV mean and dispersion
+    # are dominated by autocorrelation of overlapping windows and project a
+    # single regime forward as steady state. Caller falls back to the
+    # simple-Itô point estimate.
+    min_panel_len = int(math.ceil(_HORIZON_PANEL_RATIO_MIN * horizon_days))
+    if len(rv) < min_panel_len:
         return None
     rolling = rv.rolling(horizon_days, min_periods=horizon_days).sum()
     log_iv = np.log(rolling.dropna()).replace([np.inf, -np.inf], np.nan).dropna()
@@ -246,6 +279,22 @@ def _empirical_log_iv_moments(
     if not (np.isfinite(mu) and np.isfinite(sigma) and sigma > 0):
         return None
     return mu, min(sigma, _LOG_IV_SIGMA_CAP)
+
+
+def _cap_mu_log_iv(mu_log_iv: float, horizon_days: int) -> float:
+    """Hard-cap the lognormal centre at the variance implied by σ_max.
+
+    No realistic LETF underlying sustains an annualised σ above
+    ``_LOG_IV_SIGMA_ANNUAL_CAP`` for an entire forecast horizon. Past that
+    level the LETF is already at the zero-lower-bound and the lognormal
+    quantile mapping outputs nonsense (e.g. 800%+ "drag"). Cap at
+    ``log(σ_max² · horizon_years)``; values below the cap pass through.
+    """
+    if horizon_days <= 0 or not np.isfinite(mu_log_iv):
+        return mu_log_iv
+    horizon_years = float(horizon_days) / float(TRADING_DAYS)
+    mu_cap = math.log(_LOG_IV_SIGMA_ANNUAL_CAP ** 2 * horizon_years)
+    return min(float(mu_log_iv), mu_cap)
 
 
 # ─── HARQ-Log conditional forecast shift ───────────────────────────────────
@@ -371,6 +420,7 @@ def forecast_decay_distribution(
             mu = mu_emp
             model = "empirical_lognormal"
             n_obs = float(len(panel)) if panel is not None else 0.0
+        mu = _cap_mu_log_iv(mu, horizon_days)
         out = _lognormal_decay_from_logiv(mu, sigma_emp, beta, quantiles)
         out["model"] = model
         out["n_obs"] = n_obs
@@ -380,17 +430,18 @@ def forecast_decay_distribution(
 
     # Fallback: not enough history for an empirical lognormal. Centre on the
     # caller-supplied simple-Itô expected decay and emit a point estimate
-    # (zero dispersion).
+    # (zero dispersion). Surface the panel length we *did* see so callers
+    # can tell short-history cases apart from no-history cases.
     if fallback_expected_decay is not None and np.isfinite(fallback_expected_decay):
         cb = _c_beta(beta)
         if cb > 0:
             iv_implied = max(float(fallback_expected_decay) / cb, _RV_FLOOR)
-            mu_log_iv = math.log(iv_implied)
+            mu_log_iv = _cap_mu_log_iv(math.log(iv_implied), horizon_days)
         else:
             mu_log_iv = float("nan")
         out = _lognormal_decay_from_logiv(mu_log_iv, 0.0, beta, quantiles)
         out["model"] = "simple_ito_fallback"
-        out["n_obs"] = 0.0
+        out["n_obs"] = float(len(panel)) if panel is not None else 0.0
         return out
 
     return None
@@ -479,6 +530,7 @@ def enrich_with_decay_distribution(
             panel = _realized_variance_panel(tr_series) if tr_series is not None else None
             moments = _empirical_log_iv_moments(panel, horizon_days) if panel is not None else None
             fit = _fit_harq_log(panel) if panel is not None else None
+            panel_len = float(len(panel)) if panel is not None else 0.0
 
             if moments is not None:
                 mu_emp, sigma_emp = moments
@@ -489,18 +541,29 @@ def enrich_with_decay_distribution(
                 else:
                     mu = mu_emp
                     cache_model = "empirical_lognormal"
-                    cache_n_obs = float(len(panel))
+                    cache_n_obs = panel_len
+                mu = _cap_mu_log_iv(mu, horizon_days)
                 und_cache[und] = {
                     "model": cache_model,
                     "mu_log_iv": mu,
                     "sigma_log_iv": sigma_emp,
                     "n_obs": cache_n_obs,
+                    "panel_len": panel_len,
                 }
             else:
-                und_cache[und] = None
+                # Cache the panel length even when we fall back, so the
+                # tooltip can distinguish "no history at all" from "history
+                # below the K_min · horizon threshold".
+                und_cache[und] = {
+                    "model": None,
+                    "mu_log_iv": float("nan"),
+                    "sigma_log_iv": 0.0,
+                    "n_obs": panel_len,
+                    "panel_len": panel_len,
+                }
 
         cache = und_cache[und]
-        if cache is not None:
+        if cache is not None and cache.get("model") is not None:
             mapped = _lognormal_decay_from_logiv(
                 cache["mu_log_iv"],
                 cache["sigma_log_iv"],
@@ -527,11 +590,12 @@ def enrich_with_decay_distribution(
                 n_skip += 1
                 continue
             iv_implied = max(fb_val / cb, _RV_FLOOR)
+            mu_log_iv = _cap_mu_log_iv(math.log(iv_implied), horizon_days)
             mapped = _lognormal_decay_from_logiv(
-                math.log(iv_implied), 0.0, beta, quantiles,
+                mu_log_iv, 0.0, beta, quantiles,
             )
             model = "simple_ito_fallback"
-            n_obs = 0.0
+            n_obs = cache["n_obs"] if cache is not None else 0.0
             n_fallback_b += 1
 
         out.at[idx, "expected_gross_decay_p10_annual"] = mapped.get("p10", np.nan)
