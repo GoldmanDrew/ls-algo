@@ -10,9 +10,12 @@ published history.
 
 With ``use_excel_formulas=True`` (default), the workbook also embeds ``ALL_PAIRS``,
 ``book_raw`` (values), ``book_daily`` (formulas to ``book_raw``), and ``LP_FEE``.
-**Management** in ``LP_FEE!B`` is **Excel** (quarterly cash on the last
-``book_raw`` date in each quarter; last trading day in Mar/Jun/Sep/Dec on a normal
-calendar; hidden D–F helpers; ``ABS(A–F)``-style date match for robustness).
+**Management** in ``LP_FEE!B`` is **Excel**
+(``=IF(include_fees_off, 0, IF(A=F, (mgmt_q)*E, 0))``); the helpers
+**D=q_first_trd**, **E=prev-quarter close NAV** (mgmt base), **F=q_last_trd**
+are **Python-precomputed values** so the formula does not depend on
+``MAXIFS``/``MINIFS`` availability and uses exact date equality. So it lands on
+the last trading day of Mar/Jun/Sep/Dec.
 **Performance** in ``LP_FEE!C`` is still **values** from ``lp_fees_v15`` (pass-2 annual allocation).
 Per-pair **margin** / **short-credit** / **net financing** / **txn** in ``ALL_PAIRS`` keep
 **engine** values (not the portfolio-zeros path), and daily pair net/Ex-txn formulas
@@ -28,12 +31,34 @@ Leg PnL / borrow
   ``underlying_price``; ``short_notional_usd = short_sh * etf_price``. Use these
   for *signed* economics and for ``gross_notional_usd = ABS(long_sh)*PU+ABS(ssh)*ETF``
   after ``_inject_all_pairs_formulas`` (see ``scripts/daily_pair_workbook_formulas.py``).
-* **Monthly notional (cols E–F–G):** ``SUMIFS`` of **signed** ``long_notional_usd``,
-  ``short_notional_usd``, and ``gross_notional_usd`` on the EOM date in col **C**
-  (last ``ALL_PAIRS`` date in the month via ``MAXIFS``). **Pre-fee** is col **M**
-  ``=SUM(H:I)-SUM(J:L)`` (J–L = book T-cost, pair borrow, book margin). **Fees:**
-  **N** = management (monthly sum of ``DAILY_CALC`` col C), **O** = incentive,
-  **P** ``=N+O``, **Q** ``=M-P`` (net).
+* **Monthly Attribution column map (matches the template — verified against the
+  template workbook’s headers/merges):**
+
+  =====  =============================================  ============================================
+  Col    Header                                         Body
+  =====  =============================================  ============================================
+  B      Month                                          ``yyyy-mm`` string
+  D      Benchmark Rate                                 ``AVERAGEIFS(ALL_PAIRS!fed_funds...)``
+  F      Notional / Long                                ``SUMIFS(long_notional_usd, A=$V{r})``
+  G      Notional / Short                               ``SUMIFS(short_notional_usd, A=$V{r})``
+  H      Gross PnL / Long                               ``SUMIFS(daily_long_pnl_usd, month range)``
+  I      Gross PnL / Short                              ``SUMIFS(daily_short_pnl_usd, month range)``
+  K      T-Costs                                        ``SUMIFS(book_daily!C, month range)``
+  L      Short Book Borrow Cost                         ``SUMIFS(daily_borrow_usd, month range)``
+  M      Long Book Margin Cost                          ``SUMIFS(book_daily!G, month range)``
+  N      Pre-Fee PnL                                    ``=SUM(H:I)-SUM(K:M)``
+  P      Fund Fees / Mgmt                               ``SUMPRODUCT(text-month match × DAILY_CALC!C)``
+  Q      Fund Fees / Incentive                          ``SUMPRODUCT(text-month match × DAILY_CALC!D)``
+  R      Total                                          ``=P+Q``
+  T      Net PnL                                        ``=N-R``
+  V      EOM trading date (hidden helper)               **Python value** (last ``daily`` date in month)
+  =====  =============================================  ============================================
+
+  Columns C, E, J, O, S, U are intentionally left blank (template has no
+  values/formulas there). The hidden helper column **V** is written as a
+  precomputed Python date value so EOM ``SUMIFS`` matches exactly without
+  depending on ``MAXIFS`` availability or implicit-intersection quirks
+  (``@MAXIFS``) which can silently zero the column.
 * **Borrow in Excel (``ALL_PAIRS``) vs Python rollups:** with ``inject_leg_pnl_borrow``,
   daily borrow in the workbook is the **per-row** short-leg accrual in
   ``_inject_all_pairs_leg_pnl_borrow_excel``. **Before** that, Python runs
@@ -43,9 +68,13 @@ Leg PnL / borrow
   the docstring of that function; there is one economics path for the engine, one
   for transparent Excel per-leg formulas.
 
-**Template (source of truth for format):**
-  ``DC ETF Arb Attribution.xlsx`` with sheets ``Monthly Attribution`` and
-  ``Daily PnL`` — copy the template; do not hand-rebuild merges.
+**Template:** ``resolve_template_xlsx()`` picks the first existing path among
+``DC_ETF_PAIRWISE_TEMPLATE_XLSX``, ``notebooks/data/backtest/templates/DC_ETF_Arb_Pairwise_Template.xlsx``,
+``~/Downloads/DC ETF Arb Pairwise Backtest Attribution.xlsx``, and ``~/Downloads/DC ETF Arb Attribution.xlsx``.
+**Layout:** optional ``layout_golden_xlsx`` (or ``DC_ETF_PAIRWISE_LAYOUT_GOLDEN``) copies column widths / freeze panes
+from a golden Pairwise workbook onto matching sheet names after data is written.
+**Perf fee:** ``crystallize_trailing_partial_year=True`` (default) posts incentive on the last quarter-end
+even when the series ends before year-end (e.g. asof 2026-03-31).
 
 **Non-goals:** Do not rescale returns to match the fund; do not remove ``Monthly`` /
 ``Daily`` sheets.
@@ -55,6 +84,7 @@ Leg PnL / borrow
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 from pathlib import Path
 
@@ -73,6 +103,97 @@ from scripts.daily_pair_workbook_formulas import (
 )
 from scripts.export_diamond_creek_v15_pair_ledger import _all_pairs_columns, _prep_pair_daily
 from scripts.lp_fees_v15 import build_lp_fee_daily_cashflow_usd
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def resolve_template_xlsx(explicit: Path | str | None) -> Path:
+    """
+    Resolve the workbook to copy before adding data sheets.
+
+    Search order when ``explicit`` is ``None``:
+
+    1. ``DC_ETF_PAIRWISE_TEMPLATE_XLSX`` environment variable
+    2. ``notebooks/data/backtest/templates/DC_ETF_Arb_Pairwise_Template.xlsx``
+    3. ``~/Downloads/DC ETF Arb Pairwise Backtest Attribution.xlsx`` (full layout)
+    4. ``~/Downloads/DC ETF Arb Attribution.xlsx`` (2-sheet fund template)
+    """
+    if explicit is not None:
+        p = Path(explicit)
+        if p.is_file():
+            return p
+        raise FileNotFoundError(f"Template workbook not found: {p}")
+    ev = os.environ.get("DC_ETF_PAIRWISE_TEMPLATE_XLSX")
+    if ev:
+        p = Path(ev)
+        if p.is_file():
+            return p
+    home = Path.home()
+    candidates = [
+        _repo_root()
+        / "notebooks"
+        / "data"
+        / "backtest"
+        / "templates"
+        / "DC_ETF_Arb_Pairwise_Template.xlsx",
+        home / "Downloads" / "DC ETF Arb Pairwise Backtest Attribution.xlsx",
+        home / "Downloads" / "DC ETF Arb Attribution.xlsx",
+    ]
+    for p in candidates:
+        if p.is_file():
+            return p
+    raise FileNotFoundError(
+        "No template workbook found. Place one of:\n"
+        "  - notebooks/data/backtest/templates/DC_ETF_Arb_Pairwise_Template.xlsx\n"
+        "  - ~/Downloads/DC ETF Arb Pairwise Backtest Attribution.xlsx\n"
+        "  - ~/Downloads/DC ETF Arb Attribution.xlsx\n"
+        "or set DC_ETF_PAIRWISE_TEMPLATE_XLSX to an .xlsx path."
+    )
+
+
+def resolve_layout_golden_xlsx(explicit: Path | str | None) -> Path | None:
+    """
+    Optional workbook whose column widths / freeze panes are copied onto the
+    output for matching a golden Pairwise layout.
+
+    When ``explicit`` is ``None``: use ``DC_ETF_PAIRWISE_LAYOUT_GOLDEN`` if set,
+    else ``~/Downloads/DC ETF Arb Pairwise Backtest Attribution.xlsx`` if it exists.
+    """
+    if explicit is not None:
+        p = Path(explicit)
+        return p if p.is_file() else None
+    ev = os.environ.get("DC_ETF_PAIRWISE_LAYOUT_GOLDEN")
+    if ev:
+        p = Path(ev)
+        if p.is_file():
+            return p
+    p = Path.home() / "Downloads" / "DC ETF Arb Pairwise Backtest Attribution.xlsx"
+    return p if p.is_file() else None
+
+
+def _apply_column_layout_from_golden(target_wb, golden_path: Path) -> None:
+    """Copy column widths, hidden flags, and freeze_panes from *golden* where sheet names match."""
+    gwb = load_workbook(golden_path, data_only=False)
+    try:
+        for name in target_wb.sheetnames:
+            if name not in gwb.sheetnames:
+                continue
+            src = gwb[name]
+            dst = target_wb[name]
+            for col_letter, dim in src.column_dimensions.items():
+                if dim is None:
+                    continue
+                ddst = dst.column_dimensions[col_letter]
+                if dim.width is not None:
+                    ddst.width = dim.width
+                if getattr(dim, "hidden", False):
+                    ddst.hidden = True
+            if src.freeze_panes is not None:
+                dst.freeze_panes = src.freeze_panes
+    finally:
+        gwb.close()
 
 
 def _coerce_num(s: pd.Series) -> pd.Series:
@@ -248,39 +369,65 @@ def _book_raw_from_bt(
 
 def _lp_fee_row_formulas(row: int, *, daily_pnl_b_row: int) -> dict[str, str]:
     """
-    Per-row ``LP_FEE`` bodies: column A links to ``Daily PnL``; B is quarterly
-    management (matches :func:`build_lp_fee_daily_cashflow_usd`); D–F are helpers.
+    Per-row ``LP_FEE`` formula bodies for **A** (date link to ``Daily PnL``) and **B**
+    (quarterly management). **D / E / F** are filled with **Python values**, not
+    formulas, by :func:`_lp_fee_row_values` so that the management fee fires
+    reliably across Excel builds.
+
+    Mgmt B = ``IF(include_fees_off, 0, IF(A=F, (mgmt_q)*E, 0))``.
     """
     a = f"A{row}"
     bdp = f"B{daily_pnl_b_row}"
-    d = (
-        f"=MINIFS(book_raw!$A$2:$A$200000,book_raw!$A$2:$A$200000,"
-        f"\">=\"&DATE(YEAR({a}),INT((MONTH({a})-1)/3)*3+1,1),"
-        f"book_raw!$A$2:$A$200000,\"<=\"&EOMONTH(DATE(YEAR({a}),"
-        f"INT((MONTH({a})-1)/3)*3+1,1),2))"
-    )
-    e = (
-        f"=IFERROR(LOOKUP(2,1/(book_raw!$A$2:$A$200000<D{row}),"
-        f"book_raw!$B$2:$B$200000),dc_pairwise_params!$B$4)"
-    )
-    f_ = (
-        f"=MAXIFS(book_raw!$A$2:$A$200000,book_raw!$A$2:$A$200000,"
-        f"\">=\"&DATE(YEAR({a}),INT((MONTH({a})-1)/3)*3+1,1),"
-        f"book_raw!$A$2:$A$200000,\"<=\"&EOMONTH(DATE(YEAR({a}),"
-        f"INT((MONTH({a})-1)/3)*3+1,1),2))"
-    )
     b = (
         f"=IF(OR(dc_pairwise_params!$B$2=0,dc_pairwise_params!$B$3=0),0,"
-        f"IF(AND(F{row}<>0,ABS({a}-F{row})<0.5),"
-        f"(dc_pairwise_params!$B$3/4)*E{row},0))"
+        f"IF({a}=F{row},(dc_pairwise_params!$B$3/4)*E{row},0))"
     )
     return {
         "A": f"='Daily PnL'!{bdp}",
         "B": b,
-        "D": d,
-        "E": e,
-        "F": f_,
     }
+
+
+def _lp_fee_helper_values(
+    daily_dates: pd.DatetimeIndex,
+    book_raw: pd.DataFrame,
+    *,
+    attribution_base_capital: float,
+) -> pd.DataFrame:
+    """
+    Per-date precomputed LP_FEE helpers: q_first_trd, prev-quarter close NAV
+    (mgmt base), q_last_trd. Index aligns 1:1 with ``daily_dates``.
+    """
+    dx = pd.DatetimeIndex(pd.to_datetime(daily_dates, errors="coerce")).normalize()
+    qper = dx.to_period("Q")
+    s = pd.Series(dx, index=qper)
+    q_first = s.groupby(level=0).min()
+    q_last = s.groupby(level=0).max()
+    nav = (
+        book_raw.set_index(pd.DatetimeIndex(pd.to_datetime(book_raw["date"], errors="coerce")).normalize())[
+            "nav"
+        ]
+        .sort_index()
+    )
+
+    def _prev_close(d: pd.Timestamp) -> float:
+        prev = nav.loc[nav.index < pd.Timestamp(d).normalize()]
+        if prev.empty:
+            return float(attribution_base_capital)
+        return float(prev.iloc[-1])
+
+    nav_base = {p: _prev_close(q_first.loc[p]) for p in q_first.index}
+    rows = []
+    for i, d in enumerate(dx):
+        p = qper[i]
+        rows.append(
+            {
+                "q_first_trd": q_first.loc[p].to_pydatetime(),
+                "nav_base_mgmt": nav_base[p],
+                "q_last_trd": q_last.loc[p].to_pydatetime(),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def _eomax_trading_date_all_pairs(r: int) -> str:
@@ -319,6 +466,7 @@ def _export_dc_etf_excel_bodies(
     fee_daycount: float,
     include_fees_in_daily_pnl: bool,
     trading_days: float,
+    layout_golden_xlsx: Path | None = None,
 ) -> None:
     """Add ``ALL_PAIRS``, ``book_raw`` (values), ``book_daily`` (formulas), ``LP_FEE``, inject, ``DAILY_CALC``, monthly."""
     ap_cols = _all_pairs_columns()
@@ -432,6 +580,9 @@ def _export_dc_etf_excel_bodies(
     dix2 = pd.DatetimeIndex(pd.to_datetime(daily["date"], errors="coerce")).normalize()
     fee_l2 = fee_daily.reindex(dix2, fill_value=0.0)
     wlp = wb["LP_FEE"]
+    helpers = _lp_fee_helper_values(
+        dix2, book_raw, attribution_base_capital=float(attribution_base_capital)
+    )
     for i in range(n_d):
         r = 2 + i
         bdp = 3 + i
@@ -439,9 +590,9 @@ def _export_dc_etf_excel_bodies(
         wlp.cell(r, 1, fm["A"])
         wlp.cell(r, 2, fm["B"])
         wlp.cell(r, 3, float(fee_l2["perf_usd"].iloc[i]))
-        wlp.cell(r, 4, fm["D"])
-        wlp.cell(r, 5, fm["E"])
-        wlp.cell(r, 6, fm["F"])
+        wlp.cell(r, 4, helpers["q_first_trd"].iloc[i])
+        wlp.cell(r, 5, float(helpers["nav_base_mgmt"].iloc[i]))
+        wlp.cell(r, 6, helpers["q_last_trd"].iloc[i])
 
     wdc = wb.create_sheet("DAILY_CALC", len(wb.sheetnames))
     wdc["A1"] = "date_ref"
@@ -475,62 +626,69 @@ def _export_dc_etf_excel_bodies(
         wsm.delete_rows(4, wsm.max_row - 3)
     while wsm.max_row > 3 and wsm.cell(wsm.max_row, 2).value in (None, ""):
         wsm.delete_rows(wsm.max_row)
+    wsm.column_dimensions["V"].hidden = True
+
+    eom_by_period = (
+        daily.assign(_ym=daily["date"].dt.to_period("M"))
+        .groupby("_ym", sort=True)["date"]
+        .max()
+    )
+
+    def _month_range(r: int) -> tuple[str, str]:
+        start = f"DATE(LEFT(B{r},4),MID(B{r},6,2),1)"
+        end = f"EOMONTH(DATE(LEFT(B{r},4),MID(B{r},6,2),1),0)"
+        return start, end
+
+    def _sumifs_range(col_letter: str, sheet: str, r: int) -> str:
+        s, e = _month_range(r)
+        return (
+            f"=SUMIFS('{sheet}'!${col_letter}$2:${col_letter}$200000,"
+            f"'{sheet}'!$A$2:$A$200000,\">=\"&{s},"
+            f"'{sheet}'!$A$2:$A$200000,\"<=\"&{e})"
+        )
 
     for j, mrow in enumerate(msum.itertuples(index=False)):
         r = 4 + j
-        eomd = _eomax_trading_date_all_pairs(r)
-        c_eom = f"$C{r}"
+        s_dt, e_dt = _month_range(r)
+        v_eom = f"$V{r}"
         wsm.cell(r, 2, mrow.month_str)
-        wsm[f"C{r}"] = f"={eomd}"
-        wsm[
-            f"D{r}"
-        ] = (
-            f"=AVERAGEIFS('ALL_PAIRS'!${c_fed}$2:${c_fed}$200000,'ALL_PAIRS'!$A$2:$A$200000,"
-            f"\">=\"&DATE(LEFT(B{r},4),MID(B{r},6,2),1),'ALL_PAIRS'!$A$2:$A$200000,"
-            f"\"<=\"&EOMONTH(DATE(LEFT(B{r},4),MID(B{r},6,2),1),0))"
-        )
-        wsm[f"E{r}"] = (
-            f"=SUMIFS('ALL_PAIRS'!${c_ln}$2:${c_ln}$200000,"
-            f"'ALL_PAIRS'!$A$2:$A$200000,{c_eom})"
+        eom_d = eom_by_period.loc[msum.index[j]]
+        wsm.cell(r, 22, pd.Timestamp(eom_d).to_pydatetime())
+        wsm[f"D{r}"] = (
+            f"=IFERROR(AVERAGEIFS('ALL_PAIRS'!${c_fed}$2:${c_fed}$200000,"
+            f"'ALL_PAIRS'!$A$2:$A$200000,\">=\"&{s_dt},"
+            f"'ALL_PAIRS'!$A$2:$A$200000,\"<=\"&{e_dt}),0)"
         )
         wsm[f"F{r}"] = (
-            f"=SUMIFS('ALL_PAIRS'!${c_sn}$2:${c_sn}$200000,"
-            f"'ALL_PAIRS'!$A$2:$A$200000,{c_eom})"
+            f"=SUMIFS('ALL_PAIRS'!${c_ln}$2:${c_ln}$200000,"
+            f"'ALL_PAIRS'!$A$2:$A$200000,{v_eom})"
         )
         wsm[f"G{r}"] = (
-            f"=SUMIFS('ALL_PAIRS'!${c_gr}$2:${c_gr}$200000,"
-            f"'ALL_PAIRS'!$A$2:$A$200000,{c_eom})"
+            f"=SUMIFS('ALL_PAIRS'!${c_sn}$2:${c_sn}$200000,"
+            f"'ALL_PAIRS'!$A$2:$A$200000,{v_eom})"
         )
-        wsm[
-            f"H{r}"
-        ] = f"=SUMIFS('ALL_PAIRS'!${c_dlp}$2:${c_dlp}$200000,'ALL_PAIRS'!$A$2:$A$200000," f"\">=\"&DATE(LEFT(B{r},4),MID(B{r},6,2),1)," f"'ALL_PAIRS'!$A$2:$A$200000," f"\"<=\"&EOMONTH(DATE(LEFT(B{r},4),MID(B{r},6,2),1),0))"
-        wsm[
-            f"I{r}"
-        ] = f"=SUMIFS('ALL_PAIRS'!${c_dsp}$2:${c_dsp}$200000,'ALL_PAIRS'!$A$2:$A$200000," f"\">=\"&DATE(LEFT(B{r},4),MID(B{r},6,2),1)," f"'ALL_PAIRS'!$A$2:$A$200000," f"\"<=\"&EOMONTH(DATE(LEFT(B{r},4),MID(B{r},6,2),1),0))"
-        wsm[
-            f"J{r}"
-        ] = f"=SUMIFS(book_daily!$C$2:$C$200000,book_daily!$A$2:$A$200000," f"\">=\"&DATE(LEFT(B{r},4),MID(B{r},6,2),1),book_daily!$A$2:$A$200000," f"\"<=\"&EOMONTH(DATE(LEFT(B{r},4),MID(B{r},6,2),1),0))"
-        wsm[
-            f"K{r}"
-        ] = f"=SUMIFS('ALL_PAIRS'!${c_dbor}$2:${c_dbor}$200000,'ALL_PAIRS'!$A$2:$A$200000," f"\">=\"&DATE(LEFT(B{r},4),MID(B{r},6,2),1)," f"'ALL_PAIRS'!$A$2:$A$200000," f"\"<=\"&EOMONTH(DATE(LEFT(B{r},4),MID(B{r},6,2),1),0))"
-        wsm[
-            f"L{r}"
-        ] = f"=SUMIFS(book_daily!$G$2:$G$200000,book_daily!$A$2:$A$200000," f"\">=\"&DATE(LEFT(B{r},4),MID(B{r},6,2),1),book_daily!$A$2:$A$200000," f"\"<=\"&EOMONTH(DATE(LEFT(B{r},4),MID(B{r},6,2),1),0))"
-        wsm[f"M{r}"] = f"=SUM(H{r}:I{r})-SUM(J{r}:L{r})"
-        wsm[f"N{r}"] = (
+        wsm[f"H{r}"] = _sumifs_range(c_dlp, "ALL_PAIRS", r)
+        wsm[f"I{r}"] = _sumifs_range(c_dsp, "ALL_PAIRS", r)
+        wsm[f"K{r}"] = _sumifs_range("C", "book_daily", r)
+        wsm[f"L{r}"] = _sumifs_range(c_dbor, "ALL_PAIRS", r)
+        wsm[f"M{r}"] = _sumifs_range("G", "book_daily", r)
+        wsm[f"N{r}"] = f"=SUM(H{r}:I{r})-SUM(K{r}:M{r})"
+        wsm[f"P{r}"] = (
             f"=IF(OR(dc_pairwise_params!$B$2=0,dc_pairwise_params!$B$3=0),0,"
             f"SUMPRODUCT((TEXT(DAILY_CALC!$A$2:$A${a_last},\"yyyy-mm\")=B{r})*"
             f"DAILY_CALC!$C$2:$C${a_last}))"
         )
-        wsm[f"O{r}"] = (
+        wsm[f"Q{r}"] = (
             f"=IF(OR(dc_pairwise_params!$B$2=0,dc_pairwise_params!$B$5=0),0,"
             f"SUMPRODUCT((TEXT(DAILY_CALC!$A$2:$A${a_last},\"yyyy-mm\")=B{r})*"
             f"DAILY_CALC!$D$2:$D${a_last}))"
         )
-        wsm[f"P{r}"] = f"=N{r}+O{r}"
-        wsm[f"Q{r}"] = f"=M{r}-P{r}"
-        for c_empty in (18, 19, 20):
+        wsm[f"R{r}"] = f"=P{r}+Q{r}"
+        wsm[f"T{r}"] = f"=N{r}-R{r}"
+        for c_empty in (3, 5, 10, 15, 19, 21):
             wsm.cell(r, c_empty, None)
+    if layout_golden_xlsx is not None:
+        _apply_column_layout_from_golden(wb, layout_golden_xlsx)
     wb.save(out_path)
     wb.close()
 
@@ -540,7 +698,7 @@ def export_dc_etf_arb_pairwise_workbook(
     bt: pd.DataFrame,
     out_xlsx: Path | str,
     *,
-    template_xlsx: Path | str,
+    template_xlsx: Path | str | None = None,
     attribution_base_capital: float,
     daily_pnl_source: str = "book_nav_change_usd",
     management_fee_rate_annual: float = 0.02,
@@ -550,13 +708,15 @@ def export_dc_etf_arb_pairwise_workbook(
     use_excel_formulas: bool = True,
     trading_days: float = 252.0,
     asof_end: str | pd.Timestamp | None = "2026-03-31",
+    reallocate_underlying_borrow: bool = True,
+    layout_golden_xlsx: Path | str | None = None,
+    crystallize_trailing_partial_year: bool = True,
 ) -> Path:
     out_path = Path(out_xlsx)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    tpl = Path(template_xlsx)
-    if not tpl.is_file():
-        raise FileNotFoundError(f"Template workbook not found: {tpl}")
+    tpl = resolve_template_xlsx(template_xlsx)
     shutil.copy2(tpl, out_path)
+    layout_golden = resolve_layout_golden_xlsx(layout_golden_xlsx)
     pd_in = pair_daily
     bt_in = bt
     if asof_end is not None:
@@ -573,7 +733,8 @@ def export_dc_etf_arb_pairwise_workbook(
     pd_work = _prep_pair_daily(pd_in)
     if pd_work.empty:
         raise ValueError("pair_daily is empty after prep (check asof_end filter)")
-    pd_work = reallocate_net_underlying_borrow_by_under(pd_work, trading_days=trading_days)
+    if reallocate_underlying_borrow:
+        pd_work = reallocate_net_underlying_borrow_by_under(pd_work, trading_days=trading_days)
     pd_work = apply_portfolio_level_cost_model(
         pd_work, verify_identities=True, zero_pair_level_books=False
     )
@@ -612,6 +773,7 @@ def export_dc_etf_arb_pairwise_workbook(
         attribution_base_capital=float(attribution_base_capital),
         management_fee_annual=float(management_fee_rate_annual),
         incentive_fee=float(incentive_fee_rate),
+        crystallize_trailing_partial_year=bool(crystallize_trailing_partial_year),
     )
     fee_a = fee_df.reindex(dix, fill_value=0.0)
     daily["management_fee_daily_usd"] = _coerce_num(fee_a["mgmt_usd"])
@@ -685,6 +847,7 @@ def export_dc_etf_arb_pairwise_workbook(
             fee_daycount=fee_daycount,
             include_fees_in_daily_pnl=include_fees_in_daily_pnl,
             trading_days=trading_days,
+            layout_golden_xlsx=layout_golden,
         )
         return out_path
     wb = load_workbook(out_path)
@@ -710,23 +873,20 @@ def export_dc_etf_arb_pairwise_workbook(
     for i, row in enumerate(msum.itertuples(index=False), start=0):
         r = 4 + i
         _per = msum.index[i]
-        _eom_d = eom.loc[_per, "date"]
         ws_m.cell(r, 2, row.month_str)
-        ws_m.cell(r, 3, _eom_d)
         ws_m.cell(r, 4, float(row.mean_fed_funds) if np.isfinite(row.mean_fed_funds) else 0.0)
-        ws_m.cell(r, 5, float(row.eom_long_notional_usd))
-        ws_m.cell(r, 6, float(row.eom_short_notional_usd))
-        ws_m.cell(r, 7, float(row.eom_gross_notional_usd))
+        ws_m.cell(r, 6, float(row.eom_long_notional_usd))
+        ws_m.cell(r, 7, float(row.eom_short_notional_usd))
         ws_m.cell(r, 8, float(row.sum_long_pnl_usd))
         ws_m.cell(r, 9, float(row.sum_short_pnl_usd))
-        ws_m.cell(r, 10, float(row.sum_book_txn_usd))
-        ws_m.cell(r, 11, float(row.sum_borrow_usd))
-        ws_m.cell(r, 12, float(row.sum_book_margin_usd))
-        ws_m.cell(r, 13, float(row.pre_fee_monthly_pnl_usd))
-        ws_m.cell(r, 14, float(row.sum_management_fee_usd))
-        ws_m.cell(r, 15, float(row.incentive_fee_usd))
-        ws_m[f"P{r}"] = f"=N{r}+O{r}"
-        ws_m[f"Q{r}"] = f"=M{r}-P{r}"
+        ws_m.cell(r, 11, float(row.sum_book_txn_usd))
+        ws_m.cell(r, 12, float(row.sum_borrow_usd))
+        ws_m.cell(r, 13, float(row.sum_book_margin_usd))
+        ws_m.cell(r, 14, float(row.pre_fee_monthly_pnl_usd))
+        ws_m.cell(r, 16, float(row.sum_management_fee_usd))
+        ws_m.cell(r, 17, float(row.incentive_fee_usd))
+        ws_m[f"R{r}"] = f"=P{r}+Q{r}"
+        ws_m[f"T{r}"] = f"=N{r}-R{r}"
     wb.save(out_path)
     wb.close()
     return out_path
@@ -736,7 +896,28 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--pair-csv", type=Path, help="Optional CSV with pair_daily rows for quick CLI tests")
     p.add_argument("--bt-csv", type=Path, help="Optional CSV with bt index date + nav,cum_costs columns")
-    p.add_argument("--template-xlsx", type=Path, default=Path(r"C:\Users\werdn\Downloads\DC ETF Arb Attribution.xlsx"))
+    p.add_argument(
+        "--template-xlsx",
+        type=Path,
+        default=None,
+        help="Template .xlsx to copy first; default: auto-resolve (see resolve_template_xlsx)",
+    )
+    p.add_argument(
+        "--layout-golden",
+        type=Path,
+        default=None,
+        help="Optional golden Pairwise workbook to copy column widths / freeze panes from",
+    )
+    p.add_argument(
+        "--no-reallocate-underlying-borrow",
+        action="store_true",
+        help="Skip reallocate_net_underlying_borrow_by_under (closer Excel row-sum vs engine if multi-pair per under)",
+    )
+    p.add_argument(
+        "--no-trailing-perf-crystallize",
+        action="store_true",
+        help="Legacy: suppress incentive fee on trailing partial calendar year",
+    )
     p.add_argument(
         "--out-xlsx",
         type=Path,
@@ -772,6 +953,9 @@ def main() -> None:
             include_fees_in_daily_pnl=(not args.no_fees_in_daily_pnl),
             use_excel_formulas=(not args.value_bodies),
             asof_end=(args.asof_end.strip() or None),
+            reallocate_underlying_borrow=(not args.no_reallocate_underlying_borrow),
+            layout_golden_xlsx=args.layout_golden,
+            crystallize_trailing_partial_year=(not args.no_trailing_perf_crystallize),
         )
         print("Wrote", args.out_xlsx.resolve())
     else:

@@ -18,7 +18,6 @@ strategy:
     - JPM
     - BRK-B
     - AXP
-    - APLD
   beta_cutoff: 1.55
 
 paths:
@@ -54,7 +53,8 @@ execution:
 screener:
   borrow_low: 0.80              # max annual borrow (decimal) for core soft gate; NaN = allow
   purgatory_margin: 0.15
-  whitelist_hard_borrow_cap: 0.4
+  # Protected (whitelist + flow) names: borrow above this still forces purgatory via protected_bad
+  whitelist_hard_borrow_cap: 0.55   # bumped so whitelisted inverse names (e.g. ASTN ~44%) stay active
   flow_hard_borrow_cap: 0.45
   min_beta_days: 5
   max_stale_days: 5             # drop ETFs with no trade in last N calendar days (delisted/liquidated)
@@ -121,6 +121,10 @@ portfolio:
           - RDYY
           - SMYY
           - AIYY
+          # Backtest / research: keep these names active despite borrow band or zero-locate snapshot
+          - CORD
+          - ASTN
+          - UVIX
       weighting:
         <<: *weighting_defaults
         max_name_weight: 0.3         # 30% cap per underlying

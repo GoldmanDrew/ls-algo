@@ -22,6 +22,7 @@ def apply_lp_fees_quarterly(
     mgmt_fee_q: float = 0.005,
     incentive_fee: float = 0.20,
     crystallize_freq: str = "Q",
+    crystallize_trailing_partial_year: bool = True,
 ) -> tuple[pd.Series, pd.DataFrame]:
     r = gross_daily_ret.replace([np.inf, -np.inf], np.nan).dropna().copy()
     if r.empty:
@@ -108,8 +109,11 @@ def apply_lp_fees_quarterly(
         y_start_nav = float(nav_series.loc[y_start])
         y_end_nav_pre_perf = float(nav_series.loc[y_end])
         is_full_year = (pd.Timestamp(y_end).month == 12)
-        # Do not crystallize annual promote for an incomplete trailing year (e.g., only Q1 YTD).
-        if (y == years[-1]) and (not is_full_year):
+        # Trailing partial year (e.g., only Q1 YTD): crystallize at asof when
+        # ``crystallize_trailing_partial_year`` is True. This matches the
+        # reference fund attribution which posts an incentive fee on the asof
+        # quarter end. Set to False to suppress (engine's older behaviour).
+        if (y == years[-1]) and (not is_full_year) and not crystallize_trailing_partial_year:
             continue
 
         gate = hwm
@@ -205,6 +209,7 @@ def build_lp_fee_daily_cashflow_usd(
     attribution_base_capital: float,
     management_fee_annual: float,
     incentive_fee: float,
+    crystallize_trailing_partial_year: bool = True,
 ) -> pd.DataFrame:
     """
     **Management fee (USD cashflow, one per calendar quarter)**
@@ -246,7 +251,11 @@ def build_lp_fee_daily_cashflow_usd(
         return pd.DataFrame(0.0, index=idx, columns=["mgmt_usd", "perf_usd"])
     mgq = float(management_fee_annual) / 4.0
     _net, fee_diag = apply_lp_fees_quarterly(
-        g, mgmt_fee_q=mgq, incentive_fee=float(incentive_fee), crystallize_freq="Q"
+        g,
+        mgmt_fee_q=mgq,
+        incentive_fee=float(incentive_fee),
+        crystallize_freq="Q",
+        crystallize_trailing_partial_year=bool(crystallize_trailing_partial_year),
     )
     mg = pd.Series(0.0, index=idx, dtype=float)
     pr = pd.Series(0.0, index=idx, dtype=float)

@@ -342,7 +342,7 @@ def format_pair_exposure_flags(
     ]
     for lab, net, gross, pct in rows:
         lines.append(
-            f"  • {lab:8}  net ${abs(net):>10,.0f}  gross ${gross:>11,.0f}  ratio {pct:5.1f}%"
+            f"  • {lab:8}  net ${net:+,.0f}  gross ${gross:>11,.0f}  ratio {pct:5.1f}%"
         )
     return "\n".join(lines)
 
@@ -1094,27 +1094,37 @@ def main() -> int:
         except Exception as e:
             b2_exposure_table_str = f"(bucket 2 exposure error: {e})"
 
-    # Bucket 3 exposure
+    # Bucket 3 exposure (CSVs use ETF `symbol`; format_exposure_table expects `underlying`)
     b3_exposure_table_str = "(no bucket 3 exposure data)"
-    b3_net = 0.0
-    b3_gross = 0.0
+    b3_net_tbl, b3_gross_tbl = 0.0, 0.0
     if exposure_b3_csv_path.exists():
         try:
             exposure_b3_df = pd.read_csv(exposure_b3_csv_path)
-            b3_exposure_table_str, b3_net, b3_gross = format_exposure_table(exposure_b3_df)
+            if "underlying" not in exposure_b3_df.columns and "symbol" in exposure_b3_df.columns:
+                exposure_b3_df = exposure_b3_df.rename(columns={"symbol": "underlying"})
+            b3_exposure_table_str, b3_net_tbl, b3_gross_tbl = format_exposure_table(
+                exposure_b3_df
+            )
         except Exception as e:
             b3_exposure_table_str = f"(bucket 3 exposure error: {e})"
+    b3_net = float(totals.get("net_exposure_bucket_3", b3_net_tbl))
+    b3_gross = float(totals.get("gross_exposure_bucket_3", b3_gross_tbl))
 
     # Bucket 4 exposure
     b4_exposure_table_str = "(no bucket 4 exposure data)"
-    b4_net = 0.0
-    b4_gross = 0.0
+    b4_net_tbl, b4_gross_tbl = 0.0, 0.0
     if exposure_b4_csv_path.exists():
         try:
             exposure_b4_df = pd.read_csv(exposure_b4_csv_path)
-            b4_exposure_table_str, b4_net, b4_gross = format_exposure_table(exposure_b4_df)
+            if "underlying" not in exposure_b4_df.columns and "symbol" in exposure_b4_df.columns:
+                exposure_b4_df = exposure_b4_df.rename(columns={"symbol": "underlying"})
+            b4_exposure_table_str, b4_net_tbl, b4_gross_tbl = format_exposure_table(
+                exposure_b4_df
+            )
         except Exception as e:
             b4_exposure_table_str = f"(bucket 4 exposure error: {e})"
+    b4_net = float(totals.get("net_exposure_bucket_4", b4_net_tbl))
+    b4_gross = float(totals.get("gross_exposure_bucket_4", b4_gross_tbl))
 
     # 5) Update history + plot since START_DATE
     grand_total = b1_pnl_total + b2_pnl_total + b3_pnl_total + b4_pnl_total

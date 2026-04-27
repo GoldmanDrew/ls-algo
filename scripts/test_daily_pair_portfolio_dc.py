@@ -271,15 +271,42 @@ class TestLpFeeDailyCashflow(unittest.TestCase):
         )
         self.assertGreater(float(out.loc[q2_last, "mgmt_usd"]), 0.0)
 
+    def test_perf_fee_nonzero_on_trailing_partial_year_quarter_end(self) -> None:
+        """As-of last day is Q1 end but not Dec 31: incentive must still crystallize."""
+        d = pd.bdate_range("2025-01-02", "2026-03-31", freq="B")
+        rs = np.full(len(d), 0.0006)
+        nav = pd.Series((1.0 + rs).cumprod() * 10_000_000.0, index=d)
+        out_on = build_lp_fee_daily_cashflow_usd(
+            nav,
+            d,
+            attribution_base_capital=10_000_000.0,
+            management_fee_annual=0.02,
+            incentive_fee=0.20,
+            crystallize_trailing_partial_year=True,
+        )
+        out_off = build_lp_fee_daily_cashflow_usd(
+            nav,
+            d,
+            attribution_base_capital=10_000_000.0,
+            management_fee_annual=0.02,
+            incentive_fee=0.20,
+            crystallize_trailing_partial_year=False,
+        )
+        last = d[-1]
+        self.assertGreater(float(out_on.loc[last, "perf_usd"]), 0.0)
+        self.assertEqual(float(out_off.loc[last, "perf_usd"]), 0.0)
+
 
 class TestLpFeeExcelFormulas(unittest.TestCase):
     def test_lp_fee_row_strings_reference_sheets(self) -> None:
         f = _lp_fee_row_formulas(2, daily_pnl_b_row=3)
         self.assertIn("Daily PnL", f["A"])
-        self.assertIn("book_raw", f["D"])
-        self.assertIn("MAXIFS", f["F"])
         self.assertIn("dc_pairwise_params!$B$3/4", f["B"])
-        self.assertIn("ABS", f["B"])
+        self.assertIn("A2=F2", f["B"])
+        self.assertIn("E2", f["B"])
+        self.assertNotIn("D", f)
+        self.assertNotIn("E", f)
+        self.assertNotIn("F", f)
 
 
 class TestEomV15Books(unittest.TestCase):
