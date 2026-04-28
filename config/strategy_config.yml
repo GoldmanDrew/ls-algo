@@ -18,6 +18,7 @@ strategy:
     - JPM
     - BRK-B
     - AXP
+    - APLD
   beta_cutoff: 1.55
 
 paths:
