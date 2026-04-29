@@ -385,12 +385,14 @@ def _bucket_hint_from_order_reference(
     if not order_ref:
         return None
     for tok in str(order_ref).split("|"):
-        if "__" not in tok:
-            continue
-        right = tok.split("__", 1)[1].strip().upper()
-        cand = canonical_symbol(right)
-        if cand in etf_to_beta_map:
-            return _bucket_from_beta(float(etf_to_beta_map.get(cand, 0.0)), force_bucket3=(cand in forced))
+        raw = tok.strip().upper()
+        candidates = [raw]
+        if "__" in raw:
+            candidates.append(raw.split("__", 1)[1].strip())
+        for item in candidates:
+            cand = canonical_symbol(item)
+            if cand in etf_to_beta_map:
+                return _bucket_from_beta(float(etf_to_beta_map.get(cand, 0.0)), force_bucket3=(cand in forced))
     return None
 
 
@@ -1026,7 +1028,10 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     if not borrow_details.empty:
         borrow_details = borrow_details[~borrow_details["symbol"].isin(EXCLUDE_SYMBOLS)].copy()
 
-    cash["category"] = cash.apply(categorize_cash_row, axis=1)
+    if cash.empty:
+        cash["category"] = pd.Series(dtype=str)
+    else:
+        cash["category"] = cash.apply(categorize_cash_row, axis=1)
 
     # Master universe (so cash / borrow rows don't disappear)
     all_syms = set()
@@ -1611,8 +1616,12 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                         _lots[_u]["bucket_2"].append(_add2)
                         _bucket_cost[_u]["bucket_2"] += _add2 * _px
                 if abs(_real) > 1e-12:
-                    _realized_amt[_u]["bucket_1"] += _real * _w1
-                    _realized_amt[_u]["bucket_2"] += _real * _w2
+                    if _closed > 1e-12:
+                        _rz_w1, _rz_w2 = _normalize_bucket_pair(abs(_c1), abs(_c2))
+                    else:
+                        _rz_w1, _rz_w2 = _w1, _w2
+                    _realized_amt[_u]["bucket_1"] += _real * _rz_w1
+                    _realized_amt[_u]["bucket_2"] += _real * _rz_w2
 
         if _cur_date:
             for _u in _touched:

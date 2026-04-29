@@ -1,12 +1,12 @@
 {
   "run_date": "2026-04-28",
   "fifo_summary_present": true,
-  "total_realized_pnl": 15410.505830489998,
+  "total_realized_pnl": 15410.505830489994,
   "total_unrealized_pnl": 30128.314647000007,
   "total_dividends": 586.43,
   "total_withholding_tax": -7.89,
-  "total_pil_dividends": -18646.239999999998,
-  "total_borrow_fees": -12213.850000000002,
+  "total_pil_dividends": -18646.240000000005,
+  "total_borrow_fees": -12213.85,
   "total_short_credit_interest": 2215.1899999999996,
   "total_other_fees": 0.0,
   "total_bond_interest": 0.0,
@@ -16,7 +16,7 @@
   "borrow_total_account_source": -12213.85,
   "borrow_details_file_present": true,
   "borrow_details_rows_cumulative": 300,
-  "universe_source": "/home/runner/work/ls-algo/ls-algo/data/etf_screened_today.csv",
+  "universe_source": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\etf_screened_today.csv",
   "universe_allowed_etfs": 431,
   "universe_allowed_underlyings": 226,
   "kept_symbols": 502,
@@ -42,12 +42,12 @@
     "TQQY",
     "TSYY"
   ],
-  "bucket_state_path": "/home/runner/work/ls-algo/ls-algo/data/accounting/underlying_bucket_state.csv",
+  "bucket_state_path": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\accounting\\underlying_bucket_state.csv",
   "bucket_realized_underlyings_from_trade_timing": 161,
   "bucket_pnl": {
-    "bucket_2": 9297.228411668379,
+    "bucket_2": 12146.410757298741,
     "bucket_3": 5414.629107635582,
-    "bucket_1": 2089.213074196033,
-    "bucket_4": 671.38988399
+    "bucket_4": 671.38988399,
+    "bucket_1": -759.9692714343322
   }
 }

@@ -158,7 +158,7 @@ new_pairs = [
     ("LITX", "LITE"), ("SNXX", "SNDK"), ("WDCX", "WDC"),  ("LNOK", "NOK"),
     ("USGG", "USAR"), ("ONDG", "ONDS"), ("PLUL", "PLUG"), ("ALBG", "ALB"),
     ("UUUG", "UUUU"), ("HUTG", "HUT"),  ("XPEG", "XPEV"), ("ORLG", "ORLY"),
-    ("LUNL", "LUNR"), ("RKTL", "RKT"),  ("EOSU", "EOSE"), ("KEEL", "KEEX"),
+    ("LUNL", "LUNR"), ("RKTL", "RKT"),  ("EOSU", "EOSE"), ("KEEX", "KEEL"),
     ("FGRU", "FIGR"), ("APHU", "APH"),  ("COPZ", "COPX"), ("LEUX", "LEU"),
     ("COHX", "COHR"), ("AXPG", "AXP"),  ("FCXG", "FCX"), ("GLWG", "GLW"),
     ("SNDU", "SNDK"), ("PAAU", "PAAS"),
@@ -285,6 +285,36 @@ def _norm_sym(x) -> str:
     if _HAS_CORE:
         return _core_norm_sym(x)
     return builtins.str(x).strip().upper().replace(".", "-")
+
+
+def load_strategy_blacklist(cfg: dict, *, base_dir: Path | None = None) -> set[str]:
+    """Load strategy blacklist entries from YAML and optional paths.blacklist_txt."""
+    out = {
+        _norm_sym(sym)
+        for sym in (cfg.get("strategy", {}) or {}).get("blacklist", []) or []
+        if str(sym).strip()
+    }
+    rel_txt = str((cfg.get("paths", {}) or {}).get("blacklist_txt", "") or "").strip()
+    if rel_txt:
+        root = base_dir or Path(__file__).resolve().parent
+        p = (root / rel_txt).resolve()
+        if p.exists():
+            for line in p.read_text(encoding="utf-8").splitlines():
+                raw = line.strip()
+                if raw and not raw.startswith("#"):
+                    out.add(_norm_sym(raw))
+    return out
+
+
+def apply_strategy_blacklist_to_universe(universe: pd.DataFrame, blacklist: set[str]) -> pd.DataFrame:
+    """Drop rows whose ETF or underlying is on the strategy blacklist."""
+    if not blacklist or universe.empty:
+        return universe
+    out = universe.copy()
+    out["ETF"] = out["ETF"].astype(str).map(_norm_sym)
+    out["Underlying"] = out["Underlying"].astype(str).map(_norm_sym)
+    blocked = out["ETF"].isin(blacklist) | out["Underlying"].isin(blacklist)
+    return out.loc[~blocked].reset_index(drop=True)
 
 
 def _dedupe_by_etf(pairs: list[tuple]) -> list[tuple]:
@@ -2274,6 +2304,7 @@ def main() -> int:
     wl_list = sleeves_cfg.get("whitelist_stock", {}).get("universe", {}).get("etfs", []) or []
     flow_list = sleeves_cfg.get("flow_program", {}).get("universe", {}).get("shorts", []) or []
     protected = {_norm_sym(x) for x in (list(wl_list) + list(flow_list)) if str(x).strip()}
+    blacklist = load_strategy_blacklist(cfg, base_dir=script_dir)
 
     params = ScreeningParams(
         borrow_low=float(screener_cfg.get("borrow_low", _FALLBACK["borrow_low"])),
@@ -2289,6 +2320,8 @@ def main() -> int:
     )
     print(f"[CONFIG] borrow_low={params.borrow_low:.2%}  hard_cap={params.hard_borrow_cap:.2%}  "
           f"protected={len(protected)}")
+    if blacklist:
+        print(f"[CONFIG] blacklist={len(blacklist)} symbol(s)")
     print(f"[CONFIG] borrow_floor_price_usd=${borrow_floor_price_usd:.2f}")
 
     # Resolve min_beta_days: CLI > config > fallback
@@ -2328,6 +2361,19 @@ def main() -> int:
     print("STEP 1 — Build Universe")
     print("─" * 70)
     universe = build_full_universe(skip_scrape=args.skip_scrape, skip_inverse=args.skip_inverse)
+    if blacklist and not universe.empty:
+        before = len(universe)
+        blocked_df = universe[
+            universe["ETF"].astype(str).map(_norm_sym).isin(blacklist)
+            | universe["Underlying"].astype(str).map(_norm_sym).isin(blacklist)
+        ]
+        universe = apply_strategy_blacklist_to_universe(universe, blacklist)
+        if len(universe) < before:
+            dropped = sorted(set(blocked_df["ETF"].astype(str).map(_norm_sym)))
+            print(
+                f"[UNIVERSE] Dropped {before - len(universe)} row(s) tied to blacklisted "
+                f"symbols: {dropped}"
+            )
 
     # ── Step 2: Download prices + compute betas ──
     print("\n" + "─" * 70)

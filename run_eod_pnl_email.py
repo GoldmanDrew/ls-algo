@@ -519,6 +519,62 @@ def update_pnl_history(
     return hist
 
 
+def format_period_pnl_summary(history: pd.DataFrame, run_date: str) -> str:
+    """Format daily, week-to-date, and month-to-date changes from cumulative PnL history."""
+    if history.empty:
+        return "PERIOD PnL: unavailable (no history rows)."
+
+    hist = history.copy()
+    hist["date"] = pd.to_datetime(hist["date"], errors="coerce")
+    hist = hist.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+    if hist.empty:
+        return "PERIOD PnL: unavailable (no valid history dates)."
+
+    cols = list(PNL_HISTORY_BUCKET_COLS) + ["total_pnl"]
+    for c in cols:
+        hist[c] = pd.to_numeric(hist.get(c, np.nan), errors="coerce")
+
+    target = pd.to_datetime(run_date).normalize()
+    current_rows = hist[hist["date"].dt.normalize() <= target]
+    if current_rows.empty:
+        return "PERIOD PnL: unavailable (run date not in history)."
+    current = current_rows.iloc[-1]
+
+    def _prior_before(cutoff: pd.Timestamp) -> pd.Series | None:
+        rows = hist[hist["date"].dt.normalize() < cutoff.normalize()]
+        if rows.empty:
+            return None
+        return rows.iloc[-1]
+
+    def _delta(start: pd.Series | None, col: str) -> float:
+        cur = float(current.get(col, 0.0) or 0.0)
+        if start is None or pd.isna(start.get(col, np.nan)):
+            return cur
+        return cur - float(start.get(col, 0.0) or 0.0)
+
+    daily_base = _prior_before(current["date"])
+    week_start = target - pd.Timedelta(days=int(target.dayofweek))
+    month_start = target.replace(day=1)
+    periods = [
+        ("Daily", daily_base),
+        ("Week-to-date", _prior_before(week_start)),
+        ("Month-to-date", _prior_before(month_start)),
+    ]
+
+    labels = {
+        "pnl_bucket_1": "B1",
+        "pnl_bucket_2": "B2",
+        "pnl_bucket_3": "B3",
+        "pnl_bucket_4": "B4",
+        "total_pnl": "Total",
+    }
+    lines = ["PERIOD PnL changes from cumulative history:"]
+    for name, base in periods:
+        pieces = [f"{labels[c]}: {_delta(base, c):,.2f}" for c in cols]
+        lines.append(f"  {name}: " + " | ".join(pieces))
+    return "\n".join(lines)
+
+
 # Stable label placement per series: offset from marker in points (dx, dy), ha, va.
 # Spreads B1/B2/B3 horizontally on the same date so labels do not stack in one column.
 _PNL_LABEL_STYLE: dict[str, tuple[float, float, str, str]] = {
@@ -1131,6 +1187,7 @@ def main() -> int:
     hist = update_pnl_history(
         run_date, b1=b1_pnl_total, b2=b2_pnl_total, b3=b3_pnl_total, b4=b4_pnl_total
     )
+    period_pnl_summary = format_period_pnl_summary(hist, run_date)
     plot_path = make_pnl_plot(hist)
 
     discrepancy_df = load_position_discrepancies(run_date)
@@ -1197,6 +1254,7 @@ def main() -> int:
         f"  Bucket 2 (Standard, 0 < β ≤ 1.5): {b2_pnl_total:,.2f}\n"
         f"  Bucket 3 (Inverse, β < 0):       {b3_pnl_total:,.2f}\n\n"
         f"  Bucket 4 (Inverse decay, β < 0): {b4_pnl_total:,.2f}\n\n"
+        f"{period_pnl_summary}\n\n"
         "════════════════════════════════════════\n"
         "PnL Bucket 1 — Levered (β > 1.5) by underlying:\n"
         "----------------------------------------\n"
