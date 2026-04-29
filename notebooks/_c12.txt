@@ -1,0 +1,163 @@
+# --- Production PAIR_WEIGHTS (generate_trade_plan mirror) + flow weights ---
+import sys
+from pathlib import Path
+import yaml
+import pandas as pd
+
+_nb_root = Path.cwd().resolve()
+_repo_root = next(
+    (_p for _p in (_nb_root, _nb_root.parent, *list(_nb_root.parents)[:12]) if (_p / "scripts" / "gtp_sizing_mirror.py").exists()),
+    None,
+)
+if _repo_root is None:
+    raise FileNotFoundError("Could not find scripts/gtp_sizing_mirror.py — cwd must be repo or notebooks/.")
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
+
+import importlib
+
+_gsm_mod = "scripts.gtp_sizing_mirror"
+if _gsm_mod in sys.modules:
+    importlib.reload(sys.modules[_gsm_mod])
+
+from scripts.gtp_sizing_mirror import (
+    mirror_generate_trade_plan_sizing,
+    pair_weights_from_gtp_mirror,
+    pair_weights_with_underlying_cov_penalty,
+)
+import execute_flow_program as _efp
+
+_cfg_path = next((_p / "config" / "strategy_config.yml" for _p in (_nb_root, _nb_root.parent) if (_p / "config" / "strategy_config.yml").exists()), None)
+if _cfg_path is None:
+    raise FileNotFoundError("strategy_config.yml not found")
+with open(_cfg_path, "r", encoding="utf-8") as _f:
+    GTP_CFG = yaml.safe_load(_f)
+# Align mirrored GTP gross budget with backtest starting equity (CFG capital_usd).
+GTP_CFG.setdefault("strategy", {})
+GTP_CFG["strategy"]["capital_usd"] = float(CFG["capital_usd"])
+_b4_ov = CFG.get("b4_enabled_override", None)
+if _b4_ov is not None:
+    GTP_CFG.setdefault("portfolio", {}).setdefault("sleeves", {}).setdefault(
+        "inverse_decay_bucket4", {}
+    )["enabled"] = bool(_b4_ov)
+
+_screen_paths = [Path("data/etf_screened_today.csv"), Path("../data/etf_screened_today.csv")]
+GTP_SCREENED_PATH = next((p for p in _screen_paths if p.exists()), None)
+if GTP_SCREENED_PATH is None:
+    raise FileNotFoundError("etf_screened_today.csv not found — run daily_screener first")
+GTP_SCREENED = pd.read_csv(GTP_SCREENED_PATH)
+
+# Align sizing borrow with etf-dashboard historical average (same family as BORROW_MAP merge)
+try:
+    import numpy as np
+    from scripts.gtp_dashboard_borrow import load_dashboard_borrow_avg_annual
+
+    _dash_b, _dash_p = load_dashboard_borrow_avg_annual()
+    if _dash_b:
+        _e = GTP_SCREENED["ETF"].astype(str).str.strip().str.upper().str.replace(".", "-", regex=False)
+        _bc = pd.to_numeric(GTP_SCREENED.get("borrow_current"), errors="coerce")
+        _new = _e.map(lambda t: float(_dash_b[t]) if t in _dash_b else float("nan"))
+        GTP_SCREENED["borrow_current"] = _new.where(_new.notna(), _bc)
+        print(f"[GTP] borrow_current overlaid from dashboard ({_dash_p}) where available")
+except Exception as _dbe:
+    print(f"[GTP] dashboard borrow overlay on screener skipped: {_dbe}")
+
+GTP_MIRROR_RUN_DATE = str(pd.Timestamp.today().date())
+HYSTERESIS_TOUCH_DISK = False
+
+GTP_MIRROR_DF, GTP_MIRROR_DIAG = mirror_generate_trade_plan_sizing(
+    GTP_SCREENED,
+    GTP_CFG,
+    run_date=GTP_MIRROR_RUN_DATE,
+    hysteresis_touch_disk=HYSTERESIS_TOUCH_DISK,
+)
+
+if "UNIVERSE" not in globals():
+    raise RuntimeError("UNIVERSE must be defined before this cell.")
+
+from generate_trade_plan import _norm_sym as _gtp_norm
+import numpy as _np
+
+PAIR_WEIGHTS = pair_weights_from_gtp_mirror(GTP_MIRROR_DF, UNIVERSE)
+PAIR_WEIGHTS_PRE_COV = dict(PAIR_WEIGHTS)
+
+_frac_acc: dict[tuple[str, str], float] = {}
+_gtot = 0.0
+for _, _row in GTP_MIRROR_DF.iterrows():
+    _g = float(_np.nan_to_num(_row.get("gross_target_usd"), nan=0.0))
+    if _g <= 0:
+        continue
+    _k = (_gtp_norm(_row["ETF"]), _gtp_norm(_row["Underlying"]))
+    _frac_acc[_k] = _frac_acc.get(_k, 0.0) + _g
+    _gtot += _g
+PAIR_FRAC_BY_KEY = {k: v / _gtot for k, v in _frac_acc.items()} if _gtot > 0 else {}
+B4_PAIR_KEYS = frozenset(
+    (_gtp_norm(r["ETF"]), _gtp_norm(r["Underlying"]))
+    for _, r in GTP_MIRROR_DF.iterrows()
+    if str(r.get("sleeve", "")) == "inverse_decay_bucket4"
+    and float(_np.nan_to_num(r.get("gross_target_usd"), nan=0.0)) > 0
+)
+B4_UNDERLYINGS = frozenset(u for _e, u in B4_PAIR_KEYS)
+_b4_rules = ((GTP_CFG.get("portfolio") or {}).get("sleeves", {}).get("inverse_decay_bucket4", {}) or {}).get(
+    "rules", {}
+) or {}
+B4_PARTIAL_HEDGE_YAML = float(_np.clip(float(_b4_rules.get("partial_hedge_ratio", 1.0)), 0.0, 1.0))
+if bool(CFG.get("use_pair_weight_cov_adjust", False)):
+    try:
+        import numpy as np
+
+        _unds = sorted({str(u).upper().strip().replace(".", "-") for _, u, _ in UNIVERSE})
+        _cols = {}
+        for _u in _unds:
+            _ser = PRICES.get(_u)
+            if _ser is None or len(_ser) < int(CFG.get("pair_cov_min_obs", 30)) + 5:
+                continue
+            _cols[_u] = pd.to_numeric(_ser, errors="coerce").astype(float)
+        _uret = pd.DataFrame(_cols)
+        _mx = CFG.get("max_pair_weight_cap")
+        _maxw = float(_mx) if _mx is not None and float(_mx) > 0 else None
+        PAIR_WEIGHTS, _cov_meta = pair_weights_with_underlying_cov_penalty(
+            UNIVERSE,
+            GTP_MIRROR_DF,
+            _uret,
+            base_weights=PAIR_WEIGHTS,
+            lookback=int(CFG.get("pair_cov_lookback_days", 252)),
+            shrink=float(CFG.get("pair_cov_shrink", 0.35)),
+            penalty_strength=float(CFG.get("pair_cov_penalty", 0.85)),
+            min_obs=int(CFG.get("pair_cov_min_obs", 30)),
+            max_pair_weight=_maxw,
+        )
+        _s2 = 0.0
+        for _k in list(PAIR_FRAC_BY_KEY.keys()):
+            _e, _u = _k
+            _m = float(PAIR_WEIGHTS.get(_e, 0.0)) / max(float(PAIR_WEIGHTS_PRE_COV.get(_e, 0.0)), 1e-15)
+            PAIR_FRAC_BY_KEY[_k] = float(PAIR_FRAC_BY_KEY[_k]) * _m
+            _s2 += PAIR_FRAC_BY_KEY[_k]
+        if _s2 > 0:
+            PAIR_FRAC_BY_KEY = {__k: float(__v) / _s2 for __k, __v in PAIR_FRAC_BY_KEY.items()}
+        print(f"[GTP] cov-adjusted PAIR_WEIGHTS | meta rows={len(_cov_meta)}")
+    except Exception as _ce:
+        print(f"[GTP] cov adjust skipped: {_ce}")
+print("[GTP]", GTP_MIRROR_DIAG)
+print(
+    f"[GTP] PAIR_FRAC_BY_KEY={len(PAIR_FRAC_BY_KEY)} pairs | B4_PAIR_KEYS={len(B4_PAIR_KEYS)} | "
+    f"PAIR_WEIGHTS ETFs={len(PAIR_WEIGHTS)} sum={sum(PAIR_WEIGHTS.values()):.4f} max={max(PAIR_WEIGHTS.values()):.2%}"
+)
+
+# Flow program (bucket 3) — fixed weights for reference / downstream cells
+_flow_cfg = (GTP_CFG.get("portfolio") or {}).get("sleeves", {}).get("flow_program", {}) or {}
+_fp_usd = float(_flow_cfg.get("fixed_usd_per_week") or 0.0)
+if _fp_usd > 0:
+    CFG["flow_sleeve_usd_per_rebal"] = _fp_usd
+    CFG["b3_weekly_short_usd"] = _fp_usd
+    print(f"[flow_program] b3_weekly_short_usd / flow_sleeve synced from YAML: {_fp_usd:,.0f}")
+try:
+    _tickers, _w = _efp._parse_universe_and_weights(_flow_cfg)
+    FLOW_ETFS = list(_tickers)
+    FLOW_WEIGHTS_ARR = _w
+    FLOW_WEIGHTS = {t: float(_w[i]) for i, t in enumerate(_tickers)}
+    print(f"[flow_program] {len(FLOW_ETFS)} tickers | weight sum={float(_w.sum()):.4f}")
+except Exception as _fe:
+    FLOW_ETFS = []
+    FLOW_WEIGHTS = {}
+    print(f"[flow_program] skip: {_fe}")
