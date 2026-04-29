@@ -37,8 +37,30 @@ LEDGER_DIR = PROJECT_ROOT / "data" / "ledger"
 RUNS_ROOT = PROJECT_ROOT / "data" / "runs"
 PNL_HISTORY_CSV = LEDGER_DIR / "pnl_history.csv"
 PLOT_PNG = LEDGER_DIR / "pnl_since_2026-02-27.png"
+ATTRIBUTION_HISTORY_CSV = LEDGER_DIR / "pnl_attribution_history.csv"
+PLOT_ATTRIBUTION_PNG = LEDGER_DIR / "pnl_attribution_timeseries.png"
 START_DATE = "2026-02-27"
 PAIR_EXPOSURE_MIN_ABS_NET_USD = 500.0
+
+# Columns persisted in pnl_attribution_history.csv (YTD snapshot per run_date, same convention as pnl_history).
+ATTRIBUTION_HISTORY_COLS: tuple[str, ...] = (
+    "date",
+    "long_realized_pnl",
+    "long_unrealized_pnl",
+    "short_realized_pnl",
+    "short_unrealized_pnl",
+    "gross_realized_pnl",
+    "gross_unrealized_pnl",
+    "other_fees",
+    "borrow_fees",
+    "short_credit_interest",
+    "excluded_cash_interest_base",
+    "dividends",
+    "withholding_tax",
+    "pil_dividends",
+    "bond_interest",
+    "strategy_total_pnl",
+)
 
 
 def run_cmd(cmd: list[str], env: dict[str, str] | None = None) -> None:
@@ -387,6 +409,279 @@ def read_bucket_pnl_from_run(run_date_str: str) -> tuple[float, float, float, fl
         float(bp.get("bucket_3", 0.0)),
         float(bp.get("bucket_4", 0.0)),
     )
+
+
+def split_long_short_realized_unrealized(
+    pnl_symbol: pd.DataFrame,
+    pos: pd.DataFrame,
+) -> tuple[float, float, float, float]:
+    """
+    Split per-symbol FIFO realized / unrealized into long-book vs short-book using
+    end-of-day net position sign (position < 0 => short). Symbols with PnL rows
+    but no open position are treated as long-book (flat / closed lots).
+
+    Realized on names that flipped intraday is only approximated by this rule.
+    """
+    long_r = long_u = short_r = short_u = 0.0
+    if pnl_symbol.empty:
+        return long_r, long_u, short_r, short_u
+
+    df = pnl_symbol.copy()
+    if "symbol" not in df.columns:
+        return long_r, long_u, short_r, short_u
+
+    side_short: dict[str, bool] = {}
+    if not pos.empty and "symbol" in pos.columns:
+        p = pos.copy()
+        p["symbol"] = p["symbol"].astype(str).map(canonical_symbol)
+        if "position" in p.columns:
+            p["_pv"] = pd.to_numeric(p["position"], errors="coerce").fillna(0.0)
+            agg = p.groupby("symbol", as_index=False)["_pv"].sum()
+            for _, row in agg.iterrows():
+                side_short[str(row["symbol"])] = float(row["_pv"]) < 0
+        elif "is_short" in p.columns:
+            agg = p.groupby("symbol", as_index=False)["is_short"].any()
+            for _, row in agg.iterrows():
+                side_short[str(row["symbol"])] = bool(row["is_short"])
+
+    for _, r in df.iterrows():
+        sym = canonical_symbol(str(r.get("symbol", "") or ""))
+        if not sym:
+            continue
+        rv = float(pd.to_numeric(r.get("realized_pnl"), errors="coerce") or 0.0)
+        uv = float(pd.to_numeric(r.get("unrealized_pnl"), errors="coerce") or 0.0)
+        is_short = side_short.get(sym, False)
+        if is_short:
+            short_r += rv
+            short_u += uv
+        else:
+            long_r += rv
+            long_u += uv
+
+    return long_r, long_u, short_r, short_u
+
+
+def build_attribution_row(
+    run_date: str,
+    totals: dict,
+    pnl_symbol: pd.DataFrame,
+    pos: pd.DataFrame,
+) -> dict[str, float | str]:
+    lr, lu, sr, su = split_long_short_realized_unrealized(pnl_symbol, pos)
+    return {
+        "date": run_date,
+        "long_realized_pnl": lr,
+        "long_unrealized_pnl": lu,
+        "short_realized_pnl": sr,
+        "short_unrealized_pnl": su,
+        "gross_realized_pnl": float(totals.get("total_realized_pnl", 0.0) or 0.0),
+        "gross_unrealized_pnl": float(totals.get("total_unrealized_pnl", 0.0) or 0.0),
+        "other_fees": float(totals.get("total_other_fees", 0.0) or 0.0),
+        "borrow_fees": float(totals.get("total_borrow_fees", 0.0) or 0.0),
+        "short_credit_interest": float(totals.get("total_short_credit_interest", 0.0) or 0.0),
+        "excluded_cash_interest_base": float(totals.get("excluded_cash_interest_base", 0.0) or 0.0),
+        "dividends": float(totals.get("total_dividends", 0.0) or 0.0),
+        "withholding_tax": float(totals.get("total_withholding_tax", 0.0) or 0.0),
+        "pil_dividends": float(totals.get("total_pil_dividends", 0.0) or 0.0),
+        "bond_interest": float(totals.get("total_bond_interest", 0.0) or 0.0),
+        "strategy_total_pnl": float(totals.get("total_pnl", 0.0) or 0.0),
+    }
+
+
+def compute_attribution_snapshot_from_run(run_date_str: str) -> dict[str, float | str] | None:
+    """Load accounting outputs for a run date and build one attribution row."""
+    outdir = RUNS_ROOT / run_date_str / "accounting"
+    totals_path = outdir / "totals.json"
+    pnl_sym_path = outdir / "pnl_by_symbol.csv"
+    flex_pos = RUNS_ROOT / run_date_str / "ibkr_flex" / "flex_positions.xml"
+    if not totals_path.exists() or not pnl_sym_path.exists():
+        return None
+    totals = json.loads(totals_path.read_text(encoding="utf-8"))
+    sym_df = pd.read_csv(pnl_sym_path)
+    pos = parse_open_positions(flex_pos) if flex_pos.exists() else pd.DataFrame()
+    return build_attribution_row(run_date_str, totals, sym_df, pos)
+
+
+def enrich_attribution_history_from_runs(hist: pd.DataFrame) -> pd.DataFrame:
+    """Fill missing dates from data/runs/<date>/accounting (same pattern as bucket history)."""
+    if not RUNS_ROOT.is_dir():
+        return hist
+
+    start_dt = pd.to_datetime(START_DATE)
+    updates: dict[str, dict[str, float | str]] = {}
+    for child in RUNS_ROOT.iterdir():
+        if not child.is_dir():
+            continue
+        ds = child.name
+        try:
+            dt = pd.to_datetime(ds)
+        except (ValueError, TypeError):
+            continue
+        if dt.normalize() < start_dt.normalize():
+            continue
+        row = compute_attribution_snapshot_from_run(ds)
+        if row is None:
+            continue
+        updates[ds] = row
+
+    if not updates:
+        return hist
+
+    hist = hist.copy()
+    for c in ATTRIBUTION_HISTORY_COLS:
+        if c not in hist.columns:
+            hist[c] = np.nan
+    hist["date"] = pd.to_datetime(hist["date"], errors="coerce")
+    hist = hist.dropna(subset=["date"])
+    date_key = hist["date"].dt.strftime("%Y-%m-%d")
+    new_rows: list[dict[str, float | str]] = []
+    numeric_keys = [c for c in ATTRIBUTION_HISTORY_COLS if c != "date"]
+    for ds, row in updates.items():
+        m = date_key == ds
+        if m.any():
+            idx = int(hist.index[m][0])
+            for k in numeric_keys:
+                if k in row:
+                    hist.loc[idx, k] = row[k]
+        else:
+            new_rows.append(row)
+
+    if new_rows:
+        hist = pd.concat([hist, pd.DataFrame(new_rows)], ignore_index=True)
+
+    hist["date"] = pd.to_datetime(hist["date"], errors="coerce")
+    hist = hist.sort_values("date").drop_duplicates(subset=["date"], keep="last")
+    hist = hist.reset_index(drop=True)
+    return hist
+
+
+def update_attribution_history(
+    run_date: str,
+    totals: dict,
+    pnl_symbol_csv: Path,
+    flex_positions_xml: Path,
+) -> pd.DataFrame:
+    """
+    Upsert YTD attribution snapshot for run_date into pnl_attribution_history.csv.
+    Long/short split uses EOD position side; enrich merges other run folders.
+    """
+    ensure_ledger_dir()
+    sym_df = pd.read_csv(pnl_symbol_csv) if pnl_symbol_csv.exists() else pd.DataFrame()
+    pos = parse_open_positions(flex_positions_xml) if flex_positions_xml.exists() else pd.DataFrame()
+    row = build_attribution_row(run_date, totals, sym_df, pos)
+
+    if ATTRIBUTION_HISTORY_CSV.exists():
+        hist = pd.read_csv(ATTRIBUTION_HISTORY_CSV)
+        if "date" not in hist.columns:
+            hist = pd.DataFrame([row])
+        else:
+            hist["date"] = hist["date"].astype(str)
+            hist = hist[hist["date"] != run_date]
+            hist = pd.concat([hist, pd.DataFrame([row])], ignore_index=True)
+    else:
+        hist = pd.DataFrame([row])
+
+    hist["date"] = pd.to_datetime(hist["date"], errors="coerce")
+    hist = hist.dropna(subset=["date"]).sort_values("date")
+    for c in ATTRIBUTION_HISTORY_COLS:
+        if c == "date":
+            continue
+        if c not in hist.columns:
+            hist[c] = np.nan
+        hist[c] = pd.to_numeric(hist[c], errors="coerce")
+
+    hist = enrich_attribution_history_from_runs(hist)
+    hist = hist[hist["date"] >= pd.to_datetime(START_DATE)].copy()
+
+    hist_out = hist.copy()
+    hist_out["date"] = hist_out["date"].dt.strftime("%Y-%m-%d")
+    for c in ATTRIBUTION_HISTORY_COLS:
+        if c not in hist_out.columns:
+            hist_out[c] = np.nan
+    hist_out = hist_out[list(ATTRIBUTION_HISTORY_COLS)]
+    hist_out.to_csv(ATTRIBUTION_HISTORY_CSV, index=False)
+
+    return hist.reset_index(drop=True)
+
+
+def make_attribution_plot(history: pd.DataFrame) -> Path:
+    """
+    Multi-panel YTD time series: long/short trading, gross trading, costs & interest, dividends.
+    """
+    ensure_ledger_dir()
+    if history.empty:
+        fig, ax = plt.subplots(figsize=(13, 4))
+        ax.set_title(f"PnL attribution (no data yet) since {START_DATE}")
+        fig.tight_layout()
+        fig.savefig(PLOT_ATTRIBUTION_PNG, dpi=150)
+        plt.close(fig)
+        return PLOT_ATTRIBUTION_PNG
+
+    h = history.copy()
+    h["date"] = pd.to_datetime(h["date"], errors="coerce")
+    h = h.dropna(subset=["date"]).sort_values("date")
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 9))
+    ax_tl, ax_tr, ax_bl, ax_br = axes[0, 0], axes[0, 1], axes[1, 0], axes[1, 1]
+
+    def _line(ax, cols: list[tuple[str, str]], title: str) -> None:
+        ax.axhline(0, color="grey", linewidth=0.5, linestyle="--")
+        for col, lab in cols:
+            if col not in h.columns:
+                continue
+            y = pd.to_numeric(h[col], errors="coerce")
+            if y.notna().any():
+                ax.plot(h["date"], y, marker="o", ms=3, lw=1.3, label=lab)
+        ax.set_title(title, fontsize=10)
+        ax.grid(True, alpha=0.3)
+        ax.tick_params(axis="x", rotation=25, labelsize=7)
+        ax.legend(loc="best", fontsize=6)
+        ax.set_ylabel("USD (YTD)")
+
+    _line(
+        ax_tl,
+        [
+            ("long_realized_pnl", "Long realized"),
+            ("long_unrealized_pnl", "Long unrealized"),
+            ("short_realized_pnl", "Short realized"),
+            ("short_unrealized_pnl", "Short unrealized"),
+        ],
+        "Long vs short trading (FIFO by EOD side)",
+    )
+    _line(
+        ax_tr,
+        [
+            ("gross_realized_pnl", "Gross realized"),
+            ("gross_unrealized_pnl", "Gross unrealized"),
+        ],
+        "Gross trading PnL (totals.json)",
+    )
+    _line(
+        ax_bl,
+        [
+            ("borrow_fees", "Borrow fees"),
+            ("short_credit_interest", "Short credit interest"),
+            ("other_fees", "Other fees (t-costs)"),
+            ("excluded_cash_interest_base", "Excluded cash / margin interest"),
+        ],
+        "Financing & fees (excluded cash not in strategy total)",
+    )
+    _line(
+        ax_br,
+        [
+            ("dividends", "Dividends"),
+            ("withholding_tax", "Withholding tax"),
+            ("pil_dividends", "PIL dividends"),
+            ("bond_interest", "Bond interest"),
+        ],
+        "Dividends & income items",
+    )
+
+    fig.suptitle(f"YTD PnL attribution since {START_DATE} (snapshot per run date)", fontsize=11, y=1.02)
+    fig.tight_layout()
+    fig.savefig(PLOT_ATTRIBUTION_PNG, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return PLOT_ATTRIBUTION_PNG
 
 
 def enrich_history_bucket_cols_from_runs(hist: pd.DataFrame) -> pd.DataFrame:
@@ -1190,6 +1485,10 @@ def main() -> int:
     period_pnl_summary = format_period_pnl_summary(hist, run_date)
     plot_path = make_pnl_plot(hist)
 
+    flex_positions_xml = PROJECT_ROOT / "data" / "runs" / run_date / "ibkr_flex" / "flex_positions.xml"
+    att_hist = update_attribution_history(run_date, totals, pnl_symbol_csv, flex_positions_xml)
+    att_plot_path = make_attribution_plot(att_hist)
+
     discrepancy_df = load_position_discrepancies(run_date)
     discrepancy_plot_path = make_position_discrepancy_plot(discrepancy_df, run_date, top_n=30)
     discrepancy_table = format_largest_discrepancies(discrepancy_df, top_n=30)
@@ -1316,6 +1615,8 @@ def main() -> int:
         "----------------------------------------\n"
         "UNDER flag = actual gross exposure is below target gross exposure.\n\n"
         f"{hist_summary}\n"
+        "Attribution plot: long/short split uses EOD position sign (short if net shares < 0); "
+        "realized on flat symbols is booked to long. Excluded cash interest is not in strategy total_pnl.\n\n"
         "Attachments:\n"
         "- pnl_by_underlying.csv  (bucket 1&2 combined)\n"
         "- pnl_bucket_1.csv\n"
@@ -1325,7 +1626,9 @@ def main() -> int:
         "- pnl_by_symbol.csv\n"
         "- pnl_by_bucket.csv\n"
         "- totals.json\n"
+        "- pnl_attribution_history.csv\n"
         f"- {plot_path.name}\n"
+        f"- {att_plot_path.name}\n"
         f"- {discrepancy_plot_path.name}\n"
         f"- {discrepancy_csv_path.name}\n"
         "- net_exposure_by_underlying.csv\n"
@@ -1336,7 +1639,15 @@ def main() -> int:
     )
 
     # 7) Send (attach all CSVs + totals + plot + exposure)
-    attachments = [pnl_under_csv, totals_json_path, plot_path, discrepancy_plot_path, discrepancy_csv_path]
+    attachments = [
+        pnl_under_csv,
+        totals_json_path,
+        plot_path,
+        att_plot_path,
+        ATTRIBUTION_HISTORY_CSV,
+        discrepancy_plot_path,
+        discrepancy_csv_path,
+    ]
     if pnl_symbol_csv.exists():
         attachments.insert(1, pnl_symbol_csv)
     for csv_path in [pnl_b1_csv, pnl_b2_csv, pnl_b3_csv, pnl_b4_csv, pnl_bucket_csv]:
