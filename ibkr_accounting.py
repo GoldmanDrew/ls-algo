@@ -140,7 +140,21 @@ SUPPLEMENTAL_ETF_MAP: dict[str, str] = {
     canonical_symbol("OKTX"): canonical_symbol("OKTA"),
     canonical_symbol("PXIU"): canonical_symbol("UPXI"),
     canonical_symbol("QSX"):  canonical_symbol("QS"),
+    # Defiance 2× KEEL sleeve: BTFL superseded by KEEX; keep BTFL so legacy
+    # Flex rows and closed lots still roll up to KEEL when screened CSV drops BTFL.
+    canonical_symbol("BTFL"): canonical_symbol("KEEL"),
 }
+
+# Map legacy trade-plan tickers to the successor screened name so plan-vs-Flex
+# position discrepancies aggregate on one line (e.g. BTFL -> KEEX vs KEEL).
+PLAN_ETF_TICKER_NORMALIZATION: dict[str, str] = {
+    canonical_symbol("BTFL"): canonical_symbol("KEEX"),
+}
+
+
+def normalize_plan_etf_ticker(sym: str) -> str:
+    s = canonical_symbol(sym)
+    return PLAN_ETF_TICKER_NORMALIZATION.get(s, s)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

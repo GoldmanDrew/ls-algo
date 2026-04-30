@@ -158,7 +158,7 @@ new_pairs = [
     ("LITX", "LITE"), ("SNXX", "SNDK"), ("WDCX", "WDC"),  ("LNOK", "NOK"),
     ("USGG", "USAR"), ("ONDG", "ONDS"), ("PLUL", "PLUG"), ("ALBG", "ALB"),
     ("UUUG", "UUUU"), ("HUTG", "HUT"),  ("XPEG", "XPEV"), ("ORLG", "ORLY"),
-    ("LUNL", "LUNR"), ("RKTL", "RKT"),  ("EOSU", "EOSE"), ("BTFL", "KEEL"),
+    ("LUNL", "LUNR"), ("RKTL", "RKT"),  ("EOSU", "EOSE"), ("KEEX", "KEEL"),
     ("FGRU", "FIGR"), ("APHU", "APH"),  ("COPZ", "COPX"), ("LEUX", "LEU"),
     ("COHX", "COHR"), ("AXPG", "AXP"),  ("FCXG", "FCX"), ("GLWG", "GLW"),
     ("SNDU", "SNDK"), ("PAAU", "PAAS"),

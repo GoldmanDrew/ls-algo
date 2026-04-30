@@ -7,7 +7,7 @@ from daily_screener import (
     build_full_universe,
     load_strategy_blacklist,
 )
-from ibkr_accounting import _bucket_hint_from_order_reference
+from ibkr_accounting import _bucket_hint_from_order_reference, normalize_plan_etf_ticker
 from run_eod_pnl_email import format_period_pnl_summary
 
 
@@ -27,6 +27,11 @@ def test_order_ref_standalone_inverse_token_classifies_bucket_4() -> None:
     etf_to_beta = {"APLZ": -2.0}
     ref = "ETF_LS|APLD__GROUP|APLZ|ETF_DELTA|att1|ADAPTIVE_MKT"
     assert _bucket_hint_from_order_reference(ref, etf_to_beta) == "bucket_4"
+
+
+def test_normalize_plan_etf_btfl_to_keex() -> None:
+    assert normalize_plan_etf_ticker("BTFL") == "KEEX"
+    assert normalize_plan_etf_ticker("KEEX") == "KEEX"
 
 
 def test_screener_keex_maps_to_keel() -> None:

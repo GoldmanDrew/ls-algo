@@ -40,7 +40,9 @@ from ibkr_accounting import (
     SUPPLEMENTAL_ETF_MAP,
     canonical_symbol,
     load_etf_beta_map,
+    load_etf_to_under_map,
     load_universe_from_screened,
+    normalize_plan_etf_ticker,
 )
 from strategy_config import load_config
 
@@ -93,7 +95,7 @@ def _position_discrepancy_merge(
         if c not in plan.columns:
             raise ValueError(f"proposed_trades.csv missing required column: {c}")
     plan = plan.copy()
-    plan["ETF"] = plan["ETF"].astype(str).map(canonical_symbol)
+    plan["ETF"] = plan["ETF"].astype(str).map(canonical_symbol).map(normalize_plan_etf_ticker)
     plan["Underlying"] = plan["Underlying"].astype(str).map(canonical_symbol)
     plan["long_usd"] = pd.to_numeric(plan.get("long_usd", 0.0), errors="coerce").fillna(0.0)
     plan["short_usd"] = pd.to_numeric(plan.get("short_usd", 0.0), errors="coerce").fillna(0.0)
