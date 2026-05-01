@@ -668,6 +668,19 @@ def _clean_split_artifacts(prices: pd.Series) -> pd.Series:
                 matched_factor = inv_sf
                 break
 
+        # Yahoo adjclose on reverse-split ex-days can be ~12–25% away from an exact
+        # 10×/20× ratio vs prior close when the underlying gaps overnight (e.g.
+        # GraniteShares MSTP/SMCL 1-for-20, ex 2026-05-01). Tight relative tol misses.
+        if matched_factor is None and ratio > 0 and np.isfinite(ratio):
+            for sf in _INTEGER_SPLIT_FACTORS:
+                inv_sf = 1.0 / float(sf)
+                if sf >= 2 and abs(np.log(ratio / sf)) < 0.22:
+                    matched_factor = float(sf)
+                    break
+                if abs(np.log(ratio / inv_sf)) < 0.22:
+                    matched_factor = inv_sf
+                    break
+
         if matched_factor is None:
             continue
 
@@ -1119,6 +1132,22 @@ def add_betas(universe_df: pd.DataFrame, tr_map: dict[str, pd.Series],
             betas.append(exp_lev)
             nobs.append(n)
             sources.append("imputed_sign_mismatch")
+        elif (
+            exp_lev != 0
+            and np.isfinite(exp_lev)
+            and abs(exp_lev) >= 0.25
+            and abs(b) > abs(exp_lev) * 1.45
+        ):
+            # OLS can explode on reverse splits, stale marks, or thin-volume ETFs;
+            # magnitude wildly above listing leverage blows up decay/vol diagnostics.
+            print(
+                f"  [BETA] WARNING: {etf} OLS β={b:.4f} implausible vs "
+                f"expected leverage={exp_lev:.1f} (|β|/|L|={abs(b / exp_lev):.2f}); "
+                f"using expected."
+            )
+            betas.append(exp_lev)
+            nobs.append(n)
+            sources.append("imputed_leverage_mismatch")
         else:
             betas.append(b)
             nobs.append(n)
