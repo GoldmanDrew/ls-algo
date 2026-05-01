@@ -175,8 +175,8 @@ new_pairs = [
     # 2026-03 launches (Direxion + Tradr)
     ("ADBU", "ADBE"), ("PYPU", "PYPL"), ("TXNU", "TXN"),  ("UNHU", "UNH"),
     ("AAOX", "AAOI"), ("HLXX", "HL"),   ("IBX",  "IBM"),
-    # 2026-04-24 Tradr 2X long (AXT, Coupang, Monolithic Power, Seagate)
-    ("AXTX", "AXT"), ("CPNX", "CPNG"), ("MPWX", "MPWR"), ("STXX", "STX"),
+    # 2026-04-24 Tradr 2X long (AXTI, Coupang, Monolithic Power, Seagate)
+    ("AXTX", "AXTI"), ("CPNX", "CPNG"), ("MPWX", "MPWR"), ("STXX", "STX"),
     ("STXL", "STX"),  # Defiance 2X Long STX (vs Tradr STXX)
     ("AMA", "AMAT"),  # Defiance 2X Long AMAT
 ]
