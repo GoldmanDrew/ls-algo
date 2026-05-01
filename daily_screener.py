@@ -163,6 +163,7 @@ new_pairs = [
     ("COHX", "COHR"), ("AXPG", "AXP"),  ("FCXG", "FCX"), ("GLWG", "GLW"),
     ("SNDU", "SNDK"), ("PAAU", "PAAS"),
     ("BITX", "IBIT"), ("ETHU", "ETHA"), ("XXRP", "XRPZ"),
+    ("TXXD", "TDOG"), ("TXXS", "TSUI"),  # 21shares 2X vs spot crypto ETFs (TDOG, TSUI)
     # Tradr 2X long
     ("ONDL", "ONDS"), ("MSTX", "MSTR"), ("SMCX", "SMCI"), ("ORCX", "ORCL"),
     ("IONX", "IONQ"), ("HIMZ", "HIMS"), ("IRE", "IREN"), ("AVGX", "AVGO"),
@@ -177,6 +178,7 @@ new_pairs = [
     # 2026-04-24 Tradr 2X long (AXT, Coupang, Monolithic Power, Seagate)
     ("AXTX", "AXT"), ("CPNX", "CPNG"), ("MPWX", "MPWR"), ("STXX", "STX"),
     ("STXL", "STX"),  # Defiance 2X Long STX (vs Tradr STXX)
+    ("AMA", "AMAT"),  # Defiance 2X Long AMAT
 ]
 
 proshares_pairs_levered = [
@@ -211,11 +213,11 @@ leverage_pairs_capped_accel = [
 # realized β lands in bucket_2 in screening, but these are not 2x LETFs.
 YIELDBOOST_BUCKET2_PAIRS = [
     ("AMYY", "AMD"), ("AZYY", "AMZN"), ("BBYY", "BABA"), ("COYY", "COIN"),
-    ("CWY", "CRWV"), ("HMYY", "HIMS"), ("HOYY", "HOOD"), ("IOYY", "IONQ"),
+    ("CRY", "CRCL"), ("CWY", "CRWV"), ("HMYY", "HIMS"), ("HOYY", "HOOD"), ("IOYY", "IONQ"),
     ("MAAY", "MARA"), ("FBYY", "META"), ("MTYY", "MSTR"), ("MUYY", "MU"),
     ("NUGY", "GDX"), ("NVYY", "NVDA"), ("PLYY", "PLTR"), ("QBY", "QBTS"),
     ("RGYY", "RGTI"), ("RTYY", "RIOT"), ("SEMY", "SOXX"), ("SMYY", "SMCI"),
-    ("TMYY", "TSM"), ("TQQY", "QQQ"), ("TSYY", "TSLA"), ("XBTY", "IBIT"),
+    ("TMYY", "TSM"), ("TQQY", "QQQ"), ("TSYY", "TSLA"), ("XBTY", "IBIT"), ("XEY", "ETHA"),
     ("YSPY", "SPY"),
 ]
 
@@ -1319,10 +1321,10 @@ def apply_sub2_borrow_floor(
 # Fallbacks only used when strategy_config.yml is missing entirely.
 # In normal operation these are always overridden by screener: section in config.
 _FALLBACK = {
-    "borrow_low": 0.08,
-    "purgatory_margin": 0.04,
+    "borrow_low": 0.55,
+    "purgatory_margin": 0.25,
     "min_shares_available": 1000,
-    "whitelist_hard_borrow_cap": 0.25,
+    "whitelist_hard_borrow_cap": 0.55,
     "min_beta_days": 20,
     "borrow_floor_price_usd": 2.0,
 }
@@ -1396,6 +1398,110 @@ def screen_universe(df: pd.DataFrame, params: ScreeningParams) -> pd.DataFrame:
     df["exclude_no_shares"] = df["shares_available"] < params.min_shares_available
     df["exclude_borrow_spike"] = df["borrow_spiking"].fillna(False)
     return df
+
+
+def recompute_purgatory_by_bucket(
+    screened: pd.DataFrame,
+    *,
+    screener_cfg: dict | None,
+    sleeves_cfg: dict | None,
+) -> pd.DataFrame:
+    """After ``bucket`` is assigned, set ``purgatory`` (borrow band OR soft net edge).
+
+    **Not purgatory** requires both: (1) borrow not in the per-bucket elevated band below,
+    and (2) ``net_edge_p50_annual`` > ``purgatory_net_edge_max_annual`` (default 5%),
+    when that column exists. Otherwise the row is purgatory (0 new size downstream).
+
+    **Hard exclusion** of negative median net edge is done in ``generate_trade_plan``
+    (``net_edge_p50_annual < 0``), not via this flag.
+
+    Borrow convention matches ``screen_universe``: ``borrow_current`` is annual
+    **cost** to the short (higher = worse), same as ls-algo FTP feed.
+
+    Protected (whitelist + flow): flow uses ``flow_hard_borrow_cap``; whitelist-only
+    uses ``whitelist_hard_borrow_cap``. Above the applicable cap => ``protected_bad``
+    => purgatory (keep-open semantics downstream).
+    """
+    out = screened.copy()
+    sc = screener_cfg or {}
+    sl = sleeves_cfg or {}
+    pb = sc.get("per_bucket") or {}
+
+    defaults: dict[str, dict[str, float]] = {
+        "bucket_1": {"borrow_low": 0.55, "purgatory_margin": 0.25, "hard_borrow_cap": 0.75},
+        "bucket_2": {"borrow_low": 0.20, "purgatory_margin": 0.15, "hard_borrow_cap": 0.35},
+        "bucket_4": {"borrow_low": 1.00, "purgatory_margin": 0.20, "hard_borrow_cap": 1.20},
+    }
+
+    def _triple(tag: str) -> tuple[float, float, float]:
+        raw = pb.get(tag) or {}
+        base = defaults.get(tag, {"borrow_low": 1.0, "purgatory_margin": 0.0, "hard_borrow_cap": 1.0})
+        low = float(raw.get("borrow_low", base["borrow_low"]))
+        margin = float(raw.get("purgatory_margin", base["purgatory_margin"]))
+        hard = float(raw.get("hard_borrow_cap", base["hard_borrow_cap"]))
+        return low, margin, hard
+
+    low1, m1, h1 = _triple("bucket_1")
+    low2, m2, h2 = _triple("bucket_2")
+    low4, m4, h4 = _triple("bucket_4")
+
+    wl = sl.get("whitelist_stock", {}).get("universe", {}).get("etfs", []) or []
+    fl = sl.get("flow_program", {}).get("universe", {}).get("shorts", []) or []
+    wl_set = {_norm_sym(x) for x in wl if str(x).strip()}
+    fl_set = {_norm_sym(x) for x in fl if str(x).strip()}
+    protected = wl_set | fl_set
+    wl_hard = float(sc.get("whitelist_hard_borrow_cap", sc.get("hard_borrow_cap", 0.55)))
+    flow_hard = float(sc.get("flow_hard_borrow_cap", 0.40))
+
+    borrow = pd.to_numeric(out.get("borrow_current"), errors="coerce")
+    ftp_miss = out.get("borrow_missing_from_ftp", pd.Series(False, index=out.index))
+    ftp_miss = ftp_miss.fillna(False).astype(bool)
+    borrow_known = borrow.notna() & (~ftp_miss)
+
+    etf_n = out["ETF"].astype(str).map(_norm_sym)
+    in_flow = etf_n.isin(fl_set)
+    in_wl_only = etf_n.isin(wl_set) & ~in_flow
+    prot = etf_n.isin(protected)
+    protected_ok = prot & borrow_known & (
+        (in_flow & (borrow <= flow_hard)) | (in_wl_only & (borrow <= wl_hard))
+    )
+    protected_bad = prot & borrow_known & (~protected_ok)
+
+    bkt = out.get("bucket", pd.Series("", index=out.index)).astype(str)
+    low_sel = np.select(
+        [bkt.eq("bucket_1"), bkt.eq("bucket_2"), bkt.eq("bucket_4")],
+        [low1, low2, low4],
+        default=np.nan,
+    )
+    margin_sel = np.select(
+        [bkt.eq("bucket_1"), bkt.eq("bucket_2"), bkt.eq("bucket_4")],
+        [m1, m2, m4],
+        default=np.nan,
+    )
+    hard_sel = np.select(
+        [bkt.eq("bucket_1"), bkt.eq("bucket_2"), bkt.eq("bucket_4")],
+        [h1, h2, h4],
+        default=np.nan,
+    )
+    upper = np.minimum(low_sel + margin_sel, hard_sel)
+    borrow_purg = (
+        borrow_known
+        & (~prot)
+        & np.isfinite(low_sel)
+        & (borrow > low_sel)
+        & (borrow <= upper)
+    )
+    borrow_purg = borrow_purg | protected_bad
+
+    ne_hi = float(sc.get("purgatory_net_edge_max_annual", 0.05))
+    if "net_edge_p50_annual" in out.columns:
+        ne = pd.to_numeric(out["net_edge_p50_annual"], errors="coerce")
+        net_purg = ne.notna() & (ne >= 0.0) & (ne <= ne_hi)
+    else:
+        net_purg = pd.Series(False, index=out.index)
+
+    out["purgatory"] = (borrow_purg | net_purg).fillna(False)
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -2498,8 +2604,7 @@ def main() -> int:
     print("STEP 4 — Apply Screening Logic")
     print("─" * 70)
     screened = screen_universe(metrics, params)
-    purg = int(screened["purgatory"].sum())
-    print(f"[SCREEN] Purgatory: {purg} | Total: {len(screened)}")
+    print(f"[SCREEN] Row count after borrow diagnostics: {len(screened)}")
 
     # ── Step 5: Decay + vol (UPDATED: now also computes expected + blended) ──
     print("\n" + "─" * 70)
@@ -2644,6 +2749,12 @@ def main() -> int:
         & ((shares_avail > 0) | shares_avail.isna() | borrow_missing)
         & (borrow_cur.isna() | (borrow_cur >= 0.0))
     )
+
+    screened = recompute_purgatory_by_bucket(
+        screened, screener_cfg=screener_cfg, sleeves_cfg=sleeves_cfg
+    )
+    purg = int(screened["purgatory"].sum())
+    print(f"[SCREEN] Purgatory (per-bucket borrow bands): {purg} | Total: {len(screened)}")
 
     if blacklist:
         etf_n = screened["ETF"].astype(str).map(_norm_sym)

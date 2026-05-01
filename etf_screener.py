@@ -439,7 +439,12 @@ def main() -> int:
     protected = {_norm_sym(x) for x in (list(wl_list) + list(flow_list)) if str(x).strip()}
 
     # Hard cap for protected
-    hard_cap = float(screener_cfg.get("hard_borrow_cap", HARD_BORROW_CAP_DEFAULT))
+    hard_cap = float(
+        screener_cfg.get(
+            "hard_borrow_cap",
+            screener_cfg.get("whitelist_hard_borrow_cap", HARD_BORROW_CAP_DEFAULT),
+        )
+    )
 
     params = ScreeningParams(
         borrow_low=borrow_low,
@@ -514,6 +519,19 @@ def main() -> int:
     #  also computes borrow_drag_annual and net_decay_annual)
     # ─────────────────────────────────────────────
     screened = enrich_with_decay_and_vol(screened)
+
+    if "Beta" in screened.columns:
+        from daily_screener import recompute_purgatory_by_bucket
+
+        _beta = pd.to_numeric(screened.get("Beta"), errors="coerce")
+        screened["bucket"] = np.select(
+            [_beta.lt(0.0), _beta.gt(1.5), _beta.gt(0.0)],
+            ["bucket_4", "bucket_1", "bucket_2"],
+            default="",
+        )
+        screened = recompute_purgatory_by_bucket(
+            screened, screener_cfg=screener_cfg, sleeves_cfg=sleeves_cfg
+        )
 
     # Drop Leverage columns from output — Beta is the only hedge ratio
     screened = screened.drop(columns=[c for c in DROP_COLUMNS if c in screened.columns])

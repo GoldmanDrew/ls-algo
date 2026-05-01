@@ -16,9 +16,10 @@ Implements:
         - zipf weighting by list order (rank_order=as_listed)
         - OPTIONAL hard borrow cap for whitelist sleeve (e.g. 20%) if provided in cfg
 
-- Purgatory handling:
+- Purgatory handling (from screened CSV; see daily_screener ``recompute_purgatory_by_bucket``):
     * OUTPUT purgatory rows with 0 targets so execution won’t auto-close.
-    * Does NOT allocate new exposure to purgatory.
+    * Does NOT allocate new exposure to purgatory (borrow soft band OR net_edge_p50 in 0–5%).
+    * Sizing set also requires ``net_edge_p50_annual >= 0`` when that column exists.
 
 - inverse_decay_bucket4: optional ``enabled: false`` on the sleeve — disables all B4 targets; core/wl
   split the full gross budget.
@@ -649,9 +650,16 @@ def main() -> None:
     keep["underlying_external_trade_usd"] = 0.0
     keep["sleeve"] = ""
 
-    # SIZING set: all non-purgatory names. Sleeve membership rules
-    # determine tradability; no include_for_algo dependency.
-    eligible = screened.loc[screened["purgatory"] != True].copy()  # noqa: E712
+    # SIZING set: not purgatory (borrow + net-edge soft band in daily_screener) and
+    # net_edge_p50_annual >= 0 when present (NaN treated as ineligible).
+    if "net_edge_p50_annual" in screened.columns:
+        screened["net_edge_p50_annual"] = pd.to_numeric(
+            screened["net_edge_p50_annual"], errors="coerce"
+        )
+        _ne_ok = screened["net_edge_p50_annual"].fillna(-1.0).ge(0.0)
+    else:
+        _ne_ok = pd.Series(True, index=screened.index)
+    eligible = screened.loc[(screened["purgatory"] != True) & _ne_ok].copy()  # noqa: E712
     if eligible.empty:
         print("[WARN] No eligible rows to size (all rows are purgatory).")
         proposed = keep.copy()
@@ -967,6 +975,16 @@ def main() -> None:
         tmp = screened[["ETF", "borrow_annual"]].dropna()
         screened_borrow_map = { _norm_sym(r["ETF"]): float(r["borrow_annual"]) for _, r in tmp.iterrows() }
 
+    edge_p50_map: dict[str, float] = {}
+    if "net_edge_p50_annual" in screened.columns:
+        _tmp = screened[["ETF", "net_edge_p50_annual"]].copy()
+        _tmp["ETF"] = _tmp["ETF"].astype(str).map(_norm_sym)
+        _tmp["net_edge_p50_annual"] = pd.to_numeric(_tmp["net_edge_p50_annual"], errors="coerce")
+        for sym, grp in _tmp.groupby("ETF"):
+            v = float(grp["net_edge_p50_annual"].iloc[0])
+            if np.isfinite(v):
+                edge_p50_map[sym] = v
+
     flow_rows = []
     for s in flow_shorts:
         w = float(flow_weights.get(s, 0.0))
@@ -975,6 +993,9 @@ def main() -> None:
         b_ann = screened_borrow_map.get(s, np.nan)
         if np.isfinite(flow_hard_borrow_cap) and np.isfinite(b_ann) and (b_ann > flow_hard_borrow_cap):
             # skip adds if we know it's above the cap
+            delta = 0.0
+        p50 = edge_p50_map.get(s, np.nan)
+        if np.isfinite(p50) and float(p50) < 0.0:
             delta = 0.0
 
         prev = float(cur_cum.get(s, 0.0))
