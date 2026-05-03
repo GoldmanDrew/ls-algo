@@ -1,0 +1,93 @@
+{
+  "status": "optimal_inaccurate",
+  "solver": "CLARABEL",
+  "fallback_used": false,
+  "last_error": null,
+  "n_pairs": 241,
+  "sigma_p_book_annual": 0.1999999999998996,
+  "sigma_target_annual": 0.2,
+  "weight_ridge_lambda": 0.5,
+  "mu_shrink_intensity": 0.0,
+  "sleeve_totals": {
+    "core_leveraged": 0.6750000000000003,
+    "whitelist_stock": 0.20000000000000004,
+    "inverse_decay_bucket4": 0.125
+  },
+  "n_pairs_by_bucket": {
+    "core_leveraged": 216.0,
+    "whitelist_stock": 9.0,
+    "inverse_decay_bucket4": 16.0
+  },
+  "rc_top": [
+    {
+      "bucket": "core_leveraged",
+      "etf": "CRMU",
+      "underlying": "CRML",
+      "weight": 0.10040483200586395,
+      "rc": 0.18781551409434288
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "OPEG",
+      "underlying": "OPEN",
+      "weight": 0.05405478962491355,
+      "rc": 0.1216225598869259
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "RCAX",
+      "underlying": "RCAT",
+      "weight": 0.09071466978630834,
+      "rc": 0.09316912275751443
+    },
+    {
+      "bucket": "whitelist_stock",
+      "etf": "XBTY",
+      "underlying": "IBIT",
+      "weight": 0.08931147676586869,
+      "rc": 0.09132142513594023
+    },
+    {
+      "bucket": "whitelist_stock",
+      "etf": "FBYY",
+      "underlying": "META",
+      "weight": 0.09820182799834028,
+      "rc": 0.08827966521502781
+    },
+    {
+      "bucket": "inverse_decay_bucket4",
+      "etf": "SMZ",
+      "underlying": "SMR",
+      "weight": 0.11255186721649091,
+      "rc": 0.08617447227820503
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "SNXX",
+      "underlying": "SNDK",
+      "weight": 0.0957928385240382,
+      "rc": 0.05926210847989775
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "NVTX",
+      "underlying": "NVTS",
+      "weight": 0.02595143142390088,
+      "rc": 0.052351448771337336
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "LACG",
+      "underlying": "LAC",
+      "weight": 0.018147418224274826,
+      "rc": 0.016903302955345038
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "RDWU",
+      "underlying": "RDW",
+      "weight": 0.024225505823051503,
+      "rc": 0.015413794366368121
+    }
+  ]
+}

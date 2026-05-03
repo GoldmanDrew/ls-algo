@@ -34,7 +34,9 @@ Both legs use explicit total-return price series:
   TR_t = TR_{t-1} × (Close_t + Div_t) / Close_{t-1}
 so dividends are correctly captured on both sides.
 
-If Beta is missing (NaN) for a row, it is computed via OLS regression.
+If Beta is missing (NaN) for a row, it is estimated via OLS on total-return
+series, with the same sign / leverage plausibility guards as ``daily_screener.add_betas``
+(fallback to listed leverage when OLS is unusable or implausible).
 
 Usage in etf_screener.py:
     from etf_analytics import enrich_with_decay_and_vol
@@ -56,18 +58,17 @@ TRADING_DAYS = 252
 # Total return price series (per-ticker)
 # ──────────────────────────────────────────────
 
-# Common split/reverse-split ratios.  When yfinance's auto_adjust
-# fails (or the adjustment hasn't propagated yet), a split shows up
-# as a single-day return that is *exactly* one of these ratios.
-# We detect returns within ±2 % of each ratio and correct the price
-# series by dividing out the split factor from that day onward.
-_SPLIT_RATIOS = sorted(set(
-    [n / d for n in (1, 2, 3, 4, 5, 10, 15, 20, 25, 50)
-           for d in (1, 2, 3, 4, 5, 10, 15, 20, 25, 50)
-           if n != d and 0.05 <= n / d <= 20.0]
-), reverse=True)
+# IMPORTANT (aligned with daily_screener):
+# Restrict to integer split factors and their reciprocals only.
+# Broad fractional grids can misclassify normal large ETF moves as "splits",
+# which then distorts beta estimates.
+_INTEGER_SPLIT_FACTORS = (2, 3, 4, 5, 10, 15, 20, 25, 50)
+_SPLIT_RATIOS = sorted(
+    set(list(_INTEGER_SPLIT_FACTORS) + [1.0 / f for f in _INTEGER_SPLIT_FACTORS]),
+    reverse=True,
+)
 
-_SPLIT_TOL = 0.02          # ±2 % tolerance around each ratio
+_SPLIT_TOL = 0.005         # ±0.5 % tolerance around each ratio
 _JUMP_FLOOR = 0.40         # ignore daily moves < 40 %
 _CONTEXT_WINDOW = 20       # days of context for local vol estimate
 _ZSCORE_THRESHOLD = 4.0    # jump must be > 4σ vs local vol to be a split
@@ -121,6 +122,19 @@ def _clean_split_artifacts(prices: pd.Series) -> pd.Series:
             if abs(ratio - inv_sf) / inv_sf < _SPLIT_TOL:
                 matched_factor = inv_sf
                 break
+
+        # Yahoo adjclose on reverse-split ex-days can be ~12–25% away from an exact
+        # 10×/20× ratio vs prior close when the underlying gaps overnight (e.g.
+        # GraniteShares MSTP/SMCL 1-for-20, ex 2026-05-01). Tight relative tol misses.
+        if matched_factor is None and ratio > 0 and np.isfinite(ratio):
+            for sf in _INTEGER_SPLIT_FACTORS:
+                inv_sf = 1.0 / float(sf)
+                if sf >= 2 and abs(np.log(ratio / sf)) < 0.22:
+                    matched_factor = float(sf)
+                    break
+                if abs(np.log(ratio / inv_sf)) < 0.22:
+                    matched_factor = inv_sf
+                    break
 
         if matched_factor is None:
             continue
@@ -480,10 +494,36 @@ def enrich_with_decay_and_vol(
         beta_f = float(beta) if pd.notna(beta) else None
         n_obs = row.get("Beta_n_obs")
         n_obs_i = int(n_obs) if pd.notna(n_obs) else 0
+        exp_lev = float(row["Leverage"]) if pd.notna(row.get("Leverage")) else 2.0
 
         if beta_f is None and und and etf in tr_map and und in tr_map:
-            beta_f, n_obs_i = _compute_beta_ols(tr_map[etf], tr_map[und], min_days)
-            if beta_f is not None:
+            b, n = _compute_beta_ols(tr_map[etf], tr_map[und], min_days)
+            if b is None or n < 2:
+                beta_f = exp_lev
+                n_obs_i = n
+            elif exp_lev != 0 and abs(b) > 0.3 and (b > 0) != (exp_lev > 0):
+                print(
+                    f"  [BETA] WARNING: {etf} OLS β={b:.4f} sign disagrees with "
+                    f"expected leverage={exp_lev:.1f}; using expected. Likely bad data."
+                )
+                beta_f = exp_lev
+                n_obs_i = n
+            elif (
+                exp_lev != 0
+                and np.isfinite(exp_lev)
+                and abs(exp_lev) >= 0.25
+                and abs(b) > abs(exp_lev) * 1.45
+            ):
+                print(
+                    f"  [BETA] WARNING: {etf} OLS β={b:.4f} implausible vs "
+                    f"expected leverage={exp_lev:.1f} (|β|/|L|={abs(b / exp_lev):.2f}); "
+                    f"using expected."
+                )
+                beta_f = exp_lev
+                n_obs_i = n
+            else:
+                beta_f = b
+                n_obs_i = n
                 betas_computed += 1
 
         betas_out.append(beta_f)

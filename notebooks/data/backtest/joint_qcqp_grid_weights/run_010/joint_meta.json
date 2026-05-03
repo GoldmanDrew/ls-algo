@@ -1,0 +1,93 @@
+{
+  "status": "optimal",
+  "solver": "CLARABEL",
+  "fallback_used": false,
+  "last_error": null,
+  "n_pairs": 241,
+  "sigma_p_book_annual": 0.16000000065353476,
+  "sigma_target_annual": 0.16,
+  "weight_ridge_lambda": 0.0,
+  "mu_shrink_intensity": 0.0,
+  "sleeve_totals": {
+    "core_leveraged": 0.675,
+    "whitelist_stock": 0.20000000000000004,
+    "inverse_decay_bucket4": 0.125
+  },
+  "n_pairs_by_bucket": {
+    "core_leveraged": 216.0,
+    "whitelist_stock": 9.0,
+    "inverse_decay_bucket4": 16.0
+  },
+  "rc_top": [
+    {
+      "bucket": "whitelist_stock",
+      "etf": "XBTY",
+      "underlying": "IBIT",
+      "weight": 0.09188967726462818,
+      "rc": 0.134033910841253
+    },
+    {
+      "bucket": "whitelist_stock",
+      "etf": "FBYY",
+      "underlying": "META",
+      "weight": 0.09999999991986207,
+      "rc": 0.11728268340880008
+    },
+    {
+      "bucket": "inverse_decay_bucket4",
+      "etf": "SMZ",
+      "underlying": "SMR",
+      "weight": 0.09999999996625084,
+      "rc": 0.10979620961011526
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "CRMU",
+      "underlying": "CRML",
+      "weight": 0.053337007482772786,
+      "rc": 0.10438129014033398
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "RCAX",
+      "underlying": "RCAT",
+      "weight": 0.057276117506188017,
+      "rc": 0.0717192745645686
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "SNXX",
+      "underlying": "SNDK",
+      "weight": 0.0771586312838647,
+      "rc": 0.07067549758195019
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "OPEG",
+      "underlying": "OPEN",
+      "weight": 0.029022024098929254,
+      "rc": 0.06523305184463624
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "NVTX",
+      "underlying": "NVTS",
+      "weight": 0.014007922389745913,
+      "rc": 0.028576963148459873
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "RDWU",
+      "underlying": "RDW",
+      "weight": 0.015665587221173866,
+      "rc": 0.013995981678948164
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "LITX",
+      "underlying": "LITE",
+      "weight": 0.021033878843949545,
+      "rc": 0.01264758618366527
+    }
+  ]
+}
