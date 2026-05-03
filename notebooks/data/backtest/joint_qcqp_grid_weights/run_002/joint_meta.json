@@ -1,0 +1,93 @@
+{
+  "status": "optimal_inaccurate",
+  "solver": "CLARABEL",
+  "fallback_used": false,
+  "last_error": null,
+  "n_pairs": 241,
+  "sigma_p_book_annual": 0.12000000483885927,
+  "sigma_target_annual": 0.12,
+  "weight_ridge_lambda": 0.0,
+  "mu_shrink_intensity": 0.0,
+  "sleeve_totals": {
+    "core_leveraged": 0.675,
+    "whitelist_stock": 0.20000000000000007,
+    "inverse_decay_bucket4": 0.12499999999999999
+  },
+  "n_pairs_by_bucket": {
+    "core_leveraged": 216.0,
+    "whitelist_stock": 9.0,
+    "inverse_decay_bucket4": 16.0
+  },
+  "rc_top": [
+    {
+      "bucket": "whitelist_stock",
+      "etf": "XBTY",
+      "underlying": "IBIT",
+      "weight": 0.09012617661634738,
+      "rc": 0.19758641414114694
+    },
+    {
+      "bucket": "whitelist_stock",
+      "etf": "FBYY",
+      "underlying": "META",
+      "weight": 0.09999999988697549,
+      "rc": 0.16360926514665972
+    },
+    {
+      "bucket": "inverse_decay_bucket4",
+      "etf": "SMZ",
+      "underlying": "SMR",
+      "weight": 0.07191596382391531,
+      "rc": 0.11354004990104892
+    },
+    {
+      "bucket": "inverse_decay_bucket4",
+      "etf": "CLSZ",
+      "underlying": "CLSK",
+      "weight": 0.03537163469111386,
+      "rc": 0.04215559941634338
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "ASMU",
+      "underlying": "ASML",
+      "weight": 0.06917289819529125,
+      "rc": 0.03102073289509923
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "BABU",
+      "underlying": "BABA",
+      "weight": 0.060393517614906585,
+      "rc": 0.02978586959211927
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "SOFA",
+      "underlying": "SOFI",
+      "weight": 0.03356755582197414,
+      "rc": 0.018050859117174228
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "SNXX",
+      "underlying": "SNDK",
+      "weight": 0.01957663098820911,
+      "rc": 0.017517225104041467
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "FBL",
+      "underlying": "META",
+      "weight": 0.03150256940018931,
+      "rc": 0.015295861600668911
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "METU",
+      "underlying": "META",
+      "weight": 0.027141044599617692,
+      "rc": 0.012326752087074688
+    }
+  ]
+}

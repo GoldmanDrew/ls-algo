@@ -1,0 +1,93 @@
+{
+  "status": "optimal_inaccurate",
+  "solver": "CLARABEL",
+  "fallback_used": false,
+  "last_error": null,
+  "n_pairs": 241,
+  "sigma_p_book_annual": 0.12000000009038941,
+  "sigma_target_annual": 0.12,
+  "weight_ridge_lambda": 0.0,
+  "mu_shrink_intensity": 0.0,
+  "sleeve_totals": {
+    "core_leveraged": 0.675,
+    "whitelist_stock": 0.20000000000000004,
+    "inverse_decay_bucket4": 0.12500000000000003
+  },
+  "n_pairs_by_bucket": {
+    "core_leveraged": 216.0,
+    "whitelist_stock": 9.0,
+    "inverse_decay_bucket4": 16.0
+  },
+  "rc_top": [
+    {
+      "bucket": "whitelist_stock",
+      "etf": "XBTY",
+      "underlying": "IBIT",
+      "weight": 0.09430344449240653,
+      "rc": 0.2070821816550671
+    },
+    {
+      "bucket": "whitelist_stock",
+      "etf": "FBYY",
+      "underlying": "META",
+      "weight": 0.09999999999612998,
+      "rc": 0.15948525784025883
+    },
+    {
+      "bucket": "inverse_decay_bucket4",
+      "etf": "SMZ",
+      "underlying": "SMR",
+      "weight": 0.09167686466188722,
+      "rc": 0.15495519303578895
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "BABU",
+      "underlying": "BABA",
+      "weight": 0.06644169228728712,
+      "rc": 0.03297187474765621
+    },
+    {
+      "bucket": "inverse_decay_bucket4",
+      "etf": "CLSZ",
+      "underlying": "CLSK",
+      "weight": 0.027514006705200867,
+      "rc": 0.03216484488487829
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "SNXX",
+      "underlying": "SNDK",
+      "weight": 0.029049853396083496,
+      "rc": 0.03012827358672353
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "CRMU",
+      "underlying": "CRML",
+      "weight": 0.015131166933015958,
+      "rc": 0.028566867599007832
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "OPEG",
+      "underlying": "OPEN",
+      "weight": 0.011117747845780379,
+      "rc": 0.023631100739158487
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "ASMU",
+      "underlying": "ASML",
+      "weight": 0.0521007209177109,
+      "rc": 0.022715586627205284
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "FBL",
+      "underlying": "META",
+      "weight": 0.03299570766641655,
+      "rc": 0.016034106635622825
+    }
+  ]
+}

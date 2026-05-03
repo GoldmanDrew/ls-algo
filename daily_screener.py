@@ -1980,11 +1980,37 @@ def enrich_with_decay_and_vol(
 
         beta_f = float(row["Beta"]) if pd.notna(row.get("Beta")) else None
         n_obs_i = int(row["Beta_n_obs"]) if pd.notna(row.get("Beta_n_obs")) else 0
+        exp_lev = float(row["Leverage"]) if pd.notna(row.get("Leverage")) else 2.0
 
-        # Compute beta from OLS if missing
+        # Compute beta from OLS if missing (same guards as add_betas)
         if beta_f is None and und and etf in tr_map and und in tr_map:
-            beta_f, n_obs_i = compute_beta_ols(tr_map[etf], tr_map[und], min_days)
-            if beta_f is not None:
+            b, n = compute_beta_ols(tr_map[etf], tr_map[und], min_days)
+            if b is None or n < 2:
+                beta_f = exp_lev
+                n_obs_i = n
+            elif exp_lev != 0 and abs(b) > 0.3 and (b > 0) != (exp_lev > 0):
+                print(
+                    f"  [BETA] WARNING: {etf} OLS β={b:.4f} sign disagrees with "
+                    f"expected leverage={exp_lev:.1f}; using expected. Likely bad data."
+                )
+                beta_f = exp_lev
+                n_obs_i = n
+            elif (
+                exp_lev != 0
+                and np.isfinite(exp_lev)
+                and abs(exp_lev) >= 0.25
+                and abs(b) > abs(exp_lev) * 1.45
+            ):
+                print(
+                    f"  [BETA] WARNING: {etf} OLS β={b:.4f} implausible vs "
+                    f"expected leverage={exp_lev:.1f} (|β|/|L|={abs(b / exp_lev):.2f}); "
+                    f"using expected."
+                )
+                beta_f = exp_lev
+                n_obs_i = n
+            else:
+                beta_f = b
+                n_obs_i = n
                 betas_computed += 1
         betas_out.append(beta_f)
         beta_nobs_out.append(n_obs_i)
