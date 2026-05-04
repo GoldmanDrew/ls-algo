@@ -29,6 +29,20 @@ Optional env vars:
   IBKR_FLEX_1019_STUCK_MAX_RENEWS=4          # max stuck-1019 renewals per query (0 disables)
   RUN_DATE=YYYY-MM-DD
 
+Why Flex can sit on 1019 / "still generating" for a long time (usually NOT a client bug):
+  - IBKR builds the statement on their servers. Trades + FIFO / MTM / settlement sections
+    (Flex error families 1005–1008) are CPU-heavy; wide date ranges or very active accounts
+    routinely take many minutes.
+  - Error 1009 means IB is under heavy load; you still poll, but wall-clock stretches.
+  - Error 1018 (rate limit) triggers extra backoff sleeps in this client — fewer polls, longer
+    apparent wait (check logs for "Throttled (1018)").
+  - Your Flex *query template* (in Account Management) controls scope: all-time history,
+    many columns, or combined sections inflate generation time. Narrow the period or split
+    queries if EOD latency matters.
+  - Optional IBKR_FLEX_1019_STUCK_* SendRequest renewals may help a stuck reference, but can
+    also queue a *new* generation job; if renewals correlate with even longer waits, set
+    IBKR_FLEX_1019_STUCK_MAX_RENEWS=0 to disable and rely on a single reference + timeout.
+
 Notes:
 - ErrorCode 1019 ("Statement generation in progress") is NORMAL. We treat it as "keep polling".
 - ErrorCode 1018 ("Too many requests") can happen on SendRequest and sometimes GetStatement.
@@ -140,6 +154,25 @@ def _is_processing(body: str) -> bool:
             return True
 
     return False
+
+
+def _flex_response_log_hint(body: str, *, max_msg: int = 160) -> str:
+    """One-line summary of FlexStatementResponse for operator logs."""
+    if not _is_flex_envelope(body):
+        return "non-envelope body"
+    st = (_get_status(body) or "?").strip()
+    code = (_get_error_code(body) or "?").strip()
+    msg = (_extract_tag(body, "ErrorMessage") or "").replace("\n", " ").strip()
+    if len(msg) > max_msg:
+        msg = msg[: max_msg - 3] + "..."
+    hint = ""
+    if code in {"1006", "1007", "1008"}:
+        hint = "; IBKR assembling FIFO/MTM/settlement slices for this query"
+    elif code == "1009":
+        hint = "; IBKR reports heavy load for Flex generation"
+    elif code == "1019":
+        hint = "; server-side report build still running (normal while queued)"
+    return f"Status={st!r} ErrorCode={code!r}{hint} — {msg!r}"
 
 
 def _detect_extension(body: str) -> str:
@@ -309,16 +342,29 @@ def fetch_and_save(
     t0 = time.time()
     time.sleep(post_send_delay)
     poll_n = 0
+    polls_this_ref = 0
+
+    if q.name == "flex_trades":
+        print(
+            "[FLEX] flex_trades: IBKR generates this report on their servers; long 1019 waits "
+            "usually mean a large query (history span, trade count, FIFO/MTM sections) or "
+            "platform load — not a bad token. Logs will repeat Flex ErrorMessage while pending."
+        )
 
     while True:
         body = get_statement(active_base_url, token, ref)
+        polls_this_ref += 1
 
         if _is_processing(body):
             elapsed = time.time() - t0
             if elapsed > max_wait_sec:
                 code = _get_error_code(body) or "UNKNOWN"
                 msg = _extract_tag(body, "ErrorMessage") or "Timed out waiting for report"
-                raise FlexError(f"Timed out fetching {q.name} (q={q.query_id}, ref={ref}): {code} {msg}")
+                detail = _flex_response_log_hint(body)
+                raise FlexError(
+                    f"Timed out fetching {q.name} (q={q.query_id}, ref={ref}): {code} {msg} "
+                    f"(last response: {detail}; GetStatement polls this ref={polls_this_ref})"
+                )
             code = (_get_error_code(body) or "").strip()
             # Large Trades+Commissions Flex jobs can sit on 1019 for one reference indefinitely;
             # a fresh SendRequest often queues a new worker and unblocks (empirical / IBKR forums).
@@ -339,10 +385,12 @@ def fetch_and_save(
                     last_stuck_renew_at = now
                     print(
                         f"[FLEX] prolonged 1019 on {q.name} (~{elapsed:.0f}s); "
-                        f"SendRequest again ({stuck_1019_renews}/{stuck_1019_max}) ..."
+                        f"SendRequest again ({stuck_1019_renews}/{stuck_1019_max}) "
+                        f"(prior ref polled {polls_this_ref}×; {_flex_response_log_hint(body)}) ..."
                     )
                     time.sleep(ref_renew_sleep)
                     ref = send_request_with_backoff(active_base_url, token, q.query_id)
+                    polls_this_ref = 0
                     time.sleep(post_send_delay)
                     continue
             # Gentle backoff while IBKR is still generating (1019): reduces request rate
@@ -351,8 +399,8 @@ def fetch_and_save(
             sleep_sec = min(30.0, poll_every_sec + 0.08 * min(elapsed, 600.0))
             if poll_n % 12 == 0:
                 print(
-                    f"[FLEX] still waiting on {q.name} ({_get_error_code(body) or '?'}), "
-                    f"{elapsed:.0f}s / {max_wait_sec:.0f}s ..."
+                    f"[FLEX] still waiting on {q.name} — {elapsed:.0f}s / {max_wait_sec:.0f}s "
+                    f"(ref polls={polls_this_ref}) — {_flex_response_log_hint(body)}"
                 )
             time.sleep(sleep_sec)
             continue
@@ -369,6 +417,7 @@ def fetch_and_save(
                 )
                 time.sleep(ref_renew_sleep)
                 ref = send_request_with_backoff(active_base_url, token, q.query_id)
+                polls_this_ref = 0
                 time.sleep(post_send_delay)
                 continue
 
@@ -427,8 +476,8 @@ def main() -> int:
     for q in queries:
         timeout = args.timeout
         if q.name == "flex_trades":
-            trades_floor = float(os.getenv("IBKR_FLEX_TRADES_TIMEOUT_SEC", "1800"))
-            timeout = max(timeout, trades_floor)  # 1019 often lasts 10–25+ min on large trade queries
+            trades_floor = float(os.getenv("IBKR_FLEX_TRADES_TIMEOUT_SEC", "5400"))
+            timeout = max(timeout, trades_floor)  # 1019 often lasts 30–90+ min on large trade queries
         if q.name == "flex_borrow_fee_details":
             timeout = max(timeout, 300.0)  # borrow details sometimes slower than cash/positions
 

@@ -10,6 +10,19 @@ import pytest
 import ibkr_flex
 
 
+def test_flex_response_log_hint_includes_code() -> None:
+    body = (
+        "<FlexStatementResponse>"
+        "<Status>Warn</Status>"
+        "<ErrorCode>1009</ErrorCode>"
+        "<ErrorMessage>heavy</ErrorMessage>"
+        "</FlexStatementResponse>"
+    )
+    s = ibkr_flex._flex_response_log_hint(body)
+    assert "1009" in s
+    assert "heavy" in s
+
+
 WARN_1019 = (
     "<FlexStatementResponse>"
     "<Status>Warn</Status>"
