@@ -18,7 +18,8 @@ Required env vars:
 Optional env vars:
   IBKR_FLEX_BASE_URL=https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
   IBKR_FLEX_POLL_SEC=5
-  IBKR_FLEX_TIMEOUT_SEC=180
+  IBKR_FLEX_TIMEOUT_SEC=180            # default --timeout; per-query floors in main() can raise this
+  IBKR_FLEX_TRADES_TIMEOUT_SEC=1800    # min max-wait for flex_trades (1019 can exceed 10+ minutes)
   IBKR_FLEX_POST_SEND_DELAY_SEC=1.25   # min wait after SendRequest before GetStatement (rate limit / 1020)
   IBKR_FLEX_MAX_REFERENCE_RENEWS=8     # on 1017/1020, how many times to obtain a new reference
   IBKR_FLEX_REFERENCE_RENEW_SLEEP_SEC=2.5
@@ -296,16 +297,27 @@ def fetch_and_save(
 
     t0 = time.time()
     time.sleep(post_send_delay)
+    poll_n = 0
 
     while True:
         body = get_statement(active_base_url, token, ref)
 
         if _is_processing(body):
-            if time.time() - t0 > max_wait_sec:
+            elapsed = time.time() - t0
+            if elapsed > max_wait_sec:
                 code = _get_error_code(body) or "UNKNOWN"
                 msg = _extract_tag(body, "ErrorMessage") or "Timed out waiting for report"
                 raise FlexError(f"Timed out fetching {q.name} (q={q.query_id}, ref={ref}): {code} {msg}")
-            time.sleep(poll_every_sec)
+            # Gentle backoff while IBKR is still generating (1019): reduces request rate
+            # and avoids hammering the same reference when "try again shortly" applies.
+            poll_n += 1
+            sleep_sec = min(30.0, poll_every_sec + 0.08 * min(elapsed, 600.0))
+            if poll_n % 12 == 0:
+                print(
+                    f"[FLEX] still waiting on {q.name} ({_get_error_code(body) or '?'}), "
+                    f"{elapsed:.0f}s / {max_wait_sec:.0f}s ..."
+                )
+            time.sleep(sleep_sec)
             continue
 
         if _is_flex_envelope(body) and "<Status>Success</Status>" not in body:
@@ -336,7 +348,12 @@ def main() -> int:
     ap.add_argument("--run-date", default=os.getenv("RUN_DATE") or today_str(), help="YYYY-MM-DD")
     ap.add_argument("--out-root", default="data/runs", help="output root folder")
     ap.add_argument("--poll", type=float, default=float(os.getenv("IBKR_FLEX_POLL_SEC", "5")), help="poll interval seconds")
-    ap.add_argument("--timeout", type=float, default=float(os.getenv("IBKR_FLEX_TIMEOUT_SEC", "180")), help="max wait per report seconds")
+    ap.add_argument(
+        "--timeout",
+        type=float,
+        default=float(os.getenv("IBKR_FLEX_TIMEOUT_SEC", "180")),
+        help="max wait per report seconds (flex_trades also uses IBKR_FLEX_TRADES_TIMEOUT_SEC floor, default 1800)",
+    )
     args = ap.parse_args()
 
     token = _env_required("IBKR_FLEX_TOKEN")
@@ -373,7 +390,8 @@ def main() -> int:
     for q in queries:
         timeout = args.timeout
         if q.name == "flex_trades":
-            timeout = max(timeout, 600.0)  # trades can take longer
+            trades_floor = float(os.getenv("IBKR_FLEX_TRADES_TIMEOUT_SEC", "1800"))
+            timeout = max(timeout, trades_floor)  # 1019 often lasts 10–25+ min on large trade queries
         if q.name == "flex_borrow_fee_details":
             timeout = max(timeout, 300.0)  # borrow details sometimes slower than cash/positions
 
