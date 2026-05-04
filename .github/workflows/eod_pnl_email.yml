@@ -116,9 +116,11 @@ jobs:
 
       - name: Run EOD pipeline + email
         env:
+          IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
           IBKR_FLEX_Q_TRADES: ${{ secrets.IBKR_FLEX_Q_TRADES }}
           IBKR_FLEX_Q_CASH: ${{ secrets.IBKR_FLEX_Q_CASH }}
           IBKR_FLEX_Q_POSITIONS: ${{ secrets.IBKR_FLEX_Q_POSITIONS }}
+          IBKR_FLEX_Q_BORROW_DETAILS: ${{ secrets.IBKR_FLEX_Q_BORROW_DETAILS }}
 
           # Email
           PNL_RECIPIENTS: ${{ secrets.PNL_RECIPIENTS }}

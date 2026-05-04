@@ -19,12 +19,19 @@ Optional env vars:
   IBKR_FLEX_BASE_URL=https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
   IBKR_FLEX_POLL_SEC=5
   IBKR_FLEX_TIMEOUT_SEC=180
+  IBKR_FLEX_POST_SEND_DELAY_SEC=1.25   # min wait after SendRequest before GetStatement (rate limit / 1020)
+  IBKR_FLEX_MAX_REFERENCE_RENEWS=8     # on 1017/1020, how many times to obtain a new reference
+  IBKR_FLEX_REFERENCE_RENEW_SLEEP_SEC=2.5
   RUN_DATE=YYYY-MM-DD
 
 Notes:
 - ErrorCode 1019 ("Statement generation in progress") is NORMAL. We treat it as "keep polling".
 - ErrorCode 1018 ("Too many requests") can happen on SendRequest and sometimes GetStatement.
   We use exponential backoff + jitter for resilience.
+- ErrorCode 1020 ("Invalid request or unable to validate request") often appears if
+  GetStatement is called within IBKR's per-token rate window (~1 req/s) right after
+  SendRequest, or when the reference code is no longer valid; we wait before the first
+  GetStatement and renew the reference on 1020/1017.
 """
 
 from __future__ import annotations
@@ -44,7 +51,18 @@ import requests
 
 DEFAULT_BASE_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
 BACKUP_BASE_URL = "https://gdcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
-HARDCODED_FLEX_TOKEN = "605237565772720861934459"
+
+# IBKR: max ~1 request/sec per token across SendRequest + GetStatement combined.
+_DEFAULT_POST_SEND_DELAY_SEC = 1.25
+
+# Error codes that mean "not ready yet; keep polling with the same reference code"
+# (see https://www.ibkrguides.com/adminportal/performanceandstatements/flex3error.htm).
+_FLEX_PENDING_CODES = frozenset(
+    {"1001", "1003", "1004", "1005", "1006", "1007", "1008", "1009", "1019", "1021"}
+)
+
+# Error codes where a fresh SendRequest reference is required
+_FLEX_RENEW_REF_CODES = frozenset({"1017", "1020"})
 
 
 def today_str() -> str:
@@ -105,6 +123,9 @@ def _is_processing(body: str) -> bool:
     msg = (_extract_tag(body, "ErrorMessage") or "").lower()
 
     if status.lower() == "warn" and code == "1019":
+        return True
+
+    if code in _FLEX_PENDING_CODES:
         return True
 
     if status.lower() == "fail":
@@ -267,7 +288,14 @@ def fetch_and_save(
     if not ref:
         raise FlexError(f"SendRequest failed on all candidate hosts for q={q.query_id}: {last_send_err}")
 
+    post_send_delay = float(os.getenv("IBKR_FLEX_POST_SEND_DELAY_SEC", str(_DEFAULT_POST_SEND_DELAY_SEC)))
+    post_send_delay = max(post_send_delay, _DEFAULT_POST_SEND_DELAY_SEC)
+    max_ref_renews = int(os.getenv("IBKR_FLEX_MAX_REFERENCE_RENEWS", "8"))
+    ref_renew_sleep = float(os.getenv("IBKR_FLEX_REFERENCE_RENEW_SLEEP_SEC", "2.5"))
+    ref_renews_used = 0
+
     t0 = time.time()
+    time.sleep(post_send_delay)
 
     while True:
         body = get_statement(active_base_url, token, ref)
@@ -281,8 +309,20 @@ def fetch_and_save(
             continue
 
         if _is_flex_envelope(body) and "<Status>Success</Status>" not in body:
-            code = _get_error_code(body) or "UNKNOWN"
+            code = (_get_error_code(body) or "").strip()
             msg = _extract_tag(body, "ErrorMessage") or body[:400]
+
+            if code in _FLEX_RENEW_REF_CODES and ref_renews_used < max_ref_renews:
+                ref_renews_used += 1
+                print(
+                    f"[FLEX] GetStatement {code} ({msg[:120]!r}); "
+                    f"SendRequest again for {q.name} ({ref_renews_used}/{max_ref_renews}) ..."
+                )
+                time.sleep(ref_renew_sleep)
+                ref = send_request_with_backoff(active_base_url, token, q.query_id)
+                time.sleep(post_send_delay)
+                continue
+
             raise FlexError(f"GetStatement failed for {q.name} (ref={ref}): {code} {msg}")
 
         ext = _detect_extension(body)
@@ -299,10 +339,7 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=float(os.getenv("IBKR_FLEX_TIMEOUT_SEC", "180")), help="max wait per report seconds")
     args = ap.parse_args()
 
-    # Hardcoded token for non-env runs.
-    token = HARDCODED_FLEX_TOKEN.strip()
-    if not token:
-        raise FlexError("HARDCODED_FLEX_TOKEN is empty")
+    token = _env_required("IBKR_FLEX_TOKEN")
     base_url = os.getenv("IBKR_FLEX_BASE_URL", DEFAULT_BASE_URL).strip()
 
     # You can override these via env vars if you prefer
