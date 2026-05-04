@@ -1081,11 +1081,40 @@ def validate_ibkr_contracts(
             pass
 
 
+# ── Beta estimator ─────────────────────────────────────────────────
+# Single hedge-ratio estimator: OLS slope on aligned simple returns,
+# Bayesian-shrunk to listed leverage L with autocorrelation-adjusted
+# effective sample size. Replaces all prior magnitude / "implausible"
+# / "compression" guards (those were binary snaps; this is the smooth
+# version of the same idea).
+#
+#   β̂_OLS  = Cov(r_etf, r_und) / Var(r_und)        (simple returns)
+#   ρ_AR1  = lag-1 autocorrelation of r_und
+#   n_eff  = n × (1 − ρ_AR1) / (1 + ρ_AR1)         (clipped to [1, n])
+#   k      = BETA_SHRINK_K_BASE × max(1, L²)        (stronger prior on
+#                                                    higher-leverage
+#                                                    designs)
+#   w      = n_eff / (n_eff + k)
+#   β̂      = w · β̂_OLS + (1 − w) · L
+#
+# Sign-disagreement is still treated as data corruption (snap to L).
+# That is the only retained hard guard.
+
+BETA_SHRINK_K_BASE = 60     # ≈ one quarter of effective trading days
+BETA_MIN_DAYS = 60          # min aligned daily returns before shrinkage kicks in
+BETA_AR1_FLOOR_RATIO = 0.10 # n_eff cannot fall below 10 % of n
+
+
 def compute_beta_ols(etf_tr: pd.Series, und_tr: pd.Series,
-                     min_days: int = 60) -> tuple[float | None, int]:
-    """OLS: r_etf = alpha + beta × r_und. Returns (beta, n_obs)."""
-    etf_tr = etf_tr[~etf_tr.index.duplicated(keep='last')]
-    und_tr = und_tr[~und_tr.index.duplicated(keep='last')]
+                     min_days: int = BETA_MIN_DAYS
+                     ) -> tuple[float | None, int]:
+    """Raw OLS slope on aligned daily simple returns. (β̂, n_obs).
+
+    Kept as a stand-alone diagnostic; production code should call
+    :func:`compute_beta_shrunk` which composes this with shrinkage.
+    """
+    etf_tr = etf_tr[~etf_tr.index.duplicated(keep="last")]
+    und_tr = und_tr[~und_tr.index.duplicated(keep="last")]
     df = pd.concat(
         [etf_tr.rename("etf"), und_tr.rename("und")], axis=1, sort=True
     ).dropna()
@@ -1104,9 +1133,81 @@ def compute_beta_ols(etf_tr: pd.Series, und_tr: pd.Series,
     return round(float(cov[0, 1] / var_und), 6), len(r_etf)
 
 
+def _ar1_n_eff(returns: np.ndarray) -> tuple[float, int]:
+    """Lag-1 autocorrelation and AR(1)-adjusted effective sample size.
+
+    n_eff = n · (1 − ρ) / (1 + ρ). Returns (ρ, n_eff) with n_eff
+    clipped to [BETA_AR1_FLOOR_RATIO · n, n].
+    """
+    n = len(returns)
+    if n < 5:
+        return 0.0, n
+    r = np.asarray(returns, dtype=float)
+    r = r - r.mean()
+    denom = float((r * r).sum())
+    if denom <= 0:
+        return 0.0, n
+    rho = float((r[1:] * r[:-1]).sum() / denom)
+    rho = max(-0.95, min(0.95, rho))
+    factor = (1.0 - rho) / (1.0 + rho)
+    n_eff = int(round(max(BETA_AR1_FLOOR_RATIO * n, min(n, n * factor))))
+    return rho, max(1, n_eff)
+
+
+def compute_beta_shrunk(
+    etf_tr: pd.Series,
+    und_tr: pd.Series,
+    exp_leverage: float,
+    *,
+    min_days: int = BETA_MIN_DAYS,
+    k_base: float = BETA_SHRINK_K_BASE,
+    leverage_scaled_prior: bool = True,
+) -> tuple[float, int, str]:
+    """Shrunk hedge-ratio estimator. Returns (β, n_obs, source).
+
+    source ∈ {
+        "shrunk_to_L",            # standard path (data + listing prior)
+        "imputed_no_overlap",      # < min_days aligned returns
+        "imputed_var_zero",        # Var(r_und) ≈ 0
+        "imputed_sign_mismatch",   # OLS sign contradicts listing
+    }
+    """
+    L = float(exp_leverage) if np.isfinite(exp_leverage) else 0.0
+
+    raw = compute_beta_ols(etf_tr, und_tr, min_days=min_days)
+    b_ols, n = raw
+    if b_ols is None or n < 2:
+        return L, n, "imputed_no_overlap"
+
+    # Sign-disagreement is data corruption, not an estimator artifact.
+    if L != 0 and abs(b_ols) > 0.3 and (b_ols > 0) != (L > 0):
+        print(
+            f"  [BETA] sign mismatch: OLS β={b_ols:.4f} vs expected L={L:.2f}; "
+            "using L."
+        )
+        return L, n, "imputed_sign_mismatch"
+
+    # Recompute aligned returns once for ρ_AR1 (cheap; could be returned
+    # from compute_beta_ols but kept separate for readability).
+    df = pd.concat(
+        [etf_tr.rename("etf"), und_tr.rename("und")], axis=1, sort=True
+    ).dropna()
+    r_und = df["und"].pct_change().dropna().values
+    if r_und.size < 2:
+        return L, n, "imputed_no_overlap"
+
+    _, n_eff = _ar1_n_eff(r_und)
+
+    # Stronger prior for higher-leverage products: contractually defined.
+    k = float(k_base) * (max(1.0, L * L) if leverage_scaled_prior else 1.0)
+    w = float(n_eff) / float(n_eff + k)
+    beta = w * float(b_ols) + (1.0 - w) * L
+    return round(beta, 6), n, "shrunk_to_L"
+
+
 def add_betas(universe_df: pd.DataFrame, tr_map: dict[str, pd.Series],
-              min_days: int = 60) -> pd.DataFrame:
-    """Add Beta, Beta_n_obs, Beta_source columns from OLS regression."""
+              min_days: int = BETA_MIN_DAYS) -> pd.DataFrame:
+    """Populate Beta, Beta_n_obs, Beta_source via shrinkage estimator."""
     df = universe_df.copy()
     betas, nobs, sources = [], [], []
     for _, row in df.iterrows():
@@ -1120,65 +1221,20 @@ def add_betas(universe_df: pd.DataFrame, tr_map: dict[str, pd.Series],
             sources.append("imputed_missing_prices")
             continue
 
-        b, n = compute_beta_ols(tr_map[etf], tr_map[und], min_days)
-        if b is None or n < 2:
-            betas.append(exp_lev)
-            nobs.append(n)
-            sources.append("imputed_no_overlap")
-        elif exp_lev != 0 and abs(b) > 0.3 and (b > 0) != (exp_lev > 0):
-            # OLS beta sign disagrees with expected leverage direction
-            print(f"  [BETA] WARNING: {etf} OLS β={b:.4f} sign disagrees with "
-                  f"expected leverage={exp_lev:.1f}; using expected. Likely bad data.")
-            betas.append(exp_lev)
-            nobs.append(n)
-            sources.append("imputed_sign_mismatch")
-        elif (
-            exp_lev != 0
-            and np.isfinite(exp_lev)
-            and abs(exp_lev) >= 0.25
-            and abs(b) > abs(exp_lev) * 1.45
-        ):
-            # OLS can explode on reverse splits, stale marks, or thin-volume ETFs;
-            # magnitude wildly above listing leverage blows up decay/vol diagnostics.
-            print(
-                f"  [BETA] WARNING: {etf} OLS β={b:.4f} implausible vs "
-                f"expected leverage={exp_lev:.1f} (|β|/|L|={abs(b / exp_lev):.2f}); "
-                f"using expected."
-            )
-            betas.append(exp_lev)
-            nobs.append(n)
-            sources.append("imputed_leverage_mismatch")
-        elif (
-            exp_lev != 0
-            and np.isfinite(exp_lev)
-            and abs(exp_lev) >= 1.5
-            and n >= 15
-            and abs(b) > 0.05
-            and abs(b) < abs(exp_lev) / 1.45
-        ):
-            # OLS can sit well *below* listed leverage on income-skewed or thin 2×
-            # single-stock LETFs (e.g. CRCA/CRCG vs CRCL), which mis-buckets them
-            # into bucket_2 for net exposure; snap to listing for screening/accounting.
-            print(
-                f"  [BETA] WARNING: {etf} OLS β={b:.4f} compressed vs "
-                f"expected leverage={exp_lev:.1f} (|β|/|L|={abs(b / exp_lev):.2f}); "
-                f"using expected."
-            )
-            betas.append(exp_lev)
-            nobs.append(n)
-            sources.append("imputed_leverage_compression")
-        else:
-            betas.append(b)
-            nobs.append(n)
-            sources.append("ols" if n >= 30 else "ols_short_history")
+        b, n, src = compute_beta_shrunk(
+            tr_map[etf], tr_map[und], exp_lev, min_days=min_days
+        )
+        betas.append(b)
+        nobs.append(n)
+        sources.append(src)
 
     df["Beta"] = betas
     df["Beta_n_obs"] = nobs
     df["Beta_source"] = sources
 
-    ols_count = (df["Beta_source"] == "ols").sum()
-    imp_count = df["Beta_source"].str.startswith("imputed").sum()
-    print(f"[BETA] OLS: {ols_count} | Imputed: {imp_count} | Total: {len(df)}")
+    src_counts = df["Beta_source"].value_counts().to_dict()
+    summary = " | ".join(f"{k}={v}" for k, v in src_counts.items())
+    print(f"[BETA] {summary} | Total: {len(df)}")
     return df
 
 
@@ -2001,50 +2057,12 @@ def enrich_with_decay_and_vol(
         n_obs_i = int(row["Beta_n_obs"]) if pd.notna(row.get("Beta_n_obs")) else 0
         exp_lev = float(row["Leverage"]) if pd.notna(row.get("Leverage")) else 2.0
 
-        # Compute beta from OLS if missing (same guards as add_betas)
+        # Fill missing β via the same shrunk estimator used in add_betas.
         if beta_f is None and und and etf in tr_map and und in tr_map:
-            b, n = compute_beta_ols(tr_map[etf], tr_map[und], min_days)
-            if b is None or n < 2:
-                beta_f = exp_lev
-                n_obs_i = n
-            elif exp_lev != 0 and abs(b) > 0.3 and (b > 0) != (exp_lev > 0):
-                print(
-                    f"  [BETA] WARNING: {etf} OLS β={b:.4f} sign disagrees with "
-                    f"expected leverage={exp_lev:.1f}; using expected. Likely bad data."
-                )
-                beta_f = exp_lev
-                n_obs_i = n
-            elif (
-                exp_lev != 0
-                and np.isfinite(exp_lev)
-                and abs(exp_lev) >= 0.25
-                and abs(b) > abs(exp_lev) * 1.45
-            ):
-                print(
-                    f"  [BETA] WARNING: {etf} OLS β={b:.4f} implausible vs "
-                    f"expected leverage={exp_lev:.1f} (|β|/|L|={abs(b / exp_lev):.2f}); "
-                    f"using expected."
-                )
-                beta_f = exp_lev
-                n_obs_i = n
-            elif (
-                exp_lev != 0
-                and np.isfinite(exp_lev)
-                and abs(exp_lev) >= 1.5
-                and n >= 15
-                and abs(b) > 0.05
-                and abs(b) < abs(exp_lev) / 1.45
-            ):
-                print(
-                    f"  [BETA] WARNING: {etf} OLS β={b:.4f} compressed vs "
-                    f"expected leverage={exp_lev:.1f}; using expected."
-                )
-                beta_f = exp_lev
-                n_obs_i = n
-            else:
-                beta_f = b
-                n_obs_i = n
-                betas_computed += 1
+            beta_f, n_obs_i, _src = compute_beta_shrunk(
+                tr_map[etf], tr_map[und], exp_lev, min_days=min_days
+            )
+            betas_computed += 1
         betas_out.append(beta_f)
         beta_nobs_out.append(n_obs_i)
 
