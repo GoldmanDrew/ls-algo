@@ -94,8 +94,8 @@ jobs:
       ((github.event_name == 'workflow_dispatch' && (inputs.job == 'eod' || inputs.job == 'both'))
       || (github.event_name == 'schedule' && github.event.schedule == '0 6 * * 2-6'))
     runs-on: ubuntu-latest
-    # Flex trades can return 1019 for 30–90+ minutes; ibkr_flex waits up to IBKR_FLEX_TRADES_TIMEOUT_SEC and may renew stuck refs.
-    timeout-minutes: 120
+    # flex_trades alone can sit on 1019 for 90–120+ minutes; keep headroom for accounting + email.
+    timeout-minutes: 240
 
     steps:
       - name: Checkout latest main
@@ -122,8 +122,10 @@ jobs:
           IBKR_FLEX_Q_CASH: ${{ secrets.IBKR_FLEX_Q_CASH }}
           IBKR_FLEX_Q_POSITIONS: ${{ secrets.IBKR_FLEX_Q_POSITIONS }}
           IBKR_FLEX_Q_BORROW_DETAILS: ${{ secrets.IBKR_FLEX_Q_BORROW_DETAILS }}
-          # Match ibkr_flex.py default floor; keeps CI explicit if defaults change.
-          IBKR_FLEX_TRADES_TIMEOUT_SEC: "5400"
+          IBKR_FLEX_TRADES_TIMEOUT_SEC: "10800"
+          # Default in ibkr_flex.py is 0; explicit here — GitHub logs showed stuck SendRequest
+          # renewals still timing out on 1019 while burning per-token rate budget.
+          IBKR_FLEX_1019_STUCK_MAX_RENEWS: "0"
 
           # Email
           PNL_RECIPIENTS: ${{ secrets.PNL_RECIPIENTS }}

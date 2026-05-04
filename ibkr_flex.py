@@ -19,14 +19,14 @@ Optional env vars:
   IBKR_FLEX_BASE_URL=https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
   IBKR_FLEX_POLL_SEC=5
   IBKR_FLEX_TIMEOUT_SEC=180            # default --timeout; per-query floors in main() can raise this
-  IBKR_FLEX_TRADES_TIMEOUT_SEC=5400    # min max-wait for flex_trades (1019 can exceed 30+ min on large queries)
+  IBKR_FLEX_TRADES_TIMEOUT_SEC=10800   # min max-wait for flex_trades (1019 can exceed 90+ min on large queries)
   IBKR_FLEX_POST_SEND_DELAY_SEC=1.25   # min wait after SendRequest before GetStatement (rate limit / 1020)
   IBKR_FLEX_MAX_REFERENCE_RENEWS=8     # on 1017/1020, how many times to obtain a new reference
   IBKR_FLEX_REFERENCE_RENEW_SLEEP_SEC=2.5
   # If 1019 persists for flex_trades, IBKR sometimes never completes for one reference; optional fresh SendRequest:
   IBKR_FLEX_1019_STUCK_RENEW_AFTER_SEC=900   # first renew after this many seconds in 1019 (0 disables)
   IBKR_FLEX_1019_STUCK_RENEW_INTERVAL_SEC=600
-  IBKR_FLEX_1019_STUCK_MAX_RENEWS=4          # max stuck-1019 renewals per query (0 disables)
+  IBKR_FLEX_1019_STUCK_MAX_RENEWS=0          # default 0: renewals can queue extra IB jobs; set 2–4 only if IBKR confirms stuck refs
   RUN_DATE=YYYY-MM-DD
 
 Why Flex can sit on 1019 / "still generating" for a long time (usually NOT a client bug):
@@ -335,7 +335,7 @@ def fetch_and_save(
 
     stuck_1019_after = float(os.getenv("IBKR_FLEX_1019_STUCK_RENEW_AFTER_SEC", "900"))
     stuck_1019_interval = float(os.getenv("IBKR_FLEX_1019_STUCK_RENEW_INTERVAL_SEC", "600"))
-    stuck_1019_max = int(os.getenv("IBKR_FLEX_1019_STUCK_MAX_RENEWS", "4"))
+    stuck_1019_max = int(os.getenv("IBKR_FLEX_1019_STUCK_MAX_RENEWS", "0"))
     stuck_1019_renews = 0
     last_stuck_renew_at = 0.0
 
@@ -438,7 +438,7 @@ def main() -> int:
         "--timeout",
         type=float,
         default=float(os.getenv("IBKR_FLEX_TIMEOUT_SEC", "180")),
-        help="max wait per report seconds (flex_trades also uses IBKR_FLEX_TRADES_TIMEOUT_SEC floor, default 5400)",
+        help="max wait per report seconds (flex_trades also uses IBKR_FLEX_TRADES_TIMEOUT_SEC floor, default 10800)",
     )
     args = ap.parse_args()
 
@@ -460,11 +460,13 @@ def main() -> int:
         q_positions = "1376362"
     if not q_borrow_details:
         q_borrow_details = "1408970"
+    # Trades last: largest / slowest Flex job; smaller snapshots first (same total time if all
+    # succeed, but avoids tying up the only slow slot before cash & positions land).
     queries = [
-        FlexQuery("flex_trades", q_trades),
         FlexQuery("flex_cash", q_cash),
         FlexQuery("flex_positions", q_positions),
-        FlexQuery("flex_borrow_fee_details", q_borrow_details),  # NEW 4th flex
+        FlexQuery("flex_borrow_fee_details", q_borrow_details),
+        FlexQuery("flex_trades", q_trades),
     ]
 
     out_dir = Path(args.out_root) / args.run_date / "ibkr_flex"
@@ -476,8 +478,8 @@ def main() -> int:
     for q in queries:
         timeout = args.timeout
         if q.name == "flex_trades":
-            trades_floor = float(os.getenv("IBKR_FLEX_TRADES_TIMEOUT_SEC", "5400"))
-            timeout = max(timeout, trades_floor)  # 1019 often lasts 30–90+ min on large trade queries
+            trades_floor = float(os.getenv("IBKR_FLEX_TRADES_TIMEOUT_SEC", "10800"))
+            timeout = max(timeout, trades_floor)  # 1019 often lasts 60–120+ min on very large trade queries
         if q.name == "flex_borrow_fee_details":
             timeout = max(timeout, 300.0)  # borrow details sometimes slower than cash/positions
 
