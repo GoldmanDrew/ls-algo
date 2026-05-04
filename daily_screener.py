@@ -1148,6 +1148,25 @@ def add_betas(universe_df: pd.DataFrame, tr_map: dict[str, pd.Series],
             betas.append(exp_lev)
             nobs.append(n)
             sources.append("imputed_leverage_mismatch")
+        elif (
+            exp_lev != 0
+            and np.isfinite(exp_lev)
+            and abs(exp_lev) >= 1.5
+            and n >= 15
+            and abs(b) > 0.05
+            and abs(b) < abs(exp_lev) / 1.45
+        ):
+            # OLS can sit well *below* listed leverage on income-skewed or thin 2×
+            # single-stock LETFs (e.g. CRCA/CRCG vs CRCL), which mis-buckets them
+            # into bucket_2 for net exposure; snap to listing for screening/accounting.
+            print(
+                f"  [BETA] WARNING: {etf} OLS β={b:.4f} compressed vs "
+                f"expected leverage={exp_lev:.1f} (|β|/|L|={abs(b / exp_lev):.2f}); "
+                f"using expected."
+            )
+            betas.append(exp_lev)
+            nobs.append(n)
+            sources.append("imputed_leverage_compression")
         else:
             betas.append(b)
             nobs.append(n)
@@ -2005,6 +2024,20 @@ def enrich_with_decay_and_vol(
                     f"  [BETA] WARNING: {etf} OLS β={b:.4f} implausible vs "
                     f"expected leverage={exp_lev:.1f} (|β|/|L|={abs(b / exp_lev):.2f}); "
                     f"using expected."
+                )
+                beta_f = exp_lev
+                n_obs_i = n
+            elif (
+                exp_lev != 0
+                and np.isfinite(exp_lev)
+                and abs(exp_lev) >= 1.5
+                and n >= 15
+                and abs(b) > 0.05
+                and abs(b) < abs(exp_lev) / 1.45
+            ):
+                print(
+                    f"  [BETA] WARNING: {etf} OLS β={b:.4f} compressed vs "
+                    f"expected leverage={exp_lev:.1f}; using expected."
                 )
                 beta_f = exp_lev
                 n_obs_i = n

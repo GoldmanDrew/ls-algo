@@ -521,6 +521,20 @@ def enrich_with_decay_and_vol(
                 )
                 beta_f = exp_lev
                 n_obs_i = n
+            elif (
+                exp_lev != 0
+                and np.isfinite(exp_lev)
+                and abs(exp_lev) >= 1.5
+                and n >= 15
+                and abs(b) > 0.05
+                and abs(b) < abs(exp_lev) / 1.45
+            ):
+                print(
+                    f"  [BETA] WARNING: {etf} OLS β={b:.4f} compressed vs "
+                    f"expected leverage={exp_lev:.1f}; using expected."
+                )
+                beta_f = exp_lev
+                n_obs_i = n
             else:
                 beta_f = b
                 n_obs_i = n
