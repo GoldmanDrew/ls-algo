@@ -94,8 +94,8 @@ jobs:
       ((github.event_name == 'workflow_dispatch' && (inputs.job == 'eod' || inputs.job == 'both'))
       || (github.event_name == 'schedule' && github.event.schedule == '0 6 * * 2-6'))
     runs-on: ubuntu-latest
-    # Flex trades often returns 1019 for 10–25+ minutes; ibkr_flex waits up to IBKR_FLEX_TRADES_TIMEOUT_SEC.
-    timeout-minutes: 45
+    # Flex trades can return 1019 for 30–90+ minutes; ibkr_flex waits up to IBKR_FLEX_TRADES_TIMEOUT_SEC and may renew stuck refs.
+    timeout-minutes: 120
 
     steps:
       - name: Checkout latest main
@@ -122,6 +122,8 @@ jobs:
           IBKR_FLEX_Q_CASH: ${{ secrets.IBKR_FLEX_Q_CASH }}
           IBKR_FLEX_Q_POSITIONS: ${{ secrets.IBKR_FLEX_Q_POSITIONS }}
           IBKR_FLEX_Q_BORROW_DETAILS: ${{ secrets.IBKR_FLEX_Q_BORROW_DETAILS }}
+          # Match ibkr_flex.py default floor; keeps CI explicit if defaults change.
+          IBKR_FLEX_TRADES_TIMEOUT_SEC: "5400"
 
           # Email
           PNL_RECIPIENTS: ${{ secrets.PNL_RECIPIENTS }}

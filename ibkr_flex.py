@@ -19,10 +19,14 @@ Optional env vars:
   IBKR_FLEX_BASE_URL=https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
   IBKR_FLEX_POLL_SEC=5
   IBKR_FLEX_TIMEOUT_SEC=180            # default --timeout; per-query floors in main() can raise this
-  IBKR_FLEX_TRADES_TIMEOUT_SEC=1800    # min max-wait for flex_trades (1019 can exceed 10+ minutes)
+  IBKR_FLEX_TRADES_TIMEOUT_SEC=5400    # min max-wait for flex_trades (1019 can exceed 30+ min on large queries)
   IBKR_FLEX_POST_SEND_DELAY_SEC=1.25   # min wait after SendRequest before GetStatement (rate limit / 1020)
   IBKR_FLEX_MAX_REFERENCE_RENEWS=8     # on 1017/1020, how many times to obtain a new reference
   IBKR_FLEX_REFERENCE_RENEW_SLEEP_SEC=2.5
+  # If 1019 persists for flex_trades, IBKR sometimes never completes for one reference; optional fresh SendRequest:
+  IBKR_FLEX_1019_STUCK_RENEW_AFTER_SEC=900   # first renew after this many seconds in 1019 (0 disables)
+  IBKR_FLEX_1019_STUCK_RENEW_INTERVAL_SEC=600
+  IBKR_FLEX_1019_STUCK_MAX_RENEWS=4          # max stuck-1019 renewals per query (0 disables)
   RUN_DATE=YYYY-MM-DD
 
 Notes:
@@ -268,6 +272,7 @@ def fetch_and_save(
     out_dir: Path,
     poll_every_sec: float = 5.0,
     max_wait_sec: float = 180.0,
+    enable_stuck_1019_renew: bool = False,
 ) -> Path:
     """SendRequest -> poll GetStatement -> save to disk."""
     ref = None
@@ -295,6 +300,12 @@ def fetch_and_save(
     ref_renew_sleep = float(os.getenv("IBKR_FLEX_REFERENCE_RENEW_SLEEP_SEC", "2.5"))
     ref_renews_used = 0
 
+    stuck_1019_after = float(os.getenv("IBKR_FLEX_1019_STUCK_RENEW_AFTER_SEC", "900"))
+    stuck_1019_interval = float(os.getenv("IBKR_FLEX_1019_STUCK_RENEW_INTERVAL_SEC", "600"))
+    stuck_1019_max = int(os.getenv("IBKR_FLEX_1019_STUCK_MAX_RENEWS", "4"))
+    stuck_1019_renews = 0
+    last_stuck_renew_at = 0.0
+
     t0 = time.time()
     time.sleep(post_send_delay)
     poll_n = 0
@@ -308,6 +319,32 @@ def fetch_and_save(
                 code = _get_error_code(body) or "UNKNOWN"
                 msg = _extract_tag(body, "ErrorMessage") or "Timed out waiting for report"
                 raise FlexError(f"Timed out fetching {q.name} (q={q.query_id}, ref={ref}): {code} {msg}")
+            code = (_get_error_code(body) or "").strip()
+            # Large Trades+Commissions Flex jobs can sit on 1019 for one reference indefinitely;
+            # a fresh SendRequest often queues a new worker and unblocks (empirical / IBKR forums).
+            if (
+                enable_stuck_1019_renew
+                and stuck_1019_max > 0
+                and stuck_1019_after > 0
+                and code == "1019"
+                and stuck_1019_renews < stuck_1019_max
+            ):
+                now = time.time()
+                if last_stuck_renew_at == 0.0:
+                    should_stuck_renew = elapsed >= stuck_1019_after
+                else:
+                    should_stuck_renew = (now - last_stuck_renew_at) >= stuck_1019_interval
+                if should_stuck_renew:
+                    stuck_1019_renews += 1
+                    last_stuck_renew_at = now
+                    print(
+                        f"[FLEX] prolonged 1019 on {q.name} (~{elapsed:.0f}s); "
+                        f"SendRequest again ({stuck_1019_renews}/{stuck_1019_max}) ..."
+                    )
+                    time.sleep(ref_renew_sleep)
+                    ref = send_request_with_backoff(active_base_url, token, q.query_id)
+                    time.sleep(post_send_delay)
+                    continue
             # Gentle backoff while IBKR is still generating (1019): reduces request rate
             # and avoids hammering the same reference when "try again shortly" applies.
             poll_n += 1
@@ -352,7 +389,7 @@ def main() -> int:
         "--timeout",
         type=float,
         default=float(os.getenv("IBKR_FLEX_TIMEOUT_SEC", "180")),
-        help="max wait per report seconds (flex_trades also uses IBKR_FLEX_TRADES_TIMEOUT_SEC floor, default 1800)",
+        help="max wait per report seconds (flex_trades also uses IBKR_FLEX_TRADES_TIMEOUT_SEC floor, default 5400)",
     )
     args = ap.parse_args()
 
@@ -403,6 +440,7 @@ def main() -> int:
             out_dir=out_dir,
             poll_every_sec=args.poll,
             max_wait_sec=timeout,
+            enable_stuck_1019_renew=(q.name == "flex_trades"),
         )
         print(f"[FLEX] wrote {p}")
         time.sleep(3)
