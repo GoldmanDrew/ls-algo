@@ -1882,6 +1882,7 @@ def expected_gross_decay(
     expense_ratio: float = 0.0,
     risk_free_rate: float = 0.0,
     mgr_borrow_on_underlying: float = 0.0,
+    sigma_cap: float | None = None,
 ) -> float:
     """Theoretical annualized gross decay per $1 ETF short (total carry).
 
@@ -1916,12 +1917,24 @@ def expected_gross_decay(
         For inverse LETFs (β<0): the borrow fee the fund's manager pays to
         short the underlying, as an annualised decimal. 0.0 when unknown —
         caller should set ``expected_gross_decay_reliable`` accordingly.
+    sigma_cap : float, optional
+        When set, the **vol-drag term only** is computed at
+        ``min(sigma_annual, sigma_cap)``. Financing, expense, and manager-borrow
+        terms remain linear in their own inputs. Used by
+        :func:`enrich_with_decay_and_vol` to clip σ at the realized-decay
+        calibration ceiling so the Itô identity (γ ∝ σ²) cannot blow up on
+        underlyings whose Yahoo TR σ disagrees with the LETF panel consensus
+        (e.g. BMNR vs BMNG/BMNU/BMNZ).
     """
+    sigma_used = float(sigma_annual)
+    if sigma_cap is not None and np.isfinite(float(sigma_cap)) and float(sigma_cap) > 0.0:
+        sigma_used = min(sigma_used, float(sigma_cap))
+
     if _HAS_CORE:
         try:
             return _expected_gross_decay(
                 beta,
-                sigma_annual,
+                sigma_used,
                 expense_ratio=expense_ratio,
                 risk_free_rate=risk_free_rate,
                 mgr_borrow_on_underlying=mgr_borrow_on_underlying,
@@ -1932,7 +1945,7 @@ def expected_gross_decay(
             pass
     abs_b = abs(beta)
     abs_bm1 = abs(beta - 1.0)
-    drag = 0.5 * abs_b * abs_bm1 * sigma_annual ** 2
+    drag = 0.5 * abs_b * abs_bm1 * sigma_used ** 2
     fin = (beta - 1.0) * risk_free_rate
     mgr = abs_b * mgr_borrow_on_underlying if beta < 0 else 0.0
     return round(drag + expense_ratio + fin + mgr, 6)
@@ -2215,6 +2228,9 @@ def enrich_with_decay_and_vol(
                                        (40), blend uses **100 % expected** only.
       - net_decay_annual             : realized − ETF borrow
       - decay_score                  : blended − ETF borrow
+      - vol_underlying_source        : JSON probe summary per underlying (PASS 2)
+      - sigma_realized_implied_annual: median √(G/(½|β||β−1|)) across LETFs on U
+      - sigma_cap_annual             : 1.25× that median; caps vol-drag in expected
     """
     expense_ratios = expense_ratios or {}
     underlying_borrow_map = underlying_borrow_map or {}
@@ -2278,86 +2294,253 @@ def enrich_with_decay_and_vol(
     df["gross_decay_annual_legacy_weekly"] = decays_legacy
 
     # ── PASS 2: resolve underlying vol per ticker ──
-    # For each underlying, compute raw vol from its price series, then
-    # cross-check against implied vols from its ETFs (vol_etf / |β|).
-    # If raw vol is corrupted (e.g. unadjusted splits), use the best
-    # ETF-implied vol instead — picking the ETF with the most history
-    # and highest |β| (tightest leverage relationship).
-    # All ETFs sharing the same underlying get the SAME vol_und.
-    _VOL_RATIO_MAX = 2.0  # allow up to 2× before overriding
+    # For each underlying, build a *panel* of σ probes — raw Yahoo TR σ plus
+    # one ETF-implied σ per LETF row on the same underlying — then pool them
+    # robustly. The pool is bounded by a realized-decay calibration ceiling so
+    # that γ ∝ σ² in the Itô identity cannot blow up when raw TR disagrees
+    # with the LETF panel consensus (e.g. BMNR vs BMNG/BMNU/BMNZ).
+    #
+    # Algorithm summary (mirrors Diamond-Creek-Quant PR #8):
+    #   1. probes = {σ_raw} ∪ {σ_etf_r / |β_r| | r on U}
+    #   2. σ_pool = weighted_median(probes)
+    #         weights: n_obs_r · |β_r| for implied; max(implied weight) · 0.5
+    #         for raw (present but never dominant in a multi-probe panel).
+    #   3. MAD outlier trim: drop probes with |σ - median| > 3 · MAD; recompute.
+    #   4. realized-implied σ_real_med = median(√(G_r / (½|β_r||β_r-1|))).
+    #         ceiling = SIGMA_CAP_SAFETY · σ_real_med.
+    #   5. cap σ_pool at the ceiling.
+    #   6. final fallbacks: if pool < min(implied)/2 use raw; if everything is
+    #         missing use raw.
+    SIGMA_CAP_SAFETY = 1.25
+    MAD_TRIM_K = 3.0
+
+    def _weighted_median(values: list[float], weights: list[float]) -> float | None:
+        pairs = [
+            (float(v), float(w))
+            for v, w in zip(values, weights)
+            if np.isfinite(v) and np.isfinite(w) and w > 0
+        ]
+        if not pairs:
+            return None
+        pairs.sort(key=lambda t: t[0])
+        total = sum(w for _, w in pairs)
+        if total <= 0:
+            return None
+        cum = 0.0
+        half = total / 2.0
+        for v, w in pairs:
+            cum += w
+            if cum >= half:
+                return float(v)
+        return float(pairs[-1][0])
 
     # Group rows by underlying
     und_syms = df["Underlying"].dropna().apply(_norm_sym).unique()
-    resolved_vol_und = {}         # underlying → final (Itô-aligned) σ
-    resolved_vol_und_legacy = {}  # underlying → legacy centered-simple σ
+    resolved_vol_und: dict[str, float | None] = {}
+    resolved_vol_und_legacy: dict[str, float | None] = {}
+    sigma_und_source: dict[str, dict] = {}
+    sigma_real_med_map: dict[str, float | None] = {}
 
     for und in und_syms:
-        # Raw σ of underlying, Itô-aligned: √(mean(log-return²) · 252).
-        # Using the new estimator keeps expected = 0.5·|β|·|β−1|·σ² in the
-        # same measure as the realized daily-drag estimator in Pass 1.
         raw_vol = _annualized_second_moment_log(tr_map[und], min_days) if und in tr_map else None
 
-        # Collect implied vols from all ETFs on this underlying
         mask = df["Underlying"].apply(
             lambda x: _norm_sym(x) == und if pd.notna(x) else False)
-        implied_candidates = []  # (implied_vol, weight)
+
+        implied_candidates: list[tuple[float, float, str]] = []
+        realized_implied: list[float] = []
         for idx in df.index[mask]:
             b = betas_out[idx]
             ve = vols_etf_raw[idx]
             nobs = beta_nobs_out[idx]
             if b and abs(b) >= 0.5 and ve and ve > 0 and nobs:
-                implied = ve / abs(b)
-                # Weight: prefer more history and higher leverage
-                weight = nobs * abs(b)
-                implied_candidates.append((implied, weight))
+                implied = float(ve) / abs(float(b))
+                weight = float(nobs) * abs(float(b))
+                etf_name = _norm_sym(df.at[idx, "ETF"]) if pd.notna(df.at[idx, "ETF"]) else "?"
+                implied_candidates.append((implied, weight, etf_name))
+
+            g_real = decays[idx]
+            if (
+                b is not None
+                and np.isfinite(b)
+                and abs(b) >= 0.1
+                and abs(b - 1.0) >= 0.05
+                and g_real is not None
+                and np.isfinite(g_real)
+                and g_real > 0
+            ):
+                gamma_coef = 0.5 * abs(b) * abs(b - 1.0)
+                if gamma_coef > 1e-9:
+                    sigma_r = float(np.sqrt(max(float(g_real), 0.0) / gamma_coef))
+                    if np.isfinite(sigma_r) and sigma_r > 0:
+                        realized_implied.append(sigma_r)
+
+        sigma_real_med = float(np.median(realized_implied)) if realized_implied else None
+        sigma_real_med_map[und] = sigma_real_med
+        ceiling = (
+            SIGMA_CAP_SAFETY * sigma_real_med
+            if sigma_real_med is not None and np.isfinite(sigma_real_med) and sigma_real_med > 0
+            else None
+        )
+
+        if not implied_candidates and (raw_vol is None or raw_vol <= 0):
+            resolved_vol_und[und] = raw_vol
+            sigma_und_source[und] = {
+                "method": "no_data",
+                "n_probes": 0,
+                "n_outliers_dropped": 0,
+                "sigma_real_implied_median": sigma_real_med,
+                "sigma_pool": raw_vol,
+                "sigma_capped_to": None,
+            }
+            continue
 
         if not implied_candidates:
             resolved_vol_und[und] = raw_vol
+            sigma_und_source[und] = {
+                "method": "raw_only",
+                "n_probes": 1,
+                "n_outliers_dropped": 0,
+                "sigma_real_implied_median": sigma_real_med,
+                "sigma_pool": raw_vol,
+                "sigma_capped_to": None,
+            }
             continue
 
-        # Best implied vol = weighted average, weighted by n_obs × |β|
-        total_w = sum(w for _, w in implied_candidates)
-        best_implied = sum(v * w for v, w in implied_candidates) / total_w
+        max_implied_weight = max(w for _, w, _ in implied_candidates)
+        probe_values: list[float] = []
+        probe_weights: list[float] = []
+        probe_labels: list[str] = []
+        if raw_vol is not None and np.isfinite(raw_vol) and raw_vol > 0:
+            probe_values.append(float(raw_vol))
+            probe_weights.append(0.5 * max_implied_weight)
+            probe_labels.append("raw_und")
+        for v, w, etf_name in implied_candidates:
+            probe_values.append(float(v))
+            probe_weights.append(float(w))
+            probe_labels.append(f"impl[{etf_name}]")
 
-        if raw_vol is None or raw_vol <= 0:
-            # No raw vol — use implied
-            resolved_vol_und[und] = round(best_implied, 6)
-        elif best_implied > 0 and raw_vol / best_implied > _VOL_RATIO_MAX:
-            # Raw vol is suspiciously high — override with implied
-            resolved_vol_und[und] = round(best_implied, 6)
-            print(f"  [VOL-FIX] {und}: raw={raw_vol*100:.1f}% → implied={best_implied*100:.1f}% "
-                  f"(from {len(implied_candidates)} ETF(s))")
-        else:
-            resolved_vol_und[und] = raw_vol
+        pool0 = _weighted_median(probe_values, probe_weights)
+
+        n_outliers_dropped = 0
+        if pool0 is not None and len(probe_values) >= 3:
+            med0 = float(np.median(probe_values))
+            mad0 = float(np.median([abs(v - med0) for v in probe_values]))
+            if mad0 > 0:
+                kept = [
+                    (v, w, lbl)
+                    for v, w, lbl in zip(probe_values, probe_weights, probe_labels)
+                    if abs(v - med0) <= MAD_TRIM_K * mad0
+                ]
+                if len(kept) >= 2 and len(kept) < len(probe_values):
+                    n_outliers_dropped = len(probe_values) - len(kept)
+                    pool0 = _weighted_median(
+                        [v for v, _, _ in kept],
+                        [w for _, w, _ in kept],
+                    )
+
+        sigma_pool = pool0 if pool0 is not None and pool0 > 0 else raw_vol
+
+        capped_to: float | None = None
+        method = "weighted_median"
+        if sigma_pool is not None and ceiling is not None and sigma_pool > ceiling:
+            capped_to = float(round(ceiling, 6))
+            sigma_pool = float(ceiling)
+            method = "weighted_median_capped"
+
+        implied_only = [v for v, _, lbl in zip(probe_values, probe_weights, probe_labels) if lbl != "raw_und"]
+        if (
+            sigma_pool is not None
+            and implied_only
+            and sigma_pool > 0
+            and sigma_pool < 0.5 * min(implied_only)
+            and raw_vol is not None
+            and raw_vol > 0
+        ):
+            sigma_pool = float(raw_vol)
+            method = "raw_fallback"
+            capped_to = None
+
+        resolved_vol_und[und] = round(float(sigma_pool), 6) if sigma_pool is not None else None
+        sigma_und_source[und] = {
+            "method": method,
+            "n_probes": len(probe_values),
+            "n_outliers_dropped": int(n_outliers_dropped),
+            "sigma_real_implied_median": (
+                float(round(sigma_real_med, 6)) if sigma_real_med is not None else None
+            ),
+            "sigma_pool": (
+                float(round(sigma_pool, 6)) if sigma_pool is not None else None
+            ),
+            "sigma_capped_to": capped_to,
+        }
+
+        if len(probe_values) > 0:
+            if sigma_real_med is not None:
+                print(
+                    f"  [VOL-PROBES] {und}: n_probes={len(probe_values)} "
+                    f"n_outliers={n_outliers_dropped} "
+                    f"σ_pool={(sigma_pool or 0)*100:.1f}% "
+                    f"σ_realized={sigma_real_med * 100:.1f}%"
+                )
+            else:
+                print(
+                    f"  [VOL-PROBES] {und}: n_probes={len(probe_values)} "
+                    f"n_outliers={n_outliers_dropped} "
+                    f"σ_pool={(sigma_pool or 0)*100:.1f}% σ_realized=NA"
+                )
+            if capped_to is not None:
+                print(
+                    f"  [VOL-CAP] {und}: σ_pool capped to {capped_to*100:.1f}% "
+                    f"= {SIGMA_CAP_SAFETY:g}× realized-implied σ"
+                )
 
     # ── Parallel legacy-σ resolution (diagnostics only) ──
-    # Mirrors the resolution logic above but fed from the centered,
-    # simple-return σ estimator so downstream tools can reproduce the
-    # pre-fix behaviour exactly. Runs as its own loop so that
-    # underlyings for which the new loop hits `continue` (no implied
-    # candidates) still get a legacy σ emitted.
+    # Centered, simple-return σ kept so downstream tools can reproduce the
+    # pre-Itô behaviour. Uses the same robust weighted-median + realized-decay
+    # ceiling as the production path, just on legacy probes.
     for und in und_syms:
         raw_vol_legacy = _annualized_vol(tr_map[und], min_days) if und in tr_map else None
         mask = df["Underlying"].apply(
             lambda x, u=und: _norm_sym(x) == u if pd.notna(x) else False)
-        implied_candidates_legacy = []
+        implied_legacy: list[tuple[float, float]] = []
         for idx in df.index[mask]:
             b = betas_out[idx]
             ve = vols_etf_legacy[idx]
             nobs = beta_nobs_out[idx]
             if b and abs(b) >= 0.5 and ve and ve > 0 and nobs:
-                implied_candidates_legacy.append((ve / abs(b), nobs * abs(b)))
-        if implied_candidates_legacy:
-            tw = sum(w for _, w in implied_candidates_legacy)
-            bi = sum(v * w for v, w in implied_candidates_legacy) / tw
-            if raw_vol_legacy is None or raw_vol_legacy <= 0:
-                resolved_vol_und_legacy[und] = round(bi, 6)
-            elif bi > 0 and raw_vol_legacy / bi > _VOL_RATIO_MAX:
-                resolved_vol_und_legacy[und] = round(bi, 6)
-            else:
-                resolved_vol_und_legacy[und] = raw_vol_legacy
-        else:
+                implied_legacy.append((float(ve) / abs(float(b)), float(nobs) * abs(float(b))))
+
+        if not implied_legacy and (raw_vol_legacy is None or raw_vol_legacy <= 0):
             resolved_vol_und_legacy[und] = raw_vol_legacy
+            continue
+        if not implied_legacy:
+            resolved_vol_und_legacy[und] = raw_vol_legacy
+            continue
+
+        max_w = max(w for _, w in implied_legacy)
+        vals = [v for v, _ in implied_legacy]
+        wts = [w for _, w in implied_legacy]
+        if raw_vol_legacy is not None and np.isfinite(raw_vol_legacy) and raw_vol_legacy > 0:
+            vals.insert(0, float(raw_vol_legacy))
+            wts.insert(0, 0.5 * max_w)
+
+        pool_legacy = _weighted_median(vals, wts)
+        if pool_legacy is None:
+            resolved_vol_und_legacy[und] = raw_vol_legacy
+            continue
+
+        sigma_real_med_u = sigma_real_med_map.get(und)
+        if (
+            sigma_real_med_u is not None
+            and np.isfinite(sigma_real_med_u)
+            and sigma_real_med_u > 0
+        ):
+            ceiling_legacy = SIGMA_CAP_SAFETY * sigma_real_med_u
+            if pool_legacy > ceiling_legacy:
+                pool_legacy = float(ceiling_legacy)
+
+        resolved_vol_und_legacy[und] = round(float(pool_legacy), 6)
 
     # Assign resolved vol_und to each row + compute expected decay (4 terms).
     # expense_ratios / underlying_borrow_map were passed in from main(); missing
@@ -2367,6 +2550,8 @@ def enrich_with_decay_and_vol(
     expected_decays_legacy = []
     er_vals, er_sources = [], []
     mgr_borrows, reliables, rf_vals = [], [], []
+    vol_und_source_payloads: list[str | None] = []
+    sigma_caps_per_row: list[float | None] = []
     for i, row in df.iterrows():
         etf = _norm_sym(row["ETF"]) if pd.notna(row.get("ETF")) else None
         und = _norm_sym(row["Underlying"]) if pd.notna(row.get("Underlying")) else None
@@ -2375,6 +2560,16 @@ def enrich_with_decay_and_vol(
         vols_und.append(vol_und)
         vols_und_legacy.append(vol_und_legacy)
         if vol_und is not None: ok_vol += 1
+
+        if und and und in sigma_und_source:
+            try:
+                vol_und_source_payloads.append(
+                    json.dumps(sigma_und_source[und], separators=(",", ":"))
+                )
+            except (TypeError, ValueError):
+                vol_und_source_payloads.append(None)
+        else:
+            vol_und_source_payloads.append(None)
 
         er_val, er_src = (None, "missing")
         if etf and etf in expense_ratios:
@@ -2401,6 +2596,14 @@ def enrich_with_decay_and_vol(
         reliables.append(reliable)
         rf_vals.append(risk_free_rate)
 
+        sigma_real_med_u = sigma_real_med_map.get(und)
+        sigma_cap_row = (
+            float(SIGMA_CAP_SAFETY * sigma_real_med_u)
+            if sigma_real_med_u is not None and np.isfinite(sigma_real_med_u) and sigma_real_med_u > 0
+            else None
+        )
+        sigma_caps_per_row.append(sigma_cap_row)
+
         exp_decay = None
         if beta_f and abs(beta_f) >= 0.1 and vol_und is not None and vol_und > 0:
             f_used = float(er_val) if er_val is not None else 0.0
@@ -2410,6 +2613,7 @@ def enrich_with_decay_and_vol(
                 expense_ratio=f_used,
                 risk_free_rate=risk_free_rate,
                 mgr_borrow_on_underlying=mgr_borrow,
+                sigma_cap=sigma_cap_row,
             )
             ok_expected += 1
         expected_decays.append(exp_decay)
@@ -2425,11 +2629,18 @@ def enrich_with_decay_and_vol(
                 expense_ratio=f_used,
                 risk_free_rate=risk_free_rate,
                 mgr_borrow_on_underlying=mgr_borrow,
+                sigma_cap=sigma_cap_row,
             )
         expected_decays_legacy.append(exp_decay_legacy)
 
     df["vol_underlying_annual"] = vols_und
     df["vol_underlying_annual_legacy"] = vols_und_legacy
+    df["vol_underlying_source"] = vol_und_source_payloads
+    df["sigma_realized_implied_annual"] = [
+        sigma_real_med_map.get(_norm_sym(u)) if pd.notna(u) else None
+        for u in df["Underlying"]
+    ]
+    df["sigma_cap_annual"] = sigma_caps_per_row
     df["expense_ratio_annual"] = er_vals
     df["expense_ratio_source"] = er_sources
     df["underlying_borrow_annual"] = mgr_borrows
