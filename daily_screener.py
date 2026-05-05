@@ -185,6 +185,9 @@ new_pairs = [
     ("AXTX", "AXTI"), ("CPNX", "CPNG"), ("MPWX", "MPWR"), ("STXX", "STX"),
     ("STXL", "STX"),  # Defiance 2X Long STX (vs Tradr STXX)
     ("AMA", "AMAT"),  # Defiance 2X Long AMAT
+    # 2026-05-05 Defiance + T-REX 2X long (AMKR, AXTI)
+    ("AMKL", "AMKR"),  # Defiance Daily Target 2X Long AMKR
+    ("AXTU", "AXTI"),  # T-REX 2X Long AXTI (REX / Tuttle; distinct from Tradr AXTX)
 ]
 
 proshares_pairs_levered = [
