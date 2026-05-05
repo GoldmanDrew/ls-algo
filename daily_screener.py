@@ -52,6 +52,12 @@ import requests
 import yaml
 import yfinance as yf
 
+from beta_estimator import (
+    BetaPrior,
+    BetaResult,
+    build_yieldboost_family_priors,
+    compute_beta_for_hedging,
+)
 from decay_distribution import enrich_with_decay_distribution
 from expense_ratios import fetch_expense_ratios
 from screener_v2_fields import enrich_screener_v2_fields, load_borrow_history_json
@@ -1205,32 +1211,201 @@ def compute_beta_shrunk(
     return round(beta, 6), n, "shrunk_to_L"
 
 
-def add_betas(universe_df: pd.DataFrame, tr_map: dict[str, pd.Series],
-              min_days: int = BETA_MIN_DAYS) -> pd.DataFrame:
-    """Populate Beta, Beta_n_obs, Beta_source via shrinkage estimator."""
+_COVERED_CALL_ETFS = {_norm_sym(etf) for etf, _ in covered_call_pairs}
+_YIELDBOOST_PAIRS_NORMED = [
+    (_norm_sym(etf), _norm_sym(und)) for etf, und in YIELDBOOST_BUCKET2_PAIRS
+]
+
+
+def classify_beta_product_class(row: pd.Series) -> str:
+    """Classify a universe row for the beta-prior router.
+
+    The classification is *independent* of any realized β (we need the
+    prior class to build the prior).  The order matters: vol-ETPs are
+    flagged first so any LETF-style row that happens to also reference
+    a vol-ETP underlying is still routed to the no-shrink branch.
+
+    Returns one of:
+        ``letf_long``       — positive nominal leverage (the only class that
+                              uses ``mu_beta = L`` as the prior mean).
+        ``letf_inverse``    — negative nominal leverage from
+                              ``INVERSE_ETF_UNIVERSE`` (also uses ``mu_beta = L``).
+        ``income_yieldboost`` — ``is_yieldboost == True``.
+        ``covered_call_1x`` — ETF is in ``covered_call_pairs``.
+        ``volatility_etp``  — ETF or underlying is in ``VOLATILITY_ETP_SYMBOLS``.
+        ``scraped_income``  — 1× income row that did not match the lists above
+                              (YieldMax / Roundhill scrape, or supplemental
+                              1× income product).
+        ``unknown``         — fallthrough.
+    """
+    etf = _norm_sym(row.get("ETF", ""))
+    und = _norm_sym(row.get("Underlying", "")) if pd.notna(row.get("Underlying")) else ""
+
+    if etf in VOLATILITY_ETP_SYMBOLS or und in VOLATILITY_ETP_SYMBOLS:
+        return "volatility_etp"
+
+    lev = row.get("Leverage")
+    try:
+        lev_f = float(lev) if pd.notna(lev) else None
+    except (TypeError, ValueError):
+        lev_f = None
+
+    if lev_f is not None and lev_f < 0:
+        return "letf_inverse"
+
+    is_yb = row.get("is_yieldboost")
+    if isinstance(is_yb, (bool, np.bool_)) and bool(is_yb):
+        return "income_yieldboost"
+    if is_yb is True:
+        return "income_yieldboost"
+
+    if etf in _COVERED_CALL_ETFS:
+        return "covered_call_1x"
+
+    if lev_f is not None and abs(lev_f - 1.0) < 0.01:
+        return "scraped_income"
+
+    if lev_f is not None and lev_f > 1.0:
+        return "letf_long"
+
+    return "unknown"
+
+
+def add_betas(
+    universe_df: pd.DataFrame,
+    tr_map: dict[str, pd.Series],
+    min_days: int = BETA_MIN_DAYS,
+    *,
+    cc_default_mu: float = 0.55,
+    cc_default_tau: float = 30.0,
+) -> pd.DataFrame:
+    """Populate Beta + posterior diagnostics via :mod:`beta_estimator`.
+
+    Outputs (CSV-stable):
+        Beta, Beta_n_obs, Beta_source        — back-compat (Beta_source
+            becomes ``posterior.<prior_source>`` for the new path,
+            ``imputed_*`` for fallthrough).
+        Beta_se, Beta_resid_sigma_annual,
+        Beta_horizon_chosen, Beta_quality,
+        Beta_prior_mu, Beta_prior_tau,
+        Beta_prior_source, Beta_product_class.
+
+    The two LETF classes are the only ones that read row[``Leverage``]
+    for the prior mean; income / vol-ETP / unknown rows use class-level
+    defaults or the YieldBOOST hierarchical family prior.
+    """
+
     df = universe_df.copy()
-    betas, nobs, sources = [], [], []
+
+    df["Beta_product_class"] = df.apply(classify_beta_product_class, axis=1)
+    pclass_counts = df["Beta_product_class"].value_counts().to_dict()
+    print(
+        "[BETA] Product class counts: "
+        + " | ".join(f"{k}={v}" for k, v in pclass_counts.items())
+    )
+
+    yb_priors = build_yieldboost_family_priors(
+        _YIELDBOOST_PAIRS_NORMED,
+        tr_map,
+        min_days=min_days,
+        tau_per_sibling=30.0,
+        tau_cap=120.0,
+    )
+    if yb_priors:
+        per_und = {
+            k: v for k, v in yb_priors.items() if k != "__global__"
+        }
+        glb = yb_priors.get("__global__")
+        glb_str = (
+            f" | __global__: μ={glb.mu:+.3f} τ={glb.tau:.0f} n={glb.n_siblings}"
+            if glb is not None
+            else ""
+        )
+        per_und_str = ", ".join(
+            f"{u}: μ={p.mu:+.3f} τ={p.tau:.0f} n={p.n_siblings}"
+            for u, p in sorted(per_und.items())
+        )
+        print(f"[BETA] YieldBOOST family priors → {per_und_str}{glb_str}")
+    else:
+        print("[BETA] YieldBOOST family priors: (no siblings with sufficient history)")
+
+    betas: list[float] = []
+    nobs: list[int] = []
+    sources: list[str] = []
+    ses: list[float] = []
+    resid_sigmas: list[float] = []
+    horizons: list[int] = []
+    qualities: list[str] = []
+    prior_mus: list[float] = []
+    prior_taus: list[float] = []
+    prior_sources: list[str] = []
+
     for _, row in df.iterrows():
         etf = _norm_sym(row["ETF"])
         und = _norm_sym(row["Underlying"]) if pd.notna(row.get("Underlying")) else None
-        exp_lev = float(row.get("Leverage", 2.0))
+        product_class = str(row["Beta_product_class"])
+        lev_raw = row.get("Leverage")
+        try:
+            lev_f = float(lev_raw) if pd.notna(lev_raw) else None
+        except (TypeError, ValueError):
+            lev_f = None
+
+        # Build prior. ONLY letf_long / letf_inverse may use nominal L.
+        try:
+            prior = BetaPrior.for_row(
+                product_class=product_class,
+                nominal_leverage=lev_f,
+                underlying=und,
+                peer_betas=yb_priors,
+                cc_default_mu=cc_default_mu,
+                cc_default_tau=cc_default_tau,
+            )
+        except ValueError:
+            # LETF row missing nominal leverage → impute via fallback path
+            prior = BetaPrior(
+                mu=0.0,
+                tau=15.0,
+                source="empirical_bayes_global",
+                product_class="unknown",
+            )
 
         if not und or etf not in tr_map or und not in tr_map:
-            betas.append(exp_lev)
+            betas.append(float(prior.mu))
             nobs.append(0)
             sources.append("imputed_missing_prices")
+            ses.append(float("inf"))
+            resid_sigmas.append(float("nan"))
+            horizons.append(1)
+            qualities.append("imputed_missing_prices")
+            prior_mus.append(float(prior.mu))
+            prior_taus.append(float(prior.tau))
+            prior_sources.append(prior.source)
             continue
 
-        b, n, src = compute_beta_shrunk(
-            tr_map[etf], tr_map[und], exp_lev, min_days=min_days
+        result: BetaResult = compute_beta_for_hedging(
+            tr_map[etf], tr_map[und], prior, min_days=min_days
         )
-        betas.append(b)
-        nobs.append(n)
-        sources.append(src)
+        betas.append(float(result.beta))
+        nobs.append(int(result.n_obs))
+        sources.append(str(result.source))
+        ses.append(float(result.beta_se))
+        resid_sigmas.append(float(result.resid_sigma_annual))
+        horizons.append(int(result.horizon))
+        qualities.append(str(result.quality))
+        prior_mus.append(float(result.prior_mu))
+        prior_taus.append(float(result.prior_tau))
+        prior_sources.append(str(result.prior_source))
 
     df["Beta"] = betas
     df["Beta_n_obs"] = nobs
     df["Beta_source"] = sources
+    df["Beta_se"] = ses
+    df["Beta_resid_sigma_annual"] = resid_sigmas
+    df["Beta_horizon_chosen"] = horizons
+    df["Beta_quality"] = qualities
+    df["Beta_prior_mu"] = prior_mus
+    df["Beta_prior_tau"] = prior_taus
+    df["Beta_prior_source"] = prior_sources
 
     src_counts = df["Beta_source"].value_counts().to_dict()
     summary = " | ".join(f"{k}={v}" for k, v in src_counts.items())
