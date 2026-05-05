@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """
-Export daily strategy PnL (from run_eod_pnl_email ledger history) plus net market
-capital for the **same symbol set as PnL attribution** (``pnl_by_symbol.csv`` per run).
+Export a four-column CSV from ``data/ledger/pnl_history.csv`` plus per-run net
+capital (attribution symbol scope).
 
-Cumulative PnL columns are **rebased to zero on 2026-02-27** (same anchor as
-``run_eod_pnl_email.START_DATE``): each value has that day's cumulative subtracted.
-``daily_*`` columns are day-over-day **differences of the rebased cumulatives** (so the
-first calendar row has blank daily fields; 2026-02-27 shows cumulative 0).
+Output columns (exact headers): **Date**, **Cumulative PnL**, **Daily PnL**,
+**Net Capital Deployed**.
 
-Net market capital: sum(long ``positionValue_base``) − sum(|short ``positionValue_base``|)
-only for tickers listed in ``data/runs/<date>/accounting/pnl_by_symbol.csv`` (the file
-used with Flex positions to build ``pnl_attribution_history`` / long-short split).
+- **Cumulative PnL** is ``total_pnl`` rebased to zero on the anchor date (default
+  2026-02-27, same as ``run_eod_pnl_email.START_DATE``).
+- **Daily PnL** is the day-over-day change of that rebased cumulative (first row
+  has no prior day, so Daily PnL is blank).
+- **Net Capital Deployed** = sum(long ``positionValue_base``) − sum(|short|) for
+  symbols listed in ``data/runs/<date>/accounting/pnl_by_symbol.csv`` only.
 
 Usage:
   python scripts/export_daily_pnl_net_capital.py
@@ -35,10 +36,10 @@ LEDGER_DIR = _PROJECT_ROOT / "data" / "ledger"
 RUNS_ROOT = _PROJECT_ROOT / "data" / "runs"
 PNL_HISTORY_CSV = LEDGER_DIR / "pnl_history.csv"
 
-BUCKET_COLS = ("pnl_bucket_1", "pnl_bucket_2", "pnl_bucket_3", "pnl_bucket_4")
-
 # Must match run_eod_pnl_email.START_DATE (PnL history / plots anchor).
 DEFAULT_ANCHOR_DATE = "2026-02-27"
+
+EXPORT_COLS = ("Date", "Cumulative PnL", "Daily PnL", "Net Capital Deployed")
 
 
 def load_attribution_symbols(run_date: str, runs_root: Path) -> set[str]:
@@ -95,7 +96,6 @@ def net_capital_attribution_scope(run_date: str, runs_root: Path) -> float | Non
     if pos is None:
         return None
     if not sym_set:
-        # No symbol-level PnL file → cannot align to attribution scope.
         return None
     pos = pos.copy()
     pos["symbol"] = pos["symbol"].map(lambda s: canonical_symbol(str(s)))
@@ -130,31 +130,23 @@ def build_export(
     anchor_idx = int(anchor_row.index[0])
     base_total = float(hist.loc[anchor_idx, "total_pnl"] or 0.0)
 
-    out = pd.DataFrame({"date": hist["date"]})
-    out["cumulative_total_pnl"] = hist["total_pnl"] - base_total
-
-    bucket_bases: dict[str, float] = {}
-    for c in BUCKET_COLS:
-        if c not in hist.columns:
-            continue
-        hist[c] = pd.to_numeric(hist[c], errors="coerce")
-        bucket_bases[c] = float(hist.loc[anchor_idx, c] or 0.0)
-        out[f"cumulative_{c}"] = hist[c] - bucket_bases[c]
-
-    out["daily_total_pnl"] = out["cumulative_total_pnl"].diff()
-    for c in BUCKET_COLS:
-        col = f"cumulative_{c}"
-        if col in out.columns:
-            out[f"daily_{c}"] = out[col].diff()
+    dates = hist["date"]
+    cumulative = hist["total_pnl"] - base_total
+    daily = cumulative.diff()
 
     capitals: list[float | None] = []
-    for d in out["date"]:
+    for d in dates:
         ds = d.strftime("%Y-%m-%d")
         capitals.append(net_capital_attribution_scope(ds, runs_root))
 
-    out["net_market_capital_usd"] = capitals
-    out["date"] = out["date"].dt.strftime("%Y-%m-%d")
-    return out
+    return pd.DataFrame(
+        {
+            EXPORT_COLS[0]: dates.dt.strftime("%Y-%m-%d"),
+            EXPORT_COLS[1]: cumulative,
+            EXPORT_COLS[2]: daily,
+            EXPORT_COLS[3]: capitals,
+        }
+    )
 
 
 def main() -> int:
