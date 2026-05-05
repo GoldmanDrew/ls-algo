@@ -2169,7 +2169,31 @@ def _compute_gross_decay_daily(
                     f"split-suspect day(s)"
                 )
 
-    return round(float(daily_drag.mean()) * TRADING_DAYS, 6)
+    # Winsorize daily drag at the 1st / 99th percentile so a single bad
+    # print (stale Yahoo adjclose vs fresh listing, corporate-action glitch,
+    # or one-off gap) cannot dominate mean(drag)×252.  Thin histories use
+    # slightly wider tails so we still keep ≥ ~1 day per side.
+    drag_vals = daily_drag.to_numpy(dtype=float)
+    n_drag = int(drag_vals.size)
+    if n_drag >= 100:
+        lo_p, hi_p = 1.0, 99.0
+    elif n_drag >= 60:
+        lo_p, hi_p = 2.0, 98.0
+    else:
+        lo_p, hi_p = 5.0, 95.0
+    lo, hi = np.percentile(drag_vals, [lo_p, hi_p])
+    drag_w = np.clip(drag_vals, lo, hi)
+    raw_mean = float(np.mean(drag_vals))
+    win_mean = float(np.mean(drag_w))
+    if label and abs(win_mean - raw_mean) > 1e-6 * max(1.0, abs(raw_mean)):
+        n_clip = int(np.sum((drag_vals < lo) | (drag_vals > hi)))
+        if n_clip:
+            print(
+                f"[DECAY][winsor] {label}: clipped {n_clip} day(s) at "
+                f"{lo_p:g}/{hi_p:g}% drag; mean {raw_mean*252:.2%}→{win_mean*252:.2%} annualized"
+            )
+
+    return round(win_mean * TRADING_DAYS, 6)
 
 
 def _compute_gross_decay(
@@ -2460,6 +2484,13 @@ def enrich_with_decay_and_vol(
             sigma_pool = float(raw_vol)
             method = "raw_fallback"
             capped_to = None
+            # Raw Yahoo σ can still exceed the realized-implied calibration
+            # ceiling (e.g. BMNR vs a thin LETF panel). Never let raw_fallback
+            # bypass the σ cap — that was blowing up expected_gross_decay.
+            if ceiling is not None and sigma_pool > ceiling:
+                capped_to = float(round(ceiling, 6))
+                sigma_pool = float(ceiling)
+                method = "raw_fallback_capped"
 
         resolved_vol_und[und] = round(float(sigma_pool), 6) if sigma_pool is not None else None
         sigma_und_source[und] = {
