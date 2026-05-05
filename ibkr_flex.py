@@ -17,10 +17,13 @@ Required env vars:
 
 Optional env vars:
   IBKR_FLEX_BASE_URL=https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService
+  IBKR_FLEX_USER_AGENT=...            # required by IBKR; sensible default is built-in if unset
   IBKR_FLEX_POLL_SEC=5
+  IBKR_FLEX_MIN_POLL_SEC=6.5         # floor between GetStatement polls while pending (IB: max 10 req/min per token)
+  IBKR_FLEX_INTER_QUERY_SLEEP_SEC=6.0 # pause between finishing one query and SendRequest for the next
   IBKR_FLEX_TIMEOUT_SEC=180            # default --timeout; per-query floors in main() can raise this
-  IBKR_FLEX_TRADES_TIMEOUT_SEC=10800   # min max-wait for flex_trades (1019 can exceed 90+ min on large queries)
-  IBKR_FLEX_POST_SEND_DELAY_SEC=1.25   # min wait after SendRequest before GetStatement (rate limit / 1020)
+  IBKR_FLEX_TRADES_TIMEOUT_SEC=3600    # min max-wait for flex_trades (raise only after fixing query scope / rate)
+  IBKR_FLEX_POST_SEND_DELAY_SEC=3.0    # min wait after SendRequest before GetStatement (IB: longer for large reports)
   IBKR_FLEX_MAX_REFERENCE_RENEWS=8     # on 1017/1020, how many times to obtain a new reference
   IBKR_FLEX_REFERENCE_RENEW_SLEEP_SEC=2.5
   # If 1019 persists for flex_trades, IBKR sometimes never completes for one reference; optional fresh SendRequest:
@@ -28,6 +31,15 @@ Optional env vars:
   IBKR_FLEX_1019_STUCK_RENEW_INTERVAL_SEC=600
   IBKR_FLEX_1019_STUCK_MAX_RENEWS=0          # default 0: renewals can queue extra IB jobs; set 2–4 only if IBKR confirms stuck refs
   RUN_DATE=YYYY-MM-DD
+
+IBKR Flex Web Service (official IBKR Campus / Client Portal guides — links in Notes below):
+  - Every HTTP request MUST include a User-Agent header (Campus Flex Web Service page).
+  - Error 1018: combined SendRequest + GetStatement are limited to ~1 request/sec AND ~10/min
+    per token. Polling faster can throttle you and stretch or destabilize statement generation.
+  - Activity Flex templates using a *variable duration* such as "Last N Days" always expand to
+    the maximum possible span for that template — not the last value you used in Client Portal.
+    IB recommends fixed windows ("Last Month", "YTD", …). A silent IB-side expansion can suddenly
+    make a formerly "fast" query very heavy without you editing the template.
 
 Why Flex can sit on 1019 / "still generating" for a long time (usually NOT a client bug):
   - IBKR builds the statement on their servers. Trades + FIFO / MTM / settlement sections
@@ -44,6 +56,10 @@ Why Flex can sit on 1019 / "still generating" for a long time (usually NOT a cli
     IBKR_FLEX_1019_STUCK_MAX_RENEWS=0 to disable and rely on a single reference + timeout.
 
 Notes:
+- Flex Web Service overview (User-Agent, SendRequest/GetStatement flow):
+  https://www.interactivebrokers.com/campus/ibkr-api-page/flex-web-service/
+- Error codes (1018 rate limit text matches Campus):
+  https://www.ibkrguides.com/clientportal/performanceandstatements/flex3error.htm
 - ErrorCode 1019 ("Statement generation in progress") is NORMAL. We treat it as "keep polling".
 - ErrorCode 1018 ("Too many requests") can happen on SendRequest and sometimes GetStatement.
   We use exponential backoff + jitter for resilience.
@@ -71,8 +87,19 @@ import requests
 DEFAULT_BASE_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
 BACKUP_BASE_URL = "https://gdcdyn.interactivebrokers.com/AccountManagement/FlexWebService"
 
-# IBKR: max ~1 request/sec per token across SendRequest + GetStatement combined.
-_DEFAULT_POST_SEND_DELAY_SEC = 1.25
+# IBKR Campus: SendRequest + GetStatement share one token bucket (~1 req/s, max 10/min).
+_DEFAULT_POST_SEND_DELAY_SEC = 3.0
+
+_DEFAULT_USER_AGENT = (
+    "ls-algo-ibkr_flex/1.0 (+https://github.com/GoldmanDrew/ls-algo) "
+    "(IBKR Flex Web Service; see Campus User-Agent requirement)"
+)
+
+
+def _flex_http_headers() -> dict[str, str]:
+    """IBKR requires a User-Agent on all Flex Web Service HTTP requests."""
+    ua = os.getenv("IBKR_FLEX_USER_AGENT", _DEFAULT_USER_AGENT).strip()
+    return {"User-Agent": ua}
 
 # Error codes that mean "not ready yet; keep polling with the same reference code"
 # (see https://www.ibkrguides.com/adminportal/performanceandstatements/flex3error.htm).
@@ -219,7 +246,7 @@ def _requests_get_with_1018_backoff(
     last_err = None
     for attempt in range(1, max_attempts + 1):
         try:
-            r = requests.get(url, params=params, timeout=timeout)
+            r = requests.get(url, params=params, timeout=timeout, headers=_flex_http_headers())
             r.raise_for_status()
             text = r.text
 
@@ -396,7 +423,8 @@ def fetch_and_save(
             # Gentle backoff while IBKR is still generating (1019): reduces request rate
             # and avoids hammering the same reference when "try again shortly" applies.
             poll_n += 1
-            sleep_sec = min(30.0, poll_every_sec + 0.08 * min(elapsed, 600.0))
+            min_poll = float(os.getenv("IBKR_FLEX_MIN_POLL_SEC", "6.5"))
+            sleep_sec = max(min_poll, min(30.0, poll_every_sec + 0.08 * min(elapsed, 600.0)))
             if poll_n % 12 == 0:
                 print(
                     f"[FLEX] still waiting on {q.name} — {elapsed:.0f}s / {max_wait_sec:.0f}s "
@@ -438,7 +466,7 @@ def main() -> int:
         "--timeout",
         type=float,
         default=float(os.getenv("IBKR_FLEX_TIMEOUT_SEC", "180")),
-        help="max wait per report seconds (flex_trades also uses IBKR_FLEX_TRADES_TIMEOUT_SEC floor, default 10800)",
+        help="max wait per report seconds (flex_trades also uses IBKR_FLEX_TRADES_TIMEOUT_SEC floor, default 3600)",
     )
     args = ap.parse_args()
 
@@ -478,8 +506,8 @@ def main() -> int:
     for q in queries:
         timeout = args.timeout
         if q.name == "flex_trades":
-            trades_floor = float(os.getenv("IBKR_FLEX_TRADES_TIMEOUT_SEC", "10800"))
-            timeout = max(timeout, trades_floor)  # 1019 often lasts 60–120+ min on very large trade queries
+            trades_floor = float(os.getenv("IBKR_FLEX_TRADES_TIMEOUT_SEC", "3600"))
+            timeout = max(timeout, trades_floor)
         if q.name == "flex_borrow_fee_details":
             timeout = max(timeout, 300.0)  # borrow details sometimes slower than cash/positions
 
@@ -494,7 +522,8 @@ def main() -> int:
             enable_stuck_1019_renew=(q.name == "flex_trades"),
         )
         print(f"[FLEX] wrote {p}")
-        time.sleep(3)
+        # Space out SendRequest for the next query vs IBKR ~10 Flex calls/min per token.
+        time.sleep(float(os.getenv("IBKR_FLEX_INTER_QUERY_SLEEP_SEC", "6.0")))
 
     return 0
 
