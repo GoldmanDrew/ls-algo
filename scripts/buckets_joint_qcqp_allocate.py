@@ -360,6 +360,12 @@ def run_joint_qcqp_single(
     mu_used_override: Mapping[tuple[str, str], float] | None = None,
     sigma_eff_override: Mapping[tuple[str, str], float] | None = None,
     bucket_max_pair_weight_override: Mapping[str, Any] | None = None,
+    # G9 diversification knobs (forwarded to DCQ when supported).
+    entropy_lambda: float = 0.0,
+    entropy_reference: str = "prior_w_pre",
+    edge_temperature: float = 1.0,
+    mv_lambda: float = 0.0,
+    eff_n_min_pairs: float | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, float], dict[tuple[str, str], float]]:
     """Run a single joint QCQP solve.
 
@@ -411,6 +417,11 @@ def run_joint_qcqp_single(
         "prev_pair_weights": dict(prev_pair_weights) if prev_pair_weights else None,
         "mu_used_override": dict(mu_used_override) if mu_used_override else None,
         "sigma_eff_override": dict(sigma_eff_override) if sigma_eff_override else None,
+        "entropy_lambda": float(entropy_lambda),
+        "entropy_reference": str(entropy_reference),
+        "edge_temperature": float(edge_temperature),
+        "mv_lambda": float(mv_lambda),
+        "eff_n_min_pairs": float(eff_n_min_pairs) if eff_n_min_pairs is not None else None,
     }
     _joint_kw = filter_callable_kwargs(pair_weights_qcqp_joint, _full_joint_kw)
     _dropped = set(_full_joint_kw) - set(_joint_kw)
@@ -438,3 +449,147 @@ def run_joint_qcqp_single(
         norm_sym=norm_sym,
     )
     return pair_frac_book, pair_weights_by_bucket, diag_by_bucket, joint_meta, pw_j, pf_j
+
+
+def write_positions_md(
+    out_dir: Path | str,
+    *,
+    config_name: str,
+    joint_meta: Mapping[str, Any],
+    pair_book_weights: pd.DataFrame,
+    perf: Mapping[str, Any] | None = None,
+    top_n: int = 30,
+) -> Path:
+    """Write a single-file human-readable summary of book positions for one run.
+
+    ``pair_book_weights`` should be the long-format frame produced by the joint
+    cell with at least the columns ``[bucket, etf, underlying, w_book]``;
+    optional columns (``mu_used``, ``sigma_eff``, ``q_prior``, ``n_obs_decay``)
+    are surfaced when present. The output file is written to
+    ``<out_dir>/positions.md`` and overwrites any prior content.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    def _df_to_md(d: pd.DataFrame) -> str:
+        """Render DataFrame as a markdown pipe table without requiring tabulate."""
+        cols = [str(c) for c in d.columns]
+        widths = [max(len(c), *(len(str(v)) for v in d[c].astype(str).tolist())) for c in cols]
+        out: list[str] = []
+        out.append("| " + " | ".join(c.ljust(w) for c, w in zip(cols, widths)) + " |")
+        out.append("| " + " | ".join("-" * w for w in widths) + " |")
+        for _, row in d.iterrows():
+            out.append("| " + " | ".join(str(row[c]).ljust(w) for c, w in zip(cols, widths)) + " |")
+        return "\n".join(out)
+
+    df = pd.DataFrame(pair_book_weights).copy() if pair_book_weights is not None else pd.DataFrame()
+    if "w_book" not in df.columns:
+        # Be defensive about column naming.
+        for alt in ("w_book_post", "w_post_pair_book", "weight"):
+            if alt in df.columns:
+                df = df.rename(columns={alt: "w_book"})
+                break
+    if df.empty:
+        text = f"# positions: {config_name}\n\n_(no pairs solved)_\n"
+        path = out_dir / "positions.md"
+        path.write_text(text, encoding="utf-8")
+        return path
+    df = df.sort_values("w_book", ascending=False).reset_index(drop=True)
+
+    def _fmt_pct(x: Any) -> str:
+        try:
+            return f"{100.0 * float(x):.2f}%"
+        except (TypeError, ValueError):
+            return ""
+
+    def _fmt_num(x: Any, nd: int = 4) -> str:
+        try:
+            return f"{float(x):.{nd}f}"
+        except (TypeError, ValueError):
+            return ""
+
+    sleeve_totals = joint_meta.get("sleeve_totals", {}) or {}
+    n_active = int(joint_meta.get("n_pairs_active", int((df["w_book"] > 1e-12).sum())))
+    lines: list[str] = []
+    lines.append(f"# positions: {config_name}")
+    lines.append("")
+    lines.append("## solve")
+    lines.append(f"- status: `{joint_meta.get('status')}` (primary `{joint_meta.get('primary_status')}`)")
+    if joint_meta.get("fallback_used"):
+        lines.append(f"- fallback: `{joint_meta.get('joint_fallback_kind')}`")
+    lines.append(f"- solver: `{joint_meta.get('solver')}`")
+    lines.append(
+        f"- sigma_p_book: {_fmt_pct(joint_meta.get('sigma_p_book_annual'))}"
+        f" (target {_fmt_pct(joint_meta.get('sigma_target_annual'))})"
+    )
+    lines.append("")
+    lines.append("## diversification")
+    lines.append(f"- n_pairs_active: **{n_active}** / {int(joint_meta.get('n_pairs', len(df)))}")
+    lines.append(f"- eff_n_pair: **{_fmt_num(joint_meta.get('eff_n_pair'), 2)}**")
+    lines.append(f"- top1_pair_share: {_fmt_pct(joint_meta.get('top1_pair_share'))}")
+    lines.append(f"- top5_pair_share: {_fmt_pct(joint_meta.get('top5_pair_share'))}")
+    lines.append(f"- hhi_pair: {_fmt_num(joint_meta.get('hhi_pair'), 4)}")
+    lines.append(f"- gini_pair: {_fmt_num(joint_meta.get('gini_pair'), 3)}")
+    lines.append("")
+    lines.append("## knobs")
+    for k in (
+        "entropy_lambda", "entropy_reference", "edge_temperature", "mv_lambda",
+        "eff_n_min_pairs", "weight_ridge_lambda", "mu_shrink_intensity",
+        "turnover_lambda", "confidence_haircut",
+    ):
+        if k in joint_meta:
+            lines.append(f"- {k}: `{joint_meta.get(k)}`")
+    lines.append("")
+    if sleeve_totals:
+        lines.append("## sleeve totals")
+        for b, v in sleeve_totals.items():
+            lines.append(f"- {b}: {_fmt_pct(v)}")
+        lines.append("")
+    if perf:
+        _pct_keys = {"CAGR", "Vol", "Max DD", "Max_DD"}
+        _num_keys = {"Sharpe", "Sortino", "Calmar"}
+        lines.append("## perf")
+        for k in ("CAGR", "Vol", "Sharpe", "Max DD", "Max_DD", "Sortino", "Calmar"):
+            if k in perf:
+                v = perf[k]
+                if k in _pct_keys:
+                    lines.append(f"- {k}: {_fmt_pct(v)}")
+                elif k in _num_keys:
+                    lines.append(f"- {k}: {_fmt_num(v, 2)}")
+                else:
+                    lines.append(f"- {k}: {v}")
+        lines.append("")
+
+    cols_pref = ["bucket", "etf", "underlying", "w_book", "mu_used",
+                 "sigma_eff", "q_prior", "n_obs_decay"]
+    show_cols = [c for c in cols_pref if c in df.columns]
+    head_n = max(int(top_n), 1)
+    head = df.head(head_n)[show_cols].copy()
+    if "w_book" in head.columns:
+        head["w_book"] = head["w_book"].apply(_fmt_pct)
+    for c in ("mu_used", "sigma_eff", "q_prior"):
+        if c in head.columns:
+            head[c] = head[c].apply(lambda x: _fmt_num(x, 3))
+    if "n_obs_decay" in head.columns:
+        head["n_obs_decay"] = head["n_obs_decay"].apply(
+            lambda x: f"{int(x)}" if pd.notna(x) else ""
+        )
+    lines.append(f"## top {head_n} positions")
+    lines.append(_df_to_md(head))
+    lines.append("")
+
+    nz = df[df["w_book"] > 1e-12]
+    if len(nz) > head_n:
+        tail = nz.tail(min(10, len(nz) - head_n))[show_cols].copy()
+        if "w_book" in tail.columns:
+            tail["w_book"] = tail["w_book"].apply(_fmt_pct)
+        for c in ("mu_used", "sigma_eff", "q_prior"):
+            if c in tail.columns:
+                tail[c] = tail[c].apply(lambda x: _fmt_num(x, 3))
+        lines.append("## smallest active positions (long tail)")
+        lines.append(_df_to_md(tail))
+        lines.append("")
+
+    path = out_dir / "positions.md"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
