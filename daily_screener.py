@@ -290,7 +290,9 @@ INVERSE_ETF_UNIVERSE = [
     ("ETHD", -2, "ETH"),  ("CRCD", -2, "CRCL"), ("CORD", -2, "CRWV"), ("TSLQ", -2, "TSLA"),
     ("ZSL",  -2, "SLV"),  ("SQQQ", -3, "NDX"),  ("SPXS", -3, "SPX"),  ("TZA",  -3, "RUT"),
     ("SOXS", -3, "SOX"),  ("FAZ",  -3, "FIN"),   ("LABD", -3, "BIOTECH"),
-    ("TECS", -3, "TECH"), ("SDOW", -3, "DJIA"), ("DUST", -3, "GDX"),
+    ("TECS", -3, "TECH"), ("SDOW", -3, "DJIA"),
+    # DUST: -2× daily inverse gold miners (NYSE Arca Gold Miners Index); GDX hedge proxy.
+    ("DUST", -2, "GDX"),
     ("WEBS", -3, "TECH"), ("FNGD", -3, "TECH"),
     ("REW",  -2, "TECH"), ("SKF",  -2, "FIN"),   ("SPXU", -3, "SPX"),
     ("DUG",  -2, "XLE"),  ("DRIP", -2, "XOP"),  ("TMV",  -3, "TLT"),
