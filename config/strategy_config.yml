@@ -20,6 +20,27 @@ strategy:
     - AXP
     - APLD
   beta_cutoff: 1.55
+  # Book-level gross caps after sleeve budgets (aligned with backtest CFG / joint book limits).
+  # Preserves total allocated gross while enforcing per-pair, per-underlying, and liquidity ceilings.
+  gross_sizing_caps:
+    enabled: true
+    max_pair_weight_cap: 0.05
+    max_underlying_weight_cap: 0.11
+    aum_use_pct: 0.02
+    short_avail_use_pct: 0.25
+    missing_shares_cap: 0.02
+    shares_outstanding_use_frac: 0.20
+    median_daily_volume_use_pct: 0.10
+  # One-shot covariance penalty on final post-cap gross_target_usd; tilts mass away from
+  # underlyings with high marginal contribution to portfolio variance, then re-applies the
+  # same gross_sizing_caps so pair / underlying / liquidity ceilings still bind.
+  covariance_balance:
+    enabled: false
+    lookback_days: 252
+    min_obs: 60
+    shrink: 0.35
+    penalty_strength: 0.85
+    max_relative_shift: 0.50
 
 paths:
   screened_csv: data/etf_screened_today.csv
@@ -31,6 +52,9 @@ paths:
   equity_snapshot_csv: data/equity_snapshot.csv
   flow_ledger_csv: data/flow_ledger.csv
   etf_shares_outstanding_csv: ../etf-dashboard/data/etf_shares_outstanding.csv
+  # Optional CSV (date index, columns = underlying tickers) of daily prices OR log returns
+  # consumed by strategy.covariance_balance. Missing file → covariance_balance silently no-ops.
+  underlying_returns_csv: data/underlying_returns.csv
   # Sticky core (bucket-1) net-decay gate; updated each generate_trade_plan run when hysteresis is on
   core_leveraged_decay_state_json: data/core_leveraged_decay_state.json
   # Operator-managed corporate-action splits override CSV. Schema:
@@ -114,6 +138,10 @@ portfolio:
   # Shared weighting defaults — overridden per-sleeve below
   _weighting_defaults: &weighting_defaults
     method: "decay_score"             # "equal" or "decay_score"
+    # Sizing score: "blended_decay" (blended_gross_decay) or "net_edge" (net_edge_p50_annual; B4: bucket4_net_edge_annual).
+    # Same borrow term as decay: raw = signal - borrow_aversion * borrow_current.
+    sizing_signal: "net_edge"
+    sizing_edge_column: null          # optional override; null = sleeve default column
     realized_trust_days: 252          # full trust after 1yr of OLS data
     borrow_blend_current: 0.5        # weight on current vs historical borrow
     maturity_full_days: 252           # linear ramp: ETF needs 1yr history for full weight

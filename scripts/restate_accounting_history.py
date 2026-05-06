@@ -51,10 +51,17 @@ def run_accounting(run_date: str) -> None:
     subprocess.run(cmd, cwd=PROJECT_ROOT, check=True)
 
 
+def _skip_pnl_history_run_date(run_date: str) -> bool:
+    """Saturday Flex snapshots are omitted from pnl_history (use next weekday row)."""
+    return datetime.strptime(run_date, "%Y-%m-%d").weekday() == 5
+
+
 def rebuild_pnl_history(run_dates: list[str]) -> None:
     rows: list[dict] = []
     for run_date in run_dates:
         if run_date < START_DATE:
+            continue
+        if _skip_pnl_history_run_date(run_date):
             continue
         totals_path = RUNS_ROOT / run_date / "accounting" / "totals.json"
         if not totals_path.exists():

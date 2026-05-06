@@ -685,6 +685,11 @@ def make_attribution_plot(history: pd.DataFrame) -> Path:
     return PLOT_ATTRIBUTION_PNG
 
 
+def _omit_from_pnl_history_calendar_date(dt: pd.Timestamp) -> bool:
+    """Saturday run folders are excluded from pnl_history rows."""
+    return int(dt.weekday()) == 5
+
+
 def enrich_history_bucket_cols_from_runs(hist: pd.DataFrame) -> pd.DataFrame:
     """
     Fill pnl_bucket_* (and total_pnl) from data/runs/<date>/accounting for every
@@ -704,6 +709,8 @@ def enrich_history_bucket_cols_from_runs(hist: pd.DataFrame) -> pd.DataFrame:
         except (ValueError, TypeError):
             continue
         if dt.normalize() < start_dt.normalize():
+            continue
+        if _omit_from_pnl_history_calendar_date(dt.normalize()):
             continue
         triple = read_bucket_pnl_from_run(ds)
         if triple is None:
@@ -782,10 +789,13 @@ def update_pnl_history(
         ]
     )
 
+    run_dt = datetime.strptime(run_date, "%Y-%m-%d")
+    skip_row = run_dt.weekday() == 5  # Saturday: never persist to pnl_history
+
     if PNL_HISTORY_CSV.exists():
         hist = pd.read_csv(PNL_HISTORY_CSV)
         if "date" not in hist.columns:
-            hist = row
+            hist = row if not skip_row else pd.DataFrame(columns=row.columns)
         else:
             hist["date"] = hist["date"].astype(str)
             for c in PNL_HISTORY_BUCKET_COLS:
@@ -794,9 +804,10 @@ def update_pnl_history(
             if "total_pnl" not in hist.columns:
                 hist["total_pnl"] = np.nan
             hist = hist[hist["date"] != run_date]
-            hist = pd.concat([hist, row], ignore_index=True)
+            if not skip_row:
+                hist = pd.concat([hist, row], ignore_index=True)
     else:
-        hist = row
+        hist = row if not skip_row else pd.DataFrame(columns=row.columns)
 
     hist["date"] = pd.to_datetime(hist["date"], errors="coerce")
     hist = hist.dropna(subset=["date"]).sort_values("date")
@@ -805,6 +816,7 @@ def update_pnl_history(
     hist["total_pnl"] = pd.to_numeric(hist["total_pnl"], errors="coerce")
 
     hist = enrich_history_bucket_cols_from_runs(hist)
+    hist = hist[hist["date"].dt.weekday != 5].copy()
 
     hist_out = hist.copy()
     hist_out["date"] = hist_out["date"].dt.strftime("%Y-%m-%d")

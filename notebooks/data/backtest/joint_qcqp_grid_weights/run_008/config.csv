@@ -1,2 +1,2 @@
-run_id,book_sigma_target,book_max_pair,book_max_underlying,weight_ridge_lambda,w_min_floor_frac
-8,0.12,0.25,0.2,0.5,0.2
+run_id,book_sigma_target,book_max_pair,book_max_underlying,weight_ridge_lambda,w_min_floor_frac,mu_shrink_intensity,sleeve_cap_max_pair_frac,sleeve_cap_max_underlying_frac,confidence_haircut,conf_floor,n_obs_full,turnover_lambda,turnover_l1_max,ema_halflife_weeks,min_decay_obs,min_beta_obs
+8,0.12,0.1,0.1,0.0,0.0,0.25,0.25,0.2,True,0.25,252,0.0,,6.0,120,120

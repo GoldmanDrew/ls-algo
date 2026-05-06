@@ -1,9 +1,9 @@
 {
   "run_date": "2026-03-02",
   "fifo_summary_present": true,
-  "total_realized_pnl": -3529.793395320001,
-  "total_unrealized_pnl": -283.294707999994,
-  "total_dividends": 32.99,
+  "total_realized_pnl": -3529.7933953200027,
+  "total_unrealized_pnl": -283.29470800000126,
+  "total_dividends": 32.989999999999995,
   "total_withholding_tax": 0.0,
   "total_pil_dividends": -3926.0399999999995,
   "total_borrow_fees": -1437.6799999999998,
@@ -47,7 +47,7 @@
   "bucket_pnl": {
     "bucket_4": 185.5307903849366,
     "bucket_3": -139.62684026348623,
-    "bucket_1": -284.16523438110084,
-    "bucket_2": -8625.906819060347
+    "bucket_1": -2836.799398564037,
+    "bucket_2": -6073.272654877412
   }
 }

@@ -1,13 +1,13 @@
 {
   "run_date": "2026-04-04",
   "fifo_summary_present": true,
-  "total_realized_pnl": 4756.614673499998,
+  "total_realized_pnl": 4756.614673500002,
   "total_unrealized_pnl": 16204.844817999998,
-  "total_dividends": 448.46999999999997,
+  "total_dividends": 448.47,
   "total_withholding_tax": 0.0,
   "total_pil_dividends": -13394.21,
   "total_borrow_fees": -5830.55,
-  "total_short_credit_interest": 872.6400000000001,
+  "total_short_credit_interest": 872.6400000000002,
   "total_other_fees": 0.0,
   "total_bond_interest": 0.0,
   "total_pnl": 3057.8094914999965,
@@ -45,9 +45,9 @@
   "bucket_state_path": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\accounting\\underlying_bucket_state.csv",
   "bucket_realized_underlyings_from_trade_timing": 143,
   "bucket_pnl": {
-    "bucket_1": 14092.785582970806,
+    "bucket_1": 10503.448406522606,
     "bucket_4": 671.38988399,
-    "bucket_3": -5768.990553693552,
-    "bucket_2": -5937.375421767253
+    "bucket_2": -2348.038245319054,
+    "bucket_3": -5768.990553693552
   }
 }

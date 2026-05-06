@@ -8,8 +8,9 @@ Output columns (exact headers): **Date**, **Cumulative PnL**, **Daily PnL**,
 
 - **Cumulative PnL** is ``total_pnl`` rebased to zero on the anchor date (default
   2026-02-27, same as ``run_eod_pnl_email.START_DATE``).
-- **Daily PnL** is the day-over-day change of that rebased cumulative (first row
-  has no prior day, so Daily PnL is blank).
+- **Daily PnL** is the day-over-day change of rebased cumulative between **adjacent
+  rows** in ``pnl_history.csv``. Saturday snapshots are omitted from that ledger
+  so the next weekday (typically Monday) carries the correct step vs Friday.
 - **Net Capital Deployed** = sum(long ``positionValue_base``) − sum(|short|) for
   symbols listed in ``data/runs/<date>/accounting/pnl_by_symbol.csv`` only.
 

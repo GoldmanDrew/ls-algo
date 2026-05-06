@@ -3,14 +3,14 @@
   "fifo_summary_present": true,
   "total_realized_pnl": 3650.040852119999,
   "total_unrealized_pnl": -374.84474000000046,
-  "total_dividends": 251.91000000000003,
+  "total_dividends": 251.91,
   "total_withholding_tax": 0.0,
   "total_pil_dividends": -9373.91,
   "total_borrow_fees": -3806.63,
   "total_short_credit_interest": 872.6400000000002,
   "total_other_fees": 0.0,
   "total_bond_interest": 0.0,
-  "total_pnl": -8780.793887880005,
+  "total_pnl": -8780.79388788002,
   "excluded_cash_interest_base": -759.1551274,
   "borrow_mode": "borrow_fee_details_cumulative_by_symbol",
   "borrow_total_account_source": -3806.6299999999997,
@@ -45,9 +45,9 @@
   "bucket_state_path": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\accounting\\underlying_bucket_state.csv",
   "bucket_realized_underlyings_from_trade_timing": 126,
   "bucket_pnl": {
-    "bucket_1": 8780.92105909755,
+    "bucket_1": 5036.081228696619,
     "bucket_4": 671.38988399,
-    "bucket_2": -7261.959545322221,
+    "bucket_2": -3517.11971492129,
     "bucket_3": -10971.145285645329
   }
 }

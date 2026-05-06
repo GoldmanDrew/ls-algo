@@ -208,6 +208,8 @@ new_pairs = [
     # 2026-05-05 Defiance + T-REX 2X long (AMKR, AXTI)
     ("AMKL", "AMKR"),  # Defiance Daily Target 2X Long AMKR
     ("AXTU", "AXTI"),  # T-REX 2X Long AXTI (REX / Tuttle; distinct from Tradr AXTX)
+    # 2026-05-06 Defiance 2X long (AMPX)
+    ("AMPU", "AMPX"),  # Defiance Daily Target 2X Long AMPX (Amprius Technologies)
 ]
 
 proshares_pairs_levered = [
@@ -231,6 +233,8 @@ graniteshares_pairs_leveraged = [
     ("FBYY", "META"), ("MTYY", "MSTR"), ("NVYY", "NVDA"), ("PLYY", "PLTR"),
     ("QBY",  "QBTS"), ("TQQY", "QQQ"),  ("RGYY", "RGTI"), ("RTYY", "RIOT"),
     ("SEMY", "SOXX"), ("SMYY", "SMCI"), ("YSPY", "SPY"),  ("TSYY", "TSLA"),
+    # YieldBOOST sector / duration (option income vs 3× sector proxies; spot for β/vol)
+    ("BIOY", "XBI"), ("FINY", "XLF"), ("FIYY", "TLT"), ("TECY", "XLK"),
 ]
 
 leverage_pairs_capped_accel = [
@@ -241,11 +245,14 @@ leverage_pairs_capped_accel = [
 # GraniteShares YieldBOOST (1x put-spread income overlay vs underlying) —
 # realized β lands in bucket_2 in screening, but these are not 2x LETFs.
 YIELDBOOST_BUCKET2_PAIRS = [
-    ("AMYY", "AMD"), ("AZYY", "AMZN"), ("BBYY", "BABA"), ("COYY", "COIN"),
+    ("AMYY", "AMD"), ("AZYY", "AMZN"), ("BBYY", "BABA"), ("BIOY", "XBI"),
+    ("COYY", "COIN"),
     ("CRY", "CRCL"), ("CWY", "CRWV"), ("HMYY", "HIMS"), ("HOYY", "HOOD"), ("IOYY", "IONQ"),
-    ("MAAY", "MARA"), ("FBYY", "META"), ("MTYY", "MSTR"), ("MUYY", "MU"),
+    ("MAAY", "MARA"), ("FBYY", "META"), ("FINY", "XLF"), ("FIYY", "TLT"),
+    ("MTYY", "MSTR"), ("MUYY", "MU"),
     ("NUGY", "GDX"), ("NVYY", "NVDA"), ("PLYY", "PLTR"), ("QBY", "QBTS"),
     ("RGYY", "RGTI"), ("RTYY", "RIOT"), ("SEMY", "SOXX"), ("SMYY", "SMCI"),
+    ("TECY", "XLK"),
     ("TMYY", "TSM"), ("TQQY", "QQQ"), ("TSYY", "TSLA"), ("XBTY", "IBIT"), ("XEY", "ETHA"),
     ("YSPY", "SPY"),
 ]

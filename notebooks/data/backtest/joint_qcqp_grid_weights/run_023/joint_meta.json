@@ -1,93 +1,104 @@
 {
   "status": "optimal",
+  "primary_status": "infeasible",
+  "joint_fallback_kind": "no_book_variance",
   "solver": "CLARABEL",
-  "fallback_used": false,
+  "fallback_used": true,
   "last_error": null,
-  "n_pairs": 241,
-  "sigma_p_book_annual": 0.19999999999395518,
-  "sigma_target_annual": 0.2,
-  "weight_ridge_lambda": 0.5,
-  "mu_shrink_intensity": 0.0,
+  "n_pairs": 148,
+  "sigma_p_book_annual": 0.6680273176751939,
+  "sigma_target_annual": 0.12,
+  "weight_ridge_lambda": 0.0,
+  "mu_shrink_intensity": 0.25,
   "sleeve_totals": {
-    "core_leveraged": 0.675,
-    "whitelist_stock": 0.20000000000000004,
+    "core_leveraged": 0.6750000000000002,
+    "whitelist_stock": 0.20000000000000007,
     "inverse_decay_bucket4": 0.125
   },
   "n_pairs_by_bucket": {
-    "core_leveraged": 216.0,
-    "whitelist_stock": 9.0,
-    "inverse_decay_bucket4": 16.0
+    "core_leveraged": 22.0,
+    "whitelist_stock": 7.0,
+    "inverse_decay_bucket4": 5.0
   },
   "rc_top": [
     {
       "bucket": "core_leveraged",
-      "etf": "CRMU",
-      "underlying": "CRML",
-      "weight": 0.10354535939709421,
-      "rc": 0.19302252917864784
-    },
-    {
-      "bucket": "core_leveraged",
-      "etf": "OPEG",
-      "underlying": "OPEN",
-      "weight": 0.056402025026268225,
-      "rc": 0.12632330180057125
-    },
-    {
-      "bucket": "core_leveraged",
-      "etf": "RCAX",
-      "underlying": "RCAT",
-      "weight": 0.09585455501438059,
-      "rc": 0.09863555919937816
-    },
-    {
-      "bucket": "whitelist_stock",
-      "etf": "XBTY",
-      "underlying": "IBIT",
-      "weight": 0.09317519151560374,
-      "rc": 0.09762527218888743
-    },
-    {
-      "bucket": "inverse_decay_bucket4",
-      "etf": "SMZ",
-      "underlying": "SMR",
-      "weight": 0.11877593354213907,
-      "rc": 0.09193644135895349
-    },
-    {
-      "bucket": "whitelist_stock",
-      "etf": "FBYY",
-      "underlying": "META",
-      "weight": 0.09728037543172603,
-      "rc": 0.09033361787752753
-    },
-    {
-      "bucket": "core_leveraged",
-      "etf": "SNXX",
-      "underlying": "SNDK",
-      "weight": 0.09867338378176702,
-      "rc": 0.06183568310918282
-    },
-    {
-      "bucket": "core_leveraged",
       "etf": "NVTX",
       "underlying": "NVTS",
-      "weight": 0.027321569173474364,
-      "rc": 0.054923353748626266
+      "weight": 0.09999999983600098,
+      "rc": 0.18469065666941883
     },
     {
       "bucket": "core_leveraged",
-      "etf": "LACG",
-      "underlying": "LAC",
-      "weight": 0.022595570482710298,
-      "rc": 0.02112500890260138
+      "etf": "IRE",
+      "underlying": "IREN",
+      "weight": 0.09999999978908407,
+      "rc": 0.1744113696677954
     },
     {
       "bucket": "core_leveraged",
-      "etf": "RDWU",
-      "underlying": "RDW",
-      "weight": 0.02802345627983257,
-      "rc": 0.01803351438487679
+      "etf": "SMU",
+      "underlying": "SMR",
+      "weight": 0.0999999997789837,
+      "rc": 0.15544483243865076
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "CLSX",
+      "underlying": "CLSK",
+      "weight": 0.09999999966540439,
+      "rc": 0.15316283093713134
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "ASTX",
+      "underlying": "ASTS",
+      "weight": 0.09999999981369462,
+      "rc": 0.15246919495717723
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "NBIG",
+      "underlying": "NBIS",
+      "weight": 0.099999994529909,
+      "rc": 0.1475441015541007
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "WULX",
+      "underlying": "WULF",
+      "weight": 0.07499999922719273,
+      "rc": 0.10454019154095348
+    },
+    {
+      "bucket": "whitelist_stock",
+      "etf": "SMYY",
+      "underlying": "SMCI",
+      "weight": 0.03999999996595929,
+      "rc": 0.0014064923808811197
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "NEBX",
+      "underlying": "NBIS",
+      "weight": 5.2171612061543005e-09,
+      "rc": 6.869648674523829e-09
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "OKLL",
+      "underlying": "OKLO",
+      "weight": 1.4298919970302956e-09,
+      "rc": 2.064548657243107e-09
     }
-  ]
+  ],
+  "n_pairs_dropped_by_history": 171,
+  "min_decay_obs": 120,
+  "min_beta_obs": 120,
+  "confidence_haircut": true,
+  "conf_floor": 0.25,
+  "ema_halflife_weeks": null,
+  "turnover_lambda": 4.0,
+  "turnover_l1_max": null,
+  "anchor_used": true
 }

@@ -1,93 +1,104 @@
 {
-  "status": "optimal_inaccurate",
+  "status": "optimal",
+  "primary_status": "infeasible",
+  "joint_fallback_kind": "no_book_variance",
   "solver": "CLARABEL",
-  "fallback_used": false,
+  "fallback_used": true,
   "last_error": null,
-  "n_pairs": 241,
-  "sigma_p_book_annual": 0.120000000002472,
+  "n_pairs": 148,
+  "sigma_p_book_annual": 0.6680273176751939,
   "sigma_target_annual": 0.12,
   "weight_ridge_lambda": 0.0,
-  "mu_shrink_intensity": 0.0,
+  "mu_shrink_intensity": 0.25,
   "sleeve_totals": {
-    "core_leveraged": 0.675,
-    "whitelist_stock": 0.20000000000000004,
-    "inverse_decay_bucket4": 0.12499999999999999
+    "core_leveraged": 0.6750000000000002,
+    "whitelist_stock": 0.20000000000000007,
+    "inverse_decay_bucket4": 0.125
   },
   "n_pairs_by_bucket": {
-    "core_leveraged": 216.0,
-    "whitelist_stock": 9.0,
-    "inverse_decay_bucket4": 16.0
+    "core_leveraged": 22.0,
+    "whitelist_stock": 7.0,
+    "inverse_decay_bucket4": 5.0
   },
   "rc_top": [
     {
-      "bucket": "whitelist_stock",
-      "etf": "FBYY",
-      "underlying": "META",
-      "weight": 0.13159988423797814,
-      "rc": 0.2404417729330419
+      "bucket": "core_leveraged",
+      "etf": "NVTX",
+      "underlying": "NVTS",
+      "weight": 0.09999999983600098,
+      "rc": 0.18469065666941883
     },
     {
-      "bucket": "inverse_decay_bucket4",
-      "etf": "SMZ",
+      "bucket": "core_leveraged",
+      "etf": "IRE",
+      "underlying": "IREN",
+      "weight": 0.09999999978908407,
+      "rc": 0.1744113696677954
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "SMU",
       "underlying": "SMR",
-      "weight": 0.08613625936335505,
-      "rc": 0.1412764477764604
+      "weight": 0.0999999997789837,
+      "rc": 0.15544483243865076
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "CLSX",
+      "underlying": "CLSK",
+      "weight": 0.09999999966540439,
+      "rc": 0.15316283093713134
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "ASTX",
+      "underlying": "ASTS",
+      "weight": 0.09999999981369462,
+      "rc": 0.15246919495717723
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "NBIG",
+      "underlying": "NBIS",
+      "weight": 0.099999994529909,
+      "rc": 0.1475441015541007
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "WULX",
+      "underlying": "WULF",
+      "weight": 0.07499999922719273,
+      "rc": 0.10454019154095348
     },
     {
       "bucket": "whitelist_stock",
-      "etf": "XBTY",
-      "underlying": "IBIT",
-      "weight": 0.061526213666901766,
-      "rc": 0.11744942757219623
+      "etf": "SMYY",
+      "underlying": "SMCI",
+      "weight": 0.03999999996595929,
+      "rc": 0.0014064923808811197
     },
     {
       "bucket": "core_leveraged",
-      "etf": "SNXX",
-      "underlying": "SNDK",
-      "weight": 0.0320438373749947,
-      "rc": 0.031946208659724196
+      "etf": "NEBX",
+      "underlying": "NBIS",
+      "weight": 5.2171612061543005e-09,
+      "rc": 6.869648674523829e-09
     },
     {
       "bucket": "core_leveraged",
-      "etf": "CRMU",
-      "underlying": "CRML",
-      "weight": 0.016428919362335474,
-      "rc": 0.03068409046455288
-    },
-    {
-      "bucket": "inverse_decay_bucket4",
-      "etf": "CLSZ",
-      "underlying": "CLSK",
-      "weight": 0.02724548337532025,
-      "rc": 0.03015420917420024
-    },
-    {
-      "bucket": "core_leveraged",
-      "etf": "FBL",
-      "underlying": "META",
-      "weight": 0.044771700735232345,
-      "rc": 0.019380676694544133
-    },
-    {
-      "bucket": "core_leveraged",
-      "etf": "RCAX",
-      "underlying": "RCAT",
-      "weight": 0.01501599150873896,
-      "rc": 0.01919263597684036
-    },
-    {
-      "bucket": "core_leveraged",
-      "etf": "METU",
-      "underlying": "META",
-      "weight": 0.03825203838025024,
-      "rc": 0.014904590673140355
-    },
-    {
-      "bucket": "core_leveraged",
-      "etf": "BABU",
-      "underlying": "BABA",
-      "weight": 0.032171910183579074,
-      "rc": 0.01426585935439086
+      "etf": "OKLL",
+      "underlying": "OKLO",
+      "weight": 1.4298919970302956e-09,
+      "rc": 2.064548657243107e-09
     }
-  ]
+  ],
+  "n_pairs_dropped_by_history": 171,
+  "min_decay_obs": 0,
+  "min_beta_obs": 120,
+  "confidence_haircut": true,
+  "conf_floor": 0.25,
+  "ema_halflife_weeks": 6.0,
+  "turnover_lambda": 0.0,
+  "turnover_l1_max": null,
+  "anchor_used": true
 }
