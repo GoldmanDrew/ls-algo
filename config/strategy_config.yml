@@ -33,6 +33,14 @@ paths:
   etf_shares_outstanding_csv: ../etf-dashboard/data/etf_shares_outstanding.csv
   # Sticky core (bucket-1) net-decay gate; updated each generate_trade_plan run when hysteresis is on
   core_leveraged_decay_state_json: data/core_leveraged_decay_state.json
+  # Operator-managed corporate-action splits override CSV. Schema:
+  #   symbol,ex_date,numerator,denominator,source,note
+  # 1-for-10 reverse split:  symbol=BAIG,ex_date=2026-05-05,numerator=1,denominator=10
+  # 5-for-1 forward split:   symbol=NVDA,ex_date=2024-06-10,numerator=5,denominator=1
+  # Missing file is fine — sources will rely on Yahoo events / Flex CA / heuristic.
+  splits_overrides_csv: data/splits_overrides.csv
+  # Auto-populated by ibkr_accounting from Flex <CorporateAction type="RS"> rows.
+  flex_splits_csv: data/splits_from_flex.csv
 
 execution:
   parallel_n: 25
@@ -76,6 +84,20 @@ screener:
       hard_borrow_cap: 1.20
   min_beta_days: 5
   max_stale_days: 5             # drop ETFs with no trade in last N calendar days (delisted/liquidated)
+  # Vol-ratio data-quality gate. ``vol_ratio_value = vol_etf / (|β| · vol_und)``;
+  # an ETF with Beta=2 should sit near 1.0. Outliers (e.g. unhandled reverse
+  # splits inflating vol_etf) flip ``vol_ratio_outlier=True`` and are forced
+  # into purgatory until resolved. Missing keys → safe defaults (0.5..1.5).
+  vol_ratio_gate:
+    enabled: true
+    diagnostic_min: 0.20         # console warn-band lower bound (looser)
+    diagnostic_max: 1.75         # console warn-band upper bound (looser)
+    purgatory_on_outlier: true   # force purgatory on outliers
+    by_abs_beta:
+      "1.0": {min: 0.5, max: 1.5}
+      "2.0": {min: 0.5, max: 1.5}
+      "3.0": {min: 0.5, max: 1.5}
+    default: {min: 0.5, max: 1.5}
 
 portfolio:
   # Rebalance thresholds — skip small trades to reduce costs

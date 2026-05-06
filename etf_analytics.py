@@ -51,6 +51,20 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+# Centralised multi-source split-detection pipeline. Local copies of the
+# split detector logic that used to live in this module have been removed —
+# both this file and ``daily_screener.py`` go through ``splits.py`` now so
+# the two paths can never drift in their handling of corporate actions.
+from splits import (
+    _INTEGER_SPLIT_FACTORS,
+    _SPLIT_RATIOS,
+    _SPLIT_TOL,
+    _JUMP_FLOOR,
+    _CONTEXT_WINDOW,
+    _ZSCORE_THRESHOLD,
+    clean_split_artifacts,
+)
+
 TRADING_DAYS = 252
 
 
@@ -58,117 +72,16 @@ TRADING_DAYS = 252
 # Total return price series (per-ticker)
 # ──────────────────────────────────────────────
 
-# IMPORTANT (aligned with daily_screener):
-# Restrict to integer split factors and their reciprocals only.
-# Broad fractional grids can misclassify normal large ETF moves as "splits",
-# which then distorts beta estimates.
-_INTEGER_SPLIT_FACTORS = (2, 3, 4, 5, 10, 15, 20, 25, 50)
-_SPLIT_RATIOS = sorted(
-    set(list(_INTEGER_SPLIT_FACTORS) + [1.0 / f for f in _INTEGER_SPLIT_FACTORS]),
-    reverse=True,
-)
 
-_SPLIT_TOL = 0.005         # ±0.5 % tolerance around each ratio
-_JUMP_FLOOR = 0.40         # ignore daily moves < 40 %
-_CONTEXT_WINDOW = 20       # days of context for local vol estimate
-_ZSCORE_THRESHOLD = 4.0    # jump must be > 4σ vs local vol to be a split
+def _clean_split_artifacts(prices: pd.Series, ticker: str | None = None) -> pd.Series:
+    """Back-compat shim — delegates to ``splits.clean_split_artifacts``.
 
-
-def _clean_split_artifacts(prices: pd.Series) -> pd.Series:
-    """Detect and correct unadjusted splits/reverse-splits in a price series.
-
-    Approach:  walk through daily price ratios (p[t] / p[t-1]).
-    If a ratio matches a known split factor (within tolerance) AND
-    the jump is an extreme outlier relative to local volatility
-    (z-score > 4), correct it by dividing all subsequent prices by
-    the split factor.
-
-    The z-score approach (instead of a fixed neighbor threshold) handles
-    volatile penny/crypto stocks correctly: a 20:1 reverse split is
-    still 10+ sigma even on a stock with 200% annualized vol.
-
-    Returns a corrected copy of the series.
+    The new multi-source pipeline includes Yahoo ``events.splits`` (when
+    fed by the caller), the operator-managed CSV, legacy in-code
+    overrides, and the heuristic detector — with the off-by-one bug fixed
+    so the most-recent bar is always tested.
     """
-    if len(prices) < 3:
-        return prices.copy()
-
-    prices = prices.copy()
-    vals = prices.values.astype(float)
-
-    # Pre-compute daily log returns for z-score calculation
-    log_ratios = np.full(len(vals), np.nan)
-    for i in range(1, len(vals)):
-        if vals[i - 1] > 0 and np.isfinite(vals[i - 1]) and vals[i] > 0:
-            log_ratios[i] = np.log(vals[i] / vals[i - 1])
-
-    for i in range(1, len(vals) - 1):
-        if vals[i - 1] == 0 or not np.isfinite(vals[i - 1]):
-            continue
-        ratio = vals[i] / vals[i - 1]
-        daily_ret = ratio - 1.0
-
-        # Skip small moves — not a split
-        if abs(daily_ret) < _JUMP_FLOOR:
-            continue
-
-        # Check if this ratio matches a known split factor
-        matched_factor = None
-        for sf in _SPLIT_RATIOS:
-            if abs(ratio - sf) / sf < _SPLIT_TOL:
-                matched_factor = sf
-                break
-            # Also check inverse (reverse-split looks like 1/sf)
-            inv_sf = 1.0 / sf
-            if abs(ratio - inv_sf) / inv_sf < _SPLIT_TOL:
-                matched_factor = inv_sf
-                break
-
-        # Yahoo adjclose on reverse-split ex-days can be ~12–25% away from an exact
-        # 10×/20× ratio vs prior close when the underlying gaps overnight (e.g.
-        # GraniteShares MSTP/SMCL 1-for-20, ex 2026-05-01). Tight relative tol misses.
-        if matched_factor is None and ratio > 0 and np.isfinite(ratio):
-            for sf in _INTEGER_SPLIT_FACTORS:
-                inv_sf = 1.0 / float(sf)
-                if sf >= 2 and abs(np.log(ratio / sf)) < 0.22:
-                    matched_factor = float(sf)
-                    break
-                if abs(np.log(ratio / inv_sf)) < 0.22:
-                    matched_factor = inv_sf
-                    break
-
-        if matched_factor is None:
-            continue
-
-        # Z-score test: is this jump an extreme outlier vs local vol?
-        # Use a window of returns EXCLUDING the candidate split day.
-        start = max(1, i - _CONTEXT_WINDOW)
-        end = min(len(log_ratios), i + _CONTEXT_WINDOW + 1)
-        context = [log_ratios[j] for j in range(start, end)
-                   if j != i and np.isfinite(log_ratios[j])]
-
-        if len(context) >= 5:
-            local_std = float(np.std(context))
-            if local_std > 0:
-                log_jump = abs(np.log(ratio))
-                zscore = log_jump / local_std
-                if zscore < _ZSCORE_THRESHOLD:
-                    # Jump is within normal vol range → real price move
-                    continue
-
-        # If we don't have enough context, fall back to accepting the
-        # correction (better to fix a split than leave 839% vol).
-
-        # Correct: divide everything from day i onward by the factor
-        vals[i:] /= matched_factor
-
-        # Recompute log_ratios for the corrected region so subsequent
-        # iterations see clean data
-        for j in range(max(1, i), min(len(vals), i + 2)):
-            if vals[j - 1] > 0 and vals[j] > 0:
-                log_ratios[j] = np.log(vals[j] / vals[j - 1])
-
-    prices.iloc[:] = vals
-    return prices
+    return clean_split_artifacts(prices, ticker=ticker)
 
 
 def _get_total_return_series(ticker: str, period: str = "2y") -> pd.Series:
@@ -177,9 +90,9 @@ def _get_total_return_series(ticker: str, period: str = "2y") -> pd.Series:
 
     Uses auto_adjust=True + repair=True so yfinance returns prices
     adjusted for both stock splits AND dividends, with Yahoo's own
-    split-repair logic applied.  Then runs _clean_split_artifacts()
+    split-repair logic applied.  Then runs ``splits.clean_split_artifacts``
     as a second safety net for cases where yfinance's repair is
-    incomplete or hasn't propagated yet.
+    incomplete or hasn't propagated yet (notably same-day reverse splits).
     """
     try:
         t = yf.Ticker(ticker)
@@ -189,7 +102,7 @@ def _get_total_return_series(ticker: str, period: str = "2y") -> pd.Series:
             return pd.Series(dtype=float, name=ticker)
 
         tr_price = df["Close"].dropna()
-        tr_price = _clean_split_artifacts(tr_price)
+        tr_price = clean_split_artifacts(tr_price, ticker=ticker)
         tr_price.name = ticker
         return tr_price
 
@@ -311,17 +224,20 @@ def _annualized_second_moment_log(
     min_days: int = 60,
     cap: float = _VOL_CAP_ANNUAL,
 ) -> float | None:
-    """σ = √( mean(log_return_t²) · 252 ).
+    """σ = √( mean(winsorized log_return_t²) · 252 ).
 
     The σ that makes ``0.5·|β|·|β−1|·σ²`` equal (in expectation) to the
     realized daily drag ``mean( β·ln(1+r_u) − ln(1+r_e) ) · 252`` under
-    a noise-free β× daily tracker. Three deliberate differences from
-    :func:`_annualized_vol`:
+    a noise-free β× daily tracker. Four deliberate properties:
 
     1. Log returns, not simple returns (matches the realized-drag form).
     2. Uncentered second moment — keeps μ² in, since it IS part of
        E[r²] in the Itô correction.
     3. Same 252 annualization factor used everywhere else.
+    4. Squared returns are winsorized at 1/99 (or wider for thin
+       histories) so a single uncaught corporate action cannot dominate
+       σ. Identical tier table to ``_compute_gross_decay_daily`` in
+       ``daily_screener``; for clean symbols the clip is a no-op.
     """
     tr = tr_series.dropna()
     if len(tr) < min_days + 1:
@@ -330,7 +246,19 @@ def _annualized_second_moment_log(
     r = r[np.isfinite(r)]
     if len(r) < min_days:
         return None
-    m2 = float((r ** 2).mean())
+    sq = (r ** 2).to_numpy(dtype=float)
+    n_sq = int(sq.size)
+    if n_sq == 0:
+        return None
+    if n_sq >= 100:
+        lo_p, hi_p = 1.0, 99.0
+    elif n_sq >= 60:
+        lo_p, hi_p = 2.0, 98.0
+    else:
+        lo_p, hi_p = 5.0, 95.0
+    lo, hi = np.percentile(sq, [lo_p, hi_p])
+    sq_w = np.clip(sq, lo, hi)
+    m2 = float(np.mean(sq_w))
     if m2 <= 0:
         return None
     sigma = float(np.sqrt(m2 * TRADING_DAYS))

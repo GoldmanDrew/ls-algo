@@ -61,6 +61,26 @@ from beta_estimator import (
 from decay_distribution import enrich_with_decay_distribution
 from expense_ratios import fetch_expense_ratios
 from screener_v2_fields import enrich_screener_v2_fields, load_borrow_history_json
+from splits import (
+    SplitEvent,
+    SYMBOL_ALIASES,
+    apply_split_events,
+    clean_split_artifacts,
+    detect_heuristic_splits,
+    load_flex_splits_csv,
+    load_legacy_manual_overrides,
+    load_splits_overrides_csv,
+    merge_split_events,
+    parse_yahoo_split_events,
+)
+from splits import (  # legacy-name re-exports for in-file usage
+    _INTEGER_SPLIT_FACTORS,
+    _SPLIT_RATIOS,
+    _SPLIT_TOL,
+    _JUMP_FLOOR,
+    _CONTEXT_WINDOW,
+    _ZSCORE_THRESHOLD,
+)
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -592,222 +612,69 @@ def build_full_universe(skip_scrape: bool = False, skip_inverse: bool = False) -
 # SECTION 3 — TOTAL RETURN SERIES + BETA CALCULATION
 # ══════════════════════════════════════════════════════════════════
 
-# Common split/reverse-split ratios.
-#
-# IMPORTANT:
-# Restrict to integer split factors and their reciprocals only.
-# Broad fractional grids (e.g. 3/2, 5/3, 5/8) can misclassify normal
-# large ETF moves as "splits", which then distorts beta estimates.
-_INTEGER_SPLIT_FACTORS = (2, 3, 4, 5, 10, 15, 20, 25, 50)
-_SPLIT_RATIOS = sorted(
-    set(list(_INTEGER_SPLIT_FACTORS) + [1.0 / f for f in _INTEGER_SPLIT_FACTORS]),
-    reverse=True,
-)
+# NOTE: split/reverse-split detection is now centralised in ``splits.py``
+# (multi-source: flex / yahoo_events / overrides_csv / manual / heuristic).
+# The legacy ``_clean_split_artifacts`` and ``_apply_manual_split_overrides``
+# names are preserved as thin back-compat shims so external imports keep
+# working. New code should call ``splits.clean_split_artifacts`` directly.
 
-_SPLIT_TOL = 0.005         # ±0.5 % tolerance around each ratio
-_JUMP_FLOOR = 0.40         # ignore daily moves < 40 %
-_CONTEXT_WINDOW = 20       # days of context for local vol estimate
-_ZSCORE_THRESHOLD = 4.0    # jump must be > 4σ vs local vol to be a split
+# Yahoo symbol aliases for recently renamed products. Mirrors splits.SYMBOL_ALIASES.
+_YF_SYMBOL_FALLBACKS: dict[str, str] = dict(SYMBOL_ALIASES)
 
-# Manual split overrides aligned with the v9 backtest data treatment.
-# For a 1-for-10 reverse split, pre-split history must be back-adjusted by 0.1
-# to the post-split basis.
-_MANUAL_SPLIT_OVERRIDES: dict[str, dict[str, float]] = {
-    "SMUP": {
-        "2026-01-26": 0.1,
-    },
-    "EOSU": {
-        "2026-04-15": 25,
-    },
-}
+# Module-level state populated by ``main()``: the resolved on-disk paths for
+# operator-managed split overrides and Flex-derived splits. Kept on the module
+# so the per-ticker fetch helpers don't need extra plumbing through the
+# ThreadPoolExecutor. Both default to ``None`` (off → behaviour unchanged).
+_SPLITS_OVERRIDES_CSV_PATH: Path | None = None
+_FLEX_SPLITS_CSV_PATH: Path | None = None
 
-# Known Yahoo symbol aliases for recently renamed products.
-# Used only when the primary symbol returns no data.
-_YF_SYMBOL_FALLBACKS: dict[str, str] = {
-    "SMUP": "SMU",
-}
+# Per-fetch audit log of applied SplitEvent objects, populated by
+# ``_get_total_return_series``. Used by the ``--audit-splits`` CLI to render
+# what fired without re-running detection.
+_SPLITS_APPLIED_LOG: dict[str, list[SplitEvent]] = {}
 
 
-def _clean_split_artifacts(prices: pd.Series) -> pd.Series:
-    """Detect and correct unadjusted splits/reverse-splits in a price series.
+def _clean_split_artifacts(prices: pd.Series, ticker: str | None = None) -> pd.Series:
+    """Back-compat shim — delegates to ``splits.clean_split_artifacts``.
 
-    Approach:  walk through daily price ratios (p[t] / p[t-1]).
-    If a ratio matches a known split factor (within tolerance) AND
-    the jump is an extreme outlier relative to local volatility
-    (z-score > 4), correct it by dividing all subsequent prices by
-    the split factor.
-
-    The z-score approach (instead of a fixed neighbor threshold) handles
-    volatile penny/crypto stocks correctly: a 20:1 reverse split is
-    still 10+ sigma even on a stock with 200% annualized vol.
-
-    Returns a corrected copy of the series.
+    The new multi-source pipeline includes Yahoo ``events.splits`` (when
+    available via ``_get_total_return_series``), the operator-managed CSV,
+    legacy in-code overrides, and the heuristic detector — with the
+    off-by-one bug fixed so the most-recent bar is included.
     """
-    if len(prices) < 3:
-        return prices.copy()
-
-    prices = prices.copy()
-    vals = prices.values.astype(float)
-
-    # Pre-compute daily log returns for z-score calculation
-    log_ratios = np.full(len(vals), np.nan)
-    for i in range(1, len(vals)):
-        if vals[i - 1] > 0 and np.isfinite(vals[i - 1]) and vals[i] > 0:
-            log_ratios[i] = np.log(vals[i] / vals[i - 1])
-
-    for i in range(1, len(vals) - 1):
-        if vals[i - 1] == 0 or not np.isfinite(vals[i - 1]):
-            continue
-        ratio = vals[i] / vals[i - 1]
-        daily_ret = ratio - 1.0
-
-        # Skip small moves — not a split
-        if abs(daily_ret) < _JUMP_FLOOR:
-            continue
-
-        # Check if this ratio matches a known split factor
-        matched_factor = None
-        for sf in _SPLIT_RATIOS:
-            if abs(ratio - sf) / sf < _SPLIT_TOL:
-                matched_factor = sf
-                break
-            # Also check inverse (reverse-split looks like 1/sf)
-            inv_sf = 1.0 / sf
-            if abs(ratio - inv_sf) / inv_sf < _SPLIT_TOL:
-                matched_factor = inv_sf
-                break
-
-        # Yahoo adjclose on reverse-split ex-days can be ~12–25% away from an exact
-        # 10×/20× ratio vs prior close when the underlying gaps overnight (e.g.
-        # GraniteShares MSTP/SMCL 1-for-20, ex 2026-05-01). Tight relative tol misses.
-        if matched_factor is None and ratio > 0 and np.isfinite(ratio):
-            for sf in _INTEGER_SPLIT_FACTORS:
-                inv_sf = 1.0 / float(sf)
-                if sf >= 2 and abs(np.log(ratio / sf)) < 0.22:
-                    matched_factor = float(sf)
-                    break
-                if abs(np.log(ratio / inv_sf)) < 0.22:
-                    matched_factor = inv_sf
-                    break
-
-        if matched_factor is None:
-            continue
-
-        # Z-score test: is this jump an extreme outlier vs local vol?
-        # Use a window of returns EXCLUDING the candidate split day.
-        start = max(1, i - _CONTEXT_WINDOW)
-        end = min(len(log_ratios), i + _CONTEXT_WINDOW + 1)
-        context = [log_ratios[j] for j in range(start, end)
-                   if j != i and np.isfinite(log_ratios[j])]
-
-        if len(context) >= 5:
-            local_std = float(np.std(context))
-            if local_std > 0:
-                log_jump = abs(np.log(ratio))
-                zscore = log_jump / local_std
-                if zscore < _ZSCORE_THRESHOLD:
-                    # Jump is within normal vol range → real price move
-                    continue
-
-        # If we don't have enough context, fall back to accepting the
-        # correction (better to fix a split than leave 839% vol).
-
-        # Correct: divide everything from day i onward by the factor
-        vals[i:] /= matched_factor
-
-        # Recompute log_ratios for the corrected region so subsequent
-        # iterations see clean data
-        for j in range(max(1, i), min(len(vals), i + 2)):
-            if vals[j - 1] > 0 and vals[j] > 0:
-                log_ratios[j] = np.log(vals[j] / vals[j - 1])
-
-    prices.iloc[:] = vals
-    return prices
+    return clean_split_artifacts(
+        prices,
+        ticker=ticker,
+        splits_overrides_csv=_SPLITS_OVERRIDES_CSV_PATH,
+        flex_splits_csv=_FLEX_SPLITS_CSV_PATH,
+    )
 
 
 def _apply_manual_split_overrides(series: pd.Series, ticker: str) -> pd.Series:
+    """Back-compat shim — manual overrides are merged into the unified
+    pipeline via ``splits.load_legacy_manual_overrides`` and the operator
+    CSV. Calling this is idempotent now (self-healing skips re-application).
     """
-    Apply explicit split overrides to a total-return price series.
-
-    Behavior mirrors the v9 backtest:
-      - `factor` is a pre-split back-adjust multiplier.
-      - all history strictly before split date is multiplied by factor.
-      - if split date is absent, apply on nearest next trading day
-        within 3 calendar days.
-
-    Self-healing: before applying, checks the price ratio across the
-    split boundary. If the pre/post prices are already close (ratio
-    within 3×), Yahoo has retroactively adjusted and the override is
-    skipped to avoid double-adjustment.
-    """
-    if series.empty:
-        return series
-
-    tkr = _norm_sym(ticker)
-    overrides = _MANUAL_SPLIT_OVERRIDES.get(tkr, {})
-    if not overrides:
-        return series
-
-    out = series.sort_index().copy()
-    applied = []
-    for ds, factor in overrides.items():
-        ts = pd.Timestamp(ds)
-        # Align timezone with the price index before comparisons.
-        idx_tz = out.index.tz
-        if idx_tz is not None and ts.tzinfo is None:
-            ts = ts.tz_localize(idx_tz)
-        elif idx_tz is None and ts.tzinfo is not None:
-            ts = ts.tz_convert("UTC").tz_localize(None)
-        apply_ts = None
-        if ts in out.index:
-            apply_ts = ts
-        else:
-            nxt = out.index[out.index >= ts]
-            if len(nxt) > 0 and (nxt[0] - ts).days <= 3:
-                apply_ts = nxt[0]
-
-        if apply_ts is None:
-            print(f"[TR][split-override] {tkr} {ts.date()} not applied (date missing)")
-            continue
-
-        f = float(factor)
-
-        # Self-healing: check if Yahoo already adjusted the split.
-        # Compare the last pre-split price to the first post-split price.
-        # If they're already within 3× of each other, the data is clean.
-        pre = out.loc[out.index < apply_ts]
-        post = out.loc[out.index >= apply_ts]
-        if len(pre) > 0 and len(post) > 0:
-            px_before = float(pre.iloc[-1])
-            px_after = float(post.iloc[0])
-            if px_before > 0 and px_after > 0:
-                raw_ratio = px_after / px_before
-                if 1/3 < raw_ratio < 3.0:
-                    print(
-                        f"[TR][split-override] {tkr} {ts.date()} SKIPPED — "
-                        f"Yahoo already adjusted (pre=${px_before:.2f} post=${px_after:.2f} "
-                        f"ratio={raw_ratio:.2f})"
-                    )
-                    continue
-
-        out.loc[out.index < apply_ts] = out.loc[out.index < apply_ts] * f
-        applied.append((ts, apply_ts, f))
-
-    for req_ts, apply_ts, f in applied:
-        print(
-            f"[TR][split-override] {tkr} requested {req_ts.date()} "
-            f"applied {apply_ts.date()} back-adjust x{f:g}"
-        )
-    return out
+    return clean_split_artifacts(
+        series,
+        ticker=ticker,
+        splits_overrides_csv=_SPLITS_OVERRIDES_CSV_PATH,
+        flex_splits_csv=_FLEX_SPLITS_CSV_PATH,
+        use_heuristic=False,
+    )
 
 
 def _get_total_return_series(ticker: str, period: str = "2y") -> pd.Series:
     """Fetch adjusted-close total-return series from Yahoo Finance v8 API.
 
     Uses Yahoo's adjclose (split + dividend adjusted) directly instead of
-    yfinance, which returns incorrect adjusted prices in v0.2.40.
+    yfinance, which returns incorrect adjusted prices in v0.2.40. Also
+    captures Yahoo's ``events.splits`` payload — when present, those split
+    timestamps feed the multi-source split pipeline in ``splits.py`` so
+    same-day reverse splits (where Yahoo lags on retro-adjusting history)
+    are still corrected.
     """
-    def _fetch_one(sym: str) -> pd.Series:
+    def _fetch_one(sym: str) -> tuple[pd.Series, dict]:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}"
         params = {"range": period, "interval": "1d", "events": "div,splits"}
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -833,7 +700,8 @@ def _get_total_return_series(ticker: str, period: str = "2y") -> pd.Series:
                 s = pd.Series(adjclose, index=idx, name=ticker, dtype=float).dropna()
                 if s.empty:
                     raise ValueError("series empty after dropna")
-                return s
+                events = ((result[0].get("events") or {}).get("splits") or {})
+                return s, dict(events)
             except Exception as e:
                 last_exc = e
                 if attempt < 3:
@@ -842,9 +710,12 @@ def _get_total_return_series(ticker: str, period: str = "2y") -> pd.Series:
 
         raise RuntimeError(f"yahoo v8 failed after retries: {last_exc}")
 
-    def _fetch_one_yf(sym: str) -> pd.Series:
+    def _fetch_one_yf(sym: str) -> tuple[pd.Series, dict]:
         # Secondary fallback path if Yahoo v8 keeps failing.
         # We prefer Adj Close when available; fall back to Close.
+        # ``yf.download`` does not surface raw split-event timestamps the way
+        # the v8 chart API does, so the events dict comes back empty here —
+        # the heuristic detector in ``splits.py`` then carries the load.
         h = yf.download(
             sym,
             period=period,
@@ -880,7 +751,7 @@ def _get_total_return_series(ticker: str, period: str = "2y") -> pd.Series:
         if s.empty:
             raise ValueError("yfinance close series empty")
         idx = pd.to_datetime(s.index, utc=True).tz_convert("America/New_York").normalize()
-        return pd.Series(s.values, index=idx, name=ticker, dtype=float)
+        return pd.Series(s.values, index=idx, name=ticker, dtype=float), {}
 
     primary = _norm_sym(ticker)
     tried = [primary]
@@ -888,40 +759,45 @@ def _get_total_return_series(ticker: str, period: str = "2y") -> pd.Series:
     if fallback and fallback != primary:
         tried.append(fallback)
 
+    def _post_process(s: pd.Series, yahoo_events: dict) -> pd.Series:
+        """Apply the unified multi-source split-cleanup pipeline."""
+        try:
+            cleaned, applied = clean_split_artifacts(
+                s,
+                ticker=ticker,
+                yahoo_events=yahoo_events or None,
+                splits_overrides_csv=_SPLITS_OVERRIDES_CSV_PATH,
+                flex_splits_csv=_FLEX_SPLITS_CSV_PATH,
+                return_log=True,
+            )
+            if applied:
+                _SPLITS_APPLIED_LOG[primary] = list(applied)
+            return cleaned
+        except Exception as e_clean:
+            # Never drop a symbol solely because cleanup failed.
+            print(
+                f"[TR][warn] {primary} cleanup failed "
+                f"({type(e_clean).__name__}: {e_clean}); using raw series"
+            )
+            return s
+
     last_err: Exception | None = None
     for i, sym in enumerate(tried):
         try:
-            s = _fetch_one(sym)
+            s, yahoo_events = _fetch_one(sym)
             if i > 0:
                 print(f"[TR][fallback] {primary} -> {sym} ({len(s)} rows)")
-            try:
-                s = _apply_manual_split_overrides(s, ticker)
-                s = _clean_split_artifacts(s)
-            except Exception as e_clean:
-                # Never drop a symbol solely because cleanup failed.
-                print(
-                    f"[TR][warn] {primary} cleanup failed after {sym} fetch "
-                    f"({type(e_clean).__name__}: {e_clean}); using raw series"
-                )
-            return s
+            return _post_process(s, yahoo_events)
         except Exception as e:
             last_err = e
 
     # Last resort: yfinance history endpoint for symbols Yahoo v8 rejected.
     for i, sym in enumerate(tried):
         try:
-            s = _fetch_one_yf(sym)
+            s, yahoo_events = _fetch_one_yf(sym)
             src = f"{primary}->{sym}" if i > 0 else primary
             print(f"[TR][yf-fallback] {src} ({len(s)} rows)")
-            try:
-                s = _apply_manual_split_overrides(s, ticker)
-                s = _clean_split_artifacts(s)
-            except Exception as e_clean:
-                print(
-                    f"[TR][warn] {primary} cleanup failed on yf fallback "
-                    f"({type(e_clean).__name__}: {e_clean}); using raw series"
-                )
-            return s
+            return _post_process(s, yahoo_events)
         except Exception as e:
             last_err = e
 
@@ -1782,7 +1658,23 @@ def recompute_purgatory_by_bucket(
     else:
         net_purg = pd.Series(False, index=out.index)
 
-    out["purgatory"] = (borrow_purg | net_purg).fillna(False)
+    # Vol-ratio gate: when σ_etf vs |β|·σ_und is outside the per-leverage band
+    # (default ±50 % for a 2x ETF), the row is treated as data-quality
+    # purgatory until the underlying split / corporate action is resolved.
+    # See ``recompute_vol_ratio_gate``.
+    gate_cfg = _vol_ratio_gate_cfg(sc)
+    if (
+        gate_cfg.get("enabled", True)
+        and gate_cfg.get("purgatory_on_outlier", True)
+        and "vol_ratio_outlier" in out.columns
+    ):
+        vol_ratio_purg = (
+            out["vol_ratio_outlier"].fillna(False).astype(bool)
+        )
+    else:
+        vol_ratio_purg = pd.Series(False, index=out.index)
+
+    out["purgatory"] = (borrow_purg | net_purg | vol_ratio_purg).fillna(False)
     return out
 
 
@@ -1854,6 +1746,12 @@ def _annualized_second_moment_log(
        COIN …).
     3. Same 252 annualization factor used elsewhere — keeps realized
        and expected on the same clock.
+    4. Squared log returns are winsorized at the 1st/99th percentile (or
+       wider tails for thin histories) so a single uncaught corporate
+       action — typically a split that the upstream cleaner missed —
+       cannot single-handedly dominate σ. ``_compute_gross_decay_daily``
+       uses the same tier table; keeping the two in sync preserves the
+       realized-vs-expected algebraic identity for clean symbols.
 
     Parameters mirror :func:`_annualized_vol` so the two are drop-in
     comparable.
@@ -1866,7 +1764,19 @@ def _annualized_second_moment_log(
     r = r[np.isfinite(r)]
     if len(r) < min_days:
         return None
-    m2 = float((r ** 2).mean())
+    sq = (r ** 2).to_numpy(dtype=float)
+    n_sq = int(sq.size)
+    if n_sq == 0:
+        return None
+    if n_sq >= 100:
+        lo_p, hi_p = 1.0, 99.0
+    elif n_sq >= 60:
+        lo_p, hi_p = 2.0, 98.0
+    else:
+        lo_p, hi_p = 5.0, 95.0
+    lo, hi = np.percentile(sq, [lo_p, hi_p])
+    sq_w = np.clip(sq, lo, hi)
+    m2 = float(np.mean(sq_w))
     if m2 <= 0:
         return None
     sigma = float(np.sqrt(m2 * TRADING_DAYS))
@@ -2779,31 +2689,140 @@ def enrich_with_decay_and_vol(
         df["blended_gross_decay"] - borrow_current, np.nan)
 
     # ── Vol-ratio diagnostic ──
-    # For levered ETFs, vol_etf should be ≈ |β| × vol_und.  Flag
-    # rows where the ratio deviates by more than 3× (data-quality issue).
-    _vol_ratio_warn = []
-    for idx, row in df.iterrows():
-        vu = row.get("vol_underlying_annual")
-        ve = row.get("vol_etf_annual")
-        b  = row.get("Beta")
-        if pd.notna(vu) and pd.notna(ve) and pd.notna(b) and vu > 0 and abs(b) > 0.1:
-            expected_ve = abs(b) * vu
-            ratio = ve / expected_ve if expected_ve > 0 else np.nan
-            if pd.notna(ratio) and (ratio < 0.20 or ratio > 3.0):
-                _vol_ratio_warn.append(
-                    f"  {row['ETF']:8s} vol_und={vu*100:6.1f}%  vol_etf={ve*100:6.1f}%  "
-                    f"β={b:+.2f}  ratio={ratio:.2f}")
-    if _vol_ratio_warn:
-        print(f"\n[DECAY] ⚠ Vol-ratio outliers ({len(_vol_ratio_warn)} rows — "
-              f"vol_etf / (|β| × vol_und) far from 1.0):")
-        for line in _vol_ratio_warn[:10]:
-            print(line)
-        if len(_vol_ratio_warn) > 10:
-            print(f"  ... and {len(_vol_ratio_warn) - 10} more")
+    # For levered ETFs, vol_etf should track |β| × vol_und. We flag rows
+    # whose ratio deviates from 1.0 in either direction. Default warn-band
+    # is [0.20, 1.75]; the per-leverage gate inside the trade plan uses a
+    # tighter [0.5, 1.5] band by default. Both can be overridden via
+    # ``screener.vol_ratio_gate`` in YAML — see ``recompute_vol_ratio_gate``
+    # for the structured columns this populates.
+    df = recompute_vol_ratio_gate(df, screener_cfg=None)
 
     print(f"\n[DECAY] Beta OLS fill-ins: {betas_computed} | Vol: {ok_vol}/{len(df)} "
           f"| Realized decay: {ok_decay}/{len(df)} | Expected decay: {ok_expected}/{len(df)}")
     return df
+
+
+def _vol_ratio_gate_cfg(screener_cfg: dict | None) -> dict:
+    """Resolve the per-leverage vol-ratio gate from YAML.
+
+    Schema::
+
+        screener:
+          vol_ratio_gate:
+            enabled: true                 # toggle gate effects on purgatory
+            diagnostic_min: 0.20          # warn-band lower bound
+            diagnostic_max: 1.75          # warn-band upper bound
+            purgatory_on_outlier: true    # whether outliers force purgatory
+            by_abs_beta:                  # tighter gate per |β| bucket
+              "1.0": {min: 0.5, max: 1.5}
+              "2.0": {min: 0.5, max: 1.5}
+              "3.0": {min: 0.5, max: 1.5}
+            default: {min: 0.5, max: 1.5}
+
+    Missing keys fall back to the safe defaults below.
+    """
+    sc = screener_cfg or {}
+    gate = (sc.get("vol_ratio_gate") or {}) if isinstance(sc, dict) else {}
+    return {
+        "enabled": bool(gate.get("enabled", True)),
+        "diagnostic_min": float(gate.get("diagnostic_min", 0.20)),
+        "diagnostic_max": float(gate.get("diagnostic_max", 1.75)),
+        "purgatory_on_outlier": bool(gate.get("purgatory_on_outlier", True)),
+        "by_abs_beta": {
+            str(k): {
+                "min": float((v or {}).get("min", 0.5)),
+                "max": float((v or {}).get("max", 1.5)),
+            }
+            for k, v in (gate.get("by_abs_beta") or {}).items()
+        },
+        "default": {
+            "min": float((gate.get("default") or {}).get("min", 0.5)),
+            "max": float((gate.get("default") or {}).get("max", 1.5)),
+        },
+    }
+
+
+def _vol_ratio_bounds_for_beta(abs_beta: float, gate: dict) -> tuple[float, float]:
+    key = f"{round(abs_beta, 1):.1f}"
+    by_beta = gate.get("by_abs_beta", {}) or {}
+    if key in by_beta:
+        return by_beta[key]["min"], by_beta[key]["max"]
+    default = gate.get("default", {"min": 0.5, "max": 1.5})
+    return float(default["min"]), float(default["max"])
+
+
+def recompute_vol_ratio_gate(
+    df: pd.DataFrame,
+    *,
+    screener_cfg: dict | None,
+) -> pd.DataFrame:
+    """Add structured ``vol_ratio_value`` / ``vol_ratio_outlier`` columns.
+
+    Replaces the legacy print-only diagnostic. Downstream consumers
+    (generate_trade_plan, sizing, purgatory recompute) can refuse to size
+    a sleeve when ``vol_ratio_outlier`` is True. The diagnostic warn-band
+    stays loose (0.20–1.75) so we still get a console heads-up on borderline
+    rows; the gate-band ([0.5, 1.5] by default) drives the boolean flag.
+    """
+    out = df.copy()
+    gate = _vol_ratio_gate_cfg(screener_cfg)
+
+    diag_lo = float(gate.get("diagnostic_min", 0.20))
+    diag_hi = float(gate.get("diagnostic_max", 1.75))
+
+    vu_arr = pd.to_numeric(out.get("vol_underlying_annual"), errors="coerce")
+    ve_arr = pd.to_numeric(out.get("vol_etf_annual"), errors="coerce")
+    b_arr = pd.to_numeric(out.get("Beta"), errors="coerce")
+
+    ratio_vals: list[float] = []
+    outlier_flags: list[bool] = []
+    warn_lines: list[str] = []
+    for i in out.index:
+        vu = vu_arr.loc[i] if i in vu_arr.index else np.nan
+        ve = ve_arr.loc[i] if i in ve_arr.index else np.nan
+        b = b_arr.loc[i] if i in b_arr.index else np.nan
+        if pd.notna(vu) and pd.notna(ve) and pd.notna(b) and vu > 0 and abs(b) >= 0.1:
+            expected_ve = abs(b) * vu
+            r = (ve / expected_ve) if expected_ve > 0 else np.nan
+        else:
+            r = np.nan
+
+        if pd.notna(r) and pd.notna(b) and abs(b) >= 0.5:
+            lo, hi = _vol_ratio_bounds_for_beta(abs(float(b)), gate)
+            is_outlier = bool((r < lo) or (r > hi))
+        else:
+            is_outlier = False
+
+        ratio_vals.append(float(r) if pd.notna(r) else np.nan)
+        outlier_flags.append(is_outlier)
+
+        if pd.notna(r) and (r < diag_lo or r > diag_hi):
+            warn_lines.append(
+                f"  {str(out.at[i, 'ETF']):8s} vol_und={(vu or 0)*100:6.1f}%  "
+                f"vol_etf={(ve or 0)*100:6.1f}%  β={b:+.2f}  ratio={r:.2f}"
+            )
+
+    out["vol_ratio_value"] = ratio_vals
+    out["vol_ratio_outlier"] = outlier_flags
+
+    if warn_lines:
+        print(
+            f"\n[DECAY] ⚠ Vol-ratio outliers ({len(warn_lines)} rows — "
+            f"vol_etf / (|β| × vol_und) outside [{diag_lo:.2f}, {diag_hi:.2f}]):"
+        )
+        for line in warn_lines[:10]:
+            print(line)
+        if len(warn_lines) > 10:
+            print(f"  ... and {len(warn_lines) - 10} more")
+
+    n_gate = int(sum(1 for f in outlier_flags if f))
+    if n_gate:
+        print(
+            f"[DECAY] vol-ratio gate: {n_gate} row(s) flagged for purgatory "
+            f"(per-|β| band)"
+        )
+
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -2873,6 +2892,178 @@ def discover_default_borrow_history_json() -> Path | None:
     return None
 
 
+def _audit_universe_symbols(skip_inverse: bool) -> list[str]:
+    """Build the canonical screener universe (ETFs + underlyings) for audits."""
+    df = build_full_universe(skip_scrape=True, skip_inverse=skip_inverse)
+    if df.empty:
+        return []
+    etf_syms = df["ETF"].apply(_norm_sym).tolist()
+    und_syms = df["Underlying"].dropna().apply(_norm_sym).tolist()
+    return sorted(set(t for t in etf_syms + und_syms if t))
+
+
+def _run_audit_splits(args: argparse.Namespace) -> int:
+    """Execute the read-only ``--audit-splits`` workflow.
+
+    For each symbol in the resolved universe (or ``--symbols`` subset):
+
+      1. Pulls the TR series via ``_get_total_return_series`` (which already
+         routes through ``splits.clean_split_artifacts`` and records applied
+         events into ``_SPLITS_APPLIED_LOG``).
+      2. Re-fetches the RAW (uncorrected) series from Yahoo v8 directly to
+         compute baseline σ for comparison. This avoids re-implementing the
+         fetch path.
+      3. Reports each applied event plus σ_raw vs σ_clean.
+
+    With ``--write-overrides``, any heuristic-only event whose
+    ``(symbol, ex_date)`` pair is not already present in the splits overrides
+    CSV is appended.
+    """
+    print("=" * 70)
+    print(f"  --audit-splits  run-date={args.run_date}  window={args.audit_window}d")
+    print("=" * 70)
+
+    if args.symbols:
+        syms = [_norm_sym(s) for s in args.symbols.split(",") if str(s).strip()]
+    else:
+        print("[AUDIT] Building universe (skip-scrape, skip-inverse=False) ...")
+        syms = _audit_universe_symbols(skip_inverse=False)
+    if not syms:
+        print("[AUDIT] No symbols resolved; aborting.")
+        return 1
+    print(f"[AUDIT] {len(syms)} symbol(s) to probe.")
+
+    # Heuristic for "audit window" lookback: 30d covers same-day + recent.
+    audit_period = "30d" if args.audit_window <= 30 else f"{args.audit_window + 5}d"
+
+    rows: list[dict] = []
+    new_overrides: list[SplitEvent] = []
+    cutoff = pd.Timestamp(args.run_date) - pd.Timedelta(days=int(args.audit_window) + 3)
+
+    # Snapshot of overrides CSV before this run so we only write NEW rows.
+    existing_overrides = load_splits_overrides_csv(_SPLITS_OVERRIDES_CSV_PATH)
+    existing_keys: set[tuple[str, pd.Timestamp]] = {
+        (e.symbol, e.ex_date) for e in existing_overrides
+    }
+
+    for sym in syms:
+        try:
+            cleaned = _get_total_return_series(sym, period=audit_period)
+        except Exception as e:
+            print(f"[AUDIT] {sym} fetch failed: {e}")
+            continue
+        if cleaned.empty:
+            continue
+
+        applied = _SPLITS_APPLIED_LOG.get(_norm_sym(sym), [])
+        # Filter to events within the requested window.
+        applied = [e for e in applied if e.ex_date >= cutoff]
+        if not applied:
+            continue
+
+        # Build a parallel raw series by re-running the upstream Yahoo fetch
+        # without our cleanup (use yfinance via the bare API). Cheap because
+        # we already paid for the network round-trip above.
+        try:
+            t = yf.Ticker(sym)
+            raw_df = t.history(period=audit_period, auto_adjust=False)
+            raw = raw_df["Close"].dropna() if "Close" in raw_df else pd.Series(dtype=float)
+        except Exception:
+            raw = pd.Series(dtype=float)
+
+        sigma_raw = _annualized_second_moment_log(raw, min_days=10) if len(raw) >= 11 else None
+        sigma_clean = _annualized_second_moment_log(cleaned, min_days=10) if len(cleaned) >= 11 else None
+
+        for ev in applied:
+            rows.append(
+                {
+                    "symbol": sym,
+                    "ex_date": ev.ex_date.date().isoformat(),
+                    "factor": float(ev.factor),
+                    "source": ev.source,
+                    "sigma_raw": (
+                        round(float(sigma_raw), 4)
+                        if sigma_raw is not None
+                        else None
+                    ),
+                    "sigma_clean": (
+                        round(float(sigma_clean), 4)
+                        if sigma_clean is not None
+                        else None
+                    ),
+                    "delta": (
+                        round(float(sigma_raw - sigma_clean), 4)
+                        if (sigma_raw is not None and sigma_clean is not None)
+                        else None
+                    ),
+                    "note": ev.note[:80],
+                }
+            )
+            if (
+                ev.source == "heuristic"
+                and (sym, ev.ex_date) not in existing_keys
+            ):
+                new_overrides.append(ev)
+
+    if not rows:
+        print("[AUDIT] No split events fired in the audit window.")
+        return 0
+
+    audit_df = pd.DataFrame(rows).sort_values(by=["ex_date", "symbol"]).reset_index(drop=True)
+    print()
+    print(audit_df.to_string(index=False))
+
+    if args.write_overrides and new_overrides:
+        # Convert SplitEvents to the CSV schema and append.
+        out_path = _SPLITS_OVERRIDES_CSV_PATH
+        if out_path is None:
+            print("[AUDIT] No splits_overrides_csv path resolved; cannot write overrides.")
+            return 0
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        if out_path.is_file():
+            try:
+                existing_df = pd.read_csv(out_path)
+            except Exception:
+                existing_df = pd.DataFrame(
+                    columns=["symbol", "ex_date", "numerator", "denominator", "source", "note"]
+                )
+        else:
+            existing_df = pd.DataFrame(
+                columns=["symbol", "ex_date", "numerator", "denominator", "source", "note"]
+            )
+        added_rows: list[dict] = []
+        for ev in new_overrides:
+            # SplitEvent.factor is the price-multiplier den/num (1-for-10
+            # reverse → 10). The CSV stores num,den in share-multiplier form,
+            # so invert: reverse split factor>1 → num=1, den=round(factor).
+            if ev.factor >= 1.0:
+                num = 1
+                den = int(round(ev.factor))
+            else:
+                num = int(round(1.0 / ev.factor))
+                den = 1
+            added_rows.append(
+                {
+                    "symbol": ev.symbol,
+                    "ex_date": ev.ex_date.date().isoformat(),
+                    "numerator": num,
+                    "denominator": den,
+                    "source": ev.source,
+                    "note": ev.note,
+                }
+            )
+        merged = pd.concat([existing_df, pd.DataFrame(added_rows)], ignore_index=True)
+        merged = merged.drop_duplicates(subset=["symbol", "ex_date"], keep="last")
+        merged = merged.sort_values(by=["symbol", "ex_date"]).reset_index(drop=True)
+        merged.to_csv(out_path, index=False)
+        print(
+            f"[AUDIT] Wrote {len(added_rows)} new override(s) to {out_path} "
+            f"(file now has {len(merged)} rows)."
+        )
+
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Daily ETF screener pipeline")
     ap.add_argument("--run-date", default=date.today().isoformat())
@@ -2900,6 +3091,40 @@ def main() -> int:
         type=float,
         default=90.0,
         help="Calendar-day half-life for 0.5**(age/H) borrow weights (default: 90)",
+    )
+    ap.add_argument(
+        "--audit-splits",
+        action="store_true",
+        help=(
+            "Run a read-only split audit instead of the full screener. Probes "
+            "the universe (or --symbols) for splits applied by any source "
+            "(yahoo_events / flex / overrides_csv / manual_override / "
+            "heuristic) over the last --audit-window trading days, and prints "
+            "raw vs corrected σ for each. Use --write-overrides to append "
+            "newly detected events into the splits overrides CSV."
+        ),
+    )
+    ap.add_argument(
+        "--audit-window",
+        type=int,
+        default=5,
+        help="--audit-splits lookback in trading days (default: 5)",
+    )
+    ap.add_argument(
+        "--symbols",
+        default=None,
+        help=(
+            "Comma-separated subset of tickers for --audit-splits. "
+            "Default: full screener universe."
+        ),
+    )
+    ap.add_argument(
+        "--write-overrides",
+        action="store_true",
+        help=(
+            "When set with --audit-splits, append newly-detected events "
+            "(not already in splits_overrides.csv) into that file."
+        ),
     )
     args = ap.parse_args()
 
@@ -2937,6 +3162,41 @@ def main() -> int:
 
     screener_cfg = cfg.get("screener", {}) or {}
     sleeves_cfg = cfg.get("portfolio", {}).get("sleeves", {}) or {}
+
+    # ── Splits override paths (multi-source corporate-action handling) ──
+    # Both paths are optional. Missing files → corresponding source is silent
+    # and the heuristic + Yahoo events keep working as before.
+    paths_cfg = cfg.get("paths", {}) or {}
+
+    def _resolve_data_path(rel: str | None, default_rel: str) -> Path:
+        """Resolve a config-driven data path relative to the script root."""
+        s = (rel or default_rel).strip()
+        p = Path(s)
+        if not p.is_absolute():
+            p = script_dir / p
+        return p
+
+    global _SPLITS_OVERRIDES_CSV_PATH, _FLEX_SPLITS_CSV_PATH
+    _SPLITS_OVERRIDES_CSV_PATH = _resolve_data_path(
+        paths_cfg.get("splits_overrides_csv"),
+        "data/splits_overrides.csv",
+    )
+    _FLEX_SPLITS_CSV_PATH = _resolve_data_path(
+        paths_cfg.get("flex_splits_csv"),
+        "data/splits_from_flex.csv",
+    )
+    if _SPLITS_OVERRIDES_CSV_PATH.is_file():
+        print(f"[SPLITS] overrides CSV: {_SPLITS_OVERRIDES_CSV_PATH}")
+    else:
+        print(f"[SPLITS] overrides CSV: {_SPLITS_OVERRIDES_CSV_PATH} (absent — opt-in)")
+    if _FLEX_SPLITS_CSV_PATH.is_file():
+        print(f"[SPLITS] flex CSV:      {_FLEX_SPLITS_CSV_PATH}")
+    else:
+        print(f"[SPLITS] flex CSV:      {_FLEX_SPLITS_CSV_PATH} (absent — opt-in)")
+
+    # ── Audit splits (read-only mode) ──
+    if args.audit_splits:
+        return _run_audit_splits(args)
 
     # Protected ETFs from config
     wl_list = sleeves_cfg.get("whitelist_stock", {}).get("universe", {}).get("etfs", []) or []
@@ -3276,11 +3536,17 @@ def main() -> int:
         & (borrow_cur.isna() | (borrow_cur >= 0.0))
     )
 
+    # Recompute the vol-ratio gate with the YAML-resolved per-leverage band.
+    # ``enrich_with_decay_and_vol`` already populated the column with default
+    # bounds; this pass refreshes ``vol_ratio_outlier`` using the operator's
+    # configured limits before purgatory consumes it.
+    screened = recompute_vol_ratio_gate(screened, screener_cfg=screener_cfg)
+
     screened = recompute_purgatory_by_bucket(
         screened, screener_cfg=screener_cfg, sleeves_cfg=sleeves_cfg
     )
     purg = int(screened["purgatory"].sum())
-    print(f"[SCREEN] Purgatory (per-bucket borrow bands): {purg} | Total: {len(screened)}")
+    print(f"[SCREEN] Purgatory (per-bucket borrow bands + vol-ratio gate): {purg} | Total: {len(screened)}")
 
     if blacklist:
         etf_n = screened["ETF"].astype(str).map(_norm_sym)

@@ -10,12 +10,13 @@ Python toolkit for a **systematic long/short** book around leveraged and inverse
 2. [Repository layout](#repository-layout)
 3. [End-to-end pipeline](#end-to-end-pipeline)
 4. [Configuration (`config/strategy_config.yml`)](#configuration-configstrategy_configyml)
-5. [Sleeves vs accounting “buckets”](#sleeves-vs-accounting-buckets)
-6. [Research & backtests](#research--backtests)
-7. [Automation (GitHub Actions)](#automation-github-actions)
-8. [Data layout](#data-layout)
-9. [Requirements & IBKR](#requirements--ibkr)
-10. [Disclaimer](#disclaimer)
+5. [Corporate-action splits — see [`SPLITS.md`](SPLITS.md)](#corporate-action-splits)
+6. [Sleeves vs accounting “buckets”](#sleeves-vs-accounting-buckets)
+7. [Research & backtests](#research--backtests)
+8. [Automation (GitHub Actions)](#automation-github-actions)
+9. [Data layout](#data-layout)
+10. [Requirements & IBKR](#requirements--ibkr)
+11. [Disclaimer](#disclaimer)
 
 ---
 
@@ -36,8 +37,9 @@ Python toolkit for a **systematic long/short** book around leveraged and inverse
 | **`config/strategy_config.yml`** | Single source of truth for strategy tag, capital, leverage, IBKR host, screener borrow bands, **portfolio sleeves**, rebalance thresholds, paths. |
 | **`config/strategy_blacklist.txt`** | Optional extra symbol blacklist (referenced when present). |
 | **`config/etf_expense_ratios.yml`** | Expense-ratio side data (used by enrichment paths where applicable). |
-| **`daily_screener.py`** | Universe → prices → OLS betas → FTP borrow → decay / vol enrichment → **`paths.screened_csv`**. |
+| **`daily_screener.py`** | Universe → prices → OLS betas → FTP borrow → decay / vol enrichment → **`paths.screened_csv`**. Includes `--audit-splits` CLI for split-event review. |
 | **`etf_analytics.py`**, **`etf_screener.py`**, **`expense_ratios.py`** | Supporting analytics / scraping / expense helpers used by the screener and notebooks. |
+| **`splits.py`** | Multi-source corporate-action split detection / repair (Yahoo `events.splits`, IBKR Flex `<CorporateAction>`, ops CSV, legacy overrides, heuristic). See [`SPLITS.md`](SPLITS.md). |
 | **`generate_trade_plan.py`** | Screened CSV → sleeve membership + decay-aware weights → proposed trades + flow ledger append. |
 | **`execute_trade_plan.py`** | Proposed notionals → IBKR orders (parallel legs, purgatory rules, short availability). |
 | **`rebalance_strategy.py`** | Three-phase hybrid rebalancer (cleanup / establish / hedge); reuses execution helpers. |
@@ -168,6 +170,29 @@ Everything operational reads from this file. **Do not treat the table below as a
 | **`portfolio.sleeves.flow_program`** | Flow shorts universe, schedule, **`fixed_usd_per_week`** (or deployment base from YAML), **fixed weights** summing to **1.0**. |
 
 `generate_trade_plan.py` documents sleeve behaviour in its module docstring; keep YAML and that docstring aligned when you change rules.
+
+---
+
+## Corporate-action splits
+
+Same-day reverse splits (BAIG, BMNG, FIGG, DUOG, CRWG, CRCG on 2026-05-05 Nasdaq ECA2026-298, etc.) historically blew up `vol_etf_annual` and `expected_gross_decay_annual` because Yahoo lags on retro-adjusting adjclose for some issuers. **`splits.py`** centralises a multi-source pipeline that handles this:
+
+1. `flex` (IBKR `<CorporateAction type="RS">`)
+2. `yahoo_events` (v8 chart `events.splits`)
+3. `splits_overrides_csv` (operator-managed `data/splits_overrides.csv`)
+4. `manual_override_dict` (legacy in-code overrides)
+5. `heuristic` (z-score + integer-factor matched detector)
+
+A self-healing pre/post boundary check makes re-runs idempotent once any source retro-adjusts. The screener also emits two structured columns (`vol_ratio_value`, `vol_ratio_outlier`) that gate sleeve sizing under `screener.vol_ratio_gate` in YAML, and `ibkr_accounting.override_mark_prices` reverts to Flex `markPrice` on a symbol's split day so Yahoo close × Flex pre-split quantity can never produce a 10× phantom MtM swing.
+
+Audit + ops workflow:
+
+```bash
+python daily_screener.py --audit-splits --run-date 2026-05-05
+python daily_screener.py --audit-splits --symbols BAIG,BMNG,FIGG --write-overrides
+```
+
+Full operator playbook, edge-case table, and verification checklist live in [`SPLITS.md`](SPLITS.md).
 
 ---
 

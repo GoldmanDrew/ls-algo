@@ -575,10 +575,25 @@ def fetch_yfinance_closes(
 def override_mark_prices(
     pos: pd.DataFrame,
     yf_closes: dict[str, float],
+    *,
+    corp_action_split_dates: dict[str, str] | None = None,
+    run_date: str | None = None,
 ) -> pd.DataFrame:
     """
     Replace markPrice in the positions DataFrame with yfinance closes
     where available.  Recalculates positionValue and positionValue_base.
+
+    Split-day guard
+    ---------------
+    On the ex-date of an IBKR-reported reverse split, the Flex position
+    quantity for that symbol may still be on the PRE-split basis while
+    Yahoo's close is already POST-split (or vice versa). Multiplying the
+    two yields a 10×–25× phantom MtM swing. When ``corp_action_split_dates``
+    is supplied (mapping ``canonical_symbol -> 'YYYY-MM-DD'``) and the
+    symbol's ex-date matches ``run_date``, we KEEP the existing Flex
+    ``markPrice`` for that row instead of overriding from Yahoo. The
+    fallback message ``[ACCOUNTING][corp-action] {sym} reverted to Flex
+    mark on split day`` is emitted to stdout for the EOD log.
 
     Returns a new DataFrame (does not modify in place).
     """
@@ -586,8 +601,21 @@ def override_mark_prices(
         return pos
 
     pos = pos.copy()
-    mask = pos["symbol"].isin(yf_closes)
-    pos.loc[mask, "markPrice"] = pos.loc[mask, "symbol"].map(yf_closes)
+    sym_to_yf = dict(yf_closes)
+
+    # Carve out symbols whose ex-date matches run_date — never override these
+    # from Yahoo on the split day. The Flex markPrice is the safest fallback
+    # because it is paired with the Flex quantity on the same date.
+    if corp_action_split_dates and run_date:
+        for sym, ex_date in corp_action_split_dates.items():
+            if ex_date == run_date and sym in sym_to_yf:
+                sym_to_yf.pop(sym, None)
+                print(
+                    f"[ACCOUNTING][corp-action] {sym} reverted to Flex mark on split day"
+                )
+
+    mask = pos["symbol"].isin(sym_to_yf)
+    pos.loc[mask, "markPrice"] = pos.loc[mask, "symbol"].map(sym_to_yf)
     pos["positionValue"] = pos["position"] * pos["markPrice"]
     pos["positionValue_base"] = pos["positionValue"] * pos["fxRateToBase"]
     return pos
@@ -1032,6 +1060,48 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     borrow_details = parse_borrow_fee_details(flex_borrow_details_path, run_date)
     borrow_fee_events = parse_borrow_fee_events(flex_borrow_details_path, run_date)
 
+    # Pull <CorporateAction type="RS"> rows from the Flex cash XML and merge
+    # them into ``data/splits_from_flex.csv``. The daily screener consumes
+    # that CSV as the highest-precedence split source on its next run, and
+    # ``override_mark_prices`` below uses today's CA set to skip Yahoo
+    # overrides on the split's ex-date.
+    corp_action_split_dates: dict[str, str] = {}
+    try:
+        from splits import parse_flex_corporate_action_splits  # type: ignore
+        ca_splits_today = parse_flex_corporate_action_splits(flex_cash_path)
+    except Exception as e:
+        print(f"[ACCOUNTING][corp-action] split extraction failed: {e}")
+        ca_splits_today = pd.DataFrame()
+
+    if not ca_splits_today.empty:
+        for _, r in ca_splits_today.iterrows():
+            sym = canonical_symbol(str(r.get("symbol", "")))
+            ex_date_v = str(r.get("ex_date", "")).strip()
+            if sym and ex_date_v:
+                corp_action_split_dates[sym] = ex_date_v
+
+        flex_splits_csv = PROJECT_ROOT / "data" / "splits_from_flex.csv"
+        flex_splits_csv.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            cols = list(ca_splits_today.columns)
+            if flex_splits_csv.is_file():
+                existing = pd.read_csv(flex_splits_csv)
+            else:
+                existing = pd.DataFrame(columns=cols)
+            combined = pd.concat([existing, ca_splits_today], ignore_index=True)
+            combined = combined.drop_duplicates(
+                subset=["symbol", "ex_date"], keep="last"
+            )
+            combined = combined.sort_values(by=["symbol", "ex_date"]).reset_index(drop=True)
+            combined.to_csv(flex_splits_csv, index=False)
+            n_today = len(ca_splits_today)
+            print(
+                f"[ACCOUNTING][corp-action] {n_today} RS row(s) merged into "
+                f"{flex_splits_csv} ({len(combined)} total)"
+            )
+        except Exception as e:
+            print(f"[ACCOUNTING][corp-action] failed to write splits CSV: {e}")
+
     # Exclusions
     if not fifo.empty:
         fifo = fifo[~fifo["symbol"].isin(EXCLUDE_SYMBOLS) & ~fifo["underlyingSymbol"].isin(EXCLUDE_SYMBOLS)].copy()
@@ -1186,12 +1256,41 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                     adj = row["position"] * price_diff * row["fxRateToBase"]
                     yf_unrealized_adj[sym] = yf_unrealized_adj.get(sym, 0.0) + adj
 
+            # On any symbol whose Flex CorporateAction reports a reverse-split
+            # ex-date == run_date, drop the Yahoo unrealized adjustment too:
+            # IBKR's FIFO PnL is consistent with the pre-split Flex quantity
+            # and the post-split Yahoo close would create a 10× phantom delta.
+            if corp_action_split_dates:
+                split_today = {
+                    sym for sym, ex in corp_action_split_dates.items() if ex == run_date
+                }
+                if split_today:
+                    for s in split_today:
+                        if s in yf_unrealized_adj:
+                            yf_unrealized_adj.pop(s, None)
+                    print(
+                        f"[ACCOUNTING][corp-action] dropped Yahoo unrealized "
+                        f"adjustment on split-day symbols: "
+                        f"{sorted(split_today)}"
+                    )
+
             df["unrealized_pnl"] += df["symbol"].map(yf_unrealized_adj).fillna(0.0)
 
             # 2) Override markPrice on positions (affects exposure calc downstream)
-            pos = override_mark_prices(pos, yf_closes)
+            pos = override_mark_prices(
+                pos,
+                yf_closes,
+                corp_action_split_dates=corp_action_split_dates,
+                run_date=run_date,
+            )
 
-            n_overridden = sum(1 for s in yf_syms if s in yf_closes)
+            n_overridden = sum(
+                1 for s in yf_syms
+                if s in yf_closes
+                and not (
+                    corp_action_split_dates.get(s) == run_date
+                )
+            )
             print(f"[ACCOUNTING] yfinance: overrode {n_overridden}/{len(yf_syms)} markPrices for {run_date}")
         else:
             print(f"[ACCOUNTING] yfinance: no closes returned for {run_date} — keeping Flex markPrices")

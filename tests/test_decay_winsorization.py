@@ -190,7 +190,13 @@ def test_raw_fallback_capped_constants_present() -> None:
     """Sanity: PASS2 raw_fallback_capped path lives in
     enrich_with_decay_and_vol; the SIGMA_CAP_SAFETY constant should be
     1.25 (any change is a cross-repo parity breakage with DC PR mirror)."""
-    src = open("daily_screener.py").read()
+    from pathlib import Path
+
+    # Explicit utf-8 — daily_screener.py contains Greek/math symbols that
+    # crash the cp1252 default open() on Windows.
+    src = Path(__file__).resolve().parents[1].joinpath(
+        "daily_screener.py"
+    ).read_text(encoding="utf-8")
     assert "SIGMA_CAP_SAFETY = 1.25" in src
     assert "raw_fallback_capped" in src
     assert "raw_fallback" in src

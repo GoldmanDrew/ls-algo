@@ -457,6 +457,58 @@ def fetch_and_save(
         return out_path
 
 
+def update_splits_from_flex_csv(
+    flex_cash_xml: Path,
+    out_csv: Path,
+) -> int:
+    """Extract ``<CorporateAction type="RS">`` rows from a Flex cash XML and
+    merge them into ``out_csv`` (typically ``data/splits_from_flex.csv``).
+
+    Returns the number of NEW rows written. Idempotent: existing rows are
+    preserved and deduplicated by ``(symbol, ex_date)``.
+
+    The CSV is consumed by ``splits.load_flex_splits_csv`` as the highest-
+    precedence source in the multi-source split-detection pipeline used by
+    the daily screener and ``etf_analytics``.
+    """
+    try:
+        import pandas as pd  # local import — keeps ibkr_flex usable without pandas in CI bootstraps
+        from splits import parse_flex_corporate_action_splits  # type: ignore[import-not-found]
+    except ImportError as e:
+        print(f"[FLEX][splits] dependencies missing ({e}); skipping splits CSV update")
+        return 0
+
+    if not flex_cash_xml.is_file():
+        return 0
+
+    new_df = parse_flex_corporate_action_splits(flex_cash_xml)
+    if new_df is None or new_df.empty:
+        return 0
+
+    cols = list(new_df.columns)
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    if out_csv.is_file():
+        try:
+            existing = pd.read_csv(out_csv)
+        except Exception:
+            existing = pd.DataFrame(columns=cols)
+    else:
+        existing = pd.DataFrame(columns=cols)
+
+    combined = pd.concat([existing, new_df], ignore_index=True)
+    combined = combined.drop_duplicates(subset=["symbol", "ex_date"], keep="last")
+    combined = combined.sort_values(by=["symbol", "ex_date"]).reset_index(drop=True)
+    combined.to_csv(out_csv, index=False)
+
+    n_total = len(combined)
+    n_new = max(0, n_total - len(existing))
+    print(
+        f"[FLEX][splits] {flex_cash_xml.name}: +{n_new} new RS row(s) → "
+        f"{out_csv} ({n_total} total)"
+    )
+    return n_new
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-date", default=os.getenv("RUN_DATE") or today_str(), help="YYYY-MM-DD")
@@ -467,6 +519,11 @@ def main() -> int:
         type=float,
         default=float(os.getenv("IBKR_FLEX_TIMEOUT_SEC", "180")),
         help="max wait per report seconds (flex_trades also uses IBKR_FLEX_TRADES_TIMEOUT_SEC floor, default 3600)",
+    )
+    ap.add_argument(
+        "--splits-csv",
+        default="data/splits_from_flex.csv",
+        help="path to write/append Flex CorporateAction splits (idempotent)",
     )
     args = ap.parse_args()
 
@@ -524,6 +581,15 @@ def main() -> int:
         print(f"[FLEX] wrote {p}")
         # Space out SendRequest for the next query vs IBKR ~10 Flex calls/min per token.
         time.sleep(float(os.getenv("IBKR_FLEX_INTER_QUERY_SLEEP_SEC", "6.0")))
+
+    # Pull ``<CorporateAction type="RS">`` rows out of the freshly-saved cash
+    # XML and merge them into ``data/splits_from_flex.csv`` so the daily
+    # screener and EOD accounting can consume them on the next run.
+    cash_xml = out_dir / "flex_cash.xml"
+    splits_csv = Path(args.splits_csv)
+    if not splits_csv.is_absolute():
+        splits_csv = Path.cwd() / splits_csv
+    update_splits_from_flex_csv(cash_xml, splits_csv)
 
     return 0
 
