@@ -98,8 +98,9 @@ JOINT_GRID_WEIGHTS_ROOT = Path("data") / "backtest" / "joint_qcqp_grid_weights"
 JOINT_GRID_SLEEVE_CAP_MAX_PAIR_FRAC = 0.25
 JOINT_GRID_SLEEVE_CAP_MAX_UNDER_FRAC = 0.20
 
-# Pulls per-pair mu toward the active cohort mean before QCQP (0 = off).
-JOINT_GRID_MU_SHRINK = 0.25
+# Default mu shrink toward cohort mean before QCQP (0 = off). Each JOINT_CONFIGS
+# entry can override with ``mu_shrink_intensity=...``; lower => sharper mu ranking.
+JOINT_GRID_MU_SHRINK = float(globals().get("JOINT_GRID_MU_SHRINK", 0.10))
 
 # ---------------------------------------------------------------------------
 # Sizing-v2 stability defaults (G1) - mirrored at the top of the standalone
@@ -148,6 +149,8 @@ _DEFAULT_BASE = dict(
     min_decay_obs=int(SIZING_V2_MIN_DECAY_OBS),
     min_beta_obs=int(SIZING_V2_MIN_BETA_OBS),
     ema_halflife_weeks=float(SIZING_V2_EMA_HALFLIFE_WEEKS) if SIZING_V2_EMA_HALFLIFE_WEEKS else None,
+    # Per-config override of DCQ ``mu_shrink_intensity`` (defaults to JOINT_GRID_MU_SHRINK).
+    mu_shrink_intensity=float(JOINT_GRID_MU_SHRINK),
     # G9 diversification knobs (off by default).
     entropy_lambda=0.0,
     entropy_reference="prior_w_pre",
@@ -165,23 +168,47 @@ def _cfg(name: str, **overrides) -> dict:
 
 
 JOINT_CONFIGS: list[dict] = [
-    # Reference: prior behavior (no smoothing).
+    # Reference: caps + turnover path; uses default mu_shrink (JOINT_GRID_MU_SHRINK).
     _cfg("baseline_v1"),
-    # Pure entropy / KL smoothing.
-    _cfg("entropy_low", entropy_lambda=0.25, edge_temperature=1.0),
-    _cfg("entropy_high_T15", entropy_lambda=1.0, edge_temperature=1.5,
-         book_max_pair=0.05, book_max_underlying=0.15, w_min_floor_frac=0.10),
-    # Soft mean-variance only (couples names through Sigma).
+    # Same as baseline but no mu shrink toward cohort mean (sharpest mu'w ranking).
+    _cfg("baseline_mu0", mu_shrink_intensity=0.0),
+    # Very light KL toward w_pre; T=1 => q matches w_pre ranking (no extra flattening).
+    _cfg("entropy_micro", entropy_lambda=0.05, edge_temperature=1.0),
+    # Moderate KL, still T=1 (avoid T>1 if you want weights closer to raw edge tilt).
+    _cfg("entropy_light", entropy_lambda=0.15, edge_temperature=1.0),
+    # Soft MV only (no entropy) - correlation-aware without KL flattening.
     _cfg("mv_only", mv_lambda=10.0),
-    # Combined: edge-tilted but smooth and risk-aware (recommended baseline).
-    _cfg("entropy_plus_mv",
-         entropy_lambda=0.5, edge_temperature=1.25, mv_lambda=5.0,
-         book_max_pair=0.05, book_max_underlying=0.15, w_min_floor_frac=0.10),
-    # Hard concentration cap on top of smoothing.
-    _cfg("effN_floor_25",
-         entropy_lambda=0.25, edge_temperature=1.25, eff_n_min_pairs=25,
-         book_max_pair=0.05, book_max_underlying=0.15, w_min_floor_frac=0.10),
+    # Combined: lower entropy than before, T=1, modest mu shrink, tighter caps.
+    _cfg(
+        "entropy_plus_mv_sharp",
+        entropy_lambda=0.15,
+        edge_temperature=1.0,
+        mv_lambda=5.0,
+        mu_shrink_intensity=0.05,
+        book_max_pair=0.05,
+        book_max_underlying=0.15,
+        w_min_floor_frac=0.10,
+    ),
+    # effN floor with light entropy at T=1 (was T=1.25 + higher entropy).
+    _cfg(
+        "effN_floor_25",
+        entropy_lambda=0.10,
+        edge_temperature=1.0,
+        eff_n_min_pairs=25,
+        mu_shrink_intensity=0.05,
+        book_max_pair=0.05,
+        book_max_underlying=0.15,
+        w_min_floor_frac=0.10,
+    ),
 ]
+
+# Knob cheat-sheet (edge tilt vs smoothness):
+# - entropy_lambda: lower => less pull toward q_prior; 0 => pure mu'w (+MV/ridge).
+# - edge_temperature: 1.0 => q proportional to w_pre^(1/T) with T=1 (no extra
+#   flattening vs w_pre). T>1 flattens q (more diversification pressure).
+# - mu_shrink_intensity: lower => mu in the QCQP stays closer to raw mu_used;
+#   0 => no cohort shrink. Set globally via JOINT_GRID_MU_SHRINK or per _cfg().
+# Re-run configs after changes: clear JOINT_RUN_CACHE = {} or restart kernel.
 
 JOINT_GRID_MAX_RUNS = int(globals().get("JOINT_GRID_MAX_RUNS", 12))
 if len(JOINT_CONFIGS) > JOINT_GRID_MAX_RUNS:
@@ -378,7 +405,7 @@ for _i, cfg in enumerate(JOINT_CONFIGS, start=1):
         book_sigma_target_annual=float(cfg["book_sigma_target"]),
         weight_ridge_lambda=float(cfg["weight_ridge_lambda"]),
         w_min_floor_frac=float(cfg["w_min_floor_frac"]),
-        mu_shrink_intensity=float(JOINT_GRID_MU_SHRINK),
+        mu_shrink_intensity=float(cfg.get("mu_shrink_intensity", JOINT_GRID_MU_SHRINK)),
         sleeve_cap_max_pair_frac=float(JOINT_GRID_SLEEVE_CAP_MAX_PAIR_FRAC),
         sleeve_cap_max_underlying_frac=float(JOINT_GRID_SLEEVE_CAP_MAX_UNDER_FRAC),
         confidence_haircut=bool(cfg["confidence_haircut"]),
