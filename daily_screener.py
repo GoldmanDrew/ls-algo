@@ -210,6 +210,8 @@ new_pairs = [
     ("AXTU", "AXTI"),  # T-REX 2X Long AXTI (REX / Tuttle; distinct from Tradr AXTX)
     # 2026-05-06 Defiance 2X long (AMPX)
     ("AMPU", "AMPX"),  # Defiance Daily Target 2X Long AMPX (Amprius Technologies)
+    # 2026-05-07 Tradr 2X long (Xanadu Quantum)
+    ("XNDX", "XNDU"),  # Tradr 2X Long XNDU Daily ETF (Xanadu Quantum Technologies)
 ]
 
 proshares_pairs_levered = [
