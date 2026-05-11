@@ -1367,11 +1367,11 @@ def _write_ibkr_borrow_cache_csv(df: pd.DataFrame, cache_path: Path) -> None:
     dest = Path(cache_path)
     df = df.copy()
     obj_cols = df.select_dtypes(include=["object"]).columns
-    if len(obj_cols) > 0:
-        df[obj_cols] = df[obj_cols].where(
-            df[obj_cols].isna(),
-            df[obj_cols].astype(str).str.replace("\x00", "", regex=False),
-        )
+    for c in obj_cols:
+        col = df[c]
+        non_na = col.notna()
+        if non_na.any():
+            df.loc[non_na, c] = col.loc[non_na].astype(str).str.replace("\x00", "", regex=False)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.parent / f"{dest.name}.tmp"
     df.to_csv(tmp, index=False, encoding="utf-8", lineterminator="\n")
