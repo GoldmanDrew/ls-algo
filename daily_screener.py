@@ -1342,7 +1342,40 @@ FTP_USER = "shortstock"
 FTP_PASS = ""
 FTP_FILE = "usa.txt"
 
-BORROW_CACHE_PATH = Path("data/borrow_cache.csv")
+BORROW_CACHE_PATH = Path(__file__).resolve().parent / "data" / "borrow_cache.csv"
+
+
+def _resolved_borrow_cache_path(cache_path: Path | str) -> Path:
+    """Resolve repo-anchored path for FTP cache (immune to flaky cwd).
+
+    Relative paths join ``Path(__file__).parent`` — same convention as using
+    ``data/borrow_cache.csv`` from the project root regardless of cwd.
+    """
+    p = Path(cache_path).expanduser()
+    if not p.is_absolute():
+        p = Path(__file__).resolve().parent / p
+    return p.resolve()
+
+
+def _write_ibkr_borrow_cache_csv(df: pd.DataFrame, cache_path: Path) -> None:
+    """Write borrow snapshot atomically.
+
+    Python 3.10+ CSV on Windows raises ``OSError(22; Invalid argument)`` if cell
+    text contains NUL (``\\x00``) — strips those from object columns before
+    ``to_csv``.
+    """
+    dest = Path(cache_path)
+    df = df.copy()
+    obj_cols = df.select_dtypes(include=["object"]).columns
+    if len(obj_cols) > 0:
+        df[obj_cols] = df[obj_cols].where(
+            df[obj_cols].isna(),
+            df[obj_cols].astype(str).str.replace("\x00", "", regex=False),
+        )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.parent / f"{dest.name}.tmp"
+    df.to_csv(tmp, index=False, encoding="utf-8", lineterminator="\n")
+    tmp.replace(dest)
 
 
 def _parse_ftp_text(text: str) -> pd.DataFrame:
@@ -1371,6 +1404,7 @@ def fetch_ibkr_shortstock_file(
     On success, caches the parsed result to *cache_path*.
     On failure, falls back to the cached file (with a warning).
     """
+    cache_path = _resolved_borrow_cache_path(cache_path)
     last_err = None
     for attempt in range(1, max_retries + 1):
         try:
@@ -1394,8 +1428,7 @@ def fetch_ibkr_shortstock_file(
 
             # Cache successful fetch
             try:
-                cache_path.parent.mkdir(parents=True, exist_ok=True)
-                df.to_csv(cache_path, index=False)
+                _write_ibkr_borrow_cache_csv(df, cache_path)
                 print(f"[FTP] Cached to {cache_path}")
             except Exception as e:
                 print(f"[FTP] Warning: could not write cache: {e}")
@@ -1415,7 +1448,7 @@ def fetch_ibkr_shortstock_file(
     if cache_path.exists():
         age_hours = (datetime.now() - datetime.fromtimestamp(cache_path.stat().st_mtime)).total_seconds() / 3600
         print(f"[FTP] ⚠ Falling back to cached borrow data ({age_hours:.1f}h old)")
-        df = pd.read_csv(cache_path)
+        df = pd.read_csv(cache_path, encoding="utf-8")
         print(f"[FTP] Loaded {len(df)} rows from cache")
         return df
     else:
