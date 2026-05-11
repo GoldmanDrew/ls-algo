@@ -1,5 +1,5 @@
 """
-etf_analytics.py — Drop-in decay + volatility enrichment for etf_screener.py
+etf_analytics.py — Decay + volatility enrichment helpers for the production screener.
 
 Adds columns to the screened DataFrame:
   - vol_underlying_annual  : annualized realized vol of the underlying (total return)
@@ -38,7 +38,7 @@ If Beta is missing (NaN) for a row, it is estimated via OLS on total-return
 series, with the same sign / leverage plausibility guards as ``daily_screener.add_betas``
 (fallback to listed leverage when OLS is unusable or implausible).
 
-Usage in etf_screener.py:
+Usage:
     from etf_analytics import enrich_with_decay_and_vol
     df = enrich_with_decay_and_vol(df)
 """

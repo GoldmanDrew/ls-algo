@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-execute_trade_plan_updated.py
+execute_trade_plan.py
 
 UPDATED FOR PURGATORY RULES + SHORT-SALE SAFETY:
 
@@ -45,19 +45,18 @@ from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple, List, Set
+from typing import Dict, Tuple, Set
 import numpy as np
 from ib_insync import IB, Stock, Order, Trade, util
 from ib_insync.objects import ExecutionFilter
-import time
 import datetime as dt
-from typing import Optional, Iterable, Dict, Any, List, Tuple
+from typing import Optional, Iterable, Any, List
 
 
 import pandas as pd
-import yaml
 from ib_insync import IB, Stock, Order, Trade, MarketOrder, TagValue
 from generate_trade_plan import load_blacklist
+from strategy_config import load_config
 
 
 # =============================================================================
@@ -1754,11 +1753,7 @@ def hedge_all_screened_underlyings_postpass(
 def main() -> None:
     signal.signal(signal.SIGINT, handle_sigint)
 
-    CONFIG_YML = Path("config/strategy_config.yml")
-    if not CONFIG_YML.exists():
-        raise FileNotFoundError(f"Config not found: {CONFIG_YML}")
-
-    cfg = yaml.safe_load(CONFIG_YML.read_text(encoding="utf-8")) or {}
+    cfg = load_config("config/strategy_config.yml")
     ibkr_cfg = cfg.get("ibkr", {}) or {}
     strat_cfg = cfg.get("strategy", {}) or {}
     paths_cfg = cfg.get("paths", {}) or {}

@@ -1,0 +1,119 @@
+{
+  "status": "optimal_inaccurate",
+  "primary_status": "optimal_inaccurate",
+  "joint_fallback_kind": null,
+  "solver": "SCS",
+  "fallback_used": false,
+  "last_error": null,
+  "n_pairs": 155,
+  "n_pairs_active": 41,
+  "sigma_p_book_annual": 0.2019829616690762,
+  "sigma_target_annual": 0.2,
+  "weight_ridge_lambda": 0.0,
+  "mv_lambda": 10.0,
+  "entropy_lambda": 0.0,
+  "entropy_reference": "prior_w_pre",
+  "edge_temperature": 1.0,
+  "eff_n_min_pairs": null,
+  "mu_shrink_intensity": 0.25,
+  "confidence_haircut": true,
+  "conf_floor": 0.25,
+  "n_obs_full": 252,
+  "turnover_lambda": 1.0,
+  "turnover_l1_max": null,
+  "anchor_used": true,
+  "l1_turnover_vs_prev": 1.5303806794631871,
+  "l2_turnover_vs_prev": 0.26287322897833865,
+  "ema_override_applied": true,
+  "hhi_pair": 0.045917133699246625,
+  "eff_n_pair": 21.778362877568014,
+  "top1_pair_share": 0.0999995687484128,
+  "top5_pair_share": 0.35061437124417966,
+  "gini_pair": -0.8614991106392975,
+  "sleeve_totals": {
+    "core_leveraged": 0.675,
+    "whitelist_stock": 0.20000000000000004,
+    "inverse_decay_bucket4": 0.12500000000000003
+  },
+  "n_pairs_by_bucket": {
+    "core_leveraged": 27.0,
+    "whitelist_stock": 7.0,
+    "inverse_decay_bucket4": 7.0
+  },
+  "rc_top": [
+    {
+      "bucket": "whitelist_stock",
+      "etf": "MTYY",
+      "underlying": "MSTR",
+      "weight": 0.04000000576575533,
+      "rc": 0.08622540797806999
+    },
+    {
+      "bucket": "whitelist_stock",
+      "etf": "COYY",
+      "underlying": "COIN",
+      "weight": 0.0400000198360607,
+      "rc": 0.07805594437378094
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "CWEB",
+      "underlying": "KWEB",
+      "weight": 0.09999950655907269,
+      "rc": 0.06436553880874446
+    },
+    {
+      "bucket": "whitelist_stock",
+      "etf": "SMYY",
+      "underlying": "SMCI",
+      "weight": 0.02664783069011717,
+      "rc": 0.06086667561911284
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "MSFU",
+      "underlying": "MSFT",
+      "weight": 0.0999995687484128,
+      "rc": 0.05960662040527374
+    },
+    {
+      "bucket": "inverse_decay_bucket4",
+      "etf": "CONI",
+      "underlying": "COIN",
+      "weight": 0.02500005761904272,
+      "rc": 0.05705183762920797
+    },
+    {
+      "bucket": "inverse_decay_bucket4",
+      "etf": "CORD",
+      "underlying": "CRWV",
+      "weight": 0.02095863053747392,
+      "rc": 0.050549165836290974
+    },
+    {
+      "bucket": "inverse_decay_bucket4",
+      "etf": "ETHD",
+      "underlying": "ETHA",
+      "weight": 0.025000062773568497,
+      "rc": 0.04431020605541651
+    },
+    {
+      "bucket": "inverse_decay_bucket4",
+      "etf": "MSDD",
+      "underlying": "MSTR",
+      "weight": 0.019032682516853548,
+      "rc": 0.04305822469506323
+    },
+    {
+      "bucket": "whitelist_stock",
+      "etf": "XBTY",
+      "underlying": "IBIT",
+      "weight": 0.040000150701573506,
+      "rc": 0.041406387727129276
+    }
+  ],
+  "n_pairs_dropped_by_history": 171,
+  "min_decay_obs": 120,
+  "min_beta_obs": 120,
+  "config_name": "mv_only"
+}

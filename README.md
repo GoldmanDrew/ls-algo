@@ -37,10 +37,10 @@ Python toolkit for a **systematic long/short** book around leveraged and inverse
 | **`config/strategy_config.yml`** | Single source of truth for strategy tag, capital, leverage, IBKR host, screener borrow bands, **portfolio sleeves**, rebalance thresholds, paths. |
 | **`config/strategy_blacklist.txt`** | Optional extra symbol blacklist (referenced when present). |
 | **`config/etf_expense_ratios.yml`** | Expense-ratio side data (used by enrichment paths where applicable). |
-| **`daily_screener.py`** | Universe → prices → OLS betas → FTP borrow → decay / vol enrichment → **`paths.screened_csv`**. Includes `--audit-splits` CLI for split-event review. |
-| **`etf_analytics.py`**, **`etf_screener.py`**, **`expense_ratios.py`** | Supporting analytics / scraping / expense helpers used by the screener and notebooks. |
+| **`daily_screener.py`** | Production screener: universe → prices → OLS betas → FTP borrow → decay / vol enrichment → **`paths.screened_csv`**. Includes `--audit-splits` CLI for split-event review. |
+| **`etf_analytics.py`**, **`expense_ratios.py`** | Supporting analytics / expense helpers used by the screener and notebooks. The old standalone `etf_screener.py` path has been retired. |
 | **`splits.py`** | Multi-source corporate-action split detection / repair (Yahoo `events.splits`, IBKR Flex `<CorporateAction>`, ops CSV, legacy overrides, heuristic). See [`SPLITS.md`](SPLITS.md). |
-| **`generate_trade_plan.py`** | Screened CSV → sleeve membership + decay-aware weights → proposed trades + flow ledger append. |
+| **`generate_trade_plan.py`** | Screened CSV → sleeve membership + decay-aware weights → proposed trades. |
 | **`execute_trade_plan.py`** | Proposed notionals → IBKR orders (parallel legs, purgatory rules, short availability). |
 | **`rebalance_strategy.py`** | Three-phase hybrid rebalancer (cleanup / establish / hedge); reuses execution helpers. |
 | **`execute_flow_program.py`** | Scheduled flow short deployment. |
@@ -69,10 +69,12 @@ daily_screener.py
 
 generate_trade_plan.py
   → proposed_trades.csv (+ dated run copy)
-  → flow_ledger.csv (append, when flow sleeve is used)
 
 execute_trade_plan.py / rebalance_strategy.py
   → IBKR orders vs proposed_trades + baseline
+
+harvest_underexposed_shorts.py
+  → targeted short catch-up vs plan/position discrepancies
 
 execute_flow_program.py
   → IBKR flow sleeve shorts (schedule from YAML)
@@ -99,12 +101,12 @@ The GitHub Action uses **`--skip-ibkr-check`** for unattended runs (see workflow
 
 ### 2) Plan — `generate_trade_plan.py`
 
-- Reads **`config/strategy_config.yml`** (fixed path `CONFIG_PATH` in script).
+- Reads **`config/strategy_config.yml`** through the shared `strategy_config.load_config()` loader.
 - Applies **global strategy blacklist** and sleeve rules.
 - **Stock sleeves:** `core_leveraged`, `whitelist_stock`, optional **`inverse_decay_bucket4`** (toggle with **`enabled: false`** to remove all B4 targets; remaining gross goes to core/whitelist by their `target_weight` ratio).
 - **Core net-decay selectivity (optional):** `min_net_decay_annual` and/or **`net_decay_hysteresis`** with sticky state file **`paths.core_leveraged_decay_state_json`** (reduces core names flickering in/out when decay hovers near a threshold). If **`min_net_decay_annual` > 0**, it is a **hard floor** applied after hysteresis (no NaN bypass, no “sticky” admission below the minimum). Whitelist is **not** gated by this hysteresis.
-- **Flow program** weights are **fixed** in YAML (`weighting.method: fixed`, `normalize: true`); the script re-normalises if needed.
-- Writes **`data/proposed_trades.csv`**, **`data/runs/<run-date>/proposed_trades.csv`**, and may append **`flow_ledger_csv`**.
+- **Flow program** weights are **fixed** in YAML (`weighting.method: fixed`, `normalize: true`) and executed separately by `execute_flow_program.py`.
+- Writes **`data/proposed_trades.csv`** and **`data/runs/<run-date>/proposed_trades.csv`**. It no longer mutates the flow ledger.
 
 ```bash
 python generate_trade_plan.py
@@ -124,14 +126,23 @@ DRY_RUN=1 python execute_trade_plan.py
 
 ### 4) Rebalance — `rebalance_strategy.py`
 
-Hybrid **Phase 1–3** rebalancer driven by **`portfolio.rebalance`** thresholds in YAML (drift, min trade, net long/short bands, etc.). Imports shared primitives from `execute_trade_plan.py`.
+Hybrid **Phase 1–3** rebalancer driven by **`portfolio.rebalance`** thresholds in YAML (minimum trade size, net long/short bands, establishment threshold, etc.). Imports shared primitives from `execute_trade_plan.py`.
 
 ```bash
 python rebalance_strategy.py --dry-run
 python rebalance_strategy.py --run-date 2026-04-22 --skip-phase-1
 ```
 
-### 5) Flow sleeve — `execute_flow_program.py`
+### 5) Harvest under-exposed shorts — `harvest_underexposed_shorts.py`
+
+Targeted maintenance runner for ETF shorts that are under target versus the current plan. By default it builds discrepancies from live IBKR positions; it can fall back to accounting discrepancy CSVs.
+
+```bash
+python harvest_underexposed_shorts.py --dry-run
+python harvest_underexposed_shorts.py --run-date 2026-04-22 --top-n 20
+```
+
+### 6) Flow sleeve — `execute_flow_program.py`
 
 Deploys the inverse short basket on **`frequency`** **`D`** or **`W`**, using **`schedule_days`** / **`schedule_time_et`** in Eastern time. Maintains cumulative notionals in the ledger path from config.
 
@@ -139,7 +150,7 @@ Deploys the inverse short basket on **`frequency`** **`D`** or **`W`**, using **
 python execute_flow_program.py
 ```
 
-### 6) Flex & accounting — `ibkr_flex.py`, `ibkr_accounting.py`, `run_eod_pnl_email.py`
+### 7) Flex & accounting — `ibkr_flex.py`, `ibkr_accounting.py`, `run_eod_pnl_email.py`
 
 ```bash
 python ibkr_flex.py --run-date 2026-04-22
@@ -159,11 +170,11 @@ Everything operational reads from this file. **Do not treat the table below as a
 |---------|---------|
 | **`ibkr.*`** | TWS / Gateway host, port, client id, delayed data flags. |
 | **`accounting.*`** | Mark-price behaviour, bucket split method for attribution. |
-| **`strategy.*`** | Tag, capital, gross leverage, equity source (`ibkr` / `static` / `file`), global blacklist. |
+| **`strategy.*`** | Tag, capital, gross leverage, global blacklist, gross sizing caps, covariance balance. |
 | **`paths.*`** | All major CSV paths, run directories, optional **`core_leveraged_decay_state_json`**. |
 | **`execution.*`** | Order style, timeouts, `dry_run`, parallelism, short-first behaviour. |
-| **`screener.*`** | Borrow “soft” cap, purgatory margin, whitelist / flow hard caps, staleness rules. |
-| **`portfolio.rebalance.*`** | Drift and net-exposure triggers used by `rebalance_strategy` / execution tooling. |
+| **`screener.*`** | Borrow “soft” cap, purgatory margin, whitelist hard cap, staleness rules. Flow borrow caps live under `portfolio.sleeves.flow_program.rules`. |
+| **`portfolio.rebalance.*`** | Minimum trade and net-exposure triggers used by `rebalance_strategy` and `harvest_underexposed_shorts`. |
 | **`portfolio.sleeves.core_leveraged`** | Core (levered long ETFs): `target_weight`, `min_beta_used`, optional **`min_net_decay_annual`**, **`net_decay_hysteresis`**, `weighting` (decay_score vs equal, caps, blend). |
 | **`portfolio.sleeves.whitelist_stock`** | Explicit ETF list + weighting. |
 | **`portfolio.sleeves.inverse_decay_bucket4`** | Inverse decay pairs: **`enabled`** master switch, borrow / vol / edge rules, **`partial_hedge_ratio`**, shares-outstanding cap, weighting. |
@@ -205,7 +216,7 @@ Full operator playbook, edge-case table, and verification checklist live in [`SP
 
 ## Research & backtests
 
-- **`notebooks/Simple_Pair_Backtest.ipynb`** — end-to-end **pair backtests** (Bucket‑4 hedge tests, **v6 Option‑2** dynamic hedge vs static **h=0.5**, optional **regime overlays** and **grid search** cells, equity / **h** plots). This is **research code**; parameters in the notebook are **not** automatically wired into `generate_trade_plan.py` unless you port them.
+- **`notebooks/Simple_Pair_Backtest.ipynb`** — end-to-end **pair backtests** (Bucket‑4 hedge tests, **v6 Option‑2** dynamic hedge vs static **h=0.5**, optional **regime overlays** and **grid search** cells, equity / **h** plots). This is **research code**; production sizing parameters live in `config/strategy_config.yml`.
 - **`notebooks/Diamond_Creek_*.ipynb`**, **`IBKR_Backtest_Large_AUM.ipynb`** — fund-style / attribution experiments.
 
 ---

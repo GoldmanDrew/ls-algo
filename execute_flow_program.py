@@ -24,10 +24,10 @@ from typing import List, Tuple
 
 import numpy as np
 import pandas as pd
-import yaml
 from zoneinfo import ZoneInfo
 
 from ib_insync import IB, MarketOrder, Stock, Order, TagValue
+from strategy_config import load_config
 
 
 TRADING_DAYS = 252
@@ -375,11 +375,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="No orders placed.")
     args = parser.parse_args()
 
-    CONFIG_YML = Path("config/strategy_config.yml")
-    if not CONFIG_YML.exists():
-        raise FileNotFoundError(f"Config not found: {CONFIG_YML}")
-
-    cfg = yaml.safe_load(CONFIG_YML.read_text(encoding="utf-8")) or {}
+    cfg = load_config("config/strategy_config.yml")
     ibkr_cfg = cfg.get("ibkr", {}) or {}
     exec_cfg = cfg.get("execution", {}) or {}
     strat_cfg = cfg.get("strategy", {}) or {}

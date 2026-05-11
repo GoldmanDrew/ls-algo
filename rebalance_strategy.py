@@ -27,7 +27,6 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 import pandas as pd
-import yaml
 from ib_insync import IB, Trade
 
 from execute_trade_plan import (
@@ -68,6 +67,7 @@ from execute_trade_plan import (
 from execute_flow_program import get_account_equity
 from ibkr_accounting import load_etf_beta_map
 from generate_trade_plan import load_blacklist
+from strategy_config import load_config
 
 
 # ---------------------------------------------------------------------------
@@ -2145,11 +2145,7 @@ def main() -> None:
     parser.add_argument("--skip-phase-3", action="store_true", help="Skip hedge pass.")
     args = parser.parse_args()
 
-    CONFIG_YML = Path("config/strategy_config.yml")
-    if not CONFIG_YML.exists():
-        raise FileNotFoundError(f"Config not found: {CONFIG_YML}")
-
-    cfg       = yaml.safe_load(CONFIG_YML.read_text(encoding="utf-8")) or {}
+    cfg       = load_config("config/strategy_config.yml")
     ibkr_cfg  = cfg.get("ibkr", {})      or {}
     strat_cfg = cfg.get("strategy", {})  or {}
     paths_cfg = cfg.get("paths", {})     or {}

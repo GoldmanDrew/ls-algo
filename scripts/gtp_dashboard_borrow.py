@@ -29,7 +29,8 @@ def load_dashboard_borrow_avg_annual() -> tuple[dict[str, float], Path | None]:
     Return (ticker -> annual borrow as **decimal**, e.g. 0.05 for 5%), resolved path or None.
 
     Expects ``dashboard_data.json`` to be either a list of records or ``{"records": [...]}``.
-    Each record should include ``ETF`` and ``borrow_avg_annual`` (numeric; percent or decimal).
+    Each record should include an ETF symbol field (``ETF``, ``symbol``, ``ticker``, or
+    ``etf``) and ``borrow_avg_annual`` (numeric; percent or decimal).
     """
     src = next((p for p in dashboard_data_candidates() if p.exists()), None)
     if src is None:
@@ -44,7 +45,7 @@ def load_dashboard_borrow_avg_annual() -> tuple[dict[str, float], Path | None]:
     for r in rows:
         if not isinstance(r, dict):
             continue
-        sym = r.get("ETF") or r.get("etf") or r.get("ticker")
+        sym = r.get("ETF") or r.get("symbol") or r.get("ticker") or r.get("etf")
         if sym is None:
             continue
         k = _norm_sym(str(sym))

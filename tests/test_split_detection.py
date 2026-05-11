@@ -33,6 +33,7 @@ from splits import (  # noqa: E402
     apply_split_events,
     clean_split_artifacts,
     detect_heuristic_splits,
+    load_legacy_manual_overrides,
     load_splits_overrides_csv,
     merge_split_events,
     parse_flex_corporate_action_splits,
@@ -223,8 +224,43 @@ def test_yahoo_events_authoritative_when_unadjusted() -> None:
     assert 0.6 < boundary < 1.6
 
 
+def test_smup_colliding_yahoo_split_suppressed_for_manual_override() -> None:
+    """Legacy SMUP factor (0.1 on 2026-01-26) must win over colliding Yahoo ``events.splits``."""
+    idx = pd.to_datetime(["2026-01-19", "2026-01-20", "2026-01-23", "2026-01-26", "2026-01-27"])
+    raw = pd.Series([100.0, 100.0, 100.0, 10.0, 10.05], index=idx)
+    ex_unix = int((pd.Timestamp("2026-01-26") + pd.Timedelta(hours=14)).tz_localize("UTC").timestamp())
+    yahoo_events = {
+        str(ex_unix): {
+            "date": ex_unix,
+            "numerator": 1.0,
+            "denominator": 10.0,
+            "splitRatio": "1:10",
+        }
+    }
+    cleaned, applied = clean_split_artifacts(
+        raw,
+        ticker="SMUP",
+        yahoo_events=yahoo_events,
+        use_heuristic=False,
+        splits_overrides_csv=None,
+        flex_splits_csv=None,
+        return_log=True,
+    )
+    assert any(e.source == "manual_override_dict" for e in applied)
+    assert not any(e.source == "yahoo_events" for e in applied)
+    assert float(cleaned.pct_change().abs().dropna().max()) < 0.25
+
+
+def test_smup_manual_override_emitted_for_smu_alias() -> None:
+    evs = load_legacy_manual_overrides()
+    jan26 = [e for e in evs if str(e.ex_date.date()) == "2026-01-26" and abs(e.factor - 0.1) < 1e-9]
+    syms = {e.symbol for e in jan26}
+    assert "SMUP" in syms
+    assert "SMU" in syms
+
+
 # ──────────────────────────────────────────────────────────────────────
-# (7) Flex CA RS parser
+# (8) Flex CA RS parser
 # ──────────────────────────────────────────────────────────────────────
 _FLEX_CA_FIXTURE = dedent(
     """\

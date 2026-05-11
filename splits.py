@@ -321,23 +321,42 @@ def load_legacy_manual_overrides() -> list[SplitEvent]:
     """Re-emit ``_LEGACY_MANUAL_OVERRIDES`` as :class:`SplitEvent` instances.
 
     Kept for back-compat — new entries should go to ``splits_overrides.csv``.
+
+    Yahoo-history symbols sometimes rename (e.g. SMUP listed under ``SMU``): emit the same
+    manual events under both the canonical override key and :data:`SYMBOL_ALIASES` targets so
+    :func:`clean_split_artifacts` matches whichever ticker the price fetcher used.
     """
     out: list[SplitEvent] = []
     for sym, by_date in _LEGACY_MANUAL_OVERRIDES.items():
+        ns = _norm_sym(sym)
+        alias = SYMBOL_ALIASES.get(ns)
+        variants = {ns}
+        if alias:
+            variants.add(_norm_sym(alias))
         for ds, factor in by_date.items():
             ts = _coerce_timestamp(ds)
             if ts is None:
                 continue
-            out.append(
-                SplitEvent(
-                    symbol=_norm_sym(sym),
-                    ex_date=ts,
-                    factor=float(factor),
-                    source="manual_override_dict",
-                    note="legacy in-code override",
+            fac = float(factor)
+            for vsym in sorted(variants):
+                note = "legacy in-code override"
+                if vsym != ns:
+                    note = f"{note} (duplicate for Yahoo alias of {ns})"
+                out.append(
+                    SplitEvent(
+                        symbol=vsym,
+                        ex_date=ts,
+                        factor=fac,
+                        source="manual_override_dict",
+                        note=note,
+                    )
                 )
-            )
     return out
+
+
+# Symbols with in-code manual overrides where Yahoo ``events.splits`` has been wrong or
+# inverted vs economic reality — drop colliding Yahoo events so manual wins in merge.
+_LEGACY_FORCE_MANUAL_OVER_YAHOO: frozenset[str] = frozenset(_LEGACY_MANUAL_OVERRIDES.keys())
 
 
 _FLEX_RS_RE = re.compile(r"SPLIT\s+(\d+)\s+FOR\s+(\d+)", re.IGNORECASE)
@@ -866,17 +885,31 @@ def clean_split_artifacts(
     flex_events_all = load_flex_splits_csv(flex_splits_csv)
     flex_events = [e for e in flex_events_all if not sym or e.symbol == sym]
 
+    legacy_events_all = load_legacy_manual_overrides() if use_legacy_manual else []
+    legacy_events = [e for e in legacy_events_all if not sym or e.symbol == sym]
+
     # Source 2: Yahoo events.splits payload.
-    ye = parse_yahoo_split_events(sym, yahoo_events) if yahoo_events else []
+    ye_full = parse_yahoo_split_events(sym, yahoo_events) if yahoo_events else []
+    # Let legacy manual win on overlapping calendar windows (Yahoo num/den can disagree with
+    # LETF corporate-action reality for symbols like SMUP).
+    ye = ye_full
+    if sym in _LEGACY_FORCE_MANUAL_OVER_YAHOO and legacy_events:
+        tol_days = 2
+        block_dates = {e.ex_date.normalize() for e in legacy_events if e.symbol == sym}
+        if block_dates:
+            ye = []
+            for e in ye_full:
+                drop = any(
+                    abs((e.ex_date.normalize() - bd).days) <= tol_days for bd in block_dates
+                )
+                if not drop:
+                    ye.append(e)
 
     # Source 3: ops-managed overrides CSV.
     csv_events_all = load_splits_overrides_csv(splits_overrides_csv)
     csv_events = [e for e in csv_events_all if not sym or e.symbol == sym]
 
-    # Source 4: legacy in-code dict.
-    legacy_events_all = load_legacy_manual_overrides() if use_legacy_manual else []
-    legacy_events = [e for e in legacy_events_all if not sym or e.symbol == sym]
-
+    # Source 4: legacy in-code dict (already filtered into ``legacy_events``).
     # Source 5: heuristic — only used to fill the gap when authoritative
     # sources are silent on the most recent ex-day.
     heur_events: list[SplitEvent] = []

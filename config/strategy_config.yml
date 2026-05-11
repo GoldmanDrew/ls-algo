@@ -11,31 +11,46 @@ accounting:
 
 strategy:
   tag: ETF_LS
-  capital_usd: 625000          # fallback if equity_source=static
+  capital_usd: 625000
   gross_leverage: 4
-  equity_source: "ibkr"      # "ibkr" | "static" | "file"
   blacklist:
     - JPM
     - BRK-B
     - AXP
     - APLD
-  beta_cutoff: 1.55
-  # Book-level gross caps after sleeve budgets (aligned with backtest CFG / joint book limits).
-  # Preserves total allocated gross while enforcing per-pair, per-underlying, and liquidity ceilings.
+  # Gross caps after sleeve budgets. With ``per_sleeve``, pair / underlying limits apply **within
+  # each sleeve's gross** (Diamond-Creek-Quant sizing.yaml parity); root caps are fallbacks for
+  # unknown sleeves. Liquidity rows still cap vs whole-book ``target_gross_usd``.
   gross_sizing_caps:
     enabled: true
-    max_pair_weight_cap: 0.05
-    max_underlying_weight_cap: 0.11
-    aum_use_pct: 0.02
-    short_avail_use_pct: 0.25
-    missing_shares_cap: 0.02
-    shares_outstanding_use_frac: 0.20
-    median_daily_volume_use_pct: 0.10
+    max_pair_weight_cap: 0.10
+    max_underlying_weight_cap: 0.18
+    aum_use_pct: 0.25
+    short_avail_use_pct: 1.00
+    missing_shares_cap: 0.20
+    shares_outstanding_use_frac: 0.25
+    median_daily_volume_use_pct: 0.25
+    # Stability #2: per-pair weight hysteresis (production only — defaults disable it).
+    weight_hysteresis_abs: 0.0       # snap to prior gross when |delta| <= abs * sum(gross), e.g. 0.005
+    weight_hysteresis_rel: 0.0       # OR |delta| <= rel * prev, e.g. 0.10
+    per_sleeve:
+      core_leveraged:
+        max_pair_weight: 0.10
+        max_underlying_weight: 0.18
+      whitelist_stock:
+        max_pair_weight: 0.20
+        max_underlying_weight: 0.40
+      inverse_decay_bucket4:
+        max_pair_weight: 0.18
+        max_underlying_weight: 0.30
+      flow_program:
+        max_pair_weight: 0.40
+        max_underlying_weight: 0.50
   # One-shot covariance penalty on final post-cap gross_target_usd; tilts mass away from
   # underlyings with high marginal contribution to portfolio variance, then re-applies the
   # same gross_sizing_caps so pair / underlying / liquidity ceilings still bind.
   covariance_balance:
-    enabled: false
+    enabled: true
     lookback_days: 252
     min_obs: 60
     shrink: 0.35
@@ -90,7 +105,6 @@ screener:
   purgatory_margin: 0.25
   hard_borrow_cap: 0.75           # above = not purgatory; core sizing treats as exit band vs soft cap
   whitelist_hard_borrow_cap: 0.55 # whitelist-only protected names above this => protected_bad
-  flow_hard_borrow_cap: 0.40     # flow-program shorts: adds only when borrow <= this (see generate_trade_plan)
   # With borrow OK, net_edge_p50 must exceed this to avoid purgatory (inclusive soft band (0, max]).
   purgatory_net_edge_max_annual: 0.05
   per_bucket:
@@ -124,11 +138,9 @@ screener:
     default: {min: 0.5, max: 1.5}
 
 portfolio:
-  # Rebalance thresholds — skip small trades to reduce costs
+  # Rebalance thresholds used by rebalance_strategy.py and harvest_underexposed_shorts.py.
   rebalance:
-    drift_trigger_pct: 0.02       # rebalance if name drifts >2% from target (execute_trade_plan)
     min_trade_usd: 200            # skip deltas below $200
-    min_days_between: 1
     net_trigger_long_pct: 0.02    # trigger when net long > 2% of gross
     net_trigger_short_pct: 0.01   # trigger when net short > 1% of gross
     net_target_long_pct: 0.01     # correct net-long to 1% (50% hedge-back)
@@ -138,19 +150,27 @@ portfolio:
   # Shared weighting defaults — overridden per-sleeve below
   _weighting_defaults: &weighting_defaults
     method: "decay_score"             # "equal" or "decay_score"
-    # Sizing score: "blended_decay" (blended_gross_decay) or "net_edge" (net_edge_p50_annual; B4: bucket4_net_edge_annual).
-    # Same borrow term as decay: raw = signal - borrow_aversion * borrow_current.
+    # Sizing score: use net-edge p50 from screener (``net_edge_p50_annual``). ``sizing_signal: net_edge`` selects
+    # the edge path; ``sizing_edge_column`` pins the column (B4 may override in its sleeve block if needed).
+    # raw_score = signal - borrow_aversion * borrow_current (keep borrow_aversion small when signal is already net).
     sizing_signal: "net_edge"
-    sizing_edge_column: null          # optional override; null = sleeve default column
+    sizing_edge_column: "net_edge_p50_annual"
     realized_trust_days: 252          # full trust after 1yr of OLS data
     borrow_blend_current: 0.5        # weight on current vs historical borrow
     maturity_full_days: 252           # linear ramp: ETF needs 1yr history for full weight
     margin_efficiency_power: 0.5     # favour 2x over 3x: score x (1/|B|)^0.5
+    # --- Iteration knobs (defaults are no-ops; flip per sleeve to test) -----
+    score_concavity_p: 1.0           # Candidate A: <1 flattens the top tail (try 0.85 / 0.90)
+    sigma_aware_sizing: false        # Candidate B: requires pair_sigma_map at call site
+    sigma_aware_floor: 0.25
+    sigma_aware_min_mult: 0.5
+    sigma_aware_max_mult: 2.0
+    score_ema_rho: 0.0               # Stability #1: 0 disables; production: 0.3 / 0.5 / 0.7
 
   sleeves:
     core_leveraged:
       allocation_type: "stock"
-      target_weight: 0.675
+      target_weight: 0.45
       rules:
         min_beta_used: 1.50
         # Core = accounting bucket-1 style levered longs. Optional net-decay floor (annual fraction).
@@ -158,20 +178,22 @@ portfolio:
         # With hysteresis OFF: require net_decay_annual >= min_net_decay_annual (still never < 0).
         # With hysteresis ON: persist per-ETF sticky flag in core_leveraged_decay_state_json — enter
         # only when decay >= enter_above; once in, stay until decay < exit_below (enter_above > exit_below).
-        min_net_decay_annual: 0.0
+        min_net_decay_annual: 0.06
         net_decay_hysteresis:
           enabled: true
           enter_above: 0.12
           exit_below: 0.08
       weighting:
         <<: *weighting_defaults
-        max_name_weight: 0.15         # 12% cap per underlying
-        eq_blend: 0.15                # 25% equal-weight + 50% decay-score
-        borrow_aversion: 3
+        max_name_weight: 0.10         # align with per-sleeve pair cap
+        eq_blend: 0.0                 # v16 selected: pure score weight
+        borrow_aversion: 0.35         # v16 selected B1 borrow aversion
+        score_concavity_p: 2.0        # v16 selected B1 score shape
 
     whitelist_stock:
       allocation_type: "stock"
-      target_weight: 0.20
+      target_weight: 0.5
+      # B2 ("yieldboost") universe = every screener row tagged ``is_yieldboost == True``,
       universe:
         etfs:
           - MTYY
@@ -189,33 +211,35 @@ portfolio:
           - RDYY
           - SMYY
           - AIYY
-          # Backtest / research: keep these names active despite borrow band or zero-locate snapshot
-          - CORD
-          - ASTN
-          - UVIX
+      rules:
+        min_net_edge_annual: 0.35     # v16 selected B2 entry floor on net_edge_p50_annual
       weighting:
         <<: *weighting_defaults
-        max_name_weight: 0.3         # 30% cap per underlying
+        max_name_weight: 0.20        # align with per-sleeve pair cap
         eq_blend: 0.05                # 5% equal-weight + 95% decay-score
-        borrow_aversion: 3.3
+        borrow_aversion: 0.00         # v16 selected B2 uses net edge directly
+        score_concavity_p: 1.0
 
     inverse_decay_bucket4:
       allocation_type: "stock"
-      enabled: false                 # false = no Bucket 4 rows in proposed trades; core/wl use full gross budget
-      target_weight: 0.125
+      enabled: true                  # 45/50/5 prod sizing includes Bucket 4
+      target_weight: 0.05
+      # B4 universe = every inverse (β<0, ``inverse_shortable``) ticker in the screener,
+      # MINUS ``rules.excluded_etfs`` (per-name overrides like KOLD)
+      # MINUS ``flow_program.universe.shorts`` (those are sized in the weekly flow sleeve).
       rules:
         partial_hedge_ratio: 1.0      # 1.0 = fully hedge inverse beta exposure
         min_net_edge_annual: 0.0      # require bucket4_net_edge_annual >= this
-        min_underlying_vol: 0.50      # universe entry: require vol_underlying_annual >= 50%
-        bucket4_borrow_cap: 1.20      # B4: max annual borrow (decimal) for inverse sleeve
-        hard_borrow_cap: 1.20         # legacy alias (kept for compatibility)
+        min_underlying_vol: 0.05      # universe entry: annual vol floor (aligned with DCQ bucket_4)
+        bucket4_borrow_cap: 0.90      # v16 selected B4 max annual borrow (decimal)
         excluded_etfs:                # never allocate inverse_decay_bucket4 to these tickers
           - KOLD
-        max_shares_outstanding_frac: 0.2
+          - SCO
+        max_shares_outstanding_frac: 0.25
       weighting:
         <<: *weighting_defaults
         method: "decay_score"
-        max_name_weight: 0.2
+        max_name_weight: 0.18
         eq_blend: 0.1
         borrow_aversion: 3.0
     flow_program:

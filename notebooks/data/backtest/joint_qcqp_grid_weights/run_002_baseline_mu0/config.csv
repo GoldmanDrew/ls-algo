@@ -1,0 +1,2 @@
+run_id,name,book_sigma_target,book_max_pair,book_max_underlying,weight_ridge_lambda,w_min_floor_frac,turnover_lambda,confidence_haircut,min_decay_obs,min_beta_obs,ema_halflife_weeks,mu_shrink_intensity,entropy_lambda,entropy_reference,edge_temperature,mv_lambda,eff_n_min_pairs
+2,baseline_mu0,0.2,0.1,0.2,0.0,0.0,1.0,True,120,120,6.0,0.0,0.0,prior_w_pre,1.0,0.0,

@@ -1,0 +1,104 @@
+{
+  "status": "optimal",
+  "primary_status": "infeasible",
+  "joint_fallback_kind": "no_book_variance",
+  "solver": "CLARABEL",
+  "fallback_used": true,
+  "last_error": null,
+  "n_pairs": 148,
+  "sigma_p_book_annual": 0.668027318349614,
+  "sigma_target_annual": 0.12,
+  "weight_ridge_lambda": 0.0,
+  "mu_shrink_intensity": 0.25,
+  "sleeve_totals": {
+    "core_leveraged": 0.675,
+    "whitelist_stock": 0.2,
+    "inverse_decay_bucket4": 0.12499999999999999
+  },
+  "n_pairs_by_bucket": {
+    "core_leveraged": 21.0,
+    "whitelist_stock": 7.0,
+    "inverse_decay_bucket4": 5.0
+  },
+  "rc_top": [
+    {
+      "bucket": "core_leveraged",
+      "etf": "NVTX",
+      "underlying": "NVTS",
+      "weight": 0.09999999992370613,
+      "rc": 0.18469065663238676
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "IRE",
+      "underlying": "IREN",
+      "weight": 0.09999999990552982,
+      "rc": 0.17441136955957307
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "SMU",
+      "underlying": "SMR",
+      "weight": 0.09999999990592318,
+      "rc": 0.15544483232522813
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "CLSX",
+      "underlying": "CLSK",
+      "weight": 0.09999999987708863,
+      "rc": 0.15316283113880014
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "ASTX",
+      "underlying": "ASTS",
+      "weight": 0.09999999991675841,
+      "rc": 0.1524691948282288
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "NBIG",
+      "underlying": "NBIS",
+      "weight": 0.09999999954516316,
+      "rc": 0.14754410927477207
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "WULX",
+      "underlying": "WULF",
+      "weight": 0.07499999991646927,
+      "rc": 0.10454019247112875
+    },
+    {
+      "bucket": "whitelist_stock",
+      "etf": "SMYY",
+      "underlying": "SMCI",
+      "weight": 0.03999999998167644,
+      "rc": 0.001406492350592069
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "OKLL",
+      "underlying": "OKLO",
+      "weight": 3.3135728299180124e-10,
+      "rc": 4.784300021929171e-10
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "NEBX",
+      "underlying": "NBIS",
+      "weight": 3.1322595598597777e-10,
+      "rc": 4.124373732800686e-10
+    }
+  ],
+  "n_pairs_dropped_by_history": 171,
+  "min_decay_obs": 0,
+  "min_beta_obs": 120,
+  "confidence_haircut": false,
+  "conf_floor": 0.25,
+  "ema_halflife_weeks": 6.0,
+  "turnover_lambda": 1.0,
+  "turnover_l1_max": null,
+  "anchor_used": true
+}

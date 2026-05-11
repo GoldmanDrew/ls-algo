@@ -7,27 +7,57 @@ Imported from ``notebooks/Buckets1-4Backtest.ipynb``.  Keep logic aligned with
 
 from __future__ import annotations
 
+import importlib
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import numpy as np
 import pandas as pd
 
+# Jupyter often keeps an older ``generate_trade_plan`` in ``sys.modules`` (without
+# newer helpers such as ``apply_gross_sizing_book_caps``). Reload before importing
+# so ``importlib.reload(scripts.gtp_sizing_mirror)`` picks up both mirror and GTP edits.
+if "generate_trade_plan" in sys.modules:
+    importlib.reload(sys.modules["generate_trade_plan"])
+
 # Reuse production implementations (single source of truth for weight math).
 from generate_trade_plan import (  # noqa: E402
     _apply_notional_caps_with_redistribution,
+    _b2_b4_universe_masks,
+    _b4_eligibility_edge_column,
     _clamp01,
     _core_net_decay_gate_for_core,
     _decay_score_weights,
     _norm_sym,
+    apply_gross_sizing_book_caps,
     compute_borrow_annual_series,
     get_borrow_col,
     load_blacklist,
     load_shares_outstanding_map,
 )
+
+# ``apply_covariance_balance`` was added after this mirror existed.  Jupyter kernels often
+# keep a stale ``generate_trade_plan`` in ``sys.modules`` without that symbol — a static
+# ``from generate_trade_plan import apply_covariance_balance`` then raises ImportError.  Resolve
+# lazily and ``reload`` once when the attribute is missing.
+_apply_cov_balance_cache: tuple[Callable[..., Any] | None,] | None = None
+
+
+def _resolve_apply_covariance_balance() -> Callable[..., Any] | None:
+    global _apply_cov_balance_cache
+    if _apply_cov_balance_cache is not None:
+        return _apply_cov_balance_cache[0]
+    import generate_trade_plan as _gtp
+
+    if not hasattr(_gtp, "apply_covariance_balance"):
+        _gtp = importlib.reload(_gtp)
+    fn = getattr(_gtp, "apply_covariance_balance", None)
+    _apply_cov_balance_cache = (fn,)
+    return fn
 
 
 def _parse_feerate_decimal(x) -> float:
@@ -117,6 +147,11 @@ def mirror_generate_trade_plan_sizing(
     run_date: str,
     paths: dict[str, Any] | None = None,
     hysteresis_touch_disk: bool = False,
+    underlying_returns: pd.DataFrame | None = None,
+    pair_sigma_map: dict[tuple[str, str], float] | None = None,
+    score_ema_state: dict[tuple[str, str], float] | None = None,
+    target_gross_multiplier: float = 1.0,
+    b4_weight_override_by_pair: dict[tuple[str, str], float] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """
     Reproduce ``generate_trade_plan.main()`` stock-sleeve sizing (no flow ledger append).
@@ -125,7 +160,7 @@ def mirror_generate_trade_plan_sizing(
     ----------
     screened :
         Same columns as ``etf_screened_today.csv`` after coercion (ETF, Underlying,
-        purgatory, Beta, blended_gross_decay, borrow columns, net_decay_annual, …).
+        purgatory, Beta, blended_gross_decay, borrow columns, net_edge_p50_annual, net_decay_annual, …).
     cfg :
         Full YAML dict (``load_config()``).
     run_date :
@@ -135,9 +170,23 @@ def mirror_generate_trade_plan_sizing(
         real ``core_leveraged_decay_state_json`` file is never read for writes in a
         way that persists — actually reads still use copy. Production file is never
         overwritten; temp file is deleted after the call.
+    pair_sigma_map :
+        Optional ``{(etf, und): annual pair-spread sigma}`` for Candidate B (sigma-aware sizing).
+    score_ema_state :
+        Optional in-place dict carrying per-pair EMA scores across rebalances (Stability #1).
+    target_gross_multiplier :
+        Optional scalar in ``(0, 1]`` applied to ``target_gross_usd`` before sleeve budgeting
+        (Candidate G — DD brake). Use ``1.0`` for unchanged behaviour.
+    b4_weight_override_by_pair :
+        Optional ``{(ETF, Underlying): positive weight}`` for **inverse_decay_bucket4** only.
+        Values are renormalized to sum to 1 over the B4 rows present in ``b4_names`` (unknown
+        keys ignored). When set, replaces decay-score / equal weights **before** B4
+        shares-out redistribution and the usual book-level caps + covariance pass — so
+        production-style ``apply_gross_sizing_book_caps`` / ``apply_covariance_balance`` still
+        run on top of the override.
     """
     paths = paths or (cfg.get("paths") or {})
-    strategy = cfg.get("strategy", {}) or {}
+    strategy = dict(cfg.get("strategy", {}) or {})
     sleeves = (cfg.get("portfolio", {}) or {}).get("sleeves", {}) or {}
 
     core = sleeves.get("core_leveraged", {}) or {}
@@ -147,6 +196,11 @@ def mirror_generate_trade_plan_sizing(
     capital_usd = float(strategy.get("capital_usd", 0.0))
     gross_leverage = float(strategy.get("gross_leverage", 0.0))
     target_gross_usd = capital_usd * gross_leverage
+    # Candidate G: scale total deployable gross before sleeve budgets (DD brake / external scaler).
+    tg_mult = float(target_gross_multiplier) if target_gross_multiplier is not None else 1.0
+    if not np.isfinite(tg_mult) or tg_mult <= 0:
+        tg_mult = 1.0
+    target_gross_usd = float(target_gross_usd) * float(tg_mult)
     beta_floor = float(strategy.get("beta_floor", 0.1))
 
     core_w = float(core.get("target_weight", 0.85))
@@ -156,6 +210,8 @@ def mirror_generate_trade_plan_sizing(
 
     core_rules = core.get("rules", {}) or {}
     core_beta_min = float(core_rules.get("min_beta_used", 1.5))
+    wl_rules = wl.get("rules", {}) or {}
+    wl_min_edge = float(wl_rules.get("min_net_edge_annual", 0.0) or 0.0)
     b4_rules = b4.get("rules", {}) or {}
     b4_min_edge = float(b4_rules.get("min_net_edge_annual", 0.0))
     b4_partial_hedge_ratio = _clamp01(b4_rules.get("partial_hedge_ratio", 1.0))
@@ -164,9 +220,7 @@ def mirror_generate_trade_plan_sizing(
     b4_excluded_etfs = {_norm_sym(x) for x in (b4_rules.get("excluded_etfs") or [])}
 
     soft_borrow_cap = float((cfg.get("screener") or {}).get("borrow_low", 1.0))
-    b4_hard_borrow_cap = float(
-        b4_rules.get("bucket4_borrow_cap", b4_rules.get("hard_borrow_cap", float("inf")))
-    )
+    b4_hard_borrow_cap = float(b4_rules.get("bucket4_borrow_cap", float("inf")))
 
     wl_list = [_norm_sym(x) for x in ((wl.get("universe") or {}).get("etfs") or [])]
     wl_set = set(wl_list)
@@ -199,7 +253,7 @@ def mirror_generate_trade_plan_sizing(
     keep["Underlying"] = keep["Underlying"].astype(str).map(_norm_sym)
     keep["Beta"] = pd.to_numeric(keep["Beta"], errors="coerce")
     keep["beta_abs"] = keep["Beta"].abs()
-    for _col in ("blended_gross_decay", "borrow_current", "net_decay_annual"):
+    for _col in ("blended_gross_decay", "borrow_current", "net_decay_annual", "net_edge_p50_annual"):
         if _col not in keep.columns:
             keep[_col] = np.nan
         else:
@@ -225,6 +279,19 @@ def mirror_generate_trade_plan_sizing(
         return keep, diag
 
     eligible["in_whitelist"] = eligible["ETF"].isin(wl_set)
+    # B2 ("yieldboost") universe: any screener row tagged ``is_yieldboost`` OR present in the
+    # YAML whitelist allow-list (the latter is an additive override for research names).
+    # B2 + B4 explicitly exclude flow_program tickers (they are sized in the weekly flow sleeve).
+    flow_program_etfs = {
+        _norm_sym(x)
+        for x in (
+            ((sleeves.get("flow_program") or {}).get("universe") or {}).get("shorts") or []
+        )
+    }
+    is_yieldboost, in_b2_universe, in_flow_program = _b2_b4_universe_masks(
+        eligible, wl_set=wl_set, flow_program_etfs=flow_program_etfs
+    )
+
     net_decay_non_negative = ~(eligible["net_decay_annual"] < 0)
     b = eligible["borrow_annual"]
     core_borrow_ok = (~np.isfinite(b)) | (b <= soft_borrow_cap) | (eligible["in_whitelist"])
@@ -236,9 +303,15 @@ def mirror_generate_trade_plan_sizing(
         inverse_shortable = eligible["inverse_shortable"].fillna(False).astype(bool)
     else:
         inverse_shortable = negative_beta
-    edge_col = "bucket4_net_edge_annual" if "bucket4_net_edge_annual" in eligible.columns else "net_decay_annual"
+    edge_col = _b4_eligibility_edge_column(eligible)
     b4_edge = pd.to_numeric(eligible.get(edge_col), errors="coerce")
     b4_edge_ok = (~np.isfinite(b4_edge)) | (b4_edge >= b4_min_edge)
+    wl_edge = pd.to_numeric(eligible.get("net_edge_p50_annual"), errors="coerce")
+    wl_edge_ok = (
+        np.isfinite(wl_edge) & (wl_edge >= wl_min_edge)
+        if wl_min_edge > 0
+        else pd.Series(True, index=eligible.index)
+    )
     b4_und_vol = pd.to_numeric(eligible.get("vol_underlying_annual"), errors="coerce")
     b4_vol_ok = np.isfinite(b4_und_vol) & (b4_und_vol >= b4_min_underlying_vol)
 
@@ -263,10 +336,23 @@ def mirror_generate_trade_plan_sizing(
             tmp_decay_path.unlink(missing_ok=True)
 
     eligible["in_core"] = core_pre_decay & core_decay_gate
-    eligible["in_wl"] = positive_beta & eligible["in_whitelist"] & wl_borrow_ok & net_decay_non_negative
+    eligible["in_wl"] = (
+        positive_beta
+        & in_b2_universe
+        & ~in_flow_program
+        & wl_borrow_ok
+        & wl_edge_ok
+        & net_decay_non_negative
+    )
     b4_not_excluded = ~eligible["ETF"].isin(b4_excluded_etfs)
     eligible["in_b4"] = (
-        negative_beta & inverse_shortable & b4_borrow_ok & b4_edge_ok & b4_vol_ok & b4_not_excluded
+        negative_beta
+        & inverse_shortable
+        & b4_borrow_ok
+        & b4_edge_ok
+        & b4_vol_ok
+        & b4_not_excluded
+        & ~in_flow_program
         if b4_enabled
         else pd.Series(False, index=eligible.index)
     )
@@ -294,7 +380,13 @@ def mirror_generate_trade_plan_sizing(
 
     if not core_names.empty and core_budget > 0:
         if core_weight_method == "decay_score":
-            w = _decay_score_weights(core_names, core_weighting_cfg)
+            w = _decay_score_weights(
+                core_names,
+                core_weighting_cfg,
+                sleeve_name="core_leveraged",
+                pair_sigma_map=pair_sigma_map,
+                score_ema_state=score_ema_state,
+            )
         else:
             w = np.ones(len(core_names)) / len(core_names)
         core_names = core_names.copy()
@@ -303,7 +395,13 @@ def mirror_generate_trade_plan_sizing(
 
     if not wl_names.empty and wl_budget > 0:
         if wl_weight_method == "decay_score":
-            w = _decay_score_weights(wl_names, wl_weighting_cfg)
+            w = _decay_score_weights(
+                wl_names,
+                wl_weighting_cfg,
+                sleeve_name="whitelist_stock",
+                pair_sigma_map=pair_sigma_map,
+                score_ema_state=score_ema_state,
+            )
         else:
             wl_names = wl_names.copy()
             wl_names["wl_rank"] = wl_names["ETF"].map(lambda x: wl_list.index(x) if x in wl_set else 10**9)
@@ -320,7 +418,20 @@ def mirror_generate_trade_plan_sizing(
         if b4_weight_method == "equal":
             w = np.ones(len(b4_names)) / len(b4_names)
         else:
-            w = _decay_score_weights(b4_names, b4_weighting_cfg)
+            w = _decay_score_weights(
+                b4_names,
+                b4_weighting_cfg,
+                sleeve_name="inverse_decay_bucket4",
+                pair_sigma_map=pair_sigma_map,
+                score_ema_state=score_ema_state,
+            )
+        if b4_weight_override_by_pair:
+            ov = dict(b4_weight_override_by_pair)
+            keys_list = list(zip(b4_names["ETF"].map(_norm_sym), b4_names["Underlying"].map(_norm_sym)))
+            raw = np.array([max(0.0, float(ov.get(k, 0.0))) for k in keys_list], dtype=float)
+            s_ov = float(raw.sum())
+            if s_ov > 1e-18:
+                w = raw / s_ov
         b4_names = b4_names.copy()
         b4_names["gross_target_usd"] = b4_budget * w
         b4_names["shares_outstanding_total"] = b4_names["ETF"].map(shares_out_map)
@@ -339,6 +450,36 @@ def mirror_generate_trade_plan_sizing(
 
     sized = pd.concat([core_names, wl_names, b4_names], axis=0, ignore_index=False)
     sized = sized[~sized.index.duplicated(keep="first")].copy()
+    sized, cap_diag = apply_gross_sizing_book_caps(
+        sized,
+        target_gross_usd=float(target_gross_usd),
+        beta_floor=float(beta_floor),
+        strategy=strategy,
+        shares_out_map=shares_out_map,
+    )
+    if cap_diag.get("applied"):
+        diag["gross_sizing_caps"] = cap_diag
+
+    cov_cfg = strategy.get("covariance_balance") or {}
+    if isinstance(cov_cfg, dict) and bool(cov_cfg.get("enabled", False)):
+        _apply_cb = _resolve_apply_covariance_balance()
+        if _apply_cb is None:
+            diag["covariance_balance"] = {
+                "applied": False,
+                "reason": "generate_trade_plan_missing_apply_covariance_balance",
+            }
+        else:
+            sized, cov_diag = _apply_cb(
+                sized,
+                target_gross_usd=float(target_gross_usd),
+                beta_floor=float(beta_floor),
+                strategy=strategy,
+                paths=paths,
+                shares_out_map=shares_out_map,
+                returns_df=underlying_returns,
+            )
+            diag["covariance_balance"] = cov_diag
+
     sized["beta_used_abs"] = sized["beta_abs"].clip(lower=beta_floor).fillna(1.0)
     sized["hedge_ratio"] = 1.0 / sized["beta_used_abs"]
     b4_mask = sized["sleeve"].eq("inverse_decay_bucket4")
@@ -350,6 +491,7 @@ def mirror_generate_trade_plan_sizing(
     sized.loc[stock_mask, "short_usd"] = -(sized.loc[stock_mask, "hedge_ratio"] * sized.loc[stock_mask, "long_usd"])
 
     sized.loc[b4_mask, "short_usd"] = -sized.loc[b4_mask, "gross_target_usd"]
+    # Bucket 4: both legs are shorts (negative USD); `long_usd` names the underlying hedge column only.
     sized.loc[b4_mask, "long_usd"] = -(
         b4_partial_hedge_ratio * sized.loc[b4_mask, "beta_used_abs"] * sized.loc[b4_mask, "gross_target_usd"]
     )
@@ -500,8 +642,20 @@ def pair_weights_with_underlying_cov_penalty(
     if not syms or underlying_returns is None or underlying_returns.empty:
         return w0, pd.DataFrame()
 
-    r = underlying_returns.copy()
-    r.columns = [_norm_sym(str(c)) for c in r.columns]
+    sym_set = set(syms)
+    pick_cols: list[Any] = []
+    seen_nc: set[str] = set()
+    for c in underlying_returns.columns:
+        nc = _norm_sym(str(c))
+        if nc not in sym_set or nc in seen_nc:
+            continue
+        seen_nc.add(nc)
+        pick_cols.append(c)
+    if len(pick_cols) < 2:
+        return w0, pd.DataFrame()
+
+    r = underlying_returns.loc[:, pick_cols].copy()
+    r.columns = [_norm_sym(str(c)) for c in pick_cols]
     r = r[[c for c in r.columns if c in syms]]
     if r.empty or len(r) < int(min_obs):
         return w0, pd.DataFrame()

@@ -2,19 +2,18 @@
 """
 generate_trade_plan.py
 
-UPDATE: Portfolio construction matches YAML sleeves (85/15 stock sleeves + flow overlay)
+Production portfolio construction for YAML sleeves.
 
 Implements:
 - Stock sleeves (rebalanced as part of each run):
-    * core_leveraged:   target_weight=0.85 of target_gross_usd
+    * core_leveraged:   target_weight from strategy_config.yml
         - requires |Beta| >= min_beta_used
         - apply soft borrow ban (screener.borrow_low) UNLESS whitelisted sleeve overrides
-        - equal weight within sleeve (optional max_name_weight cap not enforced here; can be added)
+        - decay-score weighting configured in YAML
 
-    * whitelist_stock:  target_weight=0.15 of target_gross_usd
-        - ETF must be in whitelist list
-        - zipf weighting by list order (rank_order=as_listed)
-        - OPTIONAL hard borrow cap for whitelist sleeve (e.g. 20%) if provided in cfg
+    * whitelist_stock:  target_weight from strategy_config.yml
+        - YieldBoost rows plus YAML whitelist additions
+        - optional min_net_edge_annual gate from YAML
 
 - Purgatory handling (from screened CSV; see daily_screener ``recompute_purgatory_by_bucket``):
     * OUTPUT purgatory rows with 0 targets so execution won’t auto-close.
@@ -29,19 +28,8 @@ Implements:
   > 0 it is a **hard floor** (always enforced, including over hysteresis and missing-data paths).
   Hysteresis uses ``paths.core_leveraged_decay_state_json`` to reduce pairs bouncing in/out when decay oscillates.
 
-- Flow overlay (tracked, not "sized into" the 85/15 stock budgets):
-    * weekly_add_usd = (annual_deployment_rate / 52) * deployment_base
-      where deployment_base is "current_equity" or "initial_equity"
-    * distributed across flow weights (fixed)
-    * CUMULATIVE notional tracked in a ledger CSV under data/flow_ledger.csv (or cfg path)
-    * optional hard borrow cap for flow sleeve (e.g. 20%) if provided in cfg
-    * optional constraints:
-        - max_cumulative_weight (cap as % of current equity)
-        - pause_if_drawdown_exceeds (requires equity curve; here we support manual "pause" flag)
-
 Outputs:
 - proposed_trades.csv (stock sleeves sized + purgatory keep-open rows)
-- flow_ledger.csv (append-only record of cumulative flow)
 
 Notes:
 - This script assumes screened_csv includes: ETF, Underlying, purgatory, Beta
@@ -56,14 +44,13 @@ import json
 from copy import deepcopy
 from datetime import date
 from pathlib import Path
-from typing import Any, Dict, Set, Tuple
+from typing import Any, Set, Tuple
 
 import numpy as np
 import pandas as pd
-import yaml
 
+from strategy_config import load_config
 
-CONFIG_PATH = Path("config/strategy_config.yml")
 TRADING_DAYS = 252
 
 
@@ -78,19 +65,44 @@ def run_dir(run_date: str) -> Path:
     return Path("data") / "runs" / run_date
 
 
-def load_config() -> dict:
-    if not CONFIG_PATH.exists():
-        raise FileNotFoundError(f"Config not found: {CONFIG_PATH}")
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
-
-
 def _norm_sym(x: str) -> str:
     return str(x).strip().upper().replace(".", "-")
 
 
 def _clamp01(x: float) -> float:
     return max(0.0, min(1.0, float(x)))
+
+
+def _b2_b4_universe_masks(
+    eligible: pd.DataFrame,
+    *,
+    wl_set: set[str],
+    flow_program_etfs: set[str],
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Compute the B2/B4 universe gating masks shared by ``main()`` and the sizing mirror.
+
+    Returns
+    -------
+    is_yieldboost : pd.Series[bool]
+        Per-row screener flag (``False`` when the column is absent).
+    in_b2_universe : pd.Series[bool]
+        ``is_yieldboost`` ∪ rows present in the YAML whitelist allow-list.
+    in_flow_program : pd.Series[bool]
+        Rows whose ``ETF`` ticker lives in ``flow_program.universe.shorts`` —
+        excluded from both B2 and B4 because the weekly flow sleeve sizes them.
+    """
+    if "is_yieldboost" in eligible.columns:
+        is_yieldboost = eligible["is_yieldboost"].fillna(False).astype(bool)
+    else:
+        is_yieldboost = pd.Series(False, index=eligible.index)
+    in_whitelist = eligible["ETF"].isin(wl_set) if "ETF" in eligible.columns else pd.Series(False, index=eligible.index)
+    in_b2_universe = is_yieldboost | in_whitelist
+    in_flow_program = (
+        eligible["ETF"].isin(flow_program_etfs)
+        if "ETF" in eligible.columns
+        else pd.Series(False, index=eligible.index)
+    )
+    return is_yieldboost, in_b2_universe, in_flow_program
 
 
 def _load_core_decay_state(path: Path) -> dict[str, Any]:
@@ -211,7 +223,8 @@ def _sizing_signal_column(weighting_cfg: dict, *, sleeve_name: str | None = None
     """
     Return (mode, column_name) for decay_score sizing.
 
-    *mode* is ``blended_decay`` or ``net_edge``.  Column is the annual edge/decay field to read.
+    *mode* is ``blended_decay`` or ``net_edge`` (affects fallbacks only). The default primary
+    signal for **all** sleeves is ``net_edge_p50_annual``. Override via ``sizing_edge_column``.
     """
     mode = str(weighting_cfg.get("sizing_signal", "blended_decay") or "blended_decay").lower().strip()
     if mode in ("blended", "blended_decay", "decay", "gross_decay"):
@@ -221,17 +234,20 @@ def _sizing_signal_column(weighting_cfg: dict, *, sleeve_name: str | None = None
     else:
         mode = "blended_decay"
 
-    if mode == "blended_decay":
-        return mode, "blended_gross_decay"
-
     col = weighting_cfg.get("sizing_edge_column")
     if isinstance(col, str) and col.strip():
         return mode, col.strip()
 
-    sn = (sleeve_name or "").strip().lower()
-    if sn == "inverse_decay_bucket4":
-        return mode, "bucket4_net_edge_annual"
     return mode, "net_edge_p50_annual"
+
+
+def _b4_eligibility_edge_column(df: pd.DataFrame) -> str:
+    """Screener column for B4 ``min_net_edge_annual`` gate (inverse_decay_bucket4)."""
+    if "net_edge_p50_annual" in df.columns:
+        return "net_edge_p50_annual"
+    if "bucket4_net_edge_annual" in df.columns:
+        return "bucket4_net_edge_annual"
+    return "net_decay_annual"
 
 
 def _decay_score_weights(
@@ -239,18 +255,26 @@ def _decay_score_weights(
     weighting_cfg: dict,
     beta_col: str = "beta_abs",
     sleeve_name: str | None = None,
+    *,
+    pair_sigma_map: dict[tuple[str, str], float] | None = None,
+    score_ema_state: dict[tuple[str, str], float] | None = None,
 ) -> np.ndarray:
     """Compute portfolio weights from decay-score signal blended with equal weight.
 
     Parameters
     ----------
     df : DataFrame of eligible names. Must contain *beta_col* and borrow ``borrow_current``.
-         Primary signal column depends on ``weighting_cfg['sizing_signal']`` (default
-         ``blended_decay`` uses ``blended_gross_decay``; ``net_edge`` uses ``net_edge_p50_annual``
-         or ``sizing_edge_column``, with the same borrow discount as blended decay).
+         Primary signal column defaults to ``net_edge_p50_annual`` for every sleeve (override
+         with ``sizing_edge_column``). If that column is missing or all-NaN, falls back to
+         ``blended_gross_decay``. Same borrow discount on the resolved signal in all modes.
     weighting_cfg : sleeve ``weighting`` dict from strategy_config.yml.
     beta_col : column name for absolute-value beta (default ``beta_abs``).
     sleeve_name : optional sleeve key (e.g. ``inverse_decay_bucket4``) for net-edge column defaults.
+    pair_sigma_map : optional dict ``{(etf, und): annualized pair-spread sigma}`` enabling sigma-aware
+         sizing (Candidate B): score is multiplied by ``clip(1 / max(sigma, sigma_floor), [m_min, m_max])``.
+    score_ema_state : optional in-place dict ``{(etf, und): prev_score}``. When supplied with
+         ``score_ema_rho`` > 0, current scores are blended ``rho * prev + (1 - rho) * cur`` and the
+         dict is updated. Stabilizes weights against week-to-week net_edge wiggle (production use).
 
     Returns
     -------
@@ -265,20 +289,75 @@ def _decay_score_weights(
     margin_power    = float(weighting_cfg.get("margin_efficiency_power", 0.0))
     eq_blend        = _clamp01(weighting_cfg.get("eq_blend", 0.0))
     max_w           = float(weighting_cfg.get("max_name_weight", 1.0))
+    # New iteration knobs (default: identity / off so baseline behavior is unchanged).
+    score_p         = float(weighting_cfg.get("score_concavity_p", 1.0) or 1.0)
+    sigma_aware_on  = bool(weighting_cfg.get("sigma_aware_sizing", False))
+    sigma_floor     = float(weighting_cfg.get("sigma_aware_floor", 0.25) or 0.25)
+    sigma_clip_min  = float(weighting_cfg.get("sigma_aware_min_mult", 0.5) or 0.5)
+    sigma_clip_max  = float(weighting_cfg.get("sigma_aware_max_mult", 2.0) or 2.0)
+    ema_rho         = _clamp01(weighting_cfg.get("score_ema_rho", 0.0))
 
     # --- raw sizing score (same borrow discount as blended decay path) ---
-    mode, sig_col = _sizing_signal_column(weighting_cfg, sleeve_name=sleeve_name)
-    if mode == "blended_decay":
-        signal = pd.to_numeric(df["blended_gross_decay"], errors="coerce")
-    elif sig_col in df.columns:
+    _mode, sig_col = _sizing_signal_column(weighting_cfg, sleeve_name=sleeve_name)
+    if sig_col in df.columns:
         signal = pd.to_numeric(df[sig_col], errors="coerce")
     else:
         signal = pd.Series(np.nan, index=df.index)
-    if mode == "net_edge" and (sig_col not in df.columns or bool(signal.isna().all())):
+    if bool(signal.isna().all()) and "blended_gross_decay" in df.columns:
         signal = pd.to_numeric(df["blended_gross_decay"], errors="coerce")
 
     borrow = pd.to_numeric(df["borrow_current"], errors="coerce").fillna(0.0)
     raw_score = signal - borrow_aversion * borrow  # higher = better (annual units)
+
+    # --- Candidate A: signed-power concavity on the raw score -------------
+    # score = sign(raw) * |raw|^p; p in (0, 1] de-peaks the top tail without flipping signs.
+    if abs(score_p - 1.0) > 1e-9:
+        rs = pd.to_numeric(raw_score, errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        raw_score = pd.Series(np.sign(rs) * np.power(np.abs(rs), float(score_p)), index=df.index)
+
+    # --- Candidate B: sigma-aware sizing (1 / pair-spread sigma) ----------
+    if sigma_aware_on and pair_sigma_map:
+        try:
+            etfs = df["ETF"].astype(str).map(_norm_sym).tolist()
+            unds = df["Underlying"].astype(str).map(_norm_sym).tolist()
+            inv = np.array(
+                [
+                    1.0
+                    / max(
+                        float(pair_sigma_map.get((e, u), float("nan"))),
+                        float(sigma_floor),
+                    )
+                    if np.isfinite(float(pair_sigma_map.get((e, u), float("nan"))))
+                    else 1.0
+                    for e, u in zip(etfs, unds)
+                ],
+                dtype=float,
+            )
+            # Center around 1 (median(inv)) before clipping so the multiplier averages to 1.
+            med_inv = float(np.nanmedian(inv)) if np.isfinite(np.nanmedian(inv)) else 1.0
+            mult = inv / max(med_inv, 1e-9)
+            mult = np.clip(mult, float(sigma_clip_min), float(sigma_clip_max))
+            raw_score = raw_score.fillna(0.0) * pd.Series(mult, index=df.index)
+        except Exception:
+            pass
+
+    # --- Stability #1: EMA blend with prior per-pair scores (production) --
+    if ema_rho > 0 and score_ema_state is not None:
+        try:
+            etfs = df["ETF"].astype(str).map(_norm_sym).tolist()
+            unds = df["Underlying"].astype(str).map(_norm_sym).tolist()
+            cur = raw_score.fillna(0.0).to_numpy(dtype=float)
+            prev = np.array(
+                [float(score_ema_state.get((e, u), cur[i])) for i, (e, u) in enumerate(zip(etfs, unds))],
+                dtype=float,
+            )
+            blended = ema_rho * prev + (1.0 - ema_rho) * cur
+            # Update state in place (only for rows we just saw).
+            for i, (e, u) in enumerate(zip(etfs, unds)):
+                score_ema_state[(e, u)] = float(blended[i])
+            raw_score = pd.Series(blended, index=df.index)
+        except Exception:
+            pass
 
     # --- margin efficiency adjustment ------------------------------------
     beta_abs = pd.to_numeric(df[beta_col], errors="coerce").clip(lower=0.1)
@@ -537,7 +616,7 @@ def _project_pair_and_underlying_numpy(
     return w
 
 
-def _compute_pair_weight_caps_array(
+def _liquidity_tight_book_weights(
     sized: pd.DataFrame,
     *,
     target_gross_usd: float,
@@ -546,14 +625,13 @@ def _compute_pair_weight_caps_array(
     shares_out_map: dict[str, float],
 ) -> np.ndarray:
     """
-    Per-row max weight (fraction of total book gross) from hard pair cap + liquidity.
-    Liquidity caps mirror backtest notebooks (AUM, shares_available, float, median volume).
+    Per-row upper bound on **book** weight ``gross_i / sum(gross)`` implied by liquidity
+    inputs only (AUM, shares available, shares outstanding, median volume vs short leg).
     """
     n = len(sized)
     if n == 0:
         return np.zeros(0, dtype=float)
     T = max(float(target_gross_usd), 1.0)
-    max_pair = float(caps.get("max_pair_weight_cap", 0.05) or 0.05)
     missing = float(caps.get("missing_shares_cap", 0.02) or 0.02)
     aum_pct = float(caps.get("aum_use_pct", 0.0) or 0.0)
     sh_av_pct = float(caps.get("short_avail_use_pct", 0.25) or 0.25)
@@ -635,8 +713,223 @@ def _compute_pair_weight_caps_array(
         tight = np.where(np.isfinite(row_min), row_min, missing)
     else:
         tight = np.full(n, missing, dtype=float)
-    tight = np.clip(tight, 0.0, None)
+    return np.clip(tight, 0.0, None).astype(float)
+
+
+def _compute_pair_weight_caps_array(
+    sized: pd.DataFrame,
+    *,
+    target_gross_usd: float,
+    beta_floor: float,
+    caps: dict[str, Any],
+    shares_out_map: dict[str, float],
+) -> np.ndarray:
+    """
+    Per-row max weight (fraction of total book gross) from hard pair cap + liquidity.
+    Liquidity caps mirror backtest notebooks (AUM, shares_available, float, median volume).
+    """
+    n = len(sized)
+    if n == 0:
+        return np.zeros(0, dtype=float)
+    max_pair = float(caps.get("max_pair_weight_cap", 0.05) or 0.05)
+    tight = _liquidity_tight_book_weights(
+        sized,
+        target_gross_usd=target_gross_usd,
+        beta_floor=beta_floor,
+        caps=caps,
+        shares_out_map=shares_out_map,
+    )
     return np.minimum(max_pair, tight).astype(float)
+
+
+def _enforce_max_pair_weight_within_deployed_sleeve_gross(
+    gross: np.ndarray,
+    sized: pd.DataFrame,
+    sleeve_caps: dict[str, dict[str, float]],
+) -> np.ndarray:
+    """
+    Re-scale **within each sleeve** so no pair holds more than ``max_pair_weight`` times that
+    sleeve's **deployed** gross (sum of ``gross_target_usd`` over rows in the sleeve).
+
+    Liquidity can leave most sleeve rows at ~0 while a few absorb the budget; normalizing by
+    *deployed* mass avoids a single name showing 60%+ of placed gross while still being under
+    the target-book pair cap. Mass is redistributed across rows that already have positive
+    gross after liquidity (we do not revive names hard-zeroed by liquidity).
+
+    Diversification **within a sleeve** requires at least two sized rows; single-row sleeves are
+    unchanged (that pair is the sleeve). For multi-row sleeves with only one positive-gross row,
+    gross is clipped to ``max_pair_weight * sleeve_deployed_sum`` when needed.
+    """
+    g = np.asarray(gross, dtype=float).copy()
+    if "sleeve" not in sized.columns or not sleeve_caps:
+        return g
+    slv = sized["sleeve"].astype(str).to_numpy()
+    for sleeve, meta_cap in sleeve_caps.items():
+        cap = float((meta_cap or {}).get("max_pair_weight", 1.0))
+        if cap >= 1.0 - 1e-12:
+            continue
+        idx = np.where(slv == str(sleeve))[0]
+        if len(idx) <= 1:
+            # One pair defines the whole sleeve; ``max_pair_weight`` is for diversity across rows.
+            continue
+        s_sleeve = float(np.sum(g[idx]))
+        if s_sleeve <= 1e-18:
+            continue
+        pos = idx[g[idx] > 1e-18]
+        if len(pos) == 0:
+            continue
+        if len(pos) == 1:
+            i = int(pos[0])
+            max_g = cap * s_sleeve
+            if g[i] > max_g + 1e-6:
+                g[i] = max_g
+            continue
+        s_dep = float(g[pos].sum())
+        if s_dep <= 1e-18:
+            continue
+        w = g[pos] / s_dep
+        if float(np.max(w)) <= cap + 1e-8:
+            continue
+        n_p = len(pos)
+        cap_eff = float(cap)
+        # Capped simplex {w: sum w = 1, w_i <= cap} is non-empty iff n * cap >= 1.
+        if n_p * cap_eff < 1.0 - 1e-10:
+            cap_eff = 1.0 / float(n_p)
+        w_new = _project_positive_weights_to_sum_one_hard_cap(w, cap_eff)
+        g[pos] = w_new * s_dep
+    return g
+
+
+def _project_positive_weights_to_sum_one_hard_cap(w: np.ndarray, cap: float, *, tol: float = 1e-10) -> np.ndarray:
+    """
+    Find ``w_out`` with ``w_out.sum() == 1`` (or maximal feasible ``< 1`` if ``n * cap < 1``),
+    ``0 <= w_out[i] <= cap``, preferring to stay close to proportional redistribution
+    from an initial ``w``.
+
+    Unlike :func:`_project_to_capped_simplex_numpy`, caps here are **hard** — they must not be
+    relaxed toward an infeasibly concentrated desired vector.
+    """
+    w0 = np.asarray(w, dtype=float).copy()
+    if len(w0) == 0:
+        return w0
+    s0 = float(np.sum(w0))
+    if s0 <= 1e-18:
+        n = len(w0)
+        return np.full(n, 1.0 / max(n, 1), dtype=float)
+    w0 /= s0
+    cap_f = float(cap)
+    w0 = np.clip(w0, 0.0, cap_f)
+    n = len(w0)
+    if n * cap_f < 1.0 - tol:
+        return np.full(n, cap_f, dtype=float)
+    for _ in range(max(4, n * 8)):
+        rem = 1.0 - float(np.sum(w0))
+        if abs(rem) <= tol:
+            break
+        if rem < 0:
+            tot = float(np.sum(w0))
+            if tot > 1e-18:
+                w0 /= tot
+            w0 = np.clip(w0, 0.0, cap_f)
+            continue
+        head = np.clip(cap_f - w0, 0.0, None)
+        hs = float(np.sum(head))
+        if hs <= 1e-18:
+            break
+        w0 += rem * (head / hs)
+        w0 = np.clip(w0, 0.0, cap_f)
+    s1 = float(np.sum(w0))
+    if s1 >= 1.0 - tol:
+        w0 /= max(s1, 1e-18)
+    # else: infeasible to reach sum 1 under cap — keep sub‑unit mass (caller scales gross down)
+    return np.clip(w0, 0.0, cap_f)
+
+
+def _apply_gross_sizing_per_sleeve_book_caps(
+    sized: pd.DataFrame,
+    gross: np.ndarray,
+    *,
+    target_gross_usd: float,
+    beta_floor: float,
+    caps: dict[str, Any],
+    shares_out_map: dict[str, float],
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """
+    Diamond-Creek-style **per-sleeve** concentration: ``max_pair_weight`` and
+    ``max_underlying_weight`` apply to weights **within each sleeve's allocated gross**,
+    while liquidity rows still cap **book** weights (same construction as
+    :func:`_liquidity_tight_book_weights`). Preserves each sleeve's share of total gross.
+    """
+    meta: dict[str, Any] = {}
+    n = len(sized)
+    if n == 0:
+        return gross, meta
+    gsum = float(np.sum(gross))
+    if gsum <= 1e-18:
+        return gross, meta
+    per_sleeve = caps.get("per_sleeve") or {}
+    if not isinstance(per_sleeve, dict) or not per_sleeve:
+        return gross, meta
+    if "sleeve" not in sized.columns:
+        return gross, meta
+
+    liq_book = _liquidity_tight_book_weights(
+        sized,
+        target_gross_usd=target_gross_usd,
+        beta_floor=beta_floor,
+        caps=caps,
+        shares_out_map=shares_out_map,
+    )
+    default_pair = float(caps.get("max_pair_weight_cap", 0.05) or 0.05)
+    default_und = float(caps.get("max_underlying_weight_cap", 0.11) or 0.11)
+
+    slv = sized["sleeve"].astype(str).to_numpy()
+    w = gross / gsum
+    w_out = np.zeros_like(w, dtype=float)
+
+    sleeve_caps_out: dict[str, dict[str, float]] = {}
+    for sleeve in sorted({str(x) for x in slv.tolist()}):
+        idx = np.where(slv == sleeve)[0]
+        s_b = float(w[idx].sum())
+        if s_b <= 1e-18:
+            continue
+        rules = per_sleeve.get(sleeve)
+        if isinstance(rules, dict):
+            mp_raw = rules.get("max_pair_weight", default_pair)
+            mu_raw = rules.get("max_underlying_weight", default_und)
+            mp_f = float(mp_raw) if mp_raw is not None and float(mp_raw) > 0 else default_pair
+            mu_f = float(mu_raw) if mu_raw is not None and float(mu_raw) > 0 else default_und
+        else:
+            mp_f, mu_f = default_pair, default_und
+        sleeve_caps_out[str(sleeve)] = {"max_pair_weight": mp_f, "max_underlying_weight": mu_f}
+
+        v = w[idx] / s_b
+        liq_slice = liq_book[idx]
+        if len(idx) == 1:
+            # One active row holds the entire sleeve; ``max_pair_weight`` is a diversification
+            # knob across pairs and does not apply below 100% of sleeve gross. Liquidity still can.
+            cap0 = min(1.0, float(liq_slice[0]) / max(s_b, 1e-18))
+            cap_v = np.array([max(cap0, 1e-18)], dtype=float)
+        else:
+            cap_v = np.minimum(mp_f, liq_slice / max(s_b, 1e-18))
+            cap_v = np.clip(cap_v, 1e-18, None)
+
+        und_sub = sized.iloc[idx]["Underlying"].astype(str).map(_norm_sym).to_numpy()
+        und_code = pd.factorize(und_sub)[0]
+        v1 = _project_to_capped_simplex_numpy(v, cap_v)
+        # Same reasoning as ``cap_v`` for a lone pair: one underlying may carry 100% of sleeve gross.
+        mu_eff = 1.0 if len(idx) == 1 else float(mu_f)
+        v2 = _project_pair_and_underlying_numpy(v1, cap_v, und_code, mu_eff)
+        w_out[idx] = v2 * s_b
+
+    meta["per_sleeve_caps"] = sleeve_caps_out
+    new_gross = w_out * gsum
+    new_gross = _enforce_max_pair_weight_within_deployed_sleeve_gross(
+        new_gross,
+        sized,
+        sleeve_caps_out,
+    )
+    return new_gross, meta
 
 
 def _shrunk_covariance(returns: pd.DataFrame, *, shrink: float) -> pd.DataFrame:
@@ -661,12 +954,21 @@ def _normalize_underlying_returns(
     """
     if returns_df is None or returns_df.empty:
         return None
-    df = returns_df.copy()
-    df.columns = [_norm_sym(str(c)) for c in df.columns]
-    cols = [c for c in df.columns if c in set(needed_underlyings)]
-    if len(cols) < 2:
+    need_set = {_norm_sym(str(u)) for u in needed_underlyings}
+    # Subset columns **before** copy — avoids O(rows × full_universe) allocation when callers
+    # pass the full Yahoo matrix (notebook grid / diagnostics).
+    pick: list[Any] = []
+    seen_nc: set[str] = set()
+    for col in returns_df.columns:
+        nc = _norm_sym(str(col))
+        if nc not in need_set or nc in seen_nc:
+            continue
+        seen_nc.add(nc)
+        pick.append(col)
+    if len(pick) < 2:
         return None
-    df = df[cols]
+    df = returns_df.loc[:, pick].copy()
+    df.columns = [_norm_sym(str(c)) for c in pick]
     df = df.replace([np.inf, -np.inf], np.nan)
     looks_like_prices = bool((df.dropna(how="all") > 1.0).any().mean() > 0.5) if len(df) else False
     if looks_like_prices:
@@ -808,6 +1110,48 @@ def apply_covariance_balance(
     return out, diag
 
 
+def _apply_weight_hysteresis(
+    sized: pd.DataFrame,
+    new_gross: np.ndarray,
+    *,
+    prev_gross_by_pair: dict[tuple[str, str], float] | None,
+    abs_threshold: float,
+    rel_threshold: float,
+) -> np.ndarray:
+    """Stability #2: snap each pair's new gross to its prior value when the change is
+    smaller than ``max(abs_threshold * sum_gross, rel_threshold * prev_gross)``.
+
+    Operates in dollar space (gross_target_usd) so it composes with cap projections.
+    Total book gross is rescaled back to the original ``new_gross.sum()`` after snapping
+    so the projection stack downstream is unchanged.
+    """
+    if prev_gross_by_pair is None or not prev_gross_by_pair:
+        return new_gross
+    g = np.asarray(new_gross, dtype=float).copy()
+    s_total = float(np.sum(g))
+    if s_total <= 1e-18:
+        return new_gross
+    abs_t = float(abs_threshold) * s_total if abs_threshold and abs_threshold > 0 else 0.0
+    rel_t = float(rel_threshold) if rel_threshold and rel_threshold > 0 else 0.0
+    etfs = sized["ETF"].astype(str).map(_norm_sym).to_numpy()
+    unds = sized["Underlying"].astype(str).map(_norm_sym).to_numpy()
+    snapped = g.copy()
+    for i, (e, u) in enumerate(zip(etfs, unds)):
+        prev = float(prev_gross_by_pair.get((str(e), str(u)), float("nan")))
+        if not np.isfinite(prev) or prev <= 0:
+            continue
+        delta = abs(g[i] - prev)
+        if delta <= abs_t:
+            snapped[i] = prev
+            continue
+        if rel_t > 0 and delta <= rel_t * prev:
+            snapped[i] = prev
+    s_new = float(np.sum(snapped))
+    if s_new > 1e-18:
+        snapped *= s_total / s_new
+    return snapped
+
+
 def apply_gross_sizing_book_caps(
     sized: pd.DataFrame,
     *,
@@ -815,6 +1159,7 @@ def apply_gross_sizing_book_caps(
     beta_floor: float,
     strategy: dict[str, Any],
     shares_out_map: dict[str, float] | None = None,
+    prev_gross_by_pair: dict[tuple[str, str], float] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """
     Enforce book-level max pair / max underlying weights and liquidity-style per-pair caps
@@ -839,6 +1184,50 @@ def apply_gross_sizing_book_caps(
     if gsum <= 1e-18:
         return sized, diag
 
+    per_sleeve_cfg = caps.get("per_sleeve") or caps.get("per_bucket")
+    use_per_sleeve = (
+        isinstance(per_sleeve_cfg, dict)
+        and bool(per_sleeve_cfg)
+        and ("sleeve" in sized.columns)
+    )
+
+    abs_t = float(caps.get("weight_hysteresis_abs", 0.0) or 0.0)
+    rel_t = float(caps.get("weight_hysteresis_rel", 0.0) or 0.0)
+    apply_hyst = bool(prev_gross_by_pair) and (abs_t > 0 or rel_t > 0)
+
+    if use_per_sleeve:
+        new_gross, ps_meta = _apply_gross_sizing_per_sleeve_book_caps(
+            sized,
+            gross,
+            target_gross_usd=float(target_gross_usd),
+            beta_floor=float(beta_floor),
+            caps=caps,
+            shares_out_map=som,
+        )
+        if apply_hyst:
+            new_gross = _apply_weight_hysteresis(
+                sized,
+                new_gross,
+                prev_gross_by_pair=prev_gross_by_pair,
+                abs_threshold=abs_t,
+                rel_threshold=rel_t,
+            )
+        out = sized.copy()
+        out["gross_target_usd"] = new_gross
+        diag.update(
+            {
+                "applied": True,
+                "gross_sum_before": gsum,
+                "gross_sum_after": float(new_gross.sum()),
+                "max_pair_weight_cap": float(caps.get("max_pair_weight_cap", 0.05) or 0.05),
+                "max_underlying_weight_cap": float(und_cap),
+                "per_sleeve_enforced": True,
+                "per_sleeve_caps": ps_meta.get("per_sleeve_caps", {}),
+                "hysteresis_applied": bool(apply_hyst),
+            }
+        )
+        return out, diag
+
     pair_caps = _compute_pair_weight_caps_array(
         sized,
         target_gross_usd=float(target_gross_usd),
@@ -851,6 +1240,14 @@ def apply_gross_sizing_book_caps(
     und_code = pd.factorize(sized["Underlying"].astype(str).map(_norm_sym).to_numpy())[0]
     w2 = _project_pair_and_underlying_numpy(w1, pair_caps, und_code, float(und_cap))
     new_gross = w2 * gsum
+    if apply_hyst:
+        new_gross = _apply_weight_hysteresis(
+            sized,
+            new_gross,
+            prev_gross_by_pair=prev_gross_by_pair,
+            abs_threshold=abs_t,
+            rel_threshold=rel_t,
+        )
     out = sized.copy()
     out["gross_target_usd"] = new_gross
     diag.update(
@@ -860,6 +1257,8 @@ def apply_gross_sizing_book_caps(
             "gross_sum_after": float(new_gross.sum()),
             "max_pair_weight_cap": float(caps.get("max_pair_weight_cap", 0.05) or 0.05),
             "max_underlying_weight_cap": float(und_cap),
+            "per_sleeve_enforced": False,
+            "hysteresis_applied": bool(apply_hyst),
         }
     )
     return out, diag
@@ -897,47 +1296,6 @@ def compute_borrow_annual_series(df: pd.DataFrame, borrow_col: str | None) -> pd
         return pd.Series(index=df.index, data=np.nan, dtype=float)
     s = pd.to_numeric(df[borrow_col], errors="coerce")
     return s.astype(float)
-
-
-# -----------------------------
-# Flow ledger helpers
-# -----------------------------
-def load_flow_ledger(path: Path) -> pd.DataFrame:
-    if not path.exists():
-        return pd.DataFrame(columns=["date", "ticker", "delta_usd", "cum_usd"])
-    df = pd.read_csv(path)
-    for c in ["date", "ticker"]:
-        if c in df.columns:
-            df[c] = df[c].astype(str)
-    for c in ["delta_usd", "cum_usd"]:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-    return df
-
-
-def compute_current_flow_cum(ledger: pd.DataFrame) -> Dict[str, float]:
-    """
-    Returns latest cumulative per ticker (cum_usd). If ledger empty, 0.
-    """
-    if ledger.empty:
-        return {}
-    # take last cum_usd per ticker by date order
-    led = ledger.copy()
-    led["date"] = pd.to_datetime(led["date"], errors="coerce")
-    led = led.sort_values(["ticker", "date"])
-    out = {}
-    for t, g in led.groupby("ticker", sort=False):
-        v = g["cum_usd"].dropna()
-        out[str(t)] = float(v.iloc[-1]) if len(v) else 0.0
-    return out
-
-
-def append_flow_ledger(path: Path, rows: pd.DataFrame) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        rows.to_csv(path, mode="a", header=False, index=False)
-    else:
-        rows.to_csv(path, index=False)
 
 
 # -----------------------------
@@ -997,6 +1355,8 @@ def main() -> None:
 
     core_rules = core.get("rules", {}) or {}
     core_beta_min = float(core_rules.get("min_beta_used", 1.5))
+    wl_rules = wl.get("rules", {}) or {}
+    wl_min_edge = float(wl_rules.get("min_net_edge_annual", 0.0) or 0.0)
     b4_rules = b4.get("rules", {}) or {}
     b4_min_edge = float(b4_rules.get("min_net_edge_annual", 0.0))
     b4_partial_hedge_ratio = _clamp01(b4_rules.get("partial_hedge_ratio", 1.0))
@@ -1008,11 +1368,9 @@ def main() -> None:
     # Borrow caps (soft vs hard)
     soft_borrow_cap = float(cfg.get("screener", {}).get("borrow_low", 1.0))  # e.g. 0.08
     wl_hard_borrow_cap = float(wl.get("rules", {}).get("hard_borrow_cap", np.inf))
-    # Dedicated Bucket 4 borrow cap (supports legacy hard_borrow_cap key).
-    b4_hard_borrow_cap = float(
-        b4_rules.get("bucket4_borrow_cap", b4_rules.get("hard_borrow_cap", np.inf))
-    )
-    flow_hard_borrow_cap = float(flow.get("rules", {}).get("hard_borrow_cap", np.inf))
+    # Dedicated Bucket 4 borrow cap. Use ``bucket4_borrow_cap`` in YAML; old aliases are deprecated.
+    b4_hard_borrow_cap = float(b4_rules.get("bucket4_borrow_cap", np.inf))
+    flow_borrow_cap = float(flow.get("rules", {}).get("hard_borrow_cap", np.inf))
 
     # Whitelist list order
     wl_list = [_norm_sym(x) for x in (wl.get("universe", {}).get("etfs", []) or [])]
@@ -1029,21 +1387,6 @@ def main() -> None:
 
     # Flow config
     flow_shorts = [_norm_sym(x) for x in (flow.get("universe", {}).get("shorts", []) or [])]
-    flow_weights_raw = (flow.get("weighting", {}) or {}).get("weights", {}) or {}
-    flow_weights = { _norm_sym(k): float(v) for k, v in flow_weights_raw.items() if np.isfinite(v) and float(v) > 0 }
-    if flow_shorts:
-        missing = [s for s in flow_shorts if s not in flow_weights]
-        if missing:
-            raise ValueError(f"flow_program shorts missing weights: {missing}")
-        # normalize
-        ssum = sum(flow_weights[s] for s in flow_shorts)
-        flow_weights = {s: flow_weights[s] / ssum for s in flow_shorts}
-
-    annual_deploy = float(flow.get("annual_deployment_rate", 0.0))
-    deploy_base = str(flow.get("deployment_base", "current_equity")).lower()
-
-    # Flow ledger paths (new)
-    flow_ledger_path = Path(paths.get("flow_ledger_csv", "data/flow_ledger.csv"))
 
     shares_out_map, shares_src = load_shares_outstanding_map(paths)
     print(
@@ -1054,7 +1397,7 @@ def main() -> None:
         f"[INFO] core soft borrow cap={soft_borrow_cap:.1%} | "
         f"wl hard cap={wl_hard_borrow_cap if np.isfinite(wl_hard_borrow_cap) else 'inf'} | "
         f"b4 hard cap={b4_hard_borrow_cap if np.isfinite(b4_hard_borrow_cap) else 'inf'} | "
-        f"flow hard cap={flow_hard_borrow_cap if np.isfinite(flow_hard_borrow_cap) else 'inf'}"
+        f"flow hard cap={flow_borrow_cap if np.isfinite(flow_borrow_cap) else 'inf'}"
     )
     print(
         f"[INFO] b4 universe filters: min_underlying_vol={b4_min_underlying_vol:.0%} | "
@@ -1078,6 +1421,8 @@ def main() -> None:
     if not b4_enabled:
         print("[INFO] inverse_decay_bucket4 disabled — no B4 allocation or targets in proposed trades")
     print(f"[INFO] whitelist size={len(wl_list)} | flow shorts={len(flow_shorts)}")
+    if wl_min_edge > 0:
+        print(f"[INFO] whitelist_stock min_net_edge_annual={wl_min_edge:.0%}")
     print(f"[INFO] weighting: core={core_weight_method} wl={wl_weight_method} b4={b4_weight_method}")
     if shares_out_map:
         print(
@@ -1119,7 +1464,7 @@ def main() -> None:
     screened["beta_abs"] = screened["Beta"].abs()
 
     # Coerce decay columns for weighting (may be absent in older CSVs)
-    for _col in ("blended_gross_decay", "borrow_current", "net_decay_annual"):
+    for _col in ("blended_gross_decay", "borrow_current", "net_decay_annual", "net_edge_p50_annual"):
         if _col not in screened.columns:
             screened[_col] = np.nan
         else:
@@ -1179,6 +1524,13 @@ def main() -> None:
         # -----------------------------
         # core: |beta| >= min_beta_used AND passes soft borrow cap (unless also whitelist)
         eligible["in_whitelist"] = eligible["ETF"].isin(wl_set)
+        # B2 ("yieldboost") universe: any screener row tagged ``is_yieldboost`` OR present in the
+        # YAML whitelist allow-list (the latter is an additive override for research names).
+        # B2 + B4 explicitly exclude flow_program tickers (they are sized in the weekly flow sleeve).
+        flow_program_etfs = {_norm_sym(x) for x in (flow_shorts or [])}
+        is_yieldboost, in_b2_universe, in_flow_program = _b2_b4_universe_masks(
+            eligible, wl_set=wl_set, flow_program_etfs=flow_program_etfs
+        )
         # Hard rule: negative net decay names are excluded from stock sleeves (core + whitelist).
         net_decay_non_negative = ~(eligible["net_decay_annual"] < 0)
 
@@ -1204,9 +1556,15 @@ def main() -> None:
             inverse_shortable = eligible["inverse_shortable"].fillna(False).astype(bool)
         else:
             inverse_shortable = negative_beta
-        edge_col = "bucket4_net_edge_annual" if "bucket4_net_edge_annual" in eligible.columns else "net_decay_annual"
+        edge_col = _b4_eligibility_edge_column(eligible)
         b4_edge = pd.to_numeric(eligible.get(edge_col), errors="coerce")
         b4_edge_ok = (~np.isfinite(b4_edge)) | (b4_edge >= b4_min_edge)
+        wl_edge = pd.to_numeric(eligible.get("net_edge_p50_annual"), errors="coerce")
+        wl_edge_ok = (
+            np.isfinite(wl_edge) & (wl_edge >= wl_min_edge)
+            if wl_min_edge > 0
+            else pd.Series(True, index=eligible.index)
+        )
         b4_und_vol = pd.to_numeric(eligible.get("vol_underlying_annual"), errors="coerce")
         # Require realized underlying vol above the configured floor. Missing vol is treated as
         # a rejection: we will not admit a pair whose underlying-vol we cannot measure.
@@ -1236,10 +1594,45 @@ def main() -> None:
         except ValueError as e:
             raise SystemExit(str(e)) from e
         eligible["in_core"] = core_pre_decay & core_decay_gate
-        eligible["in_wl"] = positive_beta & eligible["in_whitelist"] & wl_borrow_ok & net_decay_non_negative
+        n_b2_yb_only = int((is_yieldboost & ~eligible["in_whitelist"]).sum())
+        n_b2_flow_excluded = int(
+            (positive_beta & in_b2_universe & in_flow_program).sum()
+        )
         b4_not_excluded = ~eligible["ETF"].isin(b4_excluded_etfs)
+        n_b4_flow_excluded = int(
+            (
+                negative_beta
+                & inverse_shortable
+                & b4_borrow_ok
+                & b4_edge_ok
+                & b4_vol_ok
+                & b4_not_excluded
+                & in_flow_program
+            ).sum()
+        )
+        if n_b2_yb_only or n_b2_flow_excluded or n_b4_flow_excluded:
+            print(
+                f"[INFO] B2 universe = is_yieldboost ∪ YAML whitelist; "
+                f"is_yieldboost-only adds={n_b2_yb_only}, "
+                f"B2 flow-excluded={n_b2_flow_excluded}, "
+                f"B4 flow-excluded={n_b4_flow_excluded}"
+            )
+        eligible["in_wl"] = (
+            positive_beta
+            & in_b2_universe
+            & ~in_flow_program
+            & wl_borrow_ok
+            & wl_edge_ok
+            & net_decay_non_negative
+        )
         eligible["in_b4"] = (
-            negative_beta & inverse_shortable & b4_borrow_ok & b4_edge_ok & b4_vol_ok & b4_not_excluded
+            negative_beta
+            & inverse_shortable
+            & b4_borrow_ok
+            & b4_edge_ok
+            & b4_vol_ok
+            & b4_not_excluded
+            & ~in_flow_program
         )
 
         core_names = eligible.loc[eligible["in_core"]].copy()
@@ -1255,6 +1648,12 @@ def main() -> None:
             print(
                 f"[INFO] Excluded {n_core_decay_blocked} core (bucket-1) candidate row(s) "
                 f"via min_net_decay_annual / hysteresis gate."
+            )
+        n_wl_edge_blocked = int((positive_beta & in_b2_universe & ~in_flow_program & ~wl_edge_ok).sum())
+        if n_wl_edge_blocked:
+            print(
+                f"[INFO] Excluded {n_wl_edge_blocked} whitelist_stock (bucket-2) candidate row(s) "
+                f"below min_net_edge_annual={wl_min_edge:.2%}."
             )
 
         # Budgeting:
@@ -1312,6 +1711,87 @@ def main() -> None:
             else:
                 w = _decay_score_weights(b4_names, b4_weighting_cfg, sleeve_name="inverse_decay_bucket4")
             b4_names["gross_target_usd"] = b4_budget * w
+            b4_opt2 = b4_rules.get("bucket4_weekly_opt2") or {}
+            if bool(b4_opt2.get("enabled")):
+                try:
+                    from scripts.bucket4_weekly_opt2 import (
+                        Bucket4WeeklyConfig,
+                        build_bucket4_state,
+                        compute_bucket4_targets,
+                        compute_bucket4_weights,
+                    )
+                    from scripts.v6_b4_pf_weights import V6PfParams
+
+                    pairs_subset = [
+                        (_norm_sym(str(r["ETF"])), _norm_sym(str(r["Underlying"])))
+                        for _, r in b4_names[["ETF", "Underlying"]].iterrows()
+                    ]
+                    excl_inv = frozenset({"SCO"} | {_norm_sym(x) for x in (b4_opt2.get("excluded_inverse_etfs") or [])})
+                    mp = int(b4_opt2.get("pf_min_pairs", 5))
+                    mp = min(mp, max(1, len(pairs_subset)))
+                    cfg_b4 = Bucket4WeeklyConfig(
+                        screened_csv=str(screened_csv),
+                        start=str(b4_opt2.get("history_start", "2018-01-01")),
+                        end=str(args.run_date),
+                        weekly_rebalance_freq=str(b4_opt2.get("weekly_rebalance_freq", "W-FRI")),
+                        warmup_bdays=int(b4_opt2.get("warmup_bdays", 65)),
+                        fee_bps=float(b4_opt2.get("fee_bps", 1.0)),
+                        slippage_bps=float(b4_opt2.get("slippage_bps", 20.0)),
+                        borrow_multiplier=float(b4_opt2.get("borrow_multiplier", 1.0)),
+                        excluded_inverse_etfs=excl_inv,
+                        min_underlying_vol=float(b4_opt2.get("min_underlying_vol", b4_min_underlying_vol)),
+                        min_net_decay=float(b4_opt2.get("min_net_decay", b4_min_edge)),
+                        use_ibkr_uvix_borrow=bool(b4_opt2.get("use_ibkr_uvix_borrow", False)),
+                        pf_params=V6PfParams(min_pairs=mp),
+                    )
+                    st_b4 = build_bucket4_state(cfg_b4, bucket4_pairs=pairs_subset)
+                    pw, _, _ = compute_bucket4_weights(st_b4)
+                    tgt_df, _ = compute_bucket4_targets(
+                        st_b4,
+                        pw,
+                        args.run_date,
+                        float(b4_budget),
+                        fee_bps=float(b4_opt2.get("fee_bps", 1.0)),
+                        slippage_bps=float(b4_opt2.get("slippage_bps", 20.0)),
+                        partial_hedge_ratio=b4_partial_hedge_ratio,
+                        beta_floor=beta_floor,
+                    )
+                    gross_by_key = {
+                        (_norm_sym(str(r["ETF"])), _norm_sym(str(r["Underlying"]))): float(r["gross_target_usd"])
+                        for _, r in tgt_df.iterrows()
+                        if pd.notna(r.get("gross_target_usd"))
+                    }
+                    inv_short_by_key = {
+                        (_norm_sym(str(r["ETF"])), _norm_sym(str(r["Underlying"]))): float(r["inverse_etf_short_usd"])
+                        for _, r in tgt_df.iterrows()
+                        if pd.notna(r.get("inverse_etf_short_usd"))
+                    }
+                    und_short_by_key = {
+                        (_norm_sym(str(r["ETF"])), _norm_sym(str(r["Underlying"]))): float(r["underlying_short_usd"])
+                        for _, r in tgt_df.iterrows()
+                        if pd.notna(r.get("underlying_short_usd"))
+                    }
+                    hedge_by_key = {
+                        (_norm_sym(str(r["ETF"])), _norm_sym(str(r["Underlying"]))): float(r["hedge_ratio"])
+                        for _, r in tgt_df.iterrows()
+                        if pd.notna(r.get("hedge_ratio"))
+                    }
+                    for idx in b4_names.index:
+                        k = (
+                            _norm_sym(str(b4_names.at[idx, "ETF"])),
+                            _norm_sym(str(b4_names.at[idx, "Underlying"])),
+                        )
+                        if k in gross_by_key:
+                            b4_names.at[idx, "gross_target_usd"] = gross_by_key[k]
+                        if k in inv_short_by_key:
+                            b4_names.at[idx, "b4_opt2_inverse_etf_short_usd"] = inv_short_by_key[k]
+                        if k in und_short_by_key:
+                            b4_names.at[idx, "b4_opt2_underlying_short_usd"] = und_short_by_key[k]
+                        if k in hedge_by_key:
+                            b4_names.at[idx, "b4_opt2_hedge_ratio"] = hedge_by_key[k]
+                    print(f"[INFO] bucket4_weekly_opt2: tail-risk weights + dynamic hedge targets (n={len(tgt_df)})")
+                except Exception as e:
+                    print(f"[WARN] bucket4_weekly_opt2 disabled for this run ({e}); using decay_score sizing")
             # Cap bucket-4 ETF notionals by shares outstanding and reference price.
             b4_names["shares_outstanding_total"] = b4_names["ETF"].map(shares_out_map)
             b4_names["price_ref"] = pd.to_numeric(
@@ -1347,13 +1827,22 @@ def main() -> None:
             shares_out_map=shares_out_map,
         )
         if _cap_diag.get("applied"):
-            print(
-                "[INFO] gross_sizing_caps: "
-                f"pair_cap={_cap_diag.get('max_pair_weight_cap'):.1%} "
-                f"under_cap={_cap_diag.get('max_underlying_weight_cap'):.1%} "
-                f"gross_before=${_cap_diag.get('gross_sum_before', 0):,.0f} "
-                f"gross_after=${_cap_diag.get('gross_sum_after', 0):,.0f}"
-            )
+            if _cap_diag.get("per_sleeve_enforced"):
+                _ps = _cap_diag.get("per_sleeve_caps") or {}
+                print(
+                    "[INFO] gross_sizing_caps (per-sleeve, DCQ-style): "
+                    f"sleeves={list(_ps.keys())} "
+                    f"gross_before=${_cap_diag.get('gross_sum_before', 0):,.0f} "
+                    f"gross_after=${_cap_diag.get('gross_sum_after', 0):,.0f}"
+                )
+            else:
+                print(
+                    "[INFO] gross_sizing_caps: "
+                    f"pair_cap={_cap_diag.get('max_pair_weight_cap'):.1%} "
+                    f"under_cap={_cap_diag.get('max_underlying_weight_cap'):.1%} "
+                    f"gross_before=${_cap_diag.get('gross_sum_before', 0):,.0f} "
+                    f"gross_after=${_cap_diag.get('gross_sum_after', 0):,.0f}"
+                )
 
         cov_cfg = strategy.get("covariance_balance") or {}
         if isinstance(cov_cfg, dict) and bool(cov_cfg.get("enabled", False)):
@@ -1399,13 +1888,37 @@ def main() -> None:
             sized.loc[stock_mask, "hedge_ratio"] * sized.loc[stock_mask, "long_usd"]
         )
 
-        # Bucket 4: short inverse ETF and short underlying hedge.
-        sized.loc[b4_mask, "short_usd"] = -sized.loc[b4_mask, "gross_target_usd"]
-        sized.loc[b4_mask, "long_usd"] = -(
+        # Bucket 4: short inverse ETF (`short_usd` / `etf_target_usd`) and short underlying hedge
+        # (`long_usd` / `underlying_target_usd` — column names are GTP-wide; both USD amounts are negative).
+        opt2_leg_cols = {"b4_opt2_inverse_etf_short_usd", "b4_opt2_underlying_short_usd"}
+        b4_opt2_mask = b4_mask & opt2_leg_cols.issubset(set(sized.columns))
+        b4_default_mask = b4_mask & ~b4_opt2_mask
+        sized.loc[b4_default_mask, "short_usd"] = -sized.loc[b4_default_mask, "gross_target_usd"]
+        sized.loc[b4_default_mask, "long_usd"] = -(
             b4_partial_hedge_ratio
-            * sized.loc[b4_mask, "beta_used_abs"]
-            * sized.loc[b4_mask, "gross_target_usd"]
+            * sized.loc[b4_default_mask, "beta_used_abs"]
+            * sized.loc[b4_default_mask, "gross_target_usd"]
         )
+        if bool(b4_opt2_mask.any()):
+            opt2_gross = (
+                pd.to_numeric(sized.loc[b4_opt2_mask, "b4_opt2_inverse_etf_short_usd"], errors="coerce").fillna(0.0)
+                + pd.to_numeric(sized.loc[b4_opt2_mask, "b4_opt2_underlying_short_usd"], errors="coerce").fillna(0.0)
+            ).replace(0.0, np.nan)
+            cap_scale = (
+                pd.to_numeric(sized.loc[b4_opt2_mask, "gross_target_usd"], errors="coerce").fillna(0.0) / opt2_gross
+            ).fillna(0.0).clip(lower=0.0)
+            sized.loc[b4_opt2_mask, "short_usd"] = -(
+                pd.to_numeric(sized.loc[b4_opt2_mask, "b4_opt2_inverse_etf_short_usd"], errors="coerce").fillna(0.0)
+                * cap_scale
+            )
+            sized.loc[b4_opt2_mask, "long_usd"] = -(
+                pd.to_numeric(sized.loc[b4_opt2_mask, "b4_opt2_underlying_short_usd"], errors="coerce").fillna(0.0)
+                * cap_scale
+            )
+            if "b4_opt2_hedge_ratio" in sized.columns:
+                sized.loc[b4_opt2_mask, "hedge_ratio"] = pd.to_numeric(
+                    sized.loc[b4_opt2_mask, "b4_opt2_hedge_ratio"], errors="coerce"
+                ).fillna(sized.loc[b4_opt2_mask, "hedge_ratio"])
         sized["underlying_target_usd"] = sized["long_usd"]
         sized["etf_target_usd"] = sized["short_usd"]
 
@@ -1499,64 +2012,7 @@ def main() -> None:
         print(f"[OK] Wrote proposed trades -> {dated_path}  (n={len(proposed)})")
         print(f"[OK] Updated latest proposed trades -> {proposed_latest_csv}  (n={len(proposed)})")
 
-    # =========================================================
-    # FLOW PROGRAM TRACKING (cumulative weekly adds)
-    # =========================================================
-    # We *track* desired cumulative notional shorts; execution layer can implement deltas.
-    # weekly_add_usd is based on deployment_base.
-    equity_base = capital_usd if deploy_base != "current_equity" else capital_usd  # (no live equity here)
-    weekly_add_usd = (annual_deploy / 52.0) * float(equity_base)
-
-    # Load ledger and compute current cum
-    ledger = load_flow_ledger(flow_ledger_path)
-    cur_cum = compute_current_flow_cum(ledger)
-
-    # Build this week's deltas (respect hard cap if we have borrow_annual info for those tickers in screened)
-    # If you want borrow-based filtering for flow, you need a borrow source for those tickers.
-    # Here: if the ticker exists in screened borrow_annual column, use it; else treat as NaN and allow.
-    screened_borrow_map = {}
-    if "borrow_annual" in screened.columns:
-        tmp = screened[["ETF", "borrow_annual"]].dropna()
-        screened_borrow_map = { _norm_sym(r["ETF"]): float(r["borrow_annual"]) for _, r in tmp.iterrows() }
-
-    edge_p50_map: dict[str, float] = {}
-    if "net_edge_p50_annual" in screened.columns:
-        _tmp = screened[["ETF", "net_edge_p50_annual"]].copy()
-        _tmp["ETF"] = _tmp["ETF"].astype(str).map(_norm_sym)
-        _tmp["net_edge_p50_annual"] = pd.to_numeric(_tmp["net_edge_p50_annual"], errors="coerce")
-        for sym, grp in _tmp.groupby("ETF"):
-            v = float(grp["net_edge_p50_annual"].iloc[0])
-            if np.isfinite(v):
-                edge_p50_map[sym] = v
-
-    flow_rows = []
-    for s in flow_shorts:
-        w = float(flow_weights.get(s, 0.0))
-        delta = weekly_add_usd * w
-
-        b_ann = screened_borrow_map.get(s, np.nan)
-        if np.isfinite(flow_hard_borrow_cap) and np.isfinite(b_ann) and (b_ann > flow_hard_borrow_cap):
-            # skip adds if we know it's above the cap
-            delta = 0.0
-        p50 = edge_p50_map.get(s, np.nan)
-        if np.isfinite(p50) and float(p50) < 0.0:
-            delta = 0.0
-
-        prev = float(cur_cum.get(s, 0.0))
-        new  = prev + float(delta)
-
-        flow_rows.append({"ticker": s, "delta_usd": float(delta), "cum_usd": float(new)})
-
-    flow_df = pd.DataFrame(flow_rows)
-    flow_df.insert(0, "date", args.run_date)
-
-    # Append ledger (only nonzero deltas to keep it clean)
-    to_append = flow_df.loc[flow_df["delta_usd"].abs() > 1e-9].copy()
-    if not to_append.empty:
-        append_flow_ledger(flow_ledger_path, to_append)
-
-    print(f"[OK] Flow tracking: weekly_add=${weekly_add_usd:,.2f} | flow targets snapshot deprecated (ledger-only)")
-    print(f"[OK] Flow ledger: {flow_ledger_path} (appended {len(to_append)} rows)")
+    print("[OK] Bucket 1/2/4 position generation complete. Flow sleeve execution remains separate.")
 
 
 if __name__ == "__main__":

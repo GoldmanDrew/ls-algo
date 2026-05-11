@@ -1,0 +1,119 @@
+{
+  "status": "optimal",
+  "primary_status": "infeasible",
+  "joint_fallback_kind": "no_book_variance",
+  "solver": "CLARABEL",
+  "fallback_used": true,
+  "last_error": null,
+  "n_pairs": 155,
+  "n_pairs_active": 155,
+  "sigma_p_book_annual": 0.5592791804843668,
+  "sigma_target_annual": 0.2,
+  "weight_ridge_lambda": 0.0,
+  "mv_lambda": 0.0,
+  "entropy_lambda": 0.1,
+  "entropy_reference": "prior_w_pre",
+  "edge_temperature": 1.0,
+  "eff_n_min_pairs": 25.0,
+  "mu_shrink_intensity": 0.05,
+  "confidence_haircut": true,
+  "conf_floor": 0.25,
+  "n_obs_full": 252,
+  "turnover_lambda": 1.0,
+  "turnover_l1_max": null,
+  "anchor_used": true,
+  "l1_turnover_vs_prev": 0.908452604196864,
+  "l2_turnover_vs_prev": 0.12760806211935438,
+  "ema_override_applied": true,
+  "hhi_pair": 0.032346846164691447,
+  "eff_n_pair": 30.914915009289558,
+  "top1_pair_share": 0.05000000003732141,
+  "top5_pair_share": 0.24999997462394946,
+  "gini_pair": -0.7650501384258008,
+  "sleeve_totals": {
+    "core_leveraged": 0.675,
+    "whitelist_stock": 0.20000000000000004,
+    "inverse_decay_bucket4": 0.125
+  },
+  "n_pairs_by_bucket": {
+    "core_leveraged": 141.0,
+    "whitelist_stock": 7.0,
+    "inverse_decay_bucket4": 7.0
+  },
+  "rc_top": [
+    {
+      "bucket": "core_leveraged",
+      "etf": "IRE",
+      "underlying": "IREN",
+      "weight": 0.04999997748788622,
+      "rc": 0.10064387595427214
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "NVTX",
+      "underlying": "NVTS",
+      "weight": 0.05000000003732141,
+      "rc": 0.09887499076903426
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "QBTX",
+      "underlying": "QBTS",
+      "weight": 0.04999999992295684,
+      "rc": 0.08600161034777759
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "ASTX",
+      "underlying": "ASTS",
+      "weight": 0.0499999999217786,
+      "rc": 0.08367592786141947
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "NBIG",
+      "underlying": "NBIS",
+      "weight": 0.04373148261270462,
+      "rc": 0.08286572868952427
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "SMU",
+      "underlying": "SMR",
+      "weight": 0.049999997254006376,
+      "rc": 0.08283012198539004
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "NEBX",
+      "underlying": "NBIS",
+      "weight": 0.045769157359237415,
+      "rc": 0.08192921475885709
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "CRWG",
+      "underlying": "CRWV",
+      "weight": 0.036849022484789426,
+      "rc": 0.06372728837634248
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "CWVX",
+      "underlying": "CRWV",
+      "weight": 0.03672007025409135,
+      "rc": 0.06177185484277582
+    },
+    {
+      "bucket": "core_leveraged",
+      "etf": "NBIL",
+      "underlying": "NBIS",
+      "weight": 0.03172733422733736,
+      "rc": 0.05962688346384282
+    }
+  ],
+  "n_pairs_dropped_by_history": 171,
+  "min_decay_obs": 120,
+  "min_beta_obs": 120,
+  "config_name": "effN_floor_25"
+}

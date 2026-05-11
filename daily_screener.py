@@ -49,7 +49,6 @@ from typing import Iterable, Set
 import numpy as np
 import pandas as pd
 import requests
-import yaml
 import yfinance as yf
 
 from beta_estimator import (
@@ -61,6 +60,7 @@ from beta_estimator import (
 from decay_distribution import enrich_with_decay_distribution
 from expense_ratios import fetch_expense_ratios
 from screener_v2_fields import enrich_screener_v2_fields, load_borrow_history_json
+from strategy_config import load_config
 from splits import (
     SplitEvent,
     SYMBOL_ALIASES,
@@ -684,6 +684,9 @@ def _get_total_return_series(ticker: str, period: str = "2y") -> pd.Series:
     timestamps feed the multi-source split pipeline in ``splits.py`` so
     same-day reverse splits (where Yahoo lags on retro-adjusting history)
     are still corrected.
+
+    **Single source of truth for split repair:** ``splits.clean_split_artifacts``
+    (Flex CSV, Yahoo events, ``data/splits_overrides.csv``, legacy overrides such as SMUP).
     """
     def _fetch_one(sym: str) -> tuple[pd.Series, dict]:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}"
@@ -1587,8 +1590,9 @@ def recompute_purgatory_by_bucket(
     Borrow convention matches ``screen_universe``: ``borrow_current`` is annual
     **cost** to the short (higher = worse), same as ls-algo FTP feed.
 
-    Protected (whitelist + flow): flow uses ``flow_hard_borrow_cap``; whitelist-only
-    uses ``whitelist_hard_borrow_cap``. Above the applicable cap => ``protected_bad``
+    Protected (whitelist + flow): flow uses ``flow_program.rules.hard_borrow_cap``;
+    whitelist-only uses ``whitelist_hard_borrow_cap``. Above the applicable cap =>
+    ``protected_bad``.
     => purgatory (keep-open semantics downstream).
     """
     out = screened.copy()
@@ -1620,7 +1624,8 @@ def recompute_purgatory_by_bucket(
     fl_set = {_norm_sym(x) for x in fl if str(x).strip()}
     protected = wl_set | fl_set
     wl_hard = float(sc.get("whitelist_hard_borrow_cap", sc.get("hard_borrow_cap", 0.55)))
-    flow_hard = float(sc.get("flow_hard_borrow_cap", 0.40))
+    flow_rules = ((sl.get("flow_program", {}) or {}).get("rules", {}) or {})
+    flow_hard = float(flow_rules.get("hard_borrow_cap", 0.40))
 
     borrow = pd.to_numeric(out.get("borrow_current"), errors="coerce")
     ftp_miss = out.get("borrow_missing_from_ftp", pd.Series(False, index=out.index))
@@ -3144,7 +3149,7 @@ def main() -> int:
     data_dir = script_dir / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    output_path = Path(args.output) if args.output else data_dir / "etf_screened_today.csv"
+    output_path = Path(args.output) if args.output else None
     dated_dir = data_dir / "runs" / run_date
     dated_dir.mkdir(parents=True, exist_ok=True)
 
@@ -3153,23 +3158,9 @@ def main() -> int:
     print("=" * 70)
 
     # ── Load config ──
-    cfg = {}
-    config_path = Path(args.config) if args.config else None
-    if config_path is None:
-        # Search common locations
-        for candidate in [
-            script_dir / "strategy_config.yml",
-            script_dir / "config" / "strategy_config.yml",
-            Path("strategy_config.yml"),
-            Path("config/strategy_config.yml"),
-        ]:
-            if candidate.exists():
-                config_path = candidate
-                break
-    if config_path and config_path.exists():
-        with open(config_path) as f:
-            cfg = yaml.safe_load(f) or {}
-        print(f"[CONFIG] Loaded: {config_path}")
+    config_path = Path(args.config) if args.config else script_dir / "config" / "strategy_config.yml"
+    cfg = load_config(config_path)
+    print(f"[CONFIG] Loaded: {config_path}")
 
     screener_cfg = cfg.get("screener", {}) or {}
     sleeves_cfg = cfg.get("portfolio", {}).get("sleeves", {}) or {}
@@ -3178,6 +3169,8 @@ def main() -> int:
     # Both paths are optional. Missing files → corresponding source is silent
     # and the heuristic + Yahoo events keep working as before.
     paths_cfg = cfg.get("paths", {}) or {}
+    if output_path is None:
+        output_path = Path(paths_cfg.get("screened_csv", data_dir / "etf_screened_today.csv"))
 
     def _resolve_data_path(rel: str | None, default_rel: str) -> Path:
         """Resolve a config-driven data path relative to the script root."""
