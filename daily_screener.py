@@ -2237,7 +2237,8 @@ def enrich_with_decay_and_vol(
                                        If ``Beta_n_obs`` < ``_MIN_DAYS_DECAY``
                                        (40), blend uses **100 % expected** only.
       - net_decay_annual             : realized − ETF borrow
-      - decay_score                  : blended − ETF borrow
+      - decay_score                  : blended − ETF borrow (computed but omitted
+                                       from ``etf_screened_today.csv`` export)
       - vol_underlying_source        : JSON probe summary per underlying (PASS 2)
       - sigma_realized_implied_annual: median √(G/(½|β||β−1|)) across LETFs on U
       - sigma_cap_annual             : 1.25× that median; caps vol-drag in expected
@@ -3540,7 +3541,6 @@ def main() -> int:
     if passive_mask.any():
         passive_null_cols = [
             "expected_gross_decay_annual",
-            "expected_gross_decay_annual_legacy",
             "expected_gross_decay_adjusted_annual",
             "expected_gross_decay_simple_ito_annual",
             "expected_decay_adjustment_annual",
@@ -3632,9 +3632,22 @@ def main() -> int:
     else:
         screened["strategy_blacklisted"] = False
 
-    # ── Drop helper columns, save ──
+    # ── Drop helper columns + legacy/diagnostic decay columns omitted from CSV
+    #
+    # Grep ls-algo + etf-dashboard: nothing reads these four from screened CSV anymore;
+    # ``generate_trade_plan`` uses ``net_edge_p50_annual`` (+ fallbacks). Dashboard
+    # ``ETFRecord`` omits these fields. Keep computing them in-memory above for QA.
     drop_cols = ["Leverage", "ExpectedLeverage"]
     screened = screened.drop(columns=[c for c in drop_cols if c in screened.columns])
+    _csv_omit = (
+        "decay_score",
+        "gross_decay_annual_legacy_weekly",
+        "vol_etf_annual_legacy",
+        "expected_gross_decay_annual_legacy",
+    )
+    screened = screened.drop(
+        columns=[c for c in _csv_omit if c in screened.columns], errors="ignore"
+    )
 
     screened.to_csv(dated_dir / "etf_screened_today.csv", index=False)
     screened.to_csv(output_path, index=False)

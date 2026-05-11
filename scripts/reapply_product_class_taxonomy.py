@@ -37,7 +37,6 @@ from screener_v2_fields import _expected_decay_available, _product_class
 
 _PASSIVE_NULL_COLS = (
     "expected_gross_decay_annual",
-    "expected_gross_decay_annual_legacy",
     "expected_gross_decay_adjusted_annual",
     "expected_gross_decay_simple_ito_annual",
     "expected_decay_adjustment_annual",
