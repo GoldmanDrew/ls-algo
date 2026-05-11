@@ -513,8 +513,25 @@ def build_full_universe(skip_scrape: bool = False, skip_inverse: bool = False) -
         if _norm_sym(etf) not in yieldboost_etfs
     ]
     dx_df = pd.DataFrame(all_levered, columns=["ETF", "Underlying"])
+    # Default to 2x for the broad leveraged sleeve, then promote the
+    # canonical 3x equity ETFs (Direxion / ProShares UltraPro). Leaving
+    # these mislabelled as 2x corrupts the Bayesian Beta prior (μ = listed
+    # leverage), the realized-vs-target sanity gate (vol_etf / |β|·vol_und),
+    # and the IBKR margin estimator. Example: KORU listed as 2x but actually
+    # 3x produced posterior β ≈ 2.36 (shrunk toward prior 2.0) and a
+    # 110% / (2.36·22.8%) ≈ 2.05 vol-ratio outlier flag in 2026-05-11.
     dx_df["Leverage"] = 2.0
-    print(f"[UNIVERSE] Leveraged pairs: {len(dx_df)}")
+    _LEVERAGE_3X_ETFS = {
+        "YINN", "MEXX", "KORU", "HIBL", "LABU", "SOXL",  # Direxion 3x equity
+        "TQQQ", "SPXL", "URTY",                          # ProShares UltraPro 3x
+    }
+    is_3x = dx_df["ETF"].map(_norm_sym).isin(_LEVERAGE_3X_ETFS)
+    dx_df.loc[is_3x, "Leverage"] = 3.0
+    if int(is_3x.sum()):
+        print(f"[UNIVERSE] Leveraged pairs: {len(dx_df)} "
+              f"(of which {int(is_3x.sum())} 3x)")
+    else:
+        print(f"[UNIVERSE] Leveraged pairs: {len(dx_df)}")
 
     # 2. Covered-call / income sleeve (1x): QYLD family + YieldBOOST bucket-2 names
     cc_df = pd.DataFrame(
@@ -580,6 +597,16 @@ def build_full_universe(skip_scrape: bool = False, skip_inverse: bool = False) -
         "PXIU",   # UPXI — closed 2026-03-16
         "QSX",    # QS   — closed 2026-01-30
         "FRDU",   # FRDU — closed 2026-03-16
+        # Tradr ETFs — liquidated 2026-04-27 (confirmed via tradretfs.com).
+        "DOGD",   # DDOG — liquidated 2026-04-27
+        "ENPX",   # ENPH — liquidated 2026-04-27
+        "MDBX",   # MDB  — liquidated 2026-04-27
+        "SNPX",   # SNPS — liquidated 2026-04-27
+        "VOYX",   # VOYG — liquidated 2026-04-27
+        # T-REX / Tuttle Capital — plan of liquidation; last trade 2026-05-04,
+        # final distribution on/about 2026-05-11 (SEC 497, 2026-04-21).
+        "SOLX",   # GSOL — liquidated 2026-05-11
+        "XRPK",   # XRPZ — liquidated 2026-05-11
     }
     bad_mask = all_df["ETF"].isin(_BAD_TICKERS) | all_df["Underlying"].isin(_BAD_TICKERS)
     if bad_mask.any():
@@ -2711,7 +2738,10 @@ def enrich_with_decay_and_vol(
     # tighter [0.5, 1.5] band by default. Both can be overridden via
     # ``screener.vol_ratio_gate`` in YAML — see ``recompute_vol_ratio_gate``
     # for the structured columns this populates.
-    df = recompute_vol_ratio_gate(df, screener_cfg=None)
+    #
+    # Silent first pass — the actual warn/gate console output is emitted
+    # by the second call below (with YAML-resolved bounds) in ``main()``.
+    df = recompute_vol_ratio_gate(df, screener_cfg=None, verbose=False)
 
     print(f"\n[DECAY] Beta OLS fill-ins: {betas_computed} | Vol: {ok_vol}/{len(df)} "
           f"| Realized decay: {ok_decay}/{len(df)} | Expected decay: {ok_expected}/{len(df)}")
@@ -2771,6 +2801,7 @@ def recompute_vol_ratio_gate(
     df: pd.DataFrame,
     *,
     screener_cfg: dict | None,
+    verbose: bool = True,
 ) -> pd.DataFrame:
     """Add structured ``vol_ratio_value`` / ``vol_ratio_outlier`` columns.
 
@@ -2779,6 +2810,12 @@ def recompute_vol_ratio_gate(
     a sleeve when ``vol_ratio_outlier`` is True. The diagnostic warn-band
     stays loose (0.20–1.75) so we still get a console heads-up on borderline
     rows; the gate-band ([0.5, 1.5] by default) drives the boolean flag.
+
+    The function is called twice in a normal pipeline run: first with
+    default bounds inside ``enrich_with_decay_and_vol`` (just to populate
+    the structured columns) and again with the YAML-configured bounds
+    before purgatory consumes the flag. Pass ``verbose=False`` on the
+    first call to avoid duplicating the warn/gate console output.
     """
     out = df.copy()
     gate = _vol_ratio_gate_cfg(screener_cfg)
@@ -2821,7 +2858,7 @@ def recompute_vol_ratio_gate(
     out["vol_ratio_value"] = ratio_vals
     out["vol_ratio_outlier"] = outlier_flags
 
-    if warn_lines:
+    if verbose and warn_lines:
         print(
             f"\n[DECAY] ⚠ Vol-ratio outliers ({len(warn_lines)} rows — "
             f"vol_etf / (|β| × vol_und) outside [{diag_lo:.2f}, {diag_hi:.2f}]):"
@@ -2832,7 +2869,7 @@ def recompute_vol_ratio_gate(
             print(f"  ... and {len(warn_lines) - 10} more")
 
     n_gate = int(sum(1 for f in outlier_flags if f))
-    if n_gate:
+    if verbose and n_gate:
         print(
             f"[DECAY] vol-ratio gate: {n_gate} row(s) flagged for purgatory "
             f"(per-|β| band)"
@@ -3574,10 +3611,16 @@ def main() -> int:
     active = int((screened["purgatory"] != True).sum())  # noqa: E712
     print(f"[DONE] {len(screened)} pairs | {active} active (non-purgatory) | {purg} purgatory")
 
-    # Summary stats
+    # Summary stats — column names mirror the etf-dashboard headline grid:
+    #   Beta │ Borrow │ Gross (realiz.) │ Exp. decay (p50 ± band) │ Net edge
+    # See etf-dashboard/index.html for the canonical render. ``net_decay``
+    # is the dashboard's spot column; ``decay_score`` is the sizing/sort
+    # key (blended gross decay + canonical borrow). For
+    # ``product_class == "passive_low_beta"`` rows the expected/p50/p10/p90
+    # columns are intentionally NaN (dashboard falls back to realized).
     valid_net = screened["net_decay_annual"].dropna()
     if len(valid_net) > 0:
-        print(f"[DONE] Net decay: median={valid_net.median()*100:.2f}%  "
+        print(f"[DONE] Net edge:  median={valid_net.median()*100:.2f}%  "
               f"range=[{valid_net.min()*100:.2f}%, {valid_net.max()*100:.2f}%]")
 
     valid_score = screened["decay_score"].dropna()
@@ -3585,16 +3628,46 @@ def main() -> int:
         print(f"[DONE] Decay score: median={valid_score.median()*100:.2f}%  "
               f"range=[{valid_score.min()*100:.2f}%, {valid_score.max()*100:.2f}%]")
 
+    def _fmt_pct(x: float | None, width: int = 6) -> str:
+        try:
+            if x is None or not np.isfinite(x):
+                return f"{'—':>{width}}"
+            return f"{x * 100:{width}.2f}%"
+        except (TypeError, ValueError):
+            return f"{'—':>{width}}"
+
     top5 = screened[screened["decay_score"].notna()].nlargest(5, "decay_score")
     if len(top5) > 0:
-        print(f"\n  Top 5 by decay score (blended gross − borrow):")
+        print(
+            "\n  Top 5 by decay score (dashboard columns: "
+            "β · borrow · gross realiz. · exp. p50 [p10–p90] · net edge):"
+        )
+        header = (
+            f"    {'ETF':8s}  {'β':>5s}  {'borrow':>7s}  "
+            f"{'gross':>7s}  {'exp.p50':>8s}  {'p10':>7s}  {'p90':>7s}  "
+            f"{'net edge':>9s}  {'score':>7s}"
+        )
+        print(header)
         for _, r in top5.iterrows():
-            bn = r.get("borrow_current")
-            exp = r.get("expected_gross_decay_annual")
-            print(f"    {r['ETF']:8s}  score={r['decay_score']*100:6.2f}%  "
-                  f"realized={r['gross_decay_annual']*100:6.2f}%  "
-                  f"expected={exp*100 if pd.notna(exp) else 0:6.2f}%  "
-                  f"borrow={bn*100 if pd.notna(bn) else 0:5.2f}%  β={r['Beta']:.2f}")
+            beta = r.get("Beta")
+            borrow = r.get("borrow_current")
+            gross = r.get("gross_decay_annual")
+            exp_p50 = r.get("expected_gross_decay_p50_annual")
+            exp_p10 = r.get("expected_gross_decay_p10_annual")
+            exp_p90 = r.get("expected_gross_decay_p90_annual")
+            net_edge = r.get("net_decay_annual")
+            score = r.get("decay_score")
+            print(
+                f"    {str(r['ETF']):8s}  "
+                f"{(beta if pd.notna(beta) else float('nan')):>5.2f}  "
+                f"{_fmt_pct(borrow, 7)}  "
+                f"{_fmt_pct(gross, 7)}  "
+                f"{_fmt_pct(exp_p50, 8)}  "
+                f"{_fmt_pct(exp_p10, 7)}  "
+                f"{_fmt_pct(exp_p90, 7)}  "
+                f"{_fmt_pct(net_edge, 9)}  "
+                f"{_fmt_pct(score, 7)}"
+            )
 
     print("=" * 70)
     return 0
