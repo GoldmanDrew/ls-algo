@@ -3644,22 +3644,15 @@ def main() -> int:
     active = int((screened["purgatory"] != True).sum())  # noqa: E712
     print(f"[DONE] {len(screened)} pairs | {active} active (non-purgatory) | {purg} purgatory")
 
-    # Summary stats — column names mirror the etf-dashboard headline grid:
-    #   Beta │ Borrow │ Gross (realiz.) │ Exp. decay (p50 ± band) │ Net edge
-    # See etf-dashboard/index.html for the canonical render. ``net_decay``
-    # is the dashboard's spot column; ``decay_score`` is the sizing/sort
-    # key (blended gross decay + canonical borrow). For
-    # ``product_class == "passive_low_beta"`` rows the expected/p50/p10/p90
-    # columns are intentionally NaN (dashboard falls back to realized).
+    # Summary stats — terminal table mirrors the etf-dashboard headline grid:
+    #   beta │ borrow │ gross realiz. │ exp. p50 │ p10/p90 │ net edge.
+    # ``net_decay_annual`` is the dashboard-style net-edge column (realized
+    # gross decay minus borrow). For ``product_class == "passive_low_beta"``
+    # rows expected p50/p10/p90 are NaN (dashboard falls back to realized).
     valid_net = screened["net_decay_annual"].dropna()
     if len(valid_net) > 0:
         print(f"[DONE] Net edge:  median={valid_net.median()*100:.2f}%  "
               f"range=[{valid_net.min()*100:.2f}%, {valid_net.max()*100:.2f}%]")
-
-    valid_score = screened["decay_score"].dropna()
-    if len(valid_score) > 0:
-        print(f"[DONE] Decay score: median={valid_score.median()*100:.2f}%  "
-              f"range=[{valid_score.min()*100:.2f}%, {valid_score.max()*100:.2f}%]")
 
     # Fixed-width table (monospace): include ``%`` inside each cell width so
     # headers line up with data.
@@ -3681,23 +3674,25 @@ def main() -> int:
             return "-".rjust(_W_PCT)
         return f"{fx * 100:.2f}%".rjust(_W_PCT)
 
-    top5 = screened[screened["decay_score"].notna()].nlargest(5, "decay_score")
-    if len(top5) > 0:
+    top_net = screened[screened["net_decay_annual"].notna()].nlargest(
+        5, "net_decay_annual"
+    )
+    if len(top_net) > 0:
         print(
-            "\n  Top 5 by decay score (dashboard columns: "
-            "β · borrow · gross realiz. · exp. p50 [p10–p90] · net edge · score):"
+            "\n  Top 5 by net edge / net_decay_annual "
+            "(beta · borrow · gross realiz. · exp. p50 · p10 · p90 · net_edge):"
         )
         gap = "  "
         hdr = (
             f"    {'ETF':<{_W_ETF}}{gap}{'beta':>{_W_BETA}}{gap}{'borrow':>{_W_PCT}}"
             f"{gap}{'gross':>{_W_PCT}}{gap}{'exp.p50':>{_W_PCT}}"
             f"{gap}{'p10':>{_W_PCT}}{gap}{'p90':>{_W_PCT}}"
-            f"{gap}{'net_edge':>{_W_PCT}}{gap}{'score':>{_W_PCT}}"
+            f"{gap}{'net_edge':>{_W_PCT}}"
         )
         print(hdr)
         # Match ``hdr`` visual width (4 leading spaces, then dash rule).
         print(f"    {'-' * (len(hdr) - 4)}")
-        for _, r in top5.iterrows():
+        for _, r in top_net.iterrows():
             etf_sym = str(r["ETF"])[:_W_ETF]
             beta = r.get("Beta")
             borrow = r.get("borrow_current")
@@ -3706,13 +3701,11 @@ def main() -> int:
             exp_p10 = r.get("expected_gross_decay_p10_annual")
             exp_p90 = r.get("expected_gross_decay_p90_annual")
             net_edge = r.get("net_decay_annual")
-            score = r.get("decay_score")
             row = (
                 f"    {etf_sym:<{_W_ETF}}{gap}{_top5_cell_beta(beta)}"
                 f"{gap}{_top5_cell_pct(borrow)}{gap}{_top5_cell_pct(gross)}"
                 f"{gap}{_top5_cell_pct(exp_p50)}{gap}{_top5_cell_pct(exp_p10)}"
                 f"{gap}{_top5_cell_pct(exp_p90)}{gap}{_top5_cell_pct(net_edge)}"
-                f"{gap}{_top5_cell_pct(score)}"
             )
             print(row)
 
