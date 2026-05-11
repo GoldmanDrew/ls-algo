@@ -28,6 +28,7 @@ from zoneinfo import ZoneInfo
 
 from ib_insync import IB, MarketOrder, Stock, Order, TagValue
 from strategy_config import load_config
+from execute_trade_plan import configure_ib_error_log_filter
 
 
 TRADING_DAYS = 252
@@ -385,6 +386,10 @@ def main() -> None:
     port = int(ibkr_cfg.get("port", 7497))
     client_id = int(ibkr_cfg.get("client_id", 77))
     prefer_delayed = bool(ibkr_cfg.get("prefer_delayed", True))
+    suppress_error_codes = [int(c) for c in ((ibkr_cfg.get("suppress_error_codes", [10089])) or [])]
+    configure_ib_error_log_filter(suppress_error_codes)
+    if suppress_error_codes:
+        tprint(f"[FLOW][IB] Suppressing noisy API error codes: {sorted(set(suppress_error_codes))}")
 
     strategy_tag = str(strat_cfg.get("tag", "")).strip() or "FLOW"
     dry_run = args.dry_run or bool(exec_cfg.get("dry_run", False))
