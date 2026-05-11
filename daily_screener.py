@@ -3661,27 +3661,44 @@ def main() -> int:
         print(f"[DONE] Decay score: median={valid_score.median()*100:.2f}%  "
               f"range=[{valid_score.min()*100:.2f}%, {valid_score.max()*100:.2f}%]")
 
-    def _fmt_pct(x: float | None, width: int = 6) -> str:
+    # Fixed-width table (monospace): include ``%`` inside each cell width so
+    # headers line up with data.
+    _W_ETF, _W_BETA, _W_PCT = 9, 8, 11
+
+    def _top5_cell_beta(x: object) -> str:
+        if x is None or not pd.notna(x) or not np.isfinite(float(x)):
+            return "-".rjust(_W_BETA)
+        return f"{float(x):>{_W_BETA}.2f}"
+
+    def _top5_cell_pct(x: object) -> str:
+        if x is None or not pd.notna(x):
+            return "-".rjust(_W_PCT)
         try:
-            if x is None or not np.isfinite(x):
-                return f"{'—':>{width}}"
-            return f"{x * 100:{width}.2f}%"
+            fx = float(x)
         except (TypeError, ValueError):
-            return f"{'—':>{width}}"
+            return "-".rjust(_W_PCT)
+        if not np.isfinite(fx):
+            return "-".rjust(_W_PCT)
+        return f"{fx * 100:.2f}%".rjust(_W_PCT)
 
     top5 = screened[screened["decay_score"].notna()].nlargest(5, "decay_score")
     if len(top5) > 0:
         print(
             "\n  Top 5 by decay score (dashboard columns: "
-            "β · borrow · gross realiz. · exp. p50 [p10–p90] · net edge):"
+            "β · borrow · gross realiz. · exp. p50 [p10–p90] · net edge · score):"
         )
-        header = (
-            f"    {'ETF':8s}  {'β':>5s}  {'borrow':>7s}  "
-            f"{'gross':>7s}  {'exp.p50':>8s}  {'p10':>7s}  {'p90':>7s}  "
-            f"{'net edge':>9s}  {'score':>7s}"
+        gap = "  "
+        hdr = (
+            f"    {'ETF':<{_W_ETF}}{gap}{'beta':>{_W_BETA}}{gap}{'borrow':>{_W_PCT}}"
+            f"{gap}{'gross':>{_W_PCT}}{gap}{'exp.p50':>{_W_PCT}}"
+            f"{gap}{'p10':>{_W_PCT}}{gap}{'p90':>{_W_PCT}}"
+            f"{gap}{'net_edge':>{_W_PCT}}{gap}{'score':>{_W_PCT}}"
         )
-        print(header)
+        print(hdr)
+        # Match ``hdr`` visual width (4 leading spaces, then dash rule).
+        print(f"    {'-' * (len(hdr) - 4)}")
         for _, r in top5.iterrows():
+            etf_sym = str(r["ETF"])[:_W_ETF]
             beta = r.get("Beta")
             borrow = r.get("borrow_current")
             gross = r.get("gross_decay_annual")
@@ -3690,17 +3707,14 @@ def main() -> int:
             exp_p90 = r.get("expected_gross_decay_p90_annual")
             net_edge = r.get("net_decay_annual")
             score = r.get("decay_score")
-            print(
-                f"    {str(r['ETF']):8s}  "
-                f"{(beta if pd.notna(beta) else float('nan')):>5.2f}  "
-                f"{_fmt_pct(borrow, 7)}  "
-                f"{_fmt_pct(gross, 7)}  "
-                f"{_fmt_pct(exp_p50, 8)}  "
-                f"{_fmt_pct(exp_p10, 7)}  "
-                f"{_fmt_pct(exp_p90, 7)}  "
-                f"{_fmt_pct(net_edge, 9)}  "
-                f"{_fmt_pct(score, 7)}"
+            row = (
+                f"    {etf_sym:<{_W_ETF}}{gap}{_top5_cell_beta(beta)}"
+                f"{gap}{_top5_cell_pct(borrow)}{gap}{_top5_cell_pct(gross)}"
+                f"{gap}{_top5_cell_pct(exp_p50)}{gap}{_top5_cell_pct(exp_p10)}"
+                f"{gap}{_top5_cell_pct(exp_p90)}{gap}{_top5_cell_pct(net_edge)}"
+                f"{gap}{_top5_cell_pct(score)}"
             )
+            print(row)
 
     print("=" * 70)
     return 0
