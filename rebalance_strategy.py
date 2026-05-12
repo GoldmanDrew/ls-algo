@@ -805,26 +805,27 @@ def compute_hedge_delta(
     *,
     net_notional: float,
     target_gross: float,
-    net_trigger_long_pct: float,   # 0.02
-    net_trigger_short_pct: float,  # 0.01
-    net_target_long_pct: float,    # 0.01
-    net_target_short_pct: float,   # 0.00
+    long_trigger_net_pct: float,
+    short_trigger_net_pct: float,
+    long_target_net_pct: float,
+    short_target_net_pct: float,
 ) -> Tuple[bool, float]:
+    """Apply the single asymmetric Phase 3 net-exposure hedge rule."""
     if target_gross <= 0.0:
         return False, 0.0
 
     if net_notional > 0:
-        # Net long — need to add shorts
-        trigger = net_trigger_long_pct * target_gross
+        # Too long: add shorts only after the wider long-side band is breached.
+        trigger = long_trigger_net_pct * target_gross
         if net_notional <= trigger:
             return False, 0.0
-        target_net = net_target_long_pct * target_gross
+        target_net = long_target_net_pct * target_gross
     else:
-        # Net short — need to add longs
-        trigger = net_trigger_short_pct * target_gross
+        # Too short: add longs after the tighter short-side band is breached.
+        trigger = short_trigger_net_pct * target_gross
         if abs(net_notional) <= trigger:
             return False, 0.0
-        target_net = -net_target_short_pct * target_gross
+        target_net = -short_target_net_pct * target_gross
 
     correction = target_net - net_notional
     return True, correction
@@ -931,10 +932,10 @@ def build_hedge_trades(
     prices: Dict[str, float],
     account_equity: float,
     gross_leverage: float,
-    net_trigger_long_pct: float,
-    net_trigger_short_pct: float,
-    net_target_long_pct: float,
-    net_target_short_pct: float,
+    long_trigger_net_pct: float,
+    short_trigger_net_pct: float,
+    long_target_net_pct: float,
+    short_target_net_pct: float,
     min_trade_usd: float,
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
@@ -1126,10 +1127,10 @@ def build_hedge_trades(
 
         triggered, correction_usd = compute_hedge_delta(
             net_notional=net_notional, target_gross=ref_gross,
-            net_trigger_long_pct=net_trigger_long_pct,
-            net_trigger_short_pct=net_trigger_short_pct,
-            net_target_long_pct=net_target_long_pct,
-            net_target_short_pct=net_target_short_pct,
+            long_trigger_net_pct=long_trigger_net_pct,
+            short_trigger_net_pct=short_trigger_net_pct,
+            long_target_net_pct=long_target_net_pct,
+            short_target_net_pct=short_target_net_pct,
         )
 
         net_pct = (net_notional / ref_gross * 100.0) if ref_gross > 0 else 0.0
@@ -1220,10 +1221,10 @@ def execute_hedge_pass_serial(
     short_map: Dict[str, dict],
     cancel_service: CoordinatorCancelService,
     log_exposure_event,
-    net_trigger_long_pct: float,
-    net_trigger_short_pct: float,
-    net_target_long_pct: float,
-    net_target_short_pct: float,
+    long_trigger_net_pct: float,
+    short_trigger_net_pct: float,
+    long_target_net_pct: float,
+    short_target_net_pct: float,
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
 ) -> Tuple[List[dict], int, int]:
@@ -1280,10 +1281,10 @@ def execute_hedge_pass_serial(
             )
             triggered_now, _ = compute_hedge_delta(
                 net_notional=net_now, target_gross=target_gross,
-                net_trigger_long_pct=net_trigger_long_pct,
-                net_trigger_short_pct=net_trigger_short_pct,
-                net_target_long_pct=net_target_long_pct,
-                net_target_short_pct=net_target_short_pct,
+                long_trigger_net_pct=long_trigger_net_pct,
+                short_trigger_net_pct=short_trigger_net_pct,
+                long_target_net_pct=long_target_net_pct,
+                short_target_net_pct=short_target_net_pct,
             )
             if not triggered_now:
                 tprint(
@@ -1430,10 +1431,10 @@ def _hedge_worker(
     short_map: Dict[str, dict],
     cancel_service: CoordinatorCancelService,
     log_exposure_event,
-    net_trigger_long_pct: float,
-    net_trigger_short_pct: float,
-    net_target_long_pct: float,
-    net_target_short_pct: float,
+    long_trigger_net_pct: float,
+    short_trigger_net_pct: float,
+    long_target_net_pct: float,
+    short_target_net_pct: float,
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
     log_lock: threading.Lock,
@@ -1497,10 +1498,10 @@ def _hedge_worker(
             )
             triggered_now, correction_now = compute_hedge_delta(
                 net_notional=net_now, target_gross=target_gross,
-                net_trigger_long_pct=net_trigger_long_pct,
-                net_trigger_short_pct=net_trigger_short_pct,
-                net_target_long_pct=net_target_long_pct,
-                net_target_short_pct=net_target_short_pct,
+                long_trigger_net_pct=long_trigger_net_pct,
+                short_trigger_net_pct=short_trigger_net_pct,
+                long_target_net_pct=long_target_net_pct,
+                short_target_net_pct=short_target_net_pct,
             )
             if not triggered_now:
                 tprint(
@@ -1668,10 +1669,10 @@ def execute_hedge_pass_parallel(
     short_map: Dict[str, dict],
     cancel_service: CoordinatorCancelService,
     log_exposure_event,
-    net_trigger_long_pct: float,
-    net_trigger_short_pct: float,
-    net_target_long_pct: float,
-    net_target_short_pct: float,
+    long_trigger_net_pct: float,
+    short_trigger_net_pct: float,
+    long_target_net_pct: float,
+    short_target_net_pct: float,
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
     log_lock: threading.Lock,
@@ -1721,10 +1722,10 @@ def execute_hedge_pass_parallel(
                 dry_run=dry_run, short_map=short_map,
                 cancel_service=cancel_service,
                 log_exposure_event=log_exposure_event,
-                net_trigger_long_pct=net_trigger_long_pct,
-                net_trigger_short_pct=net_trigger_short_pct,
-                net_target_long_pct=net_target_long_pct,
-                net_target_short_pct=net_target_short_pct,
+                long_trigger_net_pct=long_trigger_net_pct,
+                short_trigger_net_pct=short_trigger_net_pct,
+                long_target_net_pct=long_target_net_pct,
+                short_target_net_pct=short_target_net_pct,
                 etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                 log_lock=log_lock,
             )
@@ -1756,8 +1757,8 @@ def print_phase_summary(
     n_traded: int,
     net_by_underlying: Dict[str, float],
     target_gross_by_underlying: Dict[str, float],
-    net_trigger_long_pct: float,
-    net_trigger_short_pct: float,
+    long_trigger_net_pct: float,
+    short_trigger_net_pct: float,
 ) -> None:
     tprint(f"\n{'='*78}")
     tprint(f"  {phase}")
@@ -1773,7 +1774,7 @@ def print_phase_summary(
         net = net_by_underlying[under]
         tgt = target_gross_by_underlying.get(under, 0.0)
         pct = (net / tgt * 100.0) if tgt > 0 else 0.0
-        band = net_trigger_long_pct if net >= 0 else net_trigger_short_pct
+        band = long_trigger_net_pct if net >= 0 else short_trigger_net_pct
         status = "OK" if abs(pct) <= band * 100.0 else "WARN"
         tprint(f"  {under:<15} {net:>12,.0f} {tgt:>12,.0f} {pct:>7.1f}%  {status}")
     tprint("")
@@ -1862,10 +1863,10 @@ def build_reconciliation_trades(
     account_equity: float,
     gross_leverage: float,
     hedgeable_plan: pd.DataFrame,
-    net_trigger_long_pct: float,
-    net_trigger_short_pct: float,
-    net_target_long_pct: float,
-    net_target_short_pct: float,
+    long_trigger_net_pct: float,
+    short_trigger_net_pct: float,
+    long_target_net_pct: float,
+    short_target_net_pct: float,
     min_trade_usd: float,
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
@@ -1963,10 +1964,10 @@ def build_reconciliation_trades(
 
         triggered, correction_usd = compute_hedge_delta(
             net_notional=net_notional, target_gross=ref_gross,
-            net_trigger_long_pct=net_trigger_long_pct,
-            net_trigger_short_pct=net_trigger_short_pct,
-            net_target_long_pct=net_target_long_pct,
-            net_target_short_pct=net_target_short_pct,
+            long_trigger_net_pct=long_trigger_net_pct,
+            short_trigger_net_pct=short_trigger_net_pct,
+            long_target_net_pct=long_target_net_pct,
+            short_target_net_pct=short_target_net_pct,
         )
 
         if not triggered:
@@ -2322,11 +2323,14 @@ def main() -> None:
     gross_leverage = float(strat_cfg.get("gross_leverage", 4.0))
     blacklist      = load_blacklist(cfg)
 
-    # Rebalance params
-    net_trigger_long_pct    = float(reb_cfg.get("net_trigger_long_pct", 0.02))
-    net_trigger_short_pct   = float(reb_cfg.get("net_trigger_short_pct", 0.01))
-    net_target_long_pct     = float(reb_cfg.get("net_target_long_pct", 0.01))
-    net_target_short_pct    = float(reb_cfg.get("net_target_short_pct", 0.00))
+    # Phase 3 asymmetric hedge rule.
+    hedge_cfg = reb_cfg.get("hedge", {}) or {}
+    too_long_cfg = hedge_cfg.get("too_long", {}) or {}
+    too_short_cfg = hedge_cfg.get("too_short", {}) or {}
+    long_trigger_net_pct = float(too_long_cfg.get("trigger_net_pct", 0.04))
+    long_target_net_pct = float(too_long_cfg.get("target_net_pct", 0.01))
+    short_trigger_net_pct = float(too_short_cfg.get("trigger_net_pct", 0.01))
+    short_target_net_pct = float(too_short_cfg.get("target_net_pct", 0.00))
     min_trade_usd           = float(reb_cfg.get("min_trade_usd", 500.0))
     requeue_abs_tolerance_usd = float(reb_cfg.get("requeue_abs_tolerance_usd", max(50.0, min_trade_usd * 0.25)))
     requeue_rel_tolerance     = float(reb_cfg.get("requeue_rel_tolerance", 0.10))
@@ -2799,10 +2803,8 @@ def main() -> None:
             account_equity = get_account_equity(ib)
             tprint(f"[EQUITY] NetLiquidation = ${account_equity:,.0f}")
             tprint(
-                f"[HEDGE]  trigger_long={net_trigger_long_pct*100:.0f}%  "
-                f"trigger_short={net_trigger_short_pct*100:.0f}%  "
-                f"target_long={net_target_long_pct*100:.0f}%  "
-                f"target_short={net_target_short_pct*100:.0f}%  "
+                f"[HEDGE]  too_long: +{long_trigger_net_pct*100:.0f}% -> +{long_target_net_pct*100:.0f}%  "
+                f"too_short: -{short_trigger_net_pct*100:.0f}% -> -{short_target_net_pct*100:.0f}%  "
                 f"gross_leverage={gross_leverage}x  "
                 f"min_trade_usd=${min_trade_usd:,.0f}"
             )
@@ -2856,10 +2858,10 @@ def main() -> None:
                     hedgeable_plan=hedgeable_df,
                     strat_pos=strat_pos, prices=prices,
                     account_equity=account_equity, gross_leverage=gross_leverage,
-                    net_trigger_long_pct=net_trigger_long_pct,
-                    net_trigger_short_pct=net_trigger_short_pct,
-                    net_target_long_pct=net_target_long_pct,
-                    net_target_short_pct=net_target_short_pct,
+                    long_trigger_net_pct=long_trigger_net_pct,
+                    short_trigger_net_pct=short_trigger_net_pct,
+                    long_target_net_pct=long_target_net_pct,
+                    short_target_net_pct=short_target_net_pct,
                     min_trade_usd=min_trade_usd,
                     etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                     short_map=short_map,
@@ -2918,10 +2920,10 @@ def main() -> None:
                         dry_run=dry_run, parallel_n=parallel_n,
                         short_map=short_map, cancel_service=cancel_service,
                         log_exposure_event=log_exposure_event,
-                        net_trigger_long_pct=net_trigger_long_pct,
-                        net_trigger_short_pct=net_trigger_short_pct,
-                        net_target_long_pct=net_target_long_pct,
-                        net_target_short_pct=net_target_short_pct,
+                        long_trigger_net_pct=long_trigger_net_pct,
+                        short_trigger_net_pct=short_trigger_net_pct,
+                        long_target_net_pct=long_target_net_pct,
+                        short_target_net_pct=short_target_net_pct,
                         etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                         log_lock=log_lock,
                     )
@@ -2956,10 +2958,10 @@ def main() -> None:
                         hedgeable_plan=hedgeable_df,
                         strat_pos=strat_pos, prices=prices,
                         account_equity=account_equity, gross_leverage=gross_leverage,
-                        net_trigger_long_pct=net_trigger_long_pct,
-                        net_trigger_short_pct=net_trigger_short_pct,
-                        net_target_long_pct=net_target_long_pct,
-                        net_target_short_pct=net_target_short_pct,
+                        long_trigger_net_pct=long_trigger_net_pct,
+                        short_trigger_net_pct=short_trigger_net_pct,
+                        long_target_net_pct=long_target_net_pct,
+                        short_target_net_pct=short_target_net_pct,
                         min_trade_usd=min_trade_usd,
                         etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                         short_map=short_map,
@@ -2993,10 +2995,10 @@ def main() -> None:
                             dry_run=dry_run, parallel_n=parallel_n,
                             short_map=short_map, cancel_service=cancel_service,
                             log_exposure_event=log_exposure_event,
-                            net_trigger_long_pct=net_trigger_long_pct,
-                            net_trigger_short_pct=net_trigger_short_pct,
-                            net_target_long_pct=net_target_long_pct,
-                            net_target_short_pct=net_target_short_pct,
+                            long_trigger_net_pct=long_trigger_net_pct,
+                            short_trigger_net_pct=short_trigger_net_pct,
+                            long_target_net_pct=long_target_net_pct,
+                            short_target_net_pct=short_target_net_pct,
                             etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                             log_lock=log_lock,
                         )
@@ -3023,10 +3025,10 @@ def main() -> None:
                     hedgeable_plan=hedgeable_df,
                     strat_pos=strat_pos_post_pass, prices=prices,
                     account_equity=account_equity, gross_leverage=gross_leverage,
-                    net_trigger_long_pct=net_trigger_long_pct,
-                    net_trigger_short_pct=net_trigger_short_pct,
-                    net_target_long_pct=net_target_long_pct,
-                    net_target_short_pct=net_target_short_pct,
+                    long_trigger_net_pct=long_trigger_net_pct,
+                    short_trigger_net_pct=short_trigger_net_pct,
+                    long_target_net_pct=long_target_net_pct,
+                    short_target_net_pct=short_target_net_pct,
                     min_trade_usd=min_trade_usd,
                     etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                     short_map=short_map,
@@ -3062,10 +3064,10 @@ def main() -> None:
                     account_equity=account_equity,
                     gross_leverage=gross_leverage,
                     hedgeable_plan=hedgeable_df,
-                    net_trigger_long_pct=net_trigger_long_pct,
-                    net_trigger_short_pct=net_trigger_short_pct,
-                    net_target_long_pct=net_target_long_pct,
-                    net_target_short_pct=net_target_short_pct,
+                    long_trigger_net_pct=long_trigger_net_pct,
+                    short_trigger_net_pct=short_trigger_net_pct,
+                    long_target_net_pct=long_target_net_pct,
+                    short_target_net_pct=short_target_net_pct,
                     min_trade_usd=min_trade_usd,
                     etf_to_under=etf_to_under,
                     etf_to_beta=etf_to_beta,
@@ -3091,10 +3093,10 @@ def main() -> None:
                         dry_run=dry_run, parallel_n=parallel_n,
                         short_map=short_map, cancel_service=cancel_service,
                         log_exposure_event=log_exposure_event,
-                        net_trigger_long_pct=net_trigger_long_pct,
-                        net_trigger_short_pct=net_trigger_short_pct,
-                        net_target_long_pct=net_target_long_pct,
-                        net_target_short_pct=net_target_short_pct,
+                        long_trigger_net_pct=long_trigger_net_pct,
+                        short_trigger_net_pct=short_trigger_net_pct,
+                        long_target_net_pct=long_target_net_pct,
+                        short_target_net_pct=short_target_net_pct,
                         etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                         log_lock=log_lock,
                     )
@@ -3135,8 +3137,8 @@ def main() -> None:
                 n_traded=total_traded,
                 net_by_underlying=post_net,
                 target_gross_by_underlying=post_ref_gross,
-                net_trigger_long_pct=net_trigger_long_pct,
-                net_trigger_short_pct=net_trigger_short_pct,
+                long_trigger_net_pct=long_trigger_net_pct,
+                short_trigger_net_pct=short_trigger_net_pct,
             )
         else:
             tprint("[PHASE 3] Skipped.")

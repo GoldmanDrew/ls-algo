@@ -1552,11 +1552,11 @@ def apply_sub2_borrow_floor(
 
 # Fallbacks only used when strategy_config.yml is missing entirely.
 # In normal operation these are always overridden by screener: section in config.
+# Borrow bands live exclusively under ``screener.per_bucket.*`` and are read
+# by ``recompute_purgatory_by_bucket`` (purgatory) and ``generate_trade_plan``
+# (new-entry caps = ``entry_borrow_cap``).
 _FALLBACK = {
-    "borrow_low": 0.55,
-    "purgatory_margin": 0.25,
     "min_shares_available": 1000,
-    "hard_borrow_cap": 0.75,
     "min_beta_days": 20,
     "borrow_floor_price_usd": 2.0,
 }
@@ -1564,16 +1564,19 @@ _FALLBACK = {
 
 @dataclass
 class ScreeningParams:
-    borrow_low: float = _FALLBACK["borrow_low"]
-    purgatory_margin: float = _FALLBACK["purgatory_margin"]
     min_shares_available: int = _FALLBACK["min_shares_available"]
-    exclude_negative_cagr: bool = False
     protected_etfs: Set[str] | None = None
-    hard_borrow_cap: float = _FALLBACK["hard_borrow_cap"]
 
 
 def screen_universe(df: pd.DataFrame, params: ScreeningParams) -> pd.DataFrame:
-    """Apply borrow-based screening: purgatory, protected, diagnostics.
+    """Coerce numeric columns and stamp non-borrow diagnostic flags.
+
+    Borrow-band purgatory is owned exclusively by
+    :func:`recompute_purgatory_by_bucket`, which reads
+    ``screener.per_bucket.*`` after the bucket tag is assigned. This
+    function only handles things that are independent of bucket:
+    type coercion, ``protected`` membership, ``cagr_positive``,
+    ``exclude_no_shares``, and ``exclude_borrow_spike``.
 
     Philosophy: include by default, exclude only with positive evidence.
     FTP-missing ETFs are treated as "unknown borrow" and included — the
@@ -1595,38 +1598,6 @@ def screen_universe(df: pd.DataFrame, params: ScreeningParams) -> pd.DataFrame:
     else:
         df["cagr_positive"] = pd.NA
 
-    # Borrow classification (informational — used by plan generator)
-    borrow_known = df["borrow_current"].notna() & (~df["borrow_missing_from_ftp"])
-    df["borrow_leq_low"] = borrow_known & (df["borrow_current"] <= params.borrow_low)
-    df["borrow_gt_low"] = borrow_known & (df["borrow_current"] > params.borrow_low)
-
-    hard_cap = float(params.hard_borrow_cap)
-    df["protected_ok"] = df["protected"] & borrow_known & (df["borrow_current"] <= hard_cap)
-    df["protected_bad"] = df["protected"] & borrow_known & (df["borrow_current"] > hard_cap)
-
-    # Purgatory: borrow confirmed between soft cap and hard cap, not protected.
-    # These get 0-target rows in proposed_trades (keep-open, don't size).
-    normal_purg = (borrow_known
-                   & (df["borrow_current"] > params.borrow_low)
-                   & (df["borrow_current"] <= (params.borrow_low + params.purgatory_margin))
-                   & (~df["protected"]))
-    df["purgatory"] = normal_purg | df["protected_bad"]
-
-    # Confirmed-expensive: borrow known > hard_cap, not protected.
-    # Only these are excluded — everything else passes through to the
-    # plan generator which applies per-sleeve borrow caps.
-    confirmed_exclude = (borrow_known
-                         & (df["borrow_current"] > hard_cap)
-                         & (~df["protected"]))
-
-    # We no longer emit include_for_algo. Downstream sizing relies on sleeve
-    # membership rules in generate_trade_plan, with purgatory explicitly excluded.
-    # Keep confirmed_exclude as a diagnostic-only signal.
-    if params.exclude_negative_cagr and "cagr_port_hist" in df.columns:
-        confirmed_exclude = confirmed_exclude | (df["cagr_positive"] != True)
-
-    # Diagnostic columns (kept for backward compatibility)
-    df["exclude_borrow_gt_low"] = df["borrow_gt_low"] & (~df["protected"])
     df["exclude_no_shares"] = df["shares_available"] < params.min_shares_available
     df["exclude_borrow_spike"] = df["borrow_spiking"].fillna(False)
     return df
@@ -1660,22 +1631,21 @@ def recompute_purgatory_by_bucket(
     pb = sc.get("per_bucket") or {}
 
     defaults: dict[str, dict[str, float]] = {
-        "bucket_1": {"borrow_low": 0.55, "purgatory_margin": 0.25, "hard_borrow_cap": 0.75},
-        "bucket_2": {"borrow_low": 0.20, "purgatory_margin": 0.15, "hard_borrow_cap": 0.35},
-        "bucket_4": {"borrow_low": 1.00, "purgatory_margin": 0.20, "hard_borrow_cap": 1.20},
+        "bucket_1": {"entry_borrow_cap": 0.55, "keep_borrow_cap": 0.75},
+        "bucket_2": {"entry_borrow_cap": 0.20, "keep_borrow_cap": 0.35},
+        "bucket_4": {"entry_borrow_cap": 0.90, "keep_borrow_cap": 1.20},
     }
 
-    def _triple(tag: str) -> tuple[float, float, float]:
+    def _borrow_band(tag: str) -> tuple[float, float]:
         raw = pb.get(tag) or {}
-        base = defaults.get(tag, {"borrow_low": 1.0, "purgatory_margin": 0.0, "hard_borrow_cap": 1.0})
-        low = float(raw.get("borrow_low", base["borrow_low"]))
-        margin = float(raw.get("purgatory_margin", base["purgatory_margin"]))
-        hard = float(raw.get("hard_borrow_cap", base["hard_borrow_cap"]))
-        return low, margin, hard
+        base = defaults.get(tag, {"entry_borrow_cap": 1.0, "keep_borrow_cap": 1.0})
+        entry = float(raw.get("entry_borrow_cap", base["entry_borrow_cap"]))
+        keep = float(raw.get("keep_borrow_cap", base["keep_borrow_cap"]))
+        return entry, keep
 
-    low1, m1, h1 = _triple("bucket_1")
-    low2, m2, h2 = _triple("bucket_2")
-    low4, m4, h4 = _triple("bucket_4")
+    entry1, keep1 = _borrow_band("bucket_1")
+    entry2, keep2 = _borrow_band("bucket_2")
+    entry4, keep4 = _borrow_band("bucket_4")
 
     fl = sl.get("flow_program", {}).get("universe", {}).get("shorts", []) or []
     fl_set = {_norm_sym(x) for x in fl if str(x).strip()}
@@ -1695,28 +1665,22 @@ def recompute_purgatory_by_bucket(
     protected_bad = prot & borrow_known & (~protected_ok)
 
     bkt = out.get("bucket", pd.Series("", index=out.index)).astype(str)
-    low_sel = np.select(
+    entry_sel = np.select(
         [bkt.eq("bucket_1"), bkt.eq("bucket_2"), bkt.eq("bucket_4")],
-        [low1, low2, low4],
+        [entry1, entry2, entry4],
         default=np.nan,
     )
-    margin_sel = np.select(
+    keep_sel = np.select(
         [bkt.eq("bucket_1"), bkt.eq("bucket_2"), bkt.eq("bucket_4")],
-        [m1, m2, m4],
+        [keep1, keep2, keep4],
         default=np.nan,
     )
-    hard_sel = np.select(
-        [bkt.eq("bucket_1"), bkt.eq("bucket_2"), bkt.eq("bucket_4")],
-        [h1, h2, h4],
-        default=np.nan,
-    )
-    upper = np.minimum(low_sel + margin_sel, hard_sel)
     borrow_purg = (
         borrow_known
         & (~prot)
-        & np.isfinite(low_sel)
-        & (borrow > low_sel)
-        & (borrow <= upper)
+        & np.isfinite(entry_sel)
+        & (borrow > entry_sel)
+        & (borrow <= keep_sel)
     )
     borrow_purg = borrow_purg | protected_bad
 
@@ -3274,18 +3238,25 @@ def main() -> int:
         print(f"[CONFIG] blacklist={len(blacklist)} symbol(s)")
 
     params = ScreeningParams(
-        borrow_low=float(screener_cfg.get("borrow_low", _FALLBACK["borrow_low"])),
-        purgatory_margin=float(screener_cfg.get("purgatory_margin", _FALLBACK["purgatory_margin"])),
         min_shares_available=int(screener_cfg.get("min_shares_available", _FALLBACK["min_shares_available"])),
-        exclude_negative_cagr=bool(screener_cfg.get("exclude_negative_cagr", False)),
         protected_etfs=protected,
-        hard_borrow_cap=float(screener_cfg.get("hard_borrow_cap", _FALLBACK["hard_borrow_cap"])),
     )
     borrow_floor_price_usd = float(
         screener_cfg.get("borrow_floor_price_usd", _FALLBACK["borrow_floor_price_usd"])
     )
-    print(f"[CONFIG] borrow_low={params.borrow_low:.2%}  hard_cap={params.hard_borrow_cap:.2%}  "
-          f"protected={len(protected)}")
+    # Borrow bands now live exclusively under ``screener.per_bucket.*`` and
+    # are echoed by ``recompute_purgatory_by_bucket`` further down.
+    pb_cfg = (screener_cfg.get("per_bucket") or {})
+    pb_b1 = pb_cfg.get("bucket_1") or {}
+    pb_b2 = pb_cfg.get("bucket_2") or {}
+    pb_b4 = pb_cfg.get("bucket_4") or {}
+    print(
+        f"[CONFIG] per_bucket borrow bands  "
+        f"B1[entry={float(pb_b1.get('entry_borrow_cap', 0.0)):.2%}/keep={float(pb_b1.get('keep_borrow_cap', 0.0)):.2%}]  "
+        f"B2[entry={float(pb_b2.get('entry_borrow_cap', 0.0)):.2%}/keep={float(pb_b2.get('keep_borrow_cap', 0.0)):.2%}]  "
+        f"B4[entry={float(pb_b4.get('entry_borrow_cap', 0.0)):.2%}/keep={float(pb_b4.get('keep_borrow_cap', 0.0)):.2%}]  "
+        f"protected={len(protected)}"
+    )
     print(f"[CONFIG] borrow_floor_price_usd=${borrow_floor_price_usd:.2f}")
 
     # Resolve min_beta_days: CLI > config > fallback

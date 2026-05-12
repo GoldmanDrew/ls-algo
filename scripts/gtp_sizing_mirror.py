@@ -149,8 +149,6 @@ def mirror_generate_trade_plan_sizing(
     paths: dict[str, Any] | None = None,
     hysteresis_touch_disk: bool = False,
     underlying_returns: pd.DataFrame | None = None,
-    pair_sigma_map: dict[tuple[str, str], float] | None = None,
-    score_ema_state: dict[tuple[str, str], float] | None = None,
     target_gross_multiplier: float = 1.0,
     b4_weight_override_by_pair: dict[tuple[str, str], float] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
@@ -171,10 +169,6 @@ def mirror_generate_trade_plan_sizing(
         real ``core_leveraged_decay_state_json`` file is never read for writes in a
         way that persists — actually reads still use copy. Production file is never
         overwritten; temp file is deleted after the call.
-    pair_sigma_map :
-        Optional ``{(etf, und): annual pair-spread sigma}`` for Candidate B (sigma-aware sizing).
-    score_ema_state :
-        Optional in-place dict carrying per-pair EMA scores across rebalances (Stability #1).
     target_gross_multiplier :
         Optional scalar in ``(0, 1]`` applied to ``target_gross_usd`` before sleeve budgeting
         (Candidate G — DD brake). Use ``1.0`` for unchanged behaviour.
@@ -229,8 +223,12 @@ def mirror_generate_trade_plan_sizing(
     b4_min_underlying_vol = float(b4_rules.get("min_underlying_vol", 0.50))
     b4_excluded_etfs = {_norm_sym(x) for x in (b4_rules.get("excluded_etfs") or [])}
 
-    soft_borrow_cap = float((cfg.get("screener") or {}).get("borrow_low", 1.0))
-    b4_hard_borrow_cap = float(b4_rules.get("bucket4_borrow_cap", float("inf")))
+    # Borrow entry caps come from the same per-bucket bands that define
+    # purgatory keep thresholds in ``daily_screener``.
+    _per_bucket = (cfg.get("screener") or {}).get("per_bucket", {}) or {}
+    b1_entry_borrow_cap = float(((_per_bucket.get("bucket_1") or {}).get("entry_borrow_cap", 1.0)))
+    b2_entry_borrow_cap = float(((_per_bucket.get("bucket_2") or {}).get("entry_borrow_cap", b1_entry_borrow_cap)))
+    b4_entry_borrow_cap = float(((_per_bucket.get("bucket_4") or {}).get("entry_borrow_cap", float("inf"))))
 
     core_weighting_cfg = core.get("weighting", {}) or {}
     b4_weighting_cfg = b4.get("weighting", {}) or {}
@@ -296,8 +294,9 @@ def mirror_generate_trade_plan_sizing(
 
     net_decay_non_negative = ~(eligible["net_decay_annual"] < 0)
     b = eligible["borrow_annual"]
-    core_borrow_ok = (~np.isfinite(b)) | (b <= soft_borrow_cap)
-    b4_borrow_ok = (~np.isfinite(b)) | (b <= b4_hard_borrow_cap)
+    core_borrow_ok = (~np.isfinite(b)) | (b <= b1_entry_borrow_cap)
+    yb_borrow_ok = (~np.isfinite(b)) | (b <= b2_entry_borrow_cap)
+    b4_borrow_ok = (~np.isfinite(b)) | (b <= b4_entry_borrow_cap)
     positive_beta = eligible["Beta"].gt(0)
     negative_beta = eligible["Beta"].lt(0)
     if "inverse_shortable" in eligible.columns:
@@ -341,7 +340,7 @@ def mirror_generate_trade_plan_sizing(
         positive_beta
         & in_b2_universe
         & ~in_flow_program
-        & core_borrow_ok
+        & yb_borrow_ok
         & yieldboost_edge_ok
         & net_decay_non_negative
     )
@@ -385,8 +384,6 @@ def mirror_generate_trade_plan_sizing(
                 core_names_fit,
                 core_weighting_cfg,
                 sleeve_name="core_leveraged",
-                pair_sigma_map=pair_sigma_map,
-                score_ema_state=score_ema_state,
             )
         else:
             w = np.ones(len(core_names_fit)) / len(core_names_fit)
@@ -404,8 +401,6 @@ def mirror_generate_trade_plan_sizing(
                 yb_names_fit,
                 yb_weighting_cfg,
                 sleeve_name="yieldboost",
-                pair_sigma_map=pair_sigma_map,
-                score_ema_state=score_ema_state,
             )
         else:
             w = np.ones(len(yb_names_fit)) / len(yb_names_fit)
@@ -434,8 +429,6 @@ def mirror_generate_trade_plan_sizing(
                 b4_names,
                 b4_weighting_cfg,
                 sleeve_name="inverse_decay_bucket4",
-                pair_sigma_map=pair_sigma_map,
-                score_ema_state=score_ema_state,
             )
         if b4_weight_override_by_pair:
             ov = dict(b4_weight_override_by_pair)

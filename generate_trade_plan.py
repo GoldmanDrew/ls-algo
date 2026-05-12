@@ -256,9 +256,6 @@ def _decay_score_weights(
     weighting_cfg: dict,
     beta_col: str = "beta_abs",
     sleeve_name: str | None = None,
-    *,
-    pair_sigma_map: dict[tuple[str, str], float] | None = None,
-    score_ema_state: dict[tuple[str, str], float] | None = None,
 ) -> np.ndarray:
     """Compute portfolio weights from decay-score signal blended with equal weight.
 
@@ -271,11 +268,6 @@ def _decay_score_weights(
     weighting_cfg : sleeve ``weighting`` dict from strategy_config.yml.
     beta_col : column name for absolute-value beta (default ``beta_abs``).
     sleeve_name : optional sleeve key (e.g. ``inverse_decay_bucket4``) for net-edge column defaults.
-    pair_sigma_map : optional dict ``{(etf, und): annualized pair-spread sigma}`` enabling sigma-aware
-         sizing (Candidate B): score is multiplied by ``clip(1 / max(sigma, sigma_floor), [m_min, m_max])``.
-    score_ema_state : optional in-place dict ``{(etf, und): prev_score}``. When supplied with
-         ``score_ema_rho`` > 0, current scores are blended ``rho * prev + (1 - rho) * cur`` and the
-         dict is updated. Stabilizes weights against week-to-week net_edge wiggle (production use).
 
     Returns
     -------
@@ -292,11 +284,6 @@ def _decay_score_weights(
     max_w           = float(weighting_cfg.get("max_name_weight", 1.0))
     # New iteration knobs (default: identity / off so baseline behavior is unchanged).
     score_p         = float(weighting_cfg.get("score_concavity_p", 1.0) or 1.0)
-    sigma_aware_on  = bool(weighting_cfg.get("sigma_aware_sizing", False))
-    sigma_floor     = float(weighting_cfg.get("sigma_aware_floor", 0.25) or 0.25)
-    sigma_clip_min  = float(weighting_cfg.get("sigma_aware_min_mult", 0.5) or 0.5)
-    sigma_clip_max  = float(weighting_cfg.get("sigma_aware_max_mult", 2.0) or 2.0)
-    ema_rho         = _clamp01(weighting_cfg.get("score_ema_rho", 0.0))
 
     # --- raw sizing score (same borrow discount as blended decay path) ---
     _mode, sig_col = _sizing_signal_column(weighting_cfg, sleeve_name=sleeve_name)
@@ -315,50 +302,6 @@ def _decay_score_weights(
     if abs(score_p - 1.0) > 1e-9:
         rs = pd.to_numeric(raw_score, errors="coerce").fillna(0.0).to_numpy(dtype=float)
         raw_score = pd.Series(np.sign(rs) * np.power(np.abs(rs), float(score_p)), index=df.index)
-
-    # --- Candidate B: sigma-aware sizing (1 / pair-spread sigma) ----------
-    if sigma_aware_on and pair_sigma_map:
-        try:
-            etfs = df["ETF"].astype(str).map(_norm_sym).tolist()
-            unds = df["Underlying"].astype(str).map(_norm_sym).tolist()
-            inv = np.array(
-                [
-                    1.0
-                    / max(
-                        float(pair_sigma_map.get((e, u), float("nan"))),
-                        float(sigma_floor),
-                    )
-                    if np.isfinite(float(pair_sigma_map.get((e, u), float("nan"))))
-                    else 1.0
-                    for e, u in zip(etfs, unds)
-                ],
-                dtype=float,
-            )
-            # Center around 1 (median(inv)) before clipping so the multiplier averages to 1.
-            med_inv = float(np.nanmedian(inv)) if np.isfinite(np.nanmedian(inv)) else 1.0
-            mult = inv / max(med_inv, 1e-9)
-            mult = np.clip(mult, float(sigma_clip_min), float(sigma_clip_max))
-            raw_score = raw_score.fillna(0.0) * pd.Series(mult, index=df.index)
-        except Exception:
-            pass
-
-    # --- Stability #1: EMA blend with prior per-pair scores (production) --
-    if ema_rho > 0 and score_ema_state is not None:
-        try:
-            etfs = df["ETF"].astype(str).map(_norm_sym).tolist()
-            unds = df["Underlying"].astype(str).map(_norm_sym).tolist()
-            cur = raw_score.fillna(0.0).to_numpy(dtype=float)
-            prev = np.array(
-                [float(score_ema_state.get((e, u), cur[i])) for i, (e, u) in enumerate(zip(etfs, unds))],
-                dtype=float,
-            )
-            blended = ema_rho * prev + (1.0 - ema_rho) * cur
-            # Update state in place (only for rows we just saw).
-            for i, (e, u) in enumerate(zip(etfs, unds)):
-                score_ema_state[(e, u)] = float(blended[i])
-            raw_score = pd.Series(blended, index=df.index)
-        except Exception:
-            pass
 
     # --- margin efficiency adjustment ------------------------------------
     beta_abs = pd.to_numeric(df[beta_col], errors="coerce").clip(lower=0.1)
@@ -1378,11 +1321,16 @@ def main() -> None:
     b4_min_underlying_vol = float(b4_rules.get("min_underlying_vol", 0.50))
     b4_excluded_etfs = {_norm_sym(x) for x in (b4_rules.get("excluded_etfs") or [])}
 
-    # Borrow caps (soft vs hard)
-    soft_borrow_cap = float(cfg.get("screener", {}).get("borrow_low", 1.0))  # e.g. 0.08
-    # Dedicated Bucket 4 borrow cap. Use ``bucket4_borrow_cap`` in YAML; old aliases are deprecated.
-    b4_hard_borrow_cap = float(b4_rules.get("bucket4_borrow_cap", np.inf))
+    # Borrow entry caps come from the same per-bucket bands that define
+    # purgatory keep thresholds in ``daily_screener``.
+    _per_bucket = (cfg.get("screener", {}) or {}).get("per_bucket", {}) or {}
+    b1_entry_borrow_cap = float(((_per_bucket.get("bucket_1") or {}).get("entry_borrow_cap", 1.0)))
+    b2_entry_borrow_cap = float(((_per_bucket.get("bucket_2") or {}).get("entry_borrow_cap", b1_entry_borrow_cap)))
+    b4_entry_borrow_cap = float(((_per_bucket.get("bucket_4") or {}).get("entry_borrow_cap", np.inf)))
     flow_borrow_cap = float(flow.get("rules", {}).get("hard_borrow_cap", np.inf))
+
+    def fmt_cap(x: float) -> str:
+        return f"{x:.1%}" if np.isfinite(x) else "inf"
 
     # Weighting configs (full dicts, consumed by _decay_score_weights)
     core_weighting_cfg = core.get("weighting", {})
@@ -1404,9 +1352,10 @@ def main() -> None:
         f"| beta_floor={beta_floor}"
     )
     print(
-        f"[INFO] stock soft borrow cap={soft_borrow_cap:.1%} | "
-        f"b4 hard cap={b4_hard_borrow_cap if np.isfinite(b4_hard_borrow_cap) else 'inf'} | "
-        f"flow hard cap={flow_borrow_cap if np.isfinite(flow_borrow_cap) else 'inf'}"
+        f"[INFO] borrow entry caps: b1={fmt_cap(b1_entry_borrow_cap)} "
+        f"b2={fmt_cap(b2_entry_borrow_cap)} "
+        f"b4={fmt_cap(b4_entry_borrow_cap)} | "
+        f"flow hard cap={fmt_cap(flow_borrow_cap)}"
     )
     print(
         f"[INFO] b4 universe filters: min_underlying_vol={b4_min_underlying_vol:.0%} | "
@@ -1541,8 +1490,9 @@ def main() -> None:
         net_decay_non_negative = ~(eligible["net_decay_annual"] < 0)
 
         b = eligible["borrow_annual"]
-        core_borrow_ok = (~np.isfinite(b)) | (b <= soft_borrow_cap)
-        b4_borrow_ok = (~np.isfinite(b)) | (b <= b4_hard_borrow_cap)
+        core_borrow_ok = (~np.isfinite(b)) | (b <= b1_entry_borrow_cap)
+        yb_borrow_ok = (~np.isfinite(b)) | (b <= b2_entry_borrow_cap)
+        b4_borrow_ok = (~np.isfinite(b)) | (b <= b4_entry_borrow_cap)
 
         # Exclude inverse (β < 0) ETFs — they belong to Bucket 4 / flow, not the stock sleeve
         positive_beta = eligible["Beta"].gt(0)
@@ -1594,7 +1544,7 @@ def main() -> None:
             positive_beta
             & in_b2_universe
             & ~in_flow_program
-            & core_borrow_ok
+            & yb_borrow_ok
             & yieldboost_edge_ok
             & net_decay_non_negative
         )
