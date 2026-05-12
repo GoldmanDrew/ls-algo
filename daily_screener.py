@@ -155,6 +155,10 @@ leverage_pairs_leverageshares = [
     ("RTXG", "RTX"),  ("SATG", "SATS"), ("SBU",  "SBUX"), ("SNAG", "SNAP"),
     ("SPOG", "SPOT"), ("TERG", "TER"),  ("TSLG", "TSLA"), ("TSMG", "TSM"),
     ("UNHG", "UNH"),  ("UPSG", "UPS"),  ("VALG", "VALE"), ("XYZG", "XYZ"),
+    # 2026-05-12 Leverage Shares Themes — 2X long daily (Cboe-listed)
+    ("AAOG", "AAOI"), ("AMAU", "AMAT"), ("CATG", "CAT"), ("CIEG", "CIEN"),
+    ("COHH", "COHR"), ("ETNG", "ETN"), ("HONG", "HON"), ("SNDG", "SNDK"),
+    ("STXU", "STX"),
 ]
 
 new_pairs = [
