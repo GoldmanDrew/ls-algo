@@ -2,17 +2,21 @@
 """
 rebalance_strategy.py
 
-Hybrid three-phase rebalancer for the ls-algo ETF long/short strategy.
+Hybrid four-phase rebalancer for the ls-algo ETF long/short strategy.
 
-Phase 1 — Cleanup:   Close ETF positions not in proposed_trades.csv
-Phase 2 — Establish: Open both legs for new pairs with no/tiny current position
-Phase 3 — Hedge:     Directional net-exposure correction (core_leveraged +
-                     whitelist_stock only). Trades ONE leg per underlying to
-                     minimise transaction count.
+Phase 1  — Cleanup:   Close ETF positions not in proposed_trades.csv
+Phase 2  — Establish: Open both legs for new pairs with no/tiny current position
+Phase 2b — Resize:    Bidirectional leg-by-leg trim/grow toward plan USD
+                      targets for already-established pairs, gated by a
+                      hysteresis band (see phase2b_resize.py).
+Phase 3  — Hedge:     Directional net-exposure correction for stock sleeves
+                      (``core_leveraged`` and ``yieldboost``), excluding flow and B4.
+                      Trades ONE leg per underlying to minimise transaction count.
 
 Usage:
     python rebalance_strategy.py [--dry-run] [--run-date YYYY-MM-DD]
-                                 [--skip-phase-1] [--skip-phase-2] [--skip-phase-3]
+                                 [--skip-phase-1] [--skip-phase-2]
+                                 [--skip-phase-2b] [--skip-phase-3]
 """
 
 from __future__ import annotations
@@ -68,6 +72,20 @@ from execute_flow_program import get_account_equity
 from ibkr_accounting import load_etf_beta_map
 from generate_trade_plan import load_blacklist
 from strategy_config import load_config
+from phase2b_resize import (
+    ResizeBandConfig,
+    build_resize_trades,
+    execute_resize_serial,
+    print_resize_summary,
+    write_resize_decisions,
+)
+from substitution_engine import SubstitutionConfig, SubstitutionEngine
+from tax_lot_view import load_lot_views_for_run_dir
+from tax_router import (
+    TaxConfig,
+    make_tax_router,
+    record_completed_swaps_from_fills,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -197,13 +215,25 @@ def load_plan(
     plan_path: Path,
     strategy_tag: str,
     flow_etfs: Set[str],
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Load proposed_trades.csv filtered to strategy_tag.
 
-    Returns:
-        plan_df       — all plan rows for the tag (all sleeves)
-        hedgeable_df  — core_leveraged + whitelist_stock, non-purgatory, non-flow
+    Returns
+    -------
+    plan_df : pd.DataFrame
+        All plan rows for the tag (all sleeves), including purgatory.
+    hedgeable_df : pd.DataFrame
+        Subset used by Phase 3 hedge: ``core_leveraged + yieldboost``,
+        non-purgatory, non-flow. Phase 3's ``target_gross`` math is
+        sleeve-scoped and intentionally excludes B4.
+    resize_df : pd.DataFrame
+        Subset used by Phase 2b resize: **all sleeves** (B1 + YB + B4),
+        non-purgatory, non-flow. Including B4 here is what lets
+        ``build_resize_trades`` sum signed ``long_usd`` per Underlying so
+        a B1 long-underlying target nets against a B4 short-underlying
+        target on the same ticker — one signed underlying decision rather
+        than two opposing ones.
     """
     if not plan_path.exists():
         raise FileNotFoundError(f"Trade plan not found: {plan_path}")
@@ -215,7 +245,7 @@ def load_plan(
     if plan.empty:
         tprint(f"[PLAN] WARNING: No rows for strategy_tag={strategy_tag}; plan is empty.")
         empty: pd.DataFrame = pd.DataFrame()
-        return empty, empty
+        return empty, empty, empty
 
     plan["ETF"]        = plan["ETF"].astype(str).map(norm_sym)
     plan["Underlying"] = plan["Underlying"].astype(str).map(norm_sym)
@@ -227,14 +257,19 @@ def load_plan(
     plan["short_usd"]  = pd.to_numeric(plan.get("short_usd", 0), errors="coerce").fillna(0.0)
     plan = plan.reset_index(drop=True)
 
-    hedgeable_mask = (
-        plan["sleeve"].isin({"core_leveraged", "whitelist_stock"})
-        & (~plan["purgatory"])
-        & (~plan["ETF"].isin(flow_etfs))
-    )
-    hedgeable_df = plan[hedgeable_mask].copy().reset_index(drop=True)
+    common_mask = (~plan["purgatory"]) & (~plan["ETF"].isin(flow_etfs))
 
-    return plan, hedgeable_df
+    hedge_sleeves = frozenset({"core_leveraged", "yieldboost"})
+    hedgeable_df = plan[
+        common_mask & plan["sleeve"].isin(hedge_sleeves)
+    ].copy().reset_index(drop=True)
+
+    # Phase 2b's underlying-leg target is the SIGNED sum of long_usd per
+    # Underlying. Including all sleeves here is what nets B1 vs B4 on the
+    # same ticker into a single signed underlying decision.
+    resize_df = plan[common_mask].copy().reset_index(drop=True)
+
+    return plan, hedgeable_df, resize_df
 
 
 # ---------------------------------------------------------------------------
@@ -248,16 +283,50 @@ def build_establish_trades(
     prices: Dict[str, float],
     purgatory_etfs: Set[str],
     flow_etfs: Set[str],
-    etf_to_under: Dict[str, str],
-    min_trade_usd: float,
     establish_threshold_usd: float = 100.0,
 ) -> List[dict]:
     """
-    Identify pairs in the plan that need to be established from scratch.
-    A pair qualifies when BOTH legs are near-zero (< establish_threshold_usd).
+    Group qualifying establish rows by Underlying into per-underlying
+    buckets. Each bucket covers ONE Underlying and may contain multiple
+    ETF legs (e.g. one B1 LETF and one B4 inverse ETF on the same
+    underlying).
+
+    Returns a list of bucket dicts::
+
+        {
+            "underlying":   str,
+            "net_long_usd": float,   # signed sum of long_usd across the
+                                      # bucket's rows. B1 contributes +ve,
+                                      # B4 contributes -ve. This is the
+                                      # signed underlying-leg target USD.
+            "etf_legs": [
+                {"etf": str, "short_usd": float (negative),
+                             "long_usd":  float (signed)},
+                ...
+            ],
+        }
+
+    A pair-leg row qualifies when:
+      * The ETF is not in purgatory and not in flow_etfs.
+      * Either ``long_usd`` or ``short_usd`` is non-zero
+        (B4 rows have negative ``long_usd`` — they are NOT skipped).
+      * The ETF leg's current USD notional is < ``establish_threshold_usd``.
+      * The shared Underlying's current USD notional is also <
+        ``establish_threshold_usd`` (Phase 2b owns ones already opened).
+
+    Stage B contract changes vs the legacy implementation:
+
+    1. Multiple ETF rows for the same Underlying are now ALL collected
+       into one bucket (previously, ``seen_under`` silently dropped every
+       row after the first — so a B1 + B4 same-underlying pair lost one
+       side completely).
+    2. B4 rows (``long_usd < 0`` by GTP convention) used to be filtered
+       out by ``long_usd <= 0 and short_usd <= 0``; they now qualify and
+       contribute their signed target to the bucket's underlying leg.
+    3. The underlying leg target is the *signed* sum, so B1+B4 nets to a
+       single signed underlying decision rather than two opposing trades.
     """
-    trades: List[dict] = []
-    seen_under: Set[str] = set()
+    buckets: Dict[str, dict] = {}
 
     for _, row in plan.iterrows():
         etf   = norm_sym(str(row["ETF"]))
@@ -265,35 +334,42 @@ def build_establish_trades(
 
         if etf in purgatory_etfs or etf in flow_etfs:
             continue
-        if under in seen_under:
-            continue
 
         long_usd  = float(row.get("long_usd", 0.0)  or 0.0)
         short_usd = float(row.get("short_usd", 0.0) or 0.0)
-        if long_usd <= 0 and short_usd <= 0:
+        if long_usd == 0.0 and short_usd == 0.0:
             continue
 
         cur_etf_notional   = abs(float(strat_pos.get(etf, 0.0)))   * float(prices.get(etf, 0.0))
         cur_under_notional = abs(float(strat_pos.get(under, 0.0))) * float(prices.get(under, 0.0))
 
-        # Only establish if BOTH legs are near-zero
+        # Establish only if BOTH legs are near-zero. Phase 2b handles the
+        # "already-opened" case via its hysteresis band.
         if cur_etf_notional > establish_threshold_usd or cur_under_notional > establish_threshold_usd:
             continue
 
-        seen_under.add(under)
-        trades.append({
-            "underlying": under,
-            "etf":        etf,
-            "long_usd":   long_usd,
-            "short_usd":  short_usd,
+        bucket = buckets.setdefault(under, {
+            "underlying":   under,
+            "net_long_usd": 0.0,
+            "etf_legs":     [],
+        })
+        bucket["net_long_usd"] += long_usd
+        bucket["etf_legs"].append({
+            "etf":       etf,
+            "short_usd": short_usd,
+            "long_usd":  long_usd,
         })
 
-    tprint(f"[ESTABLISH] {len(trades)} new pairs to establish.")
-    return trades
+    out = list(buckets.values())
+    n_legs = sum(len(b["etf_legs"]) for b in out)
+    tprint(
+        f"[ESTABLISH] {len(out)} underlying bucket(s) / {n_legs} ETF leg(s) to establish."
+    )
+    return out
 
 
 def _establish_worker(
-    trade_info: dict,
+    bucket: dict,
     *,
     worker_idx: int,
     host: str,
@@ -312,17 +388,28 @@ def _establish_worker(
     short_map: Dict[str, dict],
     cancel_service: CoordinatorCancelService,
     log_exposure_event,
-    short_first: bool,
+    short_first: bool,  # retained for back-compat; bucket model always
+                        # opens ETF shorts before the underlying leg.
     log_lock: threading.Lock,
 ) -> List[dict]:
+    """
+    Open one Underlying's bucket: SELL all qualifying ETF legs (each is a
+    short — both B1 LETFs and B4 inverse ETFs go in negative-USD), then
+    submit ONE signed underlying order for the signed-net target.
+
+    Naked-leg protection:
+      * If every ETF short is blocked (FTP avail=0 or filled=0), skip the
+        underlying order entirely.
+      * If ETF shorts partially fill, scale the underlying qty by the
+        aggregate fill ratio across all ETF legs.
+    """
     ensure_thread_event_loop()
     if stop_requested():
         return []
 
-    under     = trade_info["underlying"]
-    etf       = trade_info["etf"]
-    long_usd  = trade_info["long_usd"]
-    short_usd = trade_info["short_usd"]
+    under        = bucket["underlying"]
+    net_long_usd = float(bucket.get("net_long_usd", 0.0))
+    etf_legs     = list(bucket.get("etf_legs", []) or [])
     local_fills: List[dict] = []
 
     try:
@@ -332,23 +419,36 @@ def _establish_worker(
         return []
 
     try:
+        # ------------------------------------------------------------------
+        # Underlying price
+        # ------------------------------------------------------------------
         px_under = prices.get(under) or get_snapshot_price(ib_local, under, prefer_delayed)
-        px_etf   = prices.get(etf)   or get_snapshot_price(ib_local, etf,   prefer_delayed)
-
-        if not px_under or not px_etf:
-            tprint(f"[ESTABLISH][{under}] No price for {under}={px_under} or {etf}={px_etf}; skipping.")
+        if not px_under:
+            tprint(f"[ESTABLISH][{under}] No price for underlying; skipping bucket.")
             return []
-
         with log_lock:
             prices[under] = float(px_under)
-            prices[etf]   = float(px_etf)
 
-        target_under_sh = target_shares_from_usd(abs(long_usd), px_under)
-        # short_usd is stored as negative notional in proposed_trades.csv.
-        # Convert to absolute shares for leg construction (SELL action is
-        # encoded separately), otherwise target_etf_sh stays <= 0 and the
-        # establish short leg is silently skipped.
-        target_etf_sh   = target_shares_from_usd(abs(short_usd), px_etf)
+        # ------------------------------------------------------------------
+        # ETF prices + per-leg targets (skip legs we can't price)
+        # ------------------------------------------------------------------
+        leg_plan: List[Tuple[str, int, float, float]] = []   # (etf, qty, px, short_usd)
+        for leg in etf_legs:
+            etf = norm_sym(str(leg["etf"]))
+            short_usd = float(leg.get("short_usd", 0.0) or 0.0)
+            px_etf = prices.get(etf) or get_snapshot_price(ib_local, etf, prefer_delayed)
+            if not px_etf:
+                tprint(f"[ESTABLISH][{under}] No price for {etf}; skipping that leg.")
+                continue
+            with log_lock:
+                prices[etf] = float(px_etf)
+            tgt_sh = target_shares_from_usd(abs(short_usd), px_etf)
+            if tgt_sh > 0:
+                leg_plan.append((etf, int(tgt_sh), float(px_etf), float(short_usd)))
+
+        # Underlying target: signed-net long_usd across the bucket.
+        target_under_abs_sh = target_shares_from_usd(abs(net_long_usd), px_under)
+        under_action: str = "BUY" if net_long_usd > 0 else "SELL"
 
         def exec_leg_local(sym: str, action: str, qty: int, px: float, ref: str) -> ExecResult:
             return execute_leg(
@@ -359,91 +459,50 @@ def _establish_worker(
                 cancel_service=cancel_service,
             )
 
-        legs = []
-        if target_etf_sh > 0:
-            legs.append(("SELL", etf,   target_etf_sh,   px_etf,   "etf"))
-        if target_under_sh > 0:
-            legs.append(("BUY",  under, target_under_sh, px_under, "under"))
-
-        if short_first:
-            legs.sort(key=lambda x: (0 if x[0] == "SELL" else 1))
-
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        total_short_requested_sh = 0
+        total_short_filled_sh    = 0
+        any_short_succeeded      = False
 
-        short_blocked = False
-        short_requested_sh = 0
-        short_filled_sh = 0
-
-        for action, sym, qty, px, leg_type in legs:
+        # ------------------------------------------------------------------
+        # Step 1: open all ETF SHORT legs (in this worker, sequentially).
+        # Workers are themselves run in parallel across underlyings.
+        # ------------------------------------------------------------------
+        for etf, qty, px_etf, short_usd in leg_plan:
             if stop_requested():
                 break
 
-            # If the short leg was fully blocked, skip the long to avoid
-            # creating a naked long.  Phase 3's 3a/3b will catch any
-            # remaining imbalance on the next hedge pass.
-            if action == "BUY" and short_blocked:
-                tprint(f"[ESTABLISH][{under}] Skipping long — short leg was blocked.")
+            sm    = short_map.get(etf, {})
+            avail = sm.get("available")
+            if avail is not None and avail <= 0:
+                tprint(f"[ESTABLISH][{under}] SKIP {etf}: FTP available=0.")
+                total_short_requested_sh += int(qty)
+                local_fills.append({
+                    "filled_at": now, "run_date": run_date,
+                    "strategy_tag": strategy_tag,
+                    "pair_id": f"{under}__ESTABLISH",
+                    "underlying": under, "etf": etf,
+                    "px_under": px_under, "px_etf": px_etf,
+                    "target_sh_under": target_under_abs_sh,
+                    "target_sh_etf":   qty,
+                    "delta_sh_under": 0, "delta_sh_etf": -qty,
+                    "filled_sh_under": 0, "filled_sh_etf": 0,
+                    "notes": f"SKIP_FTP_AVAIL0 wants_short={qty}",
+                })
                 continue
 
-            # If the ETF short only partially filled, scale the underlying
-            # leg to match actual short coverage instead of opening the full
-            # long target immediately.
-            if action == "BUY" and leg_type == "under" and target_etf_sh > 0 and short_requested_sh > 0:
-                fill_ratio = min(1.0, max(0.0, float(short_filled_sh) / float(short_requested_sh)))
-                scaled_qty = int(math.floor(target_under_sh * fill_ratio))
-                if scaled_qty <= 0:
-                    tprint(
-                        f"[ESTABLISH][{under}] Skipping long — short fill ratio={fill_ratio:.1%} "
-                        f"({short_filled_sh}/{short_requested_sh}) gives 0 scaled shares."
-                    )
-                    continue
-                if scaled_qty < qty:
-                    tprint(
-                        f"[ESTABLISH][{under}] Scaling long leg to short fill ratio={fill_ratio:.1%}: "
-                        f"{qty} -> {scaled_qty} shares."
-                    )
-                    qty = scaled_qty
+            order_ref = f"{strategy_tag}|{under}__ESTABLISH|{etf}|ETF"
+            res = exec_leg_local(etf, "SELL", qty, px_etf, order_ref)
+            filled_signed = -int(res.filled)
+            total_short_requested_sh += int(qty)
+            total_short_filled_sh    += int(abs(res.filled))
+            if int(res.filled) > 0:
+                any_short_succeeded = True
 
-            # FTP gate for short leg
-            if action == "SELL":
-                sm    = short_map.get(sym, {})
-                avail = sm.get("available")
-                if avail is not None and avail <= 0:
-                    tprint(f"[ESTABLISH][{under}] SKIP {sym}: FTP available=0.")
-                    short_blocked = True
-                    local_fills.append({
-                        "filled_at": now, "run_date": run_date,
-                        "strategy_tag": strategy_tag,
-                        "pair_id": f"{under}__ESTABLISH",
-                        "underlying": under, "etf": etf,
-                        "px_under": px_under, "px_etf": px_etf,
-                        "target_sh_under": target_under_sh,
-                        "target_sh_etf":   target_etf_sh,
-                        "delta_sh_under": 0, "delta_sh_etf": -target_etf_sh,
-                        "filled_sh_under": 0, "filled_sh_etf": 0,
-                        "notes": f"SKIP_FTP_AVAIL0 wants_short={target_etf_sh}",
-                    })
-                    continue
-
-            order_ref = f"{strategy_tag}|{under}__ESTABLISH|{sym}|{leg_type.upper()}"
-            res = exec_leg_local(sym, action, qty, px, order_ref)
-            filled_signed = int(res.filled) if action == "BUY" else -int(res.filled)
-
-            # If the short filled zero shares (blocked, timed out, or failed),
-            # skip the long leg to prevent naked longs.
-            # Partial fills (res.filled > 0) are OK — Phase 3 handles the residual.
-            if action == "SELL" and int(res.filled) == 0:
-                short_blocked = True
-            if action == "SELL" and leg_type == "etf":
-                short_requested_sh += int(qty)
-                short_filled_sh += int(abs(res.filled))
-
-            stage = "POST_ETF" if leg_type == "etf" else "POST_UNDER_ESTABLISH"
             log_exposure_event(
-                stage=stage, pair_id=f"{under}__ESTABLISH",
-                underlying=under, etf=etf, symbol=sym,
-                delta_sh=(-qty if action == "SELL" else qty),
-                filled_sh=filled_signed, trade=res.trade,
+                stage="POST_ETF", pair_id=f"{under}__ESTABLISH",
+                underlying=under, etf=etf, symbol=etf,
+                delta_sh=-qty, filled_sh=filled_signed, trade=res.trade,
             )
 
             local_fills.append({
@@ -452,14 +511,90 @@ def _establish_worker(
                 "pair_id": f"{under}__ESTABLISH",
                 "underlying": under, "etf": etf,
                 "px_under": px_under, "px_etf": px_etf,
-                "target_sh_under": target_under_sh,
-                "target_sh_etf":   target_etf_sh,
-                "delta_sh_under": (filled_signed if leg_type == "under" else 0),
-                "delta_sh_etf":   (filled_signed if leg_type == "etf"   else 0),
-                "filled_sh_under": (filled_signed if leg_type == "under" else 0),
-                "filled_sh_etf":   (filled_signed if leg_type == "etf"   else 0),
-                "notes": f"ESTABLISH_{leg_type.upper()} status={res.status}",
+                "target_sh_under": target_under_abs_sh,
+                "target_sh_etf":   qty,
+                "delta_sh_under": 0,
+                "delta_sh_etf":   filled_signed,
+                "filled_sh_under": 0,
+                "filled_sh_etf":   filled_signed,
+                "notes": f"ESTABLISH_ETF status={res.status}",
             })
+
+        # ------------------------------------------------------------------
+        # Step 2: open the underlying as ONE signed order.
+        # ------------------------------------------------------------------
+        if stop_requested():
+            return local_fills
+        if target_under_abs_sh <= 0:
+            return local_fills
+
+        # If there were ETF legs requested and NONE filled, treat the
+        # short side as fully blocked — don't create a naked underlying.
+        if total_short_requested_sh > 0 and not any_short_succeeded:
+            tprint(
+                f"[ESTABLISH][{under}] Skipping underlying — all "
+                f"{len(leg_plan)} ETF short leg(s) were blocked / unfilled."
+            )
+            return local_fills
+
+        # Scale underlying qty by aggregate ETF fill ratio (matches the
+        # legacy single-leg behaviour but generalised across N legs).
+        if total_short_requested_sh > 0:
+            fill_ratio = min(
+                1.0,
+                max(0.0, float(total_short_filled_sh) / float(total_short_requested_sh)),
+            )
+        else:
+            fill_ratio = 1.0
+
+        scaled_qty = int(math.floor(target_under_abs_sh * fill_ratio))
+        if scaled_qty <= 0:
+            tprint(
+                f"[ESTABLISH][{under}] Skipping underlying — short fill ratio="
+                f"{fill_ratio:.1%} ({total_short_filled_sh}/"
+                f"{total_short_requested_sh}) gives 0 scaled shares."
+            )
+            return local_fills
+        if scaled_qty < target_under_abs_sh and total_short_requested_sh > 0:
+            tprint(
+                f"[ESTABLISH][{under}] Scaling underlying leg to short fill ratio="
+                f"{fill_ratio:.1%}: {target_under_abs_sh} -> {scaled_qty} shares."
+            )
+
+        # FTP gate for SELL underlying (B4-net or B4-only buckets).
+        if under_action == "SELL":
+            sm    = short_map.get(under, {})
+            avail = sm.get("available")
+            if avail is not None and avail <= 0:
+                tprint(f"[ESTABLISH][{under}] SKIP underlying SELL: FTP available=0.")
+                return local_fills
+
+        etfs_str = ",".join(sorted({norm_sym(str(l["etf"])) for l in etf_legs})) or "(none)"
+        order_ref = f"{strategy_tag}|{under}__ESTABLISH|{under}|UNDER"
+        res = exec_leg_local(under, under_action, scaled_qty, px_under, order_ref)
+        filled_signed = int(res.filled) if under_action == "BUY" else -int(res.filled)
+
+        log_exposure_event(
+            stage="POST_UNDER_ESTABLISH", pair_id=f"{under}__ESTABLISH",
+            underlying=under, etf=etfs_str, symbol=under,
+            delta_sh=(scaled_qty if under_action == "BUY" else -scaled_qty),
+            filled_sh=filled_signed, trade=res.trade,
+        )
+
+        local_fills.append({
+            "filled_at": now, "run_date": run_date,
+            "strategy_tag": strategy_tag,
+            "pair_id": f"{under}__ESTABLISH",
+            "underlying": under, "etf": etfs_str,
+            "px_under": px_under, "px_etf": 0.0,
+            "target_sh_under": target_under_abs_sh,
+            "target_sh_etf":   0,
+            "delta_sh_under": filled_signed,
+            "delta_sh_etf":   0,
+            "filled_sh_under": filled_signed,
+            "filled_sh_etf":   0,
+            "notes": f"ESTABLISH_UNDER status={res.status} action={under_action}",
+        })
 
         return local_fills
 
@@ -2137,12 +2272,13 @@ def execute_unmapped_closes(
 def main() -> None:
     signal.signal(signal.SIGINT, handle_sigint)
 
-    parser = argparse.ArgumentParser(description="Hybrid three-phase strategy rebalancer.")
+    parser = argparse.ArgumentParser(description="Hybrid four-phase strategy rebalancer (Cleanup, Establish, Resize, Hedge).")
     parser.add_argument("--dry-run",      action="store_true", help="No orders placed.")
     parser.add_argument("--run-date",     default=None,        help="Override run date (YYYY-MM-DD).")
-    parser.add_argument("--skip-phase-1", action="store_true", help="Skip cleanup pass.")
-    parser.add_argument("--skip-phase-2", action="store_true", help="Skip establish pass.")
-    parser.add_argument("--skip-phase-3", action="store_true", help="Skip hedge pass.")
+    parser.add_argument("--skip-phase-1",  action="store_true", help="Skip cleanup pass.")
+    parser.add_argument("--skip-phase-2",  action="store_true", help="Skip establish pass.")
+    parser.add_argument("--skip-phase-2b", action="store_true", help="Skip resize pass (Phase 2b).")
+    parser.add_argument("--skip-phase-3",  action="store_true", help="Skip hedge pass.")
     args = parser.parse_args()
 
     cfg       = load_config("config/strategy_config.yml")
@@ -2216,11 +2352,12 @@ def main() -> None:
     tprint(f"[FLOW] {len(flow_etfs)} flow-program ETFs excluded from hedge phase.")
 
     # Load plan
-    plan_path           = resolve_plan_path(run_date, paths_cfg)
-    plan, hedgeable_df  = load_plan(plan_path, strategy_tag, flow_etfs)
+    plan_path                       = resolve_plan_path(run_date, paths_cfg)
+    plan, hedgeable_df, resize_df   = load_plan(plan_path, strategy_tag, flow_etfs)
     tprint(
         f"[PLAN] {len(plan)} total rows; "
-        f"{len(hedgeable_df)} hedgeable (core+whitelist, non-purgatory, non-flow)."
+        f"{len(hedgeable_df)} hedgeable (B1+YB, for Phase 3); "
+        f"{len(resize_df)} resize-eligible (all sleeves, for Phase 2b)."
     )
 
     # Load screened universe
@@ -2403,24 +2540,31 @@ def main() -> None:
         # ==================================================================
         # PHASE 2 — Establish new positions
         # ==================================================================
+        established_underlyings: Set[str] = set()
         if not args.skip_phase_2 and not plan.empty:
             tprint("\n" + "=" * 60)
             tprint("  PHASE 2 — ESTABLISH NEW POSITIONS")
             tprint("=" * 60)
 
-            establish_trades = build_establish_trades(
+            # Stage B: establish_trades is now a list of per-Underlying
+            # buckets (not flat per-row pairs). Each bucket may carry
+            # multiple ETF legs and a signed-net underlying target so a
+            # B1 + B4 same-underlying pair coexists in one signed
+            # underlying decision.
+            establish_buckets = build_establish_trades(
                 plan=plan,
                 strat_pos=strat_pos,
                 prices=prices,
                 purgatory_etfs=purgatory_etfs,
                 flow_etfs=flow_etfs,
-                etf_to_under=etf_to_under,
-                min_trade_usd=min_trade_usd,
                 establish_threshold_usd=establish_threshold_usd,
             )
-            if establish_trades:
+            established_underlyings = {
+                norm_sym(str(b["underlying"])) for b in establish_buckets
+            }
+            if establish_buckets:
                 fills2 = execute_establish_parallel(
-                    establish_trades=establish_trades,
+                    establish_trades=establish_buckets,
                     host=host, port=port, client_id=client_id,
                     baseline=baseline, prices=prices,
                     prefer_delayed=prefer_delayed, exec_cfg=exec_cfg,
@@ -2442,9 +2586,156 @@ def main() -> None:
             tprint("[SHUTDOWN] Exiting after Phase 2.")
             return
 
-        # Refresh positions for Phase 3
+        # Refresh positions for Phase 2b / Phase 3
         ib_pos    = current_ib_positions(ib)
         strat_pos = strategy_position_only(ib_pos, baseline)
+
+        # ==================================================================
+        # PHASE 2b — Resize Existing Pairs
+        # ==================================================================
+        # Bidirectional leg-by-leg trim/grow toward plan USD targets,
+        # gated by a hysteresis band. Skip pairs just established this
+        # run (their legs were sized to plan moments ago).
+        #
+        # Stage 2 (when portfolio.rebalance.tax.enabled=true): TRIM trades
+        # are routed through a tax classifier that consults a per-symbol
+        # LotView (built from Flex OpenPositions levelOfDetail=LOT) and an
+        # ETF substitution engine. Loss-trims with an eligible substitute
+        # become SELL-original / BUY-substitute pairs; loss-trims without
+        # one are deferred. GAIN trims may be limited to LT inventory.
+        resize_cfg = ResizeBandConfig.from_dict(reb_cfg.get("resize", {}))
+        if not args.skip_phase_2b and resize_cfg.enabled and not resize_df.empty:
+            tprint("\n" + "=" * 60)
+            tprint("  PHASE 2b — RESIZE EXISTING PAIRS")
+            tprint("=" * 60)
+            tprint(
+                f"[PHASE2B] band: enter={resize_cfg.enter_band_pct*100:.0f}% "
+                f"exit={resize_cfg.exit_band_pct*100:.0f}% "
+                f"min_trim=${resize_cfg.min_trim_usd:,.0f} "
+                f"min_grow=${resize_cfg.min_grow_usd:,.0f}"
+            )
+
+            # Stage 2: tax routing setup (no-op when disabled in config)
+            tax_cfg = TaxConfig.from_dict(reb_cfg.get("tax", {}))
+            sub_cfg = SubstitutionConfig.from_dict(port_cfg.get("substitution", {}))
+            sub_engine: Optional[SubstitutionEngine] = None
+            tax_router_fn = None
+
+            if tax_cfg.enabled or sub_cfg.enabled:
+                # Try to load lot views from the latest accounting Flex pull.
+                acct_dir = run_dir(run_date) / "accounting"
+                lot_views = load_lot_views_for_run_dir(
+                    acct_dir,
+                    fallback_search_root=Path("data/runs"),
+                )
+                tprint(
+                    f"[PHASE2B][TAX] Loaded lot views for {len(lot_views)} symbols "
+                    f"(asof: latest available flex_positions.xml)."
+                )
+
+                if sub_cfg.enabled:
+                    sub_engine = SubstitutionEngine(
+                        config=sub_cfg,
+                        state_path=Path("data/active_substitutions.json"),
+                        screener_borrow=borrow_by_etf,
+                        screener_universe=set(screened["ETF"].astype(str).map(norm_sym))
+                                          | set(screened["Underlying"].astype(str).map(norm_sym)),
+                    )
+                    n_active = len(sub_engine.active_substitutions())
+                    tprint(
+                        f"[PHASE2B][SUB] Substitution engine ready "
+                        f"(min_loss=${sub_cfg.min_loss_usd_to_substitute:,.0f}; "
+                        f"{n_active} active substitutions)."
+                    )
+
+                if tax_cfg.enabled:
+                    tax_router_fn = make_tax_router(
+                        lot_views=lot_views,
+                        prices=prices,
+                        tax_cfg=tax_cfg,
+                        sub_engine=sub_engine,
+                    )
+                    tprint(
+                        f"[PHASE2B][TAX] Tax routing enabled "
+                        f"(method={tax_cfg.lot_method_assumed}, "
+                        f"prefer_lt={tax_cfg.prefer_long_term_lots})."
+                    )
+
+            # Phase 2b consumes resize_df (B1+YB+B4) so the underlying-leg
+            # target is the signed sum across all sleeves. This is what nets
+            # B1 long-NVDA against B4 short-NVDA into a single underlying
+            # decision rather than two opposing trades.
+            resize_trades, resize_decisions = build_resize_trades(
+                hedgeable_plan=resize_df,
+                strat_pos=strat_pos,
+                prices=prices,
+                purgatory_etfs=purgatory_etfs,
+                flow_etfs=flow_etfs,
+                blacklist=set(blacklist),
+                cfg=resize_cfg,
+                skip_underlyings=established_underlyings,
+                tax_router=tax_router_fn,
+            )
+
+            decisions_csv = rb_dir / "resize_decisions.csv"
+            n_dec = write_resize_decisions(
+                resize_decisions, decisions_csv,
+                run_date=run_date, strategy_tag=strategy_tag,
+            )
+            tprint(f"[PHASE2B] Wrote {n_dec} decision rows -> {decisions_csv}")
+
+            print_resize_summary(resize_trades, resize_decisions)
+
+            if resize_trades:
+                if auto_approve:
+                    do_resize = True
+                else:
+                    ans = input("[PHASE2B] Approve executing these resize trades? (y/n): ").strip().lower()
+                    do_resize = (ans == "y")
+
+                if do_resize:
+                    fills_p2b = execute_resize_serial(
+                        ib=ib,
+                        trades=resize_trades,
+                        short_map=short_map,
+                        blocked_short_etfs=blocked_short_etfs,
+                        exec_cfg=exec_cfg,
+                        strategy_tag=strategy_tag,
+                        run_date=run_date,
+                        limit_bps=limit_bps,
+                        timeout=timeout,
+                        max_retries=max_retries,
+                        dry_run=dry_run,
+                        cancel_service=cancel_service,
+                        log_exposure_event=log_exposure_event,
+                        short_first=short_first,
+                    )
+                    all_fills.extend(fills_p2b)
+
+                    # Persist any successful loss-harvest swaps
+                    if sub_engine is not None and fills_p2b:
+                        n_swap = record_completed_swaps_from_fills(
+                            resize_trades, fills_p2b, sub_engine,
+                        )
+                        if n_swap:
+                            tprint(f"[PHASE2B][SUB] Persisted {n_swap} swap(s) to active_substitutions.json")
+
+                    if fills_p2b:
+                        _sync_positions_after_external_trades(ib, timeout_s=15.0)
+                        ib_pos    = current_ib_positions(ib)
+                        strat_pos = strategy_position_only(ib_pos, baseline)
+                else:
+                    tprint("[PHASE2B] Skipped by user.")
+            else:
+                tprint("[PHASE2B] No resize trades needed (all legs within band).")
+        elif args.skip_phase_2b:
+            tprint("[PHASE 2b] Skipped (--skip-phase-2b).")
+        elif not resize_cfg.enabled:
+            tprint("[PHASE 2b] Disabled in config (portfolio.rebalance.resize.enabled=false).")
+
+        if stop_requested():
+            tprint("[SHUTDOWN] Exiting after Phase 2b.")
+            return
 
         # ==================================================================
         # PRE-PHASE-3 — Detect & prompt for unmapped positions

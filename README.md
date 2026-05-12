@@ -15,15 +15,16 @@ Python toolkit for a **systematic long/short** book around leveraged and inverse
 7. [Research & backtests](#research--backtests)
 8. [Automation (GitHub Actions)](#automation-github-actions)
 9. [Data layout](#data-layout)
-10. [Requirements & IBKR](#requirements--ibkr)
-11. [Disclaimer](#disclaimer)
+10. [Phase 2b setup — tax-aware resize & loss-harvest substitution](#phase-2b-setup--tax-aware-resize--loss-harvest-substitution)
+11. [Requirements & IBKR](#requirements--ibkr)
+12. [Disclaimer](#disclaimer)
 
 ---
 
 ## What this repo does
 
 - **Decay capture (conceptual):** leveraged and inverse ETFs exhibit path-dependent **volatility drag** relative to a buy-and-hold of the underlying. The screener estimates **realised** and **expected** gross decay, blends them, and subtracts **borrow** to produce **`net_decay_annual`** (and related columns) for ranking and sizing.
-- **Portfolio construction:** `generate_trade_plan.py` reads the screened universe and `strategy_config.yml`, assigns each non-purgatory row to **core**, **whitelist**, and/or **inverse decay Bucket‑4** sleeves (subject to rules), sizes **gross USD** targets, and writes **`data/proposed_trades.csv`** plus a dated copy under **`data/runs/<YYYY-MM-DD>/`**.
+- **Portfolio construction:** `generate_trade_plan.py` reads the screened universe and `strategy_config.yml`, assigns each non-purgatory row to **`core_leveraged`**, **`yieldboost`** (YieldBoost names only — `is_yieldboost` from the screener), and/or **inverse decay Bucket‑4** (subject to rules), sizes **gross USD** targets, and writes **`data/proposed_trades.csv`** plus a dated copy under **`data/runs/<YYYY-MM-DD>/`**.
 - **Execution:** `execute_trade_plan.py` and `rebalance_strategy.py` implement cleanup, establishment, hedging, short-availability gates, and adaptive orders against **TWS / IB Gateway** via **`ib_insync`**.
 - **Flow sleeve:** `execute_flow_program.py` deploys the configured **inverse ETF short basket** on a calendar (e.g. weekly `goodAfterTime` orders), separate from the stock-sleeve plan, with cumulative tracking in **`flow_ledger_csv`**.
 - **Accounting:** `ibkr_flex.py` pulls Flex XML; `ibkr_accounting.py` builds PnL and beta-normalised exposure reports under **`data/runs/<date>/accounting/`**; `run_eod_pnl_email.py` composes history, plots, and optional email.
@@ -103,8 +104,8 @@ The GitHub Action uses **`--skip-ibkr-check`** for unattended runs (see workflow
 
 - Reads **`config/strategy_config.yml`** through the shared `strategy_config.load_config()` loader.
 - Applies **global strategy blacklist** and sleeve rules.
-- **Stock sleeves:** `core_leveraged`, `whitelist_stock`, optional **`inverse_decay_bucket4`** (toggle with **`enabled: false`** to remove all B4 targets; remaining gross goes to core/whitelist by their `target_weight` ratio).
-- **Core net-decay selectivity (optional):** `min_net_decay_annual` and/or **`net_decay_hysteresis`** with sticky state file **`paths.core_leveraged_decay_state_json`** (reduces core names flickering in/out when decay hovers near a threshold). If **`min_net_decay_annual` > 0**, it is a **hard floor** applied after hysteresis (no NaN bypass, no “sticky” admission below the minimum). Whitelist is **not** gated by this hysteresis.
+- **Stock sleeves:** `core_leveraged`, **`yieldboost`** (YieldBoost-only bucket‑2 candidates), optional **`inverse_decay_bucket4`** (toggle with **`enabled: false`** to remove all B4 targets; remaining post‑B4 gross is split core vs yieldboost via their **`target_weight` ratio).
+- **Core net-decay selectivity (optional):** `min_net_decay_annual` and/or **`net_decay_hysteresis`** with sticky state file **`paths.core_leveraged_decay_state_json`** (reduces core names flickering in/out when decay hovers near a threshold). If **`min_net_decay_annual` > 0**, it is a **hard floor** applied after hysteresis (no NaN bypass, no “sticky” admission below the minimum). The **`yieldboost`** sleeve is **not** gated by this hysteresis.
 - **Flow program** weights are **fixed** in YAML (`weighting.method: fixed`, `normalize: true`) and executed separately by `execute_flow_program.py`.
 - Writes **`data/proposed_trades.csv`** and **`data/runs/<run-date>/proposed_trades.csv`**. It no longer mutates the flow ledger.
 
@@ -176,7 +177,7 @@ Everything operational reads from this file. **Do not treat the table below as a
 | **`screener.*`** | Borrow “soft” cap, purgatory margin, whitelist hard cap, staleness rules. Flow borrow caps live under `portfolio.sleeves.flow_program.rules`. |
 | **`portfolio.rebalance.*`** | Minimum trade and net-exposure triggers used by `rebalance_strategy` and `harvest_underexposed_shorts`. |
 | **`portfolio.sleeves.core_leveraged`** | Core (levered long ETFs): `target_weight`, `min_beta_used`, optional **`min_net_decay_annual`**, **`net_decay_hysteresis`**, `weighting` (decay_score vs equal, caps, blend). |
-| **`portfolio.sleeves.whitelist_stock`** | Explicit ETF list + weighting. |
+| **`portfolio.sleeves.yieldboost`** | YieldBoost / bucket‑2 sleeve: **`is_yieldboost`** names from the screener only, `rules.min_net_edge_annual`, `weighting`; budget vs core from **`target_weight`**. |
 | **`portfolio.sleeves.inverse_decay_bucket4`** | Inverse decay pairs: **`enabled`** master switch, borrow / vol / edge rules, **`partial_hedge_ratio`**, shares-outstanding cap, weighting. |
 | **`portfolio.sleeves.flow_program`** | Flow shorts universe, schedule, **`fixed_usd_per_week`** (or deployment base from YAML), **fixed weights** summing to **1.0**. |
 
@@ -209,7 +210,7 @@ Full operator playbook, edge-case table, and verification checklist live in [`SP
 
 ## Sleeves vs accounting “buckets”
 
-- **Sleeves** (`core_leveraged`, `whitelist_stock`, `inverse_decay_bucket4`, `flow_program`) are **portfolio construction** labels written into **`proposed_trades.csv`** and used by execution / rebalancing.
+- **Sleeves** (`core_leveraged`, `yieldboost`, `inverse_decay_bucket4`, `flow_program`) are **portfolio construction** labels written into **`proposed_trades.csv`** and used by execution / rebalancing.
 - **Accounting buckets** (`bucket_1` … `bucket_4`) in **`ibkr_accounting.py`** are **attribution / reporting** groupings (e.g. high-beta levered vs inverse decay). They are related concepts but **not identical** to YAML sleeve names. When interpreting `pnl_bucket_*.csv`, read the accounting script headers.
 
 ---
@@ -247,6 +248,108 @@ Use **workflow_dispatch** to run screener-only, EOD-only, or both.
 | **`data/core_leveraged_decay_state.json`** | Sticky core net-decay state (created/updated when hysteresis is enabled). |
 
 **`data/borrow_history.json` (optional):** If present before `daily_screener.py` runs, it is **auto-loaded** (no CLI flag required) from, in order: `BORROW_HISTORY_PATH` / `--borrow-history-path`, `ETF_DASHBOARD_ROOT/data/borrow_history.json`, sibling `../etf-dashboard/data/borrow_history.json`, or this repo’s `data/borrow_history.json`. The scheduled **GitHub Action** downloads it from `GoldmanDrew/etf-dashboard` raw when the curl succeeds. That enables **weighted borrow resampling** for `net_edge_*` plus `net_edge_hist_json` / p25 / p75 on the CSV.
+
+---
+
+## Phase 2b setup — tax-aware resize & loss-harvest substitution
+
+Phase 2b is a fourth phase in `rebalance_strategy.py` that bidirectionally trims/grows existing pair legs back to plan target sizes whenever the leg notional drifts outside a hysteresis band. It runs between Phase 2 (Establish) and Phase 3 (Hedge):
+
+| Phase | Purpose |
+| --- | --- |
+| 1 | Cleanup — close pairs the new plan no longer wants |
+| 2 | Establish — open new pairs from the plan |
+| **2b** | **Resize — trim/grow surviving pairs back to plan targets (band-gated)** |
+| 3 | Hedge — net-exposure correction via the configured hedge ETF |
+
+### Stage 1 — bands (always on)
+
+`portfolio.rebalance.resize` in `config/strategy_config.yml`:
+
+```yaml
+resize:
+  enabled: true
+  enter_band_pct: 0.15        # trigger when leg notional drifts >15%
+  exit_band_pct:  0.05        # trim/grow until within 5% (hysteresis)
+  min_trim_usd: 250
+  min_grow_usd: 250
+```
+
+Telemetry is appended to `data/runs/<run_date>/rebalance/resize_decisions.csv` (one row per leg evaluated, including skips).
+
+### Stage 2 — tax routing & ETF substitution (opt-in)
+
+When enabled, Phase 2b TRIMs (SELL on long legs, BUY-to-cover on shorts) are routed through a tax-aware classifier (`tax_router.py`):
+
+| Situation | Routing |
+| --- | --- |
+| GAIN + `prefer_long_term_lots: true` and LT inventory available | Limit qty to LT shares, prefer LT in lot ordering (`lt_only_trim`) |
+| LOSS ≥ `min_loss_usd_to_substitute` and substitute available | SELL original + BUY equivalent-notional substitute (`harvest_sub_sell` / `harvest_sub_buy`) |
+| LOSS < floor, or no substitute, or substitution disabled | Pure trim — book the realized P&L as-is |
+| LOSS ≥ floor with no eligible substitute | Defer — skip the trim with `no_substitute_for_loss_trim` |
+
+State for active swaps is persisted to `data/active_substitutions.json`. While a substitute is held, it is excluded from being chosen as a substitute for any other underlying.
+
+> **IBKR API constraint:** The TWS API does **not** support per-order SpecID tax-lot designation. The router only **predicts** realized P&L under the assumed account default lot method. The broker still matches lots according to TWS's account-level setting. A one-time TWS configuration step is therefore required.
+
+#### One-time TWS Account Configuration
+
+1. Open **Trader Workstation → File → Global Configuration → API**, ensure socket clients are enabled (already required for the rest of this repo).
+2. Open **Account → Account Configuration → Tax Optimizer Default Match Method** (in IBKR Client Portal: *Account → Settings → Tax Optimizer Default*).
+3. Set the default match method to match `portfolio.rebalance.tax.lot_method_assumed` in `config/strategy_config.yml` — typically **HIFO** (highest in, first out) or **MaxLossUtilization**.
+4. The account default applies to all new closes; you can still override per-close in the **Tax Optimizer** GUI post-trade.
+
+#### One-time Flex Query setup (lot-level data)
+
+`tax_lot_view.py` reads `data/runs/<run_date>/accounting/flex_positions.xml` (the same file already used by `ibkr_accounting.py`) but expects lot-level detail.
+
+In **Account Management → Reports → Flex Queries** for your "Open Positions" Flex query:
+
+- Section: **Open Positions**
+- **Level of Detail: Lot** (not Summary)
+- Required fields: `Symbol`, `Position`, `Cost Basis Price`, `Cost Basis Money`, `Open Date Time`, `Holding Period Date Time`, `Originating Order ID`, `Mark Price`
+
+Re-run the Flex export. If the file is missing or still summary-level when Phase 2b runs, the tax router silently falls back to "no lot data → pure trim" behavior (graceful degradation).
+
+#### Enabling Stage 2
+
+Edit `config/strategy_config.yml`:
+
+```yaml
+portfolio:
+  rebalance:
+    tax:
+      enabled: true
+      lot_method_assumed: "HIFO"          # MUST match TWS Tax Optimizer default
+      prefer_long_term_lots: true
+      st_lt_holding_days: 365
+
+  substitution:
+    enabled: true
+    min_loss_usd_to_substitute: 500.0
+    hold_substitute_days: 31
+    underlyings:
+      IBIT:  ["FBTC", "BITB", "ARKB"]     # spot-BTC ETFs
+      ETHA:  ["FETH", "ETHE"]             # spot-ETH ETFs
+      # Add per-underlying pools you consider "not substantially identical"
+```
+
+> **Wash-sale judgment is yours.** The engine treats the configured pool as authoritative — it does not opine on whether two ETFs are "substantially identical" for IRS §1091 purposes. Consult tax counsel; conservative pools typically draw from different issuers tracking the same asset (e.g. iShares vs Fidelity vs Bitwise spot-BTC ETFs).
+
+#### Stage 2 telemetry
+
+`resize_decisions.csv` adds columns:
+
+| Column | Meaning |
+| --- | --- |
+| `est_realized_pnl_usd` | Predicted P&L under the assumed lot method (signed) |
+| `st_qty_consumed`, `lt_qty_consumed` | Predicted ST / LT split of consumed qty |
+| `lots_consumed_count` | Number of distinct lots touched |
+| `substitute_of` | If this row is the BUY-substitute leg, the symbol it replaced |
+| `swap_with` | Partner symbol when the row is part of a swap |
+| `harvested_loss_usd` | Magnitude of realized loss for `harvest_sub_*` rows |
+
+`decision` widens to include `harvest_sub_sell`, `harvest_sub_buy`, `lt_only_trim` in addition to `trim` / `grow` / `skip`.
 
 ---
 

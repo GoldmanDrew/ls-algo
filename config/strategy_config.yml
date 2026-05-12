@@ -1,7 +1,7 @@
 ibkr:
   host: 127.0.0.1
-  port: 7496
-  client_id: 41
+  port: 7497
+  client_id: 31
   prefer_delayed: true
   suppress_error_codes: [10089]
 
@@ -11,7 +11,7 @@ accounting:
 
 strategy:
   tag: ETF_LS
-  capital_usd: 625000
+  capital_usd: 800000
   gross_leverage: 4
   blacklist:
     - JPM
@@ -24,7 +24,7 @@ strategy:
   gross_sizing_caps:
     enabled: true
     max_pair_weight_cap: 0.10
-    max_underlying_weight_cap: 0.18
+    max_underlying_weight_cap: 0.15
     aum_use_pct: 0.25
     short_avail_use_pct: 1.00
     missing_shares_cap: 0.20
@@ -36,16 +36,13 @@ strategy:
     per_sleeve:
       core_leveraged:
         max_pair_weight: 0.10
-        max_underlying_weight: 0.18
-      whitelist_stock:
+        max_underlying_weight: 0.2
+      yieldboost:
         max_pair_weight: 0.20
-        max_underlying_weight: 0.40
+        max_underlying_weight: 0.2
       inverse_decay_bucket4:
-        max_pair_weight: 0.18
+        max_pair_weight: 0.20
         max_underlying_weight: 0.30
-      flow_program:
-        max_pair_weight: 0.40
-        max_underlying_weight: 0.50
   # One-shot covariance penalty on final post-cap gross_target_usd; tilts mass away from
   # underlyings with high marginal contribution to portfolio variance, then re-applies the
   # same gross_sizing_caps so pair / underlying / liquidity ceilings still bind.
@@ -53,18 +50,15 @@ strategy:
     enabled: true
     lookback_days: 252
     min_obs: 60
-    shrink: 0.35
-    penalty_strength: 0.85
-    max_relative_shift: 0.50
+    shrink: 0.25
+    penalty_strength: 1.0
+    max_relative_shift: 0.75
 
 paths:
   screened_csv: data/etf_screened_today.csv
   blacklist_txt: config/strategy_blacklist.txt
   baseline_csv: data/baseline_snapshot.csv
   proposed_trades_csv: data/proposed_trades.csv
-  ledger_csv: data/strategy_ledger.csv
-  fills_csv: data/trade_fills.csv
-  equity_snapshot_csv: data/equity_snapshot.csv
   flow_ledger_csv: data/flow_ledger.csv
   etf_shares_outstanding_csv: ../etf-dashboard/data/etf_shares_outstanding.csv
   # Optional CSV (date index, columns = underlying tickers) of daily prices OR log returns
@@ -84,28 +78,27 @@ paths:
 execution:
   parallel_n: 25
   auto_approve: true
+  # ``execute_trade_plan.execute_leg`` only honors ``ADAPTIVE_MKT``; other styles
+  # fall through to the limit-order path with ``limit_bps`` offset.
   order_style: ADAPTIVE_MKT
-  dry_run: false
+  dry_run: false                       # ``DRY_RUN=1`` env var overrides this in execute_trade_plan.py
   limit_bps: 25.0
-  aggressive_bps_step: 50.0
-  market_fallback_third_try: true
   short_first: true
   max_retries: 3
   timeout_sec: 90
-  accept_timeout_sec: 20
-  market_accept_timeout_sec: 90
-  limit_done_timeout_sec: 90
-  market_done_timeout_sec: 180
-  cancel_client_id: 99         # dedicated client for cancel coordinator
+  market_accept_timeout_sec: 90        # accept-timeout for ADAPTIVE_MKT legs
+  market_done_timeout_sec: 180         # terminal-state timeout for ADAPTIVE_MKT legs
 
 screener:
-  # Global fallbacks for ``screen_universe`` (diagnostics). Authoritative purgatory is
-  # recomputed per row in ``daily_screener.recompute_purgatory_by_bucket`` using ``per_bucket``.
-  borrow_low: 0.55
-  purgatory_margin: 0.25
-  hard_borrow_cap: 0.75           # above = not purgatory; core sizing treats as exit band vs soft cap
-  whitelist_hard_borrow_cap: 0.55 # whitelist-only protected names above this => protected_bad
-  # With borrow OK, net_edge_p50 must exceed this to avoid purgatory (inclusive soft band (0, max]).
+  # Diagnostic-only globals. Stamp diagnostic columns inside ``screen_universe``;
+  # authoritative purgatory is recomputed per row in
+  # ``daily_screener.recompute_purgatory_by_bucket`` using ``per_bucket`` below.
+  # These globals do NOT gate generate_trade_plan or rebalance_strategy decisions.
+  borrow_low: 0.55                  # diagnostic
+  purgatory_margin: 0.25            # diagnostic
+  hard_borrow_cap: 0.75             # diagnostic
+  # Authoritative net-edge soft-purgatory band (read by ``recompute_purgatory_by_bucket``).
+  # With borrow OK, ``net_edge_p50_annual`` must exceed this to avoid purgatory.
   purgatory_net_edge_max_annual: 0.05
   per_bucket:
     bucket_1:
@@ -147,7 +140,78 @@ portfolio:
     net_target_short_pct: 0.00    # correct net-short to 0% (full flat)
     establish_threshold_usd: 100.0  # rebalance_strategy: skip Phase 2 if position already > $100
 
-  # Shared weighting defaults — overridden per-sleeve below
+    # Phase 2b — Resize Existing Pairs (rebalance_strategy.py).
+    # Bidirectional leg-by-leg trim/grow toward plan USD targets, gated
+    # by a hysteresis band. Inserted between Phase 2 (Establish) and
+    # Phase 3 (Hedge). See phase2b_resize.py for decision logic.
+    #
+    # Effective threshold per leg:
+    #   enter_thr = max(enter_band_pct * |target_usd|, min_trim_usd|min_grow_usd)
+    #   exit_thr  = max(exit_band_pct  * |target_usd|, min_trim_usd|min_grow_usd)
+    # A leg trades only when |abs_drift| > enter_thr, and is rebalanced
+    # to within exit_thr of target. The absolute floor protects small
+    # B4 pairs where percentage bands fall below transaction costs.
+    resize:
+      enabled: true
+      enter_band_pct: 0.05        # trigger when leg notional drifts >15% from target
+      exit_band_pct: 0.02         # trim/grow until within 5% (hysteresis)
+      min_trim_usd: 250           # absolute floor for SELL/BTC trades
+      min_grow_usd: 250           # absolute floor for BUY/grow-short trades
+
+    # Phase 2b — Stage 2 tax routing (tax_router.py).
+    # When enabled, TRIM trades (SELL on long leg, BUY-to-cover on short leg)
+    # are routed through a tax-aware classifier:
+    #   - GAIN + prefer_long_term_lots:  limit qty to long-term lots only
+    #   - LOSS >= min_loss_usd_to_substitute: route through substitution
+    #   - LOSS < floor:                       pass through with the loss booked
+    #   - LOSS with no substitute available:  defer (skip) the trim
+    #
+    # IBKR API does not support per-order SpecID lot designation. This
+    # routing only PREDICTS realized P&L under the assumed account default
+    # lot method (lot_method_assumed) -- the broker still matches lots per
+    # the TWS Account Configuration -> Tax Optimizer Default Match Method
+    # (set to HIFO or MaxLossUtilization once, manually). Lot data comes
+    # from Flex's OpenPositions section configured at levelOfDetail=LOT.
+    # See README "Stage 2 setup" section for one-time TWS configuration.
+    #
+    # DISABLED BY DEFAULT — flip to true after lot data is flowing and
+    # active_substitutions.json is initialized.
+    tax:
+      enabled: false
+      lot_method_assumed: "HIFO"  # must match TWS Tax Optimizer default
+      prefer_long_term_lots: true
+      st_lt_holding_days: 365
+
+  # Phase 2b — Stage 2 substitution engine (substitution_engine.py).
+  # Configurable substitute pool per underlying for tax-loss harvesting.
+  # When a TRIM would realize a loss above the floor, the engine returns
+  # the first eligible substitute from the ordered list (skipping any
+  # already in-use as a substitute for another original).
+  #
+  # The "substantially identical" determination is the user's call;
+  # the engine treats the configured pool as authoritative.
+  #
+  # State persisted to data/active_substitutions.json. By default the
+  # substitute is held indefinitely (no swap-back). Set hold_substitute_days
+  # to 0 to disable scheduled swap-back entirely; positive values record an
+  # advisory swap_back_due date for future Stage 3 logic.
+  substitution:
+    enabled: false
+    min_loss_usd_to_substitute: 500.0
+    hold_substitute_days: 31
+    max_substitute_borrow_annual: 1.0
+    underlyings: {}              # long-leg pool, e.g. IBIT: ["FBTC","BITB","ARKB"]
+    letfs: {}                    # short-leg LETF pool, used when a short_etf trim
+                                 # would realize a loss and a substitute is configured.
+                                 # e.g. SQQQ: ["SQQB","PSQ"]
+
+  # Shared weighting defaults — overridden per-sleeve below.
+  # NOTE: the YAML anchor is consumed at parse time via ``<<: *weighting_defaults``
+  # in each sleeve. Python never reads ``portfolio._weighting_defaults`` directly.
+  # ``realized_trust_days`` is intentionally NOT in the anchor — only
+  # ``daily_screener.add_decay_columns`` reads it, and only from
+  # ``core_leveraged.weighting``, so it lives there explicitly to avoid the
+  # impression that yieldboost / B4 sleeves can override it.
   _weighting_defaults: &weighting_defaults
     method: "decay_score"             # "equal" or "decay_score"
     # Sizing score: use net-edge p50 from screener (``net_edge_p50_annual``). ``sizing_signal: net_edge`` selects
@@ -155,12 +219,9 @@ portfolio:
     # raw_score = signal - borrow_aversion * borrow_current (keep borrow_aversion small when signal is already net).
     sizing_signal: "net_edge"
     sizing_edge_column: "net_edge_p50_annual"
-    realized_trust_days: 252          # full trust after 1yr of OLS data
-    borrow_blend_current: 0.5        # weight on current vs historical borrow
-    maturity_full_days: 252           # linear ramp: ETF needs 1yr history for full weight
     margin_efficiency_power: 0.5     # favour 2x over 3x: score x (1/|B|)^0.5
     # --- Iteration knobs (defaults are no-ops; flip per sleeve to test) -----
-    score_concavity_p: 1.0           # Candidate A: <1 flattens the top tail (try 0.85 / 0.90)
+    score_concavity_p: 2           # Candidate A: <1 flattens the top tail (try 0.85 / 0.90)
     sigma_aware_sizing: false        # Candidate B: requires pair_sigma_map at call site
     sigma_aware_floor: 0.25
     sigma_aware_min_mult: 0.5
@@ -169,8 +230,8 @@ portfolio:
 
   sleeves:
     core_leveraged:
-      allocation_type: "stock"
-      target_weight: 0.45
+      # Share of gross after inverse_decay_bucket4, split vs ``yieldboost`` (normalized together).
+      target_weight: 0.475
       rules:
         min_beta_used: 1.50
         # Core = accounting bucket-1 style levered longs. Optional net-decay floor (annual fraction).
@@ -185,52 +246,38 @@ portfolio:
           exit_below: 0.08
       weighting:
         <<: *weighting_defaults
+        # ``realized_trust_days`` is read only here (daily_screener.add_decay_columns
+        # ~3468). Defaults to 252 if absent. Other sleeves don't read it.
+        realized_trust_days: 252
         max_name_weight: 0.10         # align with per-sleeve pair cap
         eq_blend: 0.0                 # v16 selected: pure score weight
-        borrow_aversion: 0.35         # v16 selected B1 borrow aversion
+        borrow_aversion: 0.3         # v16 selected B1 borrow aversion
         score_concavity_p: 2.0        # v16 selected B1 score shape
 
-    whitelist_stock:
-      allocation_type: "stock"
+    yieldboost:
+      enabled: true
+      # Bucket-2 sleeve: screened rows with ``is_yieldboost`` only (see daily_screener). Split vs core
+      # is relative — core.target_weight + yieldboost.target_weight is normalized after B4.
       target_weight: 0.5
-      # B2 ("yieldboost") universe = every screener row tagged ``is_yieldboost == True``,
-      universe:
-        etfs:
-          - MTYY
-          - HMYY
-          - MAAY
-          - FBYY
-          - XBTY
-          - QBY
-          - IOYY
-          - COYY
-          - CWY
-          - MUYY
-          - GMEY
-          - DRAY
-          - RDYY
-          - SMYY
-          - AIYY
       rules:
-        min_net_edge_annual: 0.35     # v16 selected B2 entry floor on net_edge_p50_annual
+        min_net_edge_annual: 0.25     # gate on ``net_edge_p50_annual`` for YieldBoost names
       weighting:
         <<: *weighting_defaults
-        max_name_weight: 0.20        # align with per-sleeve pair cap
-        eq_blend: 0.05                # 5% equal-weight + 95% decay-score
-        borrow_aversion: 0.00         # v16 selected B2 uses net edge directly
-        score_concavity_p: 1.0
+        max_name_weight: 0.20
+        eq_blend: 0.02
+        borrow_aversion: 0.3
+        score_concavity_p: 1
 
     inverse_decay_bucket4:
-      allocation_type: "stock"
-      enabled: true                  # 45/50/5 prod sizing includes Bucket 4
-      target_weight: 0.05
+      enabled: true                  # sleeve split vs stock: inverse_decay_bucket4.target_weight remainder → stock
+      target_weight: 0.025
       # B4 universe = every inverse (β<0, ``inverse_shortable``) ticker in the screener,
       # MINUS ``rules.excluded_etfs`` (per-name overrides like KOLD)
       # MINUS ``flow_program.universe.shorts`` (those are sized in the weekly flow sleeve).
       rules:
-        partial_hedge_ratio: 1.0      # 1.0 = fully hedge inverse beta exposure
-        min_net_edge_annual: 0.0      # require bucket4_net_edge_annual >= this
-        min_underlying_vol: 0.05      # universe entry: annual vol floor (aligned with DCQ bucket_4)
+        partial_hedge_ratio: 0.8      # 1.0 = fully hedge inverse beta exposure
+        min_net_edge_annual: 0.25      # require bucket4_net_edge_annual >= this
+        min_underlying_vol: 0.45      # universe entry: annual vol floor (aligned with DCQ bucket_4)
         bucket4_borrow_cap: 0.90      # v16 selected B4 max annual borrow (decimal)
         excluded_etfs:                # never allocate inverse_decay_bucket4 to these tickers
           - KOLD
@@ -238,12 +285,10 @@ portfolio:
         max_shares_outstanding_frac: 0.25
       weighting:
         <<: *weighting_defaults
-        method: "decay_score"
         max_name_weight: 0.18
         eq_blend: 0.1
         borrow_aversion: 3.0
     flow_program:
-      allocation_type: "flow"
       rules:
         hard_borrow_cap: 0.40        # weekly flow adds only when borrow <= 40% and net_edge_p50 > 0
       frequency: "W"

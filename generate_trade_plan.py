@@ -5,26 +5,24 @@ generate_trade_plan.py
 Production portfolio construction for YAML sleeves.
 
 Implements:
-- Stock sleeves (rebalanced as part of each run):
-    * core_leveraged:   target_weight from strategy_config.yml
-        - requires |Beta| >= min_beta_used
-        - apply soft borrow ban (screener.borrow_low) UNLESS whitelisted sleeve overrides
-        - decay-score weighting configured in YAML
+- ``core_leveraged`` sleeve: high-beta bucket-1 positives only (**excludes** ``is_yieldboost``
+  rows; those size in ``yieldboost``).
+    * Post-B4 gross is split vs ``yieldboost`` using normalized ``target_weight`` on each sleeve.
+- ``yieldboost`` sleeve: bucket‑2 / YieldBoost only (`is_yieldboost`), gated by
+  ``portfolio.sleeves.yieldboost.rules.min_net_edge_annual`` on ``net_edge_p50_annual``.
 
-    * whitelist_stock:  target_weight from strategy_config.yml
-        - YieldBoost rows plus YAML whitelist additions
-        - optional min_net_edge_annual gate from YAML
+- Bucket 4: ``inverse_decay_bucket4`` unchanged.
 
 - Purgatory handling (from screened CSV; see daily_screener ``recompute_purgatory_by_bucket``):
     * OUTPUT purgatory rows with 0 targets so execution won’t auto-close.
     * Does NOT allocate new exposure to purgatory (borrow soft band OR net_edge_p50 in 0–5%).
     * Sizing set also requires ``net_edge_p50_annual >= 0`` when that column exists.
 
-- inverse_decay_bucket4: optional ``enabled: false`` on the sleeve — disables all B4 targets; core/wl
-  split the full gross budget.
+- inverse_decay_bucket4: optional ``enabled: false`` on the sleeve — disables all B4 targets; stock
+  sleeve absorbs the full gross budget.
 
-- core_leveraged (bucket-1 style core): optional ``min_net_decay_annual`` and ``net_decay_hysteresis`` in
-  YAML rules — tighter net-decay selectivity for core only; whitelist unchanged. If ``min_net_decay_annual``
+- ``core_leveraged`` bucket-1 path: optional ``min_net_decay_annual`` and ``net_decay_hysteresis`` in
+  YAML — tighter net-decay selectivity for **high-beta core rows only**. If ``min_net_decay_annual``
   > 0 it is a **hard floor** (always enforced, including over hysteresis and missing-data paths).
   Hysteresis uses ``paths.core_leveraged_decay_state_json`` to reduce pairs bouncing in/out when decay oscillates.
 
@@ -73,10 +71,19 @@ def _clamp01(x: float) -> float:
     return max(0.0, min(1.0, float(x)))
 
 
+def _normalize_two_nonnegative_weights(a: float, b: float) -> tuple[float, float]:
+    """Return (frac_a, frac_b) that sum to 1; if both zero, (1, 0)."""
+    aa = max(0.0, float(a))
+    bb = max(0.0, float(b))
+    s = aa + bb
+    if s <= 1e-18:
+        return 1.0, 0.0
+    return aa / s, bb / s
+
+
 def _b2_b4_universe_masks(
     eligible: pd.DataFrame,
     *,
-    wl_set: set[str],
     flow_program_etfs: set[str],
 ) -> tuple[pd.Series, pd.Series, pd.Series]:
     """Compute the B2/B4 universe gating masks shared by ``main()`` and the sizing mirror.
@@ -86,7 +93,7 @@ def _b2_b4_universe_masks(
     is_yieldboost : pd.Series[bool]
         Per-row screener flag (``False`` when the column is absent).
     in_b2_universe : pd.Series[bool]
-        ``is_yieldboost`` ∪ rows present in the YAML whitelist allow-list.
+        ``is_yieldboost`` only (bucket‑2 stock candidates for ``generate_trade_plan``).
     in_flow_program : pd.Series[bool]
         Rows whose ``ETF`` ticker lives in ``flow_program.universe.shorts`` —
         excluded from both B2 and B4 because the weekly flow sleeve sizes them.
@@ -95,8 +102,7 @@ def _b2_b4_universe_masks(
         is_yieldboost = eligible["is_yieldboost"].fillna(False).astype(bool)
     else:
         is_yieldboost = pd.Series(False, index=eligible.index)
-    in_whitelist = eligible["ETF"].isin(wl_set) if "ETF" in eligible.columns else pd.Series(False, index=eligible.index)
-    in_b2_universe = is_yieldboost | in_whitelist
+    in_b2_universe = is_yieldboost
     in_flow_program = (
         eligible["ETF"].isin(flow_program_etfs)
         if "ETF" in eligible.columns
@@ -144,7 +150,7 @@ def _core_net_decay_gate_for_core(
     clears that ETF's sticky flag so a later recovery requires the enter threshold again.
 
     Only rows satisfying ``core_pre_decay`` (structural core candidate + non-negative decay) can
-    be gated off; all other rows return pass-through True so whitelist-only names do not corrupt
+    be gated off; all other rows return pass-through True so non-core rows do not corrupt
     sticky state.
 
     - If hysteresis disabled and min_net_decay_annual <= 0: all-True.
@@ -212,11 +218,6 @@ def _core_net_decay_gate_for_core(
     _save_core_decay_state(state_path, by_etf, run_date)
     return gate
 
-
-def _zipf_weights(n: int, exponent: float = 1.0) -> np.ndarray:
-    r = np.arange(1, n + 1, dtype=float)
-    w = 1.0 / np.power(r, exponent)
-    return w / w.sum() if w.sum() > 0 else w
 
 
 def _sizing_signal_column(weighting_cfg: dict, *, sleeve_name: str | None = None) -> tuple[str, str]:
@@ -1344,19 +1345,31 @@ def main() -> None:
 
     # Sleeves
     core = sleeves.get("core_leveraged", {})
-    wl   = sleeves.get("whitelist_stock", {})
-    b4   = sleeves.get("inverse_decay_bucket4", {})
+    b4 = sleeves.get("inverse_decay_bucket4", {})
     flow = sleeves.get("flow_program", {})
+    yb_sleeve = sleeves.get("yieldboost", {}) or {}
 
-    core_w = float(core.get("target_weight", 0.85))
-    wl_w   = float(wl.get("target_weight", 0.15))
-    b4_w   = float(b4.get("target_weight", 0.0))
+    b4_w = float(b4.get("target_weight", 0.0))
     b4_enabled = bool(b4.get("enabled", True))
+    yb_enabled = bool(yb_sleeve.get("enabled", True))
+    core_stock_tw = float(core.get("target_weight", 1.0))
+    yb_stock_tw = float(yb_sleeve.get("target_weight", 0.0))
+    core_stock_frac, yb_stock_frac = _normalize_two_nonnegative_weights(
+        core_stock_tw,
+        yb_stock_tw if yb_enabled else 0.0,
+    )
+    stock_nominal_w = (
+        max(0.0, min(1.0, 1.0 - b4_w)) if b4_enabled else 1.0
+    )
 
     core_rules = core.get("rules", {}) or {}
     core_beta_min = float(core_rules.get("min_beta_used", 1.5))
-    wl_rules = wl.get("rules", {}) or {}
-    wl_min_edge = float(wl_rules.get("min_net_edge_annual", 0.0) or 0.0)
+    yb_rules = yb_sleeve.get("rules", {}) or {}
+    _yb_edge_yaml = yb_rules.get("min_net_edge_annual", None)
+    if _yb_edge_yaml is None or (isinstance(_yb_edge_yaml, float) and not np.isfinite(_yb_edge_yaml)):
+        yb_min_edge = float(core_rules.get("yieldboost_min_net_edge_annual", 0.0) or 0.0)
+    else:
+        yb_min_edge = float(_yb_edge_yaml or 0.0)
     b4_rules = b4.get("rules", {}) or {}
     b4_min_edge = float(b4_rules.get("min_net_edge_annual", 0.0))
     b4_partial_hedge_ratio = _clamp01(b4_rules.get("partial_hedge_ratio", 1.0))
@@ -1367,23 +1380,17 @@ def main() -> None:
 
     # Borrow caps (soft vs hard)
     soft_borrow_cap = float(cfg.get("screener", {}).get("borrow_low", 1.0))  # e.g. 0.08
-    wl_hard_borrow_cap = float(wl.get("rules", {}).get("hard_borrow_cap", np.inf))
     # Dedicated Bucket 4 borrow cap. Use ``bucket4_borrow_cap`` in YAML; old aliases are deprecated.
     b4_hard_borrow_cap = float(b4_rules.get("bucket4_borrow_cap", np.inf))
     flow_borrow_cap = float(flow.get("rules", {}).get("hard_borrow_cap", np.inf))
 
-    # Whitelist list order
-    wl_list = [_norm_sym(x) for x in (wl.get("universe", {}).get("etfs", []) or [])]
-    wl_set = set(wl_list)
-    zipf_exp = float(wl.get("weighting", {}).get("zipf_exponent", 1.0))
-
     # Weighting configs (full dicts, consumed by _decay_score_weights)
     core_weighting_cfg = core.get("weighting", {})
-    wl_weighting_cfg   = wl.get("weighting", {})
-    b4_weighting_cfg   = b4.get("weighting", {})
+    b4_weighting_cfg = b4.get("weighting", {})
+    yb_weighting_cfg = yb_sleeve.get("weighting", {}) or {}
     core_weight_method = str(core_weighting_cfg.get("method", "equal")).lower()
-    wl_weight_method   = str(wl_weighting_cfg.get("method", "decay_score")).lower()
-    b4_weight_method   = str(b4_weighting_cfg.get("method", "decay_score")).lower()
+    b4_weight_method = str(b4_weighting_cfg.get("method", "decay_score")).lower()
+    yb_weight_method = str(yb_weighting_cfg.get("method", "decay_score")).lower()
 
     # Flow config
     flow_shorts = [_norm_sym(x) for x in (flow.get("universe", {}).get("shorts", []) or [])]
@@ -1391,11 +1398,13 @@ def main() -> None:
     shares_out_map, shares_src = load_shares_outstanding_map(paths)
     print(
         f"[INFO] target_gross_usd=${target_gross_usd:,.0f} | "
-        f"core={core_w:.0%} wl={wl_w:.0%} b4={b4_w:.0%} (enabled={b4_enabled}) | beta_floor={beta_floor}"
+        f"post_b4_stock(nominal)={stock_nominal_w:.0%} "
+        f"(core_frac={core_stock_frac:.1%} yb_frac={yb_stock_frac:.1%} of that) "
+        f"b4={b4_w:.0%} (enabled={b4_enabled}) "
+        f"| beta_floor={beta_floor}"
     )
     print(
-        f"[INFO] core soft borrow cap={soft_borrow_cap:.1%} | "
-        f"wl hard cap={wl_hard_borrow_cap if np.isfinite(wl_hard_borrow_cap) else 'inf'} | "
+        f"[INFO] stock soft borrow cap={soft_borrow_cap:.1%} | "
         f"b4 hard cap={b4_hard_borrow_cap if np.isfinite(b4_hard_borrow_cap) else 'inf'} | "
         f"flow hard cap={flow_borrow_cap if np.isfinite(flow_borrow_cap) else 'inf'}"
     )
@@ -1420,10 +1429,10 @@ def main() -> None:
             )
     if not b4_enabled:
         print("[INFO] inverse_decay_bucket4 disabled — no B4 allocation or targets in proposed trades")
-    print(f"[INFO] whitelist size={len(wl_list)} | flow shorts={len(flow_shorts)}")
-    if wl_min_edge > 0:
-        print(f"[INFO] whitelist_stock min_net_edge_annual={wl_min_edge:.0%}")
-    print(f"[INFO] weighting: core={core_weight_method} wl={wl_weight_method} b4={b4_weight_method}")
+    print(f"[INFO] flow shorts={len(flow_shorts)}")
+    if yb_min_edge > 0:
+        print(f"[INFO] yieldboost sleeve min net_edge_p50_annual floor={yb_min_edge:.0%}")
+    print(f"[INFO] weighting: core={core_weight_method} yieldboost={yb_weight_method} b4={b4_weight_method}")
     if shares_out_map:
         print(
             f"[INFO] bucket4 shares-outstanding cap enabled: "
@@ -1522,34 +1531,20 @@ def main() -> None:
         # -----------------------------
         # Build sleeve membership
         # -----------------------------
-        # core: |beta| >= min_beta_used AND passes soft borrow cap (unless also whitelist)
-        eligible["in_whitelist"] = eligible["ETF"].isin(wl_set)
-        # B2 ("yieldboost") universe: any screener row tagged ``is_yieldboost`` OR present in the
-        # YAML whitelist allow-list (the latter is an additive override for research names).
-        # B2 + B4 explicitly exclude flow_program tickers (they are sized in the weekly flow sleeve).
+        # core_leveraged: high-beta bucket-1 path only (~not ``is_yieldboost``).
+        # yieldboost: ``is_yieldboost`` rows that pass borrow + min_net_edge on net_edge_p50.
         flow_program_etfs = {_norm_sym(x) for x in (flow_shorts or [])}
         is_yieldboost, in_b2_universe, in_flow_program = _b2_b4_universe_masks(
-            eligible, wl_set=wl_set, flow_program_etfs=flow_program_etfs
+            eligible, flow_program_etfs=flow_program_etfs
         )
-        # Hard rule: negative net decay names are excluded from stock sleeves (core + whitelist).
+        # Hard rule: negative net decay names are excluded from stock sleeve.
         net_decay_non_negative = ~(eligible["net_decay_annual"] < 0)
 
-        # Borrow cap predicates
-        # - soft cap applies to core ONLY when NOT whitelist
-        # - whitelist has hard cap (20%) if provided
-        # - for NaN borrow, allow (conservative in the sense of "don't accidentally drop new ETFs");
-        #   if you want the opposite, flip the np.isfinite checks.
         b = eligible["borrow_annual"]
-
-        # CORE: enforce soft borrow cap ONLY for non-whitelist names
-        core_borrow_ok = (~np.isfinite(b)) | (b <= soft_borrow_cap) | (eligible["in_whitelist"])
-
-        # WHITELIST: ALWAYS allow, independent of borrow
-        wl_borrow_ok = True
-        # (or: pd.Series(True, index=eligible.index))
+        core_borrow_ok = (~np.isfinite(b)) | (b <= soft_borrow_cap)
         b4_borrow_ok = (~np.isfinite(b)) | (b <= b4_hard_borrow_cap)
 
-        # Exclude inverse (β < 0) ETFs — they belong to the flow program, not core/whitelist
+        # Exclude inverse (β < 0) ETFs — they belong to Bucket 4 / flow, not the stock sleeve
         positive_beta = eligible["Beta"].gt(0)
         negative_beta = eligible["Beta"].lt(0)
         if "inverse_shortable" in eligible.columns:
@@ -1559,10 +1554,10 @@ def main() -> None:
         edge_col = _b4_eligibility_edge_column(eligible)
         b4_edge = pd.to_numeric(eligible.get(edge_col), errors="coerce")
         b4_edge_ok = (~np.isfinite(b4_edge)) | (b4_edge >= b4_min_edge)
-        wl_edge = pd.to_numeric(eligible.get("net_edge_p50_annual"), errors="coerce")
-        wl_edge_ok = (
-            np.isfinite(wl_edge) & (wl_edge >= wl_min_edge)
-            if wl_min_edge > 0
+        ne_p50 = pd.to_numeric(eligible.get("net_edge_p50_annual"), errors="coerce")
+        yieldboost_edge_ok = (
+            np.isfinite(ne_p50) & (ne_p50 >= yb_min_edge)
+            if yb_min_edge > 0
             else pd.Series(True, index=eligible.index)
         )
         b4_und_vol = pd.to_numeric(eligible.get("vol_underlying_annual"), errors="coerce")
@@ -1593,11 +1588,19 @@ def main() -> None:
             )
         except ValueError as e:
             raise SystemExit(str(e)) from e
-        eligible["in_core"] = core_pre_decay & core_decay_gate
-        n_b2_yb_only = int((is_yieldboost & ~eligible["in_whitelist"]).sum())
-        n_b2_flow_excluded = int(
-            (positive_beta & in_b2_universe & in_flow_program).sum()
+        eligible["in_core"] = core_pre_decay & core_decay_gate & ~in_b2_universe
+
+        in_yieldboost_stock = (
+            positive_beta
+            & in_b2_universe
+            & ~in_flow_program
+            & core_borrow_ok
+            & yieldboost_edge_ok
+            & net_decay_non_negative
         )
+
+        n_b2_yb_rows = int(in_b2_universe.sum())
+        n_b2_flow_excluded = int((positive_beta & in_b2_universe & in_flow_program).sum())
         b4_not_excluded = ~eligible["ETF"].isin(b4_excluded_etfs)
         n_b4_flow_excluded = int(
             (
@@ -1610,21 +1613,12 @@ def main() -> None:
                 & in_flow_program
             ).sum()
         )
-        if n_b2_yb_only or n_b2_flow_excluded or n_b4_flow_excluded:
+        if n_b2_flow_excluded or n_b4_flow_excluded:
             print(
-                f"[INFO] B2 universe = is_yieldboost ∪ YAML whitelist; "
-                f"is_yieldboost-only adds={n_b2_yb_only}, "
-                f"B2 flow-excluded={n_b2_flow_excluded}, "
-                f"B4 flow-excluded={n_b4_flow_excluded}"
+                f"[INFO] B2 YieldBoost ticker rows≈{n_b2_yb_rows} | "
+                f"B2↔flow overlap (excluded from stock sleeve)={n_b2_flow_excluded}, "
+                f"B4↔flow overlap={n_b4_flow_excluded}"
             )
-        eligible["in_wl"] = (
-            positive_beta
-            & in_b2_universe
-            & ~in_flow_program
-            & wl_borrow_ok
-            & wl_edge_ok
-            & net_decay_non_negative
-        )
         eligible["in_b4"] = (
             negative_beta
             & inverse_shortable
@@ -1636,8 +1630,10 @@ def main() -> None:
         )
 
         core_names = eligible.loc[eligible["in_core"]].copy()
-        wl_names   = eligible.loc[eligible["in_wl"]].copy()
-        b4_names   = eligible.loc[eligible["in_b4"]].copy()
+        yb_names = eligible.loc[in_yieldboost_stock].copy()
+        if not yb_enabled:
+            yb_names = eligible.loc[[]].copy()
+        b4_names = eligible.loc[eligible["in_b4"]].copy()
         if not b4_enabled:
             b4_names = eligible.loc[[]].copy()
         n_neg_decay_excluded = int((~net_decay_non_negative).sum())
@@ -1649,58 +1645,65 @@ def main() -> None:
                 f"[INFO] Excluded {n_core_decay_blocked} core (bucket-1) candidate row(s) "
                 f"via min_net_decay_annual / hysteresis gate."
             )
-        n_wl_edge_blocked = int((positive_beta & in_b2_universe & ~in_flow_program & ~wl_edge_ok).sum())
-        if n_wl_edge_blocked:
+        n_yb_edge_blocked = int((positive_beta & in_b2_universe & ~in_flow_program & ~yieldboost_edge_ok).sum())
+        if n_yb_edge_blocked:
             print(
-                f"[INFO] Excluded {n_wl_edge_blocked} whitelist_stock (bucket-2) candidate row(s) "
-                f"below min_net_edge_annual={wl_min_edge:.2%}."
+                f"[INFO] Excluded {n_yb_edge_blocked} yieldboost sleeve candidate row(s) "
+                f"below min_net_edge_annual={yb_min_edge:.2%}."
             )
 
         # Budgeting:
-        # - Bucket 4 gets an explicit % of total plan when active.
-        # - Remaining budget is split across core/wl by relative sleeve weights.
+        # - Bucket 4 gets ``target_weight`` of total gross when active.
+        # - Remaining gross is split core vs yieldboost using normalized YAML ``target_weights``.
         b4_budget = target_gross_usd * b4_w if (not b4_names.empty and b4_w > 0) else 0.0
         b4_budget = min(b4_budget, target_gross_usd)
         remainder_budget = max(0.0, target_gross_usd - b4_budget)
-        stock_weight_sum = 0.0
-        if not core_names.empty:
-            stock_weight_sum += core_w
-        if not wl_names.empty:
-            stock_weight_sum += wl_w
-        if stock_weight_sum > 0:
-            core_budget = remainder_budget * (core_w / stock_weight_sum) if not core_names.empty else 0.0
-            wl_budget = remainder_budget * (wl_w / stock_weight_sum) if not wl_names.empty else 0.0
-        else:
+        core_budget = remainder_budget * core_stock_frac
+        yb_budget = remainder_budget * yb_stock_frac
+        if core_budget > 1e-9 and core_names.empty:
+            yb_budget += core_budget
             core_budget = 0.0
-            wl_budget = 0.0
+        if yb_budget > 1e-9 and yb_names.empty:
+            core_budget += yb_budget
+            yb_budget = 0.0
+
+        core_names_fit = core_names.copy()
+        yb_names_fit = yb_names.copy()
 
         # -----------------------------
-        # Allocate CORE
+        # Allocate CORE stock sleeve (`core_leveraged`)
         # -----------------------------
-        if not core_names.empty and core_budget > 0:
+        if not core_names_fit.empty and core_budget > 0:
             if core_weight_method == "decay_score":
-                w = _decay_score_weights(core_names, core_weighting_cfg, sleeve_name="core_leveraged")
+                w = _decay_score_weights(core_names_fit, core_weighting_cfg, sleeve_name="core_leveraged")
             else:   # "equal" or unrecognised → equal weight
-                w = np.ones(len(core_names)) / len(core_names)
-            core_names["gross_target_usd"] = core_budget * w
-            core_names["sleeve"] = "core_leveraged"
+                w = np.ones(len(core_names_fit)) / len(core_names_fit)
+            core_names_fit["gross_target_usd"] = core_budget * w
+            core_names_fit["sleeve"] = "core_leveraged"
+        elif not core_names_fit.empty:
+            core_names_fit["gross_target_usd"] = 0.0
+            core_names_fit["sleeve"] = "core_leveraged"
 
         # -----------------------------
-        # Allocate WHITELIST
+        # Allocate YIELDBOOST sleeve (bucket‑2 candidates only)
         # -----------------------------
-        if not wl_names.empty and wl_budget > 0:
-            if wl_weight_method == "decay_score":
-                w = _decay_score_weights(wl_names, wl_weighting_cfg, sleeve_name="whitelist_stock")
-            else:   # "zipf" (default) or "equal"
-                wl_names["wl_rank"] = wl_names["ETF"].map(
-                    lambda x: wl_list.index(x) if x in wl_set else 10**9)
-                wl_names = wl_names.sort_values("wl_rank").copy()
-                if wl_weight_method == "equal":
-                    w = np.ones(len(wl_names)) / len(wl_names)
-                else:
-                    w = _zipf_weights(len(wl_names), exponent=zipf_exp)
-            wl_names["gross_target_usd"] = wl_budget * w
-            wl_names["sleeve"] = "whitelist_stock"
+        if not yb_names_fit.empty and yb_budget > 0:
+            if yb_weight_method == "decay_score":
+                w = _decay_score_weights(yb_names_fit, yb_weighting_cfg, sleeve_name="yieldboost")
+            else:
+                w = np.ones(len(yb_names_fit)) / len(yb_names_fit)
+            yb_names_fit["gross_target_usd"] = yb_budget * w
+            yb_names_fit["sleeve"] = "yieldboost"
+        elif not yb_names_fit.empty:
+            yb_names_fit["gross_target_usd"] = 0.0
+            yb_names_fit["sleeve"] = "yieldboost"
+
+        stock_frames = []
+        if not core_names_fit.empty:
+            stock_frames.append(core_names_fit)
+        if not yb_names_fit.empty:
+            stock_frames.append(yb_names_fit)
+        stock_names = pd.concat(stock_frames, axis=0, ignore_index=False) if stock_frames else eligible.loc[[]].copy()
 
         # -----------------------------
         # Allocate BUCKET 4
@@ -1816,7 +1819,7 @@ def main() -> None:
                     )
             b4_names["sleeve"] = "inverse_decay_bucket4"
 
-        sized = pd.concat([core_names, wl_names, b4_names], axis=0, ignore_index=False)
+        sized = pd.concat([stock_names, b4_names], axis=0, ignore_index=False)
         sized = sized[~sized.index.duplicated(keep="first")].copy()
 
         sized, _cap_diag = apply_gross_sizing_book_caps(
@@ -1930,19 +1933,24 @@ def main() -> None:
         keep.loc[sized.index, "sleeve"] = sized["sleeve"]
 
         print(
-            f"[INFO] sized core={len(core_names)} wl={len(wl_names)} b4={len(b4_names)} | "
-            f"budgets: core=${core_budget:,.0f} wl=${wl_budget:,.0f} b4=${b4_budget:,.0f}"
+            f"[INFO] sized core={len(core_names_fit)} yb={len(yb_names_fit)} b4={len(b4_names)} | "
+            f"budgets: core=${core_budget:,.0f} yb=${yb_budget:,.0f} (post-b4 ${remainder_budget:,.0f}) "
+            f"b4=${b4_budget:,.0f}"
         )
 
         # Weight diagnostics
-        if core_weight_method == "decay_score" and not core_names.empty and core_budget > 0:
-            cw = core_names["gross_target_usd"] / core_budget
-            print(f"[INFO] core weights: max={cw.max():.3f} min={cw.min():.3f} "
-                  f"nonzero={int((cw > 1e-9).sum())}/{len(core_names)}")
-        if wl_weight_method == "decay_score" and not wl_names.empty and wl_budget > 0:
-            ww = wl_names["gross_target_usd"] / wl_budget
-            print(f"[INFO] wl weights: max={ww.max():.3f} min={ww.min():.3f} "
-                  f"nonzero={int((ww > 1e-9).sum())}/{len(wl_names)}")
+        if core_weight_method == "decay_score" and not core_names_fit.empty and core_budget > 0:
+            cw = core_names_fit["gross_target_usd"] / core_budget
+            print(
+                f"[INFO] core_leveraged weights: max={cw.max():.3f} min={cw.min():.3f} "
+                f"nonzero={int((cw > 1e-9).sum())}/{len(core_names_fit)}"
+            )
+        if yb_weight_method == "decay_score" and not yb_names_fit.empty and yb_budget > 0:
+            yw = yb_names_fit["gross_target_usd"] / yb_budget
+            print(
+                f"[INFO] yieldboost weights: max={yw.max():.3f} min={yw.min():.3f} "
+                f"nonzero={int((yw > 1e-9).sum())}/{len(yb_names_fit)}"
+            )
         if b4_weight_method == "decay_score" and not b4_names.empty and b4_budget > 0:
             bw = b4_names["gross_target_usd"] / b4_budget
             print(
@@ -1952,8 +1960,9 @@ def main() -> None:
 
         # Internalization diagnostics by underlying.
         if not keep.empty:
+            stock_mask_plan = keep["sleeve"].astype(str).isin(["core_leveraged", "yieldboost"])
             b12_under = (
-                keep[keep["sleeve"].isin(["core_leveraged", "whitelist_stock"])]
+                keep.loc[stock_mask_plan]
                 .groupby("Underlying", as_index=False)["long_usd"]
                 .sum()
                 .rename(columns={"long_usd": "underlying_target_from_b12_usd"})

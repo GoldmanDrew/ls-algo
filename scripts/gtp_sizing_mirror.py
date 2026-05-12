@@ -32,6 +32,7 @@ from generate_trade_plan import (  # noqa: E402
     _clamp01,
     _core_net_decay_gate_for_core,
     _decay_score_weights,
+    _normalize_two_nonnegative_weights,
     _norm_sym,
     apply_gross_sizing_book_caps,
     compute_borrow_annual_series,
@@ -190,8 +191,8 @@ def mirror_generate_trade_plan_sizing(
     sleeves = (cfg.get("portfolio", {}) or {}).get("sleeves", {}) or {}
 
     core = sleeves.get("core_leveraged", {}) or {}
-    wl = sleeves.get("whitelist_stock", {}) or {}
     b4 = sleeves.get("inverse_decay_bucket4", {}) or {}
+    yb_sleeve = sleeves.get("yieldboost", {}) or {}
 
     capital_usd = float(strategy.get("capital_usd", 0.0))
     gross_leverage = float(strategy.get("gross_leverage", 0.0))
@@ -203,15 +204,24 @@ def mirror_generate_trade_plan_sizing(
     target_gross_usd = float(target_gross_usd) * float(tg_mult)
     beta_floor = float(strategy.get("beta_floor", 0.1))
 
-    core_w = float(core.get("target_weight", 0.85))
-    wl_w = float(wl.get("target_weight", 0.15))
     b4_w = float(b4.get("target_weight", 0.0))
     b4_enabled = bool(b4.get("enabled", True))
+    yb_enabled = bool(yb_sleeve.get("enabled", True))
+    core_stock_tw = float(core.get("target_weight", 1.0))
+    yb_stock_tw = float(yb_sleeve.get("target_weight", 0.0))
+    core_stock_frac, yb_stock_frac = _normalize_two_nonnegative_weights(
+        core_stock_tw,
+        yb_stock_tw if yb_enabled else 0.0,
+    )
 
     core_rules = core.get("rules", {}) or {}
     core_beta_min = float(core_rules.get("min_beta_used", 1.5))
-    wl_rules = wl.get("rules", {}) or {}
-    wl_min_edge = float(wl_rules.get("min_net_edge_annual", 0.0) or 0.0)
+    yb_rules = yb_sleeve.get("rules", {}) or {}
+    _yb_edge_yaml = yb_rules.get("min_net_edge_annual", None)
+    if _yb_edge_yaml is None or (isinstance(_yb_edge_yaml, float) and not np.isfinite(_yb_edge_yaml)):
+        yb_min_edge = float(core_rules.get("yieldboost_min_net_edge_annual", 0.0) or 0.0)
+    else:
+        yb_min_edge = float(_yb_edge_yaml or 0.0)
     b4_rules = b4.get("rules", {}) or {}
     b4_min_edge = float(b4_rules.get("min_net_edge_annual", 0.0))
     b4_partial_hedge_ratio = _clamp01(b4_rules.get("partial_hedge_ratio", 1.0))
@@ -222,16 +232,12 @@ def mirror_generate_trade_plan_sizing(
     soft_borrow_cap = float((cfg.get("screener") or {}).get("borrow_low", 1.0))
     b4_hard_borrow_cap = float(b4_rules.get("bucket4_borrow_cap", float("inf")))
 
-    wl_list = [_norm_sym(x) for x in ((wl.get("universe") or {}).get("etfs") or [])]
-    wl_set = set(wl_list)
-    zipf_exp = float((wl.get("weighting") or {}).get("zipf_exponent", 1.0))
-
     core_weighting_cfg = core.get("weighting", {}) or {}
-    wl_weighting_cfg = wl.get("weighting", {}) or {}
     b4_weighting_cfg = b4.get("weighting", {}) or {}
+    yb_weighting_cfg = yb_sleeve.get("weighting", {}) or {}
     core_weight_method = str(core_weighting_cfg.get("method", "equal")).lower()
-    wl_weight_method = str(wl_weighting_cfg.get("method", "decay_score")).lower()
     b4_weight_method = str(b4_weighting_cfg.get("method", "decay_score")).lower()
+    yb_weight_method = str(yb_weighting_cfg.get("method", "decay_score")).lower()
 
     shares_out_map, _ = load_shares_outstanding_map(paths)
 
@@ -278,10 +284,6 @@ def mirror_generate_trade_plan_sizing(
             tmp_decay_path.unlink(missing_ok=True)
         return keep, diag
 
-    eligible["in_whitelist"] = eligible["ETF"].isin(wl_set)
-    # B2 ("yieldboost") universe: any screener row tagged ``is_yieldboost`` OR present in the
-    # YAML whitelist allow-list (the latter is an additive override for research names).
-    # B2 + B4 explicitly exclude flow_program tickers (they are sized in the weekly flow sleeve).
     flow_program_etfs = {
         _norm_sym(x)
         for x in (
@@ -289,13 +291,12 @@ def mirror_generate_trade_plan_sizing(
         )
     }
     is_yieldboost, in_b2_universe, in_flow_program = _b2_b4_universe_masks(
-        eligible, wl_set=wl_set, flow_program_etfs=flow_program_etfs
+        eligible, flow_program_etfs=flow_program_etfs
     )
 
     net_decay_non_negative = ~(eligible["net_decay_annual"] < 0)
     b = eligible["borrow_annual"]
-    core_borrow_ok = (~np.isfinite(b)) | (b <= soft_borrow_cap) | (eligible["in_whitelist"])
-    wl_borrow_ok = True
+    core_borrow_ok = (~np.isfinite(b)) | (b <= soft_borrow_cap)
     b4_borrow_ok = (~np.isfinite(b)) | (b <= b4_hard_borrow_cap)
     positive_beta = eligible["Beta"].gt(0)
     negative_beta = eligible["Beta"].lt(0)
@@ -306,10 +307,10 @@ def mirror_generate_trade_plan_sizing(
     edge_col = _b4_eligibility_edge_column(eligible)
     b4_edge = pd.to_numeric(eligible.get(edge_col), errors="coerce")
     b4_edge_ok = (~np.isfinite(b4_edge)) | (b4_edge >= b4_min_edge)
-    wl_edge = pd.to_numeric(eligible.get("net_edge_p50_annual"), errors="coerce")
-    wl_edge_ok = (
-        np.isfinite(wl_edge) & (wl_edge >= wl_min_edge)
-        if wl_min_edge > 0
+    ne_p50 = pd.to_numeric(eligible.get("net_edge_p50_annual"), errors="coerce")
+    yieldboost_edge_ok = (
+        np.isfinite(ne_p50) & (ne_p50 >= yb_min_edge)
+        if yb_min_edge > 0
         else pd.Series(True, index=eligible.index)
     )
     b4_und_vol = pd.to_numeric(eligible.get("vol_underlying_annual"), errors="coerce")
@@ -335,13 +336,13 @@ def mirror_generate_trade_plan_sizing(
         if cleanup_tmp and tmp_decay_path and tmp_decay_path.exists():
             tmp_decay_path.unlink(missing_ok=True)
 
-    eligible["in_core"] = core_pre_decay & core_decay_gate
-    eligible["in_wl"] = (
+    eligible["in_core"] = core_pre_decay & core_decay_gate & ~in_b2_universe
+    in_yieldboost_stock = (
         positive_beta
         & in_b2_universe
         & ~in_flow_program
-        & wl_borrow_ok
-        & wl_edge_ok
+        & core_borrow_ok
+        & yieldboost_edge_ok
         & net_decay_non_negative
     )
     b4_not_excluded = ~eligible["ETF"].isin(b4_excluded_etfs)
@@ -358,61 +359,72 @@ def mirror_generate_trade_plan_sizing(
     )
 
     core_names = eligible.loc[eligible["in_core"]].copy()
-    wl_names = eligible.loc[eligible["in_wl"]].copy()
+    yb_names = eligible.loc[in_yieldboost_stock].copy()
+    if not yb_enabled:
+        yb_names = eligible.loc[[]].copy()
     b4_names = eligible.loc[eligible["in_b4"]].copy()
 
     b4_budget = target_gross_usd * b4_w if (not b4_names.empty and b4_w > 0 and b4_enabled) else 0.0
     b4_budget = min(b4_budget, target_gross_usd)
     remainder_budget = max(0.0, target_gross_usd - b4_budget)
-    stock_weight_sum = 0.0
-    if not core_names.empty:
-        stock_weight_sum += core_w
-    if not wl_names.empty:
-        stock_weight_sum += wl_w
-    if stock_weight_sum > 0:
-        core_budget = remainder_budget * (core_w / stock_weight_sum) if not core_names.empty else 0.0
-        wl_budget = remainder_budget * (wl_w / stock_weight_sum) if not wl_names.empty else 0.0
-    else:
+    core_budget = remainder_budget * core_stock_frac
+    yb_budget = remainder_budget * yb_stock_frac
+    if core_budget > 1e-9 and core_names.empty:
+        yb_budget += core_budget
         core_budget = 0.0
-        wl_budget = 0.0
+    if yb_budget > 1e-9 and yb_names.empty:
+        core_budget += yb_budget
+        yb_budget = 0.0
 
-    from generate_trade_plan import _zipf_weights  # local import
+    core_names_fit = core_names.copy()
+    yb_names_fit = yb_names.copy()
 
-    if not core_names.empty and core_budget > 0:
+    if not core_names_fit.empty and core_budget > 0:
         if core_weight_method == "decay_score":
             w = _decay_score_weights(
-                core_names,
+                core_names_fit,
                 core_weighting_cfg,
                 sleeve_name="core_leveraged",
                 pair_sigma_map=pair_sigma_map,
                 score_ema_state=score_ema_state,
             )
         else:
-            w = np.ones(len(core_names)) / len(core_names)
-        core_names = core_names.copy()
-        core_names["gross_target_usd"] = core_budget * w
-        core_names["sleeve"] = "core_leveraged"
+            w = np.ones(len(core_names_fit)) / len(core_names_fit)
+        core_names_fit = core_names_fit.copy()
+        core_names_fit["gross_target_usd"] = core_budget * w
+        core_names_fit["sleeve"] = "core_leveraged"
+    elif not core_names_fit.empty:
+        core_names_fit = core_names_fit.copy()
+        core_names_fit["gross_target_usd"] = 0.0
+        core_names_fit["sleeve"] = "core_leveraged"
 
-    if not wl_names.empty and wl_budget > 0:
-        if wl_weight_method == "decay_score":
+    if not yb_names_fit.empty and yb_budget > 0:
+        if yb_weight_method == "decay_score":
             w = _decay_score_weights(
-                wl_names,
-                wl_weighting_cfg,
-                sleeve_name="whitelist_stock",
+                yb_names_fit,
+                yb_weighting_cfg,
+                sleeve_name="yieldboost",
                 pair_sigma_map=pair_sigma_map,
                 score_ema_state=score_ema_state,
             )
         else:
-            wl_names = wl_names.copy()
-            wl_names["wl_rank"] = wl_names["ETF"].map(lambda x: wl_list.index(x) if x in wl_set else 10**9)
-            wl_names = wl_names.sort_values("wl_rank").copy()
-            if wl_weight_method == "equal":
-                w = np.ones(len(wl_names)) / len(wl_names)
-            else:
-                w = _zipf_weights(len(wl_names), exponent=zipf_exp)
-        wl_names = wl_names.copy()
-        wl_names["gross_target_usd"] = wl_budget * w
-        wl_names["sleeve"] = "whitelist_stock"
+            w = np.ones(len(yb_names_fit)) / len(yb_names_fit)
+        yb_names_fit = yb_names_fit.copy()
+        yb_names_fit["gross_target_usd"] = yb_budget * w
+        yb_names_fit["sleeve"] = "yieldboost"
+    elif not yb_names_fit.empty:
+        yb_names_fit = yb_names_fit.copy()
+        yb_names_fit["gross_target_usd"] = 0.0
+        yb_names_fit["sleeve"] = "yieldboost"
+
+    _stock_parts: list[pd.DataFrame] = []
+    if not core_names_fit.empty:
+        _stock_parts.append(core_names_fit)
+    if not yb_names_fit.empty:
+        _stock_parts.append(yb_names_fit)
+    stock_names = (
+        pd.concat(_stock_parts, axis=0, ignore_index=False) if _stock_parts else eligible.loc[[]].copy()
+    )
 
     if not b4_names.empty and b4_budget > 0 and b4_enabled:
         if b4_weight_method == "equal":
@@ -448,7 +460,7 @@ def mirror_generate_trade_plan_sizing(
             )
         b4_names["sleeve"] = "inverse_decay_bucket4"
 
-    sized = pd.concat([core_names, wl_names, b4_names], axis=0, ignore_index=False)
+    sized = pd.concat([stock_names, b4_names], axis=0, ignore_index=False)
     sized = sized[~sized.index.duplicated(keep="first")].copy()
     sized, cap_diag = apply_gross_sizing_book_caps(
         sized,
@@ -508,10 +520,10 @@ def mirror_generate_trade_plan_sizing(
     diag.update(
         {
             "core_budget": core_budget,
-            "wl_budget": wl_budget,
+            "yieldboost_budget": yb_budget,
             "b4_budget": b4_budget,
-            "n_core": int(len(core_names)),
-            "n_wl": int(len(wl_names)),
+            "n_core": int(len(core_names_fit)),
+            "n_yieldboost": int(len(yb_names_fit)),
             "n_b4": int(len(b4_names)),
         }
     )

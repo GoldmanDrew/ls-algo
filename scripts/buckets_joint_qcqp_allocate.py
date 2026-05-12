@@ -89,7 +89,7 @@ def build_joint_bundle(
     norm_sym: Callable[[Any], str],
     sleeve_order: tuple[str, ...] = (
         "core_leveraged",
-        "whitelist_stock",
+        "yieldboost",
         "inverse_decay_bucket4",
     ),
     budget_key: Mapping[str, str] | None = None,
@@ -108,7 +108,7 @@ def build_joint_bundle(
     if not budget_key:
         budget_key = {
             "core_leveraged": "core_budget",
-            "whitelist_stock": "wl_budget",
+            "yieldboost": "yieldboost_budget",
             "inverse_decay_bucket4": "b4_budget",
         }
 
