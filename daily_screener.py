@@ -887,7 +887,7 @@ def drop_stale_etfs(
     stops trading, its price series goes stale and gets dropped on the
     next screener run.  No manual watchlist or SEC scraping needed.
 
-    Protected ETFs (whitelist + flow) are still dropped if stale — a
+    Protected ETFs (weekly flow sleeve) are still dropped if stale — a
     delisted ETF can't be traded regardless of protection status.
 
     Returns the filtered universe DataFrame.
@@ -1556,7 +1556,7 @@ _FALLBACK = {
     "borrow_low": 0.55,
     "purgatory_margin": 0.25,
     "min_shares_available": 1000,
-    "whitelist_hard_borrow_cap": 0.55,
+    "hard_borrow_cap": 0.75,
     "min_beta_days": 20,
     "borrow_floor_price_usd": 2.0,
 }
@@ -1569,7 +1569,7 @@ class ScreeningParams:
     min_shares_available: int = _FALLBACK["min_shares_available"]
     exclude_negative_cagr: bool = False
     protected_etfs: Set[str] | None = None
-    hard_borrow_cap: float = _FALLBACK["whitelist_hard_borrow_cap"]
+    hard_borrow_cap: float = _FALLBACK["hard_borrow_cap"]
 
 
 def screen_universe(df: pd.DataFrame, params: ScreeningParams) -> pd.DataFrame:
@@ -1650,9 +1650,8 @@ def recompute_purgatory_by_bucket(
     Borrow convention matches ``screen_universe``: ``borrow_current`` is annual
     **cost** to the short (higher = worse), same as ls-algo FTP feed.
 
-    Protected (whitelist + flow): flow uses ``flow_program.rules.hard_borrow_cap``;
-    whitelist-only uses ``whitelist_hard_borrow_cap``. Above the applicable cap =>
-    ``protected_bad``.
+    Protected (weekly flow sleeve only): flow uses ``flow_program.rules.hard_borrow_cap``.
+    Above that cap => ``protected_bad``.
     => purgatory (keep-open semantics downstream).
     """
     out = screened.copy()
@@ -1678,12 +1677,9 @@ def recompute_purgatory_by_bucket(
     low2, m2, h2 = _triple("bucket_2")
     low4, m4, h4 = _triple("bucket_4")
 
-    wl = sl.get("whitelist_stock", {}).get("universe", {}).get("etfs", []) or []
     fl = sl.get("flow_program", {}).get("universe", {}).get("shorts", []) or []
-    wl_set = {_norm_sym(x) for x in wl if str(x).strip()}
     fl_set = {_norm_sym(x) for x in fl if str(x).strip()}
-    protected = wl_set | fl_set
-    wl_hard = float(sc.get("whitelist_hard_borrow_cap", sc.get("hard_borrow_cap", 0.55)))
+    protected = fl_set.copy()
     flow_rules = ((sl.get("flow_program", {}) or {}).get("rules", {}) or {})
     flow_hard = float(flow_rules.get("hard_borrow_cap", 0.40))
 
@@ -1694,11 +1690,8 @@ def recompute_purgatory_by_bucket(
 
     etf_n = out["ETF"].astype(str).map(_norm_sym)
     in_flow = etf_n.isin(fl_set)
-    in_wl_only = etf_n.isin(wl_set) & ~in_flow
     prot = etf_n.isin(protected)
-    protected_ok = prot & borrow_known & (
-        (in_flow & (borrow <= flow_hard)) | (in_wl_only & (borrow <= wl_hard))
-    )
+    protected_ok = prot & borrow_known & in_flow & (borrow <= flow_hard)
     protected_bad = prot & borrow_known & (~protected_ok)
 
     bkt = out.get("bucket", pd.Series("", index=out.index)).astype(str)
@@ -3274,9 +3267,8 @@ def main() -> int:
         return _run_audit_splits(args)
 
     # Protected ETFs from config
-    wl_list = sleeves_cfg.get("whitelist_stock", {}).get("universe", {}).get("etfs", []) or []
     flow_list = sleeves_cfg.get("flow_program", {}).get("universe", {}).get("shorts", []) or []
-    protected = {_norm_sym(x) for x in (list(wl_list) + list(flow_list)) if str(x).strip()}
+    protected = {_norm_sym(x) for x in flow_list if str(x).strip()}
     blacklist = load_strategy_blacklist(cfg, base_dir=script_dir)
     if blacklist:
         print(f"[CONFIG] blacklist={len(blacklist)} symbol(s)")
@@ -3287,8 +3279,7 @@ def main() -> int:
         min_shares_available=int(screener_cfg.get("min_shares_available", _FALLBACK["min_shares_available"])),
         exclude_negative_cagr=bool(screener_cfg.get("exclude_negative_cagr", False)),
         protected_etfs=protected,
-        hard_borrow_cap=float(screener_cfg.get("hard_borrow_cap",
-                              screener_cfg.get("whitelist_hard_borrow_cap", _FALLBACK["whitelist_hard_borrow_cap"]))),
+        hard_borrow_cap=float(screener_cfg.get("hard_borrow_cap", _FALLBACK["hard_borrow_cap"])),
     )
     borrow_floor_price_usd = float(
         screener_cfg.get("borrow_floor_price_usd", _FALLBACK["borrow_floor_price_usd"])
