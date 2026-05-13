@@ -1,7 +1,7 @@
 ibkr:
   host: 127.0.0.1
-  port: 7497
-  client_id: 31
+  port: 7496
+  client_id: 41
   prefer_delayed: true
   suppress_error_codes: [10089]
 
@@ -11,7 +11,7 @@ accounting:
 
 strategy:
   tag: ETF_LS
-  capital_usd: 80000
+  capital_usd: 800000
   gross_leverage: 4
   blacklist:
     - JPM
