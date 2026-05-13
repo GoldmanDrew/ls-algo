@@ -836,6 +836,11 @@ def execute_leg(
     done_timeout   = float(exec_cfg.get("market_done_timeout_sec", 300.0))
 
     strategy_tag_local = strategy_tag_from_order_ref(order_ref)
+    prefer_delayed_exec = bool(exec_cfg.get("prefer_delayed", True))
+    # After IB error 354 (no market data), TWS rejects *adaptive / market*
+    # algos until a quote stream exists. Retrying ADAPTIVE on att2/att3
+    # just repeats 354 — flip to limit-only for the rest of this leg.
+    mktdata_force_lmt = False
 
     def cancel_global() -> int:
         if dry_run:
@@ -845,6 +850,44 @@ def execute_leg(
         if not strategy_tag_local:
             return 0
         return cancel_service.cancel(symbol_u, strategy_tag_local)
+
+    def refresh_limit_reference_px() -> float:
+        """Best-effort snapshot for LMT anchoring after 354 or when quotes are thin."""
+        try:
+            px = get_snapshot_price(ib, symbol_u, prefer_delayed=prefer_delayed_exec)
+            if px is not None and float(px) > 0:
+                return float(px)
+        except Exception:
+            pass
+        return float(ref_price)
+
+    def submit_limit_fallback(
+        *,
+        base_px: float,
+        attempt: int,
+        tag: str,
+        ctx: str,
+    ) -> int:
+        """Place a limit at base_px±limit_bps; return filled shares from this order."""
+        nonlocal last_trade_local
+        adj = float(bps) / 10000.0
+        lmt_px = base_px * (1.0 + adj) if action.upper() == "BUY" else base_px * (1.0 - adj)
+        lmt_remain = qty - filled_total
+        if lmt_remain <= 0:
+            return 0
+        o2 = build_limit_order(
+            action=action,
+            qty=lmt_remain,
+            lmt_price=lmt_px,
+            order_ref=f"{order_ref}|att{attempt}|{tag}",
+        )
+        tprint(f"{ctx}[LEG] {symbol_u} {tag} LMT @ {lmt_px:.4f} (ref={base_px:.4f})")
+        trade2 = ib.placeOrder(contract, o2)
+        last_trade_local = trade2
+        _ok2, trade2 = wait_for_trade_accepted(ib, trade2, timeout=accept_timeout)
+        trade2 = wait_for_trade_terminal(ib, trade2, timeout=done_timeout)
+        last_trade_local = trade2
+        return int(trade2.orderStatus.filled or 0)
 
     for attempt in range(1, max_retries + 1):
         if stop_requested():
@@ -861,10 +904,24 @@ def execute_leg(
         # cleanup bug).
         n_cancel = cancel_global()
         if n_cancel:
-            tprint(f"[{context}][CANCEL] {symbol_u}: cancelled {n_cancel} stale orders (global, confirmed terminal)")
+            ctx0 = f"[{context}]" if context else ""
+            tprint(f"{ctx0}[CANCEL] {symbol_u}: cancelled {n_cancel} stale orders (global, confirmed terminal)")
             # Extra settle time: even after terminal confirmation, TWS may
             # still be processing internal state.  Give it a moment.
             ib.sleep(1.0)
+
+        ctx = f"[{context}]" if context else ""
+
+        # IB precautionary 354 path — only discretionary limits are accepted.
+        if mktdata_force_lmt and order_style == "ADAPTIVE_MKT":
+            base = refresh_limit_reference_px()
+            filled2 = submit_limit_fallback(
+                base_px=base, attempt=attempt, tag="LMT_ONLY", ctx=ctx,
+            )
+            filled_total = min(qty, filled_total + max(0, filled2))
+            if attempt < max_retries and filled_total < qty:
+                ib.sleep(1.5)
+            continue
 
         if order_style == "ADAPTIVE_MKT":
             if "|UNDER_DELTA" in order_ref:
@@ -887,7 +944,6 @@ def execute_leg(
             )
             px_str = "MKT"
 
-        ctx = f"[{context}]" if context else ""
         tprint(f"{ctx}[LEG] {symbol_u} {action} qty={remain} px={px_str} refTag={o.orderRef} clientId={ib.client.clientId}")
 
         if dry_run:
@@ -931,6 +987,23 @@ def execute_leg(
                     f"before rejection; filled_total={filled_total}"
                 )
 
+            # Precautionary 354 can arrive before adaptive is "accepted" — do not
+            # burn retries on another ADAPTIVE; go straight to LMT.
+            if is_mktdata_block(code, msg) and order_style == "ADAPTIVE_MKT":
+                mktdata_force_lmt = True
+                base = refresh_limit_reference_px()
+                tprint(
+                    f"{ctx}[LEG] {symbol_u} NOT_ACK mktdata block (code={code}); "
+                    f"LMT-only ref={base:.4f}"
+                )
+                filled2 = submit_limit_fallback(
+                    base_px=base, attempt=attempt, tag="LMT_FALLBACK", ctx=ctx,
+                )
+                filled_total = min(qty, filled_total + max(0, filled2))
+                if attempt < max_retries and filled_total < qty:
+                    ib.sleep(1.5)
+                continue
+
             tprint(f"{ctx}[LEG] {symbol_u} NOT_ACK (status={st} code={code} msg={msg}); retrying.")
             ib.sleep(1.0)
             continue
@@ -960,29 +1033,14 @@ def execute_leg(
             # Collect any partial fills from the cancelled adaptive order
             filled_total = min(qty, filled_total + max(0, filled))
             cancel_global()
-            adj = float(bps) / 10000.0
-            lmt = ref_price * (1.0 + adj) if action.upper() == "BUY" else ref_price * (1.0 - adj)
-
-            lmt_remain = qty - filled_total
-            if lmt_remain <= 0:
-                continue
-
-            o2 = build_limit_order(
-                action=action,
-                qty=lmt_remain,
-                lmt_price=lmt,
-                order_ref=f"{order_ref}|att{attempt}|LMT_FALLBACK",
+            mktdata_force_lmt = True
+            # Refresh anchor — stale plan ref_price is a common reason LMT sits
+            # far from the touch after a 354.
+            base = refresh_limit_reference_px()
+            tprint(f"{ctx}[LEG] {symbol_u} mktdata cancelled (code={code}); LMT fallback ref={base:.4f}")
+            filled2 = submit_limit_fallback(
+                base_px=base, attempt=attempt, tag="LMT_FALLBACK", ctx=ctx,
             )
-            tprint(f"{ctx}[LEG] {symbol_u} fallback LMT @ {lmt:.4f} (code={code})")
-
-            trade2 = ib.placeOrder(contract, o2)
-            last_trade_local = trade2
-
-            _ok2, trade2 = wait_for_trade_accepted(ib, trade2, timeout=accept_timeout)
-            trade2 = wait_for_trade_terminal(ib, trade2, timeout=done_timeout)
-            last_trade_local = trade2
-
-            filled2 = int(trade2.orderStatus.filled or 0)
             filled_total = min(qty, filled_total + max(0, filled2))
             continue
 
