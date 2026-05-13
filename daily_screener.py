@@ -1560,7 +1560,7 @@ def apply_sub2_borrow_floor(
 # by ``recompute_purgatory_by_bucket`` (purgatory) and ``generate_trade_plan``
 # (new-entry caps = ``entry_borrow_cap``).
 _FALLBACK = {
-    "min_shares_available": 1000,
+    "min_shares_available": 10,
     "min_beta_days": 30,
     "borrow_floor_price_usd": 2.0,
 }
@@ -1727,7 +1727,7 @@ def recompute_purgatory_by_bucket(
     # No-locate purgatory: positive screener evidence that we cannot short
     # this ETF (zero shares offered or missing from the FTP feed entirely).
     # ``screen_universe`` already stamps ``exclude_no_shares`` from
-    # ``shares_available < min_shares_available`` (default 1000 sh), and
+    # ``shares_available < min_shares_available`` (default 10 sh), and
     # ``borrow_missing_from_ftp`` is True when IBKR FTP did not list the
     # symbol at screener-pull time. Either is sufficient for keep-open
     # semantics; both are individually configurable.

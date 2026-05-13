@@ -95,13 +95,15 @@ screener:
   purgatory_net_edge_max_annual: 0.05
   # No-locate purgatory: keep-open semantics (no new entry) for ETFs that the
   # daily IBKR FTP feed says we cannot short. ``exclude_no_shares`` fires when
-  # ``shares_available < min_shares_available`` (default 1000 sh);
+  # ``shares_available < min_shares_available`` (default 10 sh; set explicitly below);
   # ``borrow_missing_from_ftp`` fires when the symbol was absent from the FTP
   # feed at screener pull time. Either is sufficient — both default ON.
   # Toggling either to false reverts to legacy behaviour for that signal only.
   no_locate_purgatory:
     exclude_no_shares: true
     borrow_missing_from_ftp: true
+  # Minimum IBKR FTP ``shares_available`` to treat as shortable (``exclude_no_shares``).
+  min_shares_available: 10
   # Per-bucket borrow bands — the SINGLE source of truth for new-entry borrow caps
   # and purgatory keep bands used by ``daily_screener`` and ``generate_trade_plan``.
   #
