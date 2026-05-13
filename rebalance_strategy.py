@@ -57,9 +57,10 @@ from execute_trade_plan import (
     load_baseline_qty, current_ib_positions, strategy_position_only,
     target_shares_from_usd, fmt_dollars,
     # Screened data helpers
-    build_borrow_by_etf, build_purgatory_set,
+    build_borrow_by_etf, build_purgatory_set, build_screener_avail_by_etf,
     # Short availability
     fetch_ibkr_short_availability_map, is_short_not_available,
+    is_short_unavailable_now,
     # Cleanup (Phase 1)
     build_cleanup_trades_to_match_plan, print_cleanup_trade_list,
     build_contract_cache, execute_cleanup_trades_parallel,
@@ -386,6 +387,7 @@ def _establish_worker(
     max_retries: int,
     dry_run: bool,
     short_map: Dict[str, dict],
+    screener_avail_map: Dict[str, int],
     cancel_service: CoordinatorCancelService,
     log_exposure_event,
     short_first: bool,  # retained for back-compat; bucket model always
@@ -472,10 +474,12 @@ def _establish_worker(
             if stop_requested():
                 break
 
-            sm    = short_map.get(etf, {})
-            avail = sm.get("available")
-            if avail is not None and avail <= 0:
-                tprint(f"[ESTABLISH][{under}] SKIP {etf}: FTP available=0.")
+            blocked, why = is_short_unavailable_now(
+                etf, short_map=short_map, screener_avail_map=screener_avail_map,
+            )
+            if blocked:
+                src = "FTP available=0" if why == "ftp_avail0" else "screener shares_available<=0"
+                tprint(f"[ESTABLISH][{under}] SKIP {etf}: {src}.")
                 total_short_requested_sh += int(qty)
                 local_fills.append({
                     "filled_at": now, "run_date": run_date,
@@ -487,7 +491,7 @@ def _establish_worker(
                     "target_sh_etf":   qty,
                     "delta_sh_under": 0, "delta_sh_etf": -qty,
                     "filled_sh_under": 0, "filled_sh_etf": 0,
-                    "notes": f"SKIP_FTP_AVAIL0 wants_short={qty}",
+                    "notes": f"SKIP_NO_LOCATE_{why.upper()} wants_short={qty}",
                 })
                 continue
 
@@ -561,12 +565,14 @@ def _establish_worker(
                 f"{fill_ratio:.1%}: {target_under_abs_sh} -> {scaled_qty} shares."
             )
 
-        # FTP gate for SELL underlying (B4-net or B4-only buckets).
+        # No-locate gate for SELL underlying (B4-net or B4-only buckets).
         if under_action == "SELL":
-            sm    = short_map.get(under, {})
-            avail = sm.get("available")
-            if avail is not None and avail <= 0:
-                tprint(f"[ESTABLISH][{under}] SKIP underlying SELL: FTP available=0.")
+            blocked, why = is_short_unavailable_now(
+                under, short_map=short_map, screener_avail_map=screener_avail_map,
+            )
+            if blocked:
+                src = "FTP available=0" if why == "ftp_avail0" else "screener shares_available<=0"
+                tprint(f"[ESTABLISH][{under}] SKIP underlying SELL: {src}.")
                 return local_fills
 
         etfs_str = ",".join(sorted({norm_sym(str(l["etf"])) for l in etf_legs})) or "(none)"
@@ -623,6 +629,7 @@ def execute_establish_parallel(
     dry_run: bool,
     parallel_n: int,
     short_map: Dict[str, dict],
+    screener_avail_map: Dict[str, int],
     cancel_service: CoordinatorCancelService,
     log_exposure_event,
     short_first: bool,
@@ -662,6 +669,7 @@ def execute_establish_parallel(
                 strategy_tag=strategy_tag, run_date=run_date,
                 limit_bps=limit_bps, timeout=timeout, max_retries=max_retries,
                 dry_run=dry_run, short_map=short_map,
+                screener_avail_map=screener_avail_map,
                 cancel_service=cancel_service,
                 log_exposure_event=log_exposure_event,
                 short_first=short_first, log_lock=log_lock,
@@ -841,6 +849,7 @@ def resolve_hedge_leg(
     etf_to_beta: Dict[str, float],
     plan: pd.DataFrame,
     short_map: Optional[Dict[str, dict]] = None,
+    screener_avail_map: Optional[Dict[str, int]] = None,
     blocked_short_etfs: Optional[Set[str]] = None,
 ) -> Tuple[Optional[str], str, int, float]:
     """
@@ -896,6 +905,14 @@ def resolve_hedge_leg(
             qty = int(math.floor(abs(correction_usd) / (px * beta)))
             if qty <= 0:
                 continue
+            # Combined no-locate gate (FTP avail + screener shares_available).
+            blocked, why = is_short_unavailable_now(
+                etf, short_map=short_map, screener_avail_map=screener_avail_map,
+            )
+            if blocked:
+                src = "FTP available=0" if why == "ftp_avail0" else "screener shares_available<=0"
+                tprint(f"[HEDGE][{underlying}] {etf} {src}; skipping.")
+                continue
             # Cap to FTP available shares so we don't attempt more than
             # the borrow desk can supply.  The remaining imbalance will be
             # caught on the next hedge pass.
@@ -903,9 +920,6 @@ def resolve_hedge_leg(
                 avail = (short_map.get(etf) or {}).get("available")
                 if avail is not None and avail > 0:
                     qty = min(qty, int(avail))
-                elif avail is not None and avail <= 0:
-                    tprint(f"[HEDGE][{underlying}] {etf} FTP available=0; skipping.")
-                    continue
             if qty <= 0:
                 continue
             return etf, "SELL", qty, px
@@ -940,6 +954,7 @@ def build_hedge_trades(
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
     short_map: Optional[Dict[str, dict]] = None,
+    screener_avail_map: Optional[Dict[str, int]] = None,
     blocked_short_etfs: Optional[Set[str]] = None,
     flow_etfs: Optional[Set[str]] = None,
     blacklist: Optional[Set[str]] = None,
@@ -1159,6 +1174,7 @@ def build_hedge_trades(
             strat_pos=strat_pos, prices=prices,
             etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
             plan=hedgeable_plan, short_map=short_map,
+            screener_avail_map=screener_avail_map,
             blocked_short_etfs=blocked_short_etfs,
         )
         if symbol is None or qty <= 0:
@@ -1219,6 +1235,7 @@ def execute_hedge_pass_serial(
     max_retries: int,
     dry_run: bool,
     short_map: Dict[str, dict],
+    screener_avail_map: Dict[str, int],
     cancel_service: CoordinatorCancelService,
     log_exposure_event,
     long_trigger_net_pct: float,
@@ -1314,13 +1331,15 @@ def execute_hedge_pass_serial(
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         px_under = float(prices.get(under) or 0.0)
 
-        # FTP gate for new shorts (ETF only — selling an existing
+        # No-locate gate for new shorts (ETF only — selling an existing
         # underlying long is not a short sale)
         if action == "SELL" and symbol != under:
-            sm    = short_map.get(symbol, {})
-            avail = sm.get("available")
-            if avail is not None and avail <= 0:
-                tprint(f"[HEDGE][{under}] SKIP {symbol}: FTP available=0.")
+            blocked, why = is_short_unavailable_now(
+                symbol, short_map=short_map, screener_avail_map=screener_avail_map,
+            )
+            if blocked:
+                src = "FTP available=0" if why == "ftp_avail0" else "screener shares_available<=0"
+                tprint(f"[HEDGE][{under}] SKIP {symbol}: {src}.")
                 fill_records.append({
                     "filled_at": now, "run_date": run_date,
                     "strategy_tag": strategy_tag,
@@ -1330,7 +1349,7 @@ def execute_hedge_pass_serial(
                     "target_sh_under": 0, "target_sh_etf": 0,
                     "delta_sh_under": 0, "delta_sh_etf": -qty,
                     "filled_sh_under": 0, "filled_sh_etf": 0,
-                    "notes": "HEDGE_SKIP_FTP_AVAIL0",
+                    "notes": f"HEDGE_SKIP_NO_LOCATE_{why.upper()}",
                 })
                 continue
 
@@ -1429,6 +1448,7 @@ def _hedge_worker(
     max_retries: int,
     dry_run: bool,
     short_map: Dict[str, dict],
+    screener_avail_map: Dict[str, int],
     cancel_service: CoordinatorCancelService,
     log_exposure_event,
     long_trigger_net_pct: float,
@@ -1542,24 +1562,34 @@ def _hedge_worker(
                     )
                     return [], False, True
 
-            # Apply FTP cap on re-computed qty (ETF shorts only)
-            if action == "SELL" and short_map and symbol != under:
-                avail = (short_map.get(symbol) or {}).get("available")
-                if avail is not None and avail > 0:
-                    qty = min(qty, int(avail))
+            # Apply no-locate gate + FTP cap on re-computed qty (ETF shorts only)
+            if action == "SELL" and symbol != under:
+                blocked, why = is_short_unavailable_now(
+                    symbol, short_map=short_map, screener_avail_map=screener_avail_map,
+                )
+                if blocked:
+                    src = "FTP available=0" if why == "ftp_avail0" else "screener shares_available<=0"
+                    tprint(f"[HEDGE][{under}] {symbol} {src} on re-verify; skipping.")
+                    return [], False, True
+                if short_map:
+                    avail = (short_map.get(symbol) or {}).get("available")
+                    if avail is not None and avail > 0:
+                        qty = min(qty, int(avail))
 
             tprint(f"[HEDGE][{under}] Re-verified: correction={correction_now:+,.0f} -> qty={qty}")
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         px_under = float(prices.get(under) or 0.0)
 
-        # FTP gate for new shorts (ETF only — selling an existing
+        # No-locate gate for new shorts (ETF only — selling an existing
         # underlying long is not a short sale)
         if action == "SELL" and symbol != under:
-            sm    = short_map.get(symbol, {})
-            avail = sm.get("available")
-            if avail is not None and avail <= 0:
-                tprint(f"[HEDGE][{under}] SKIP {symbol}: FTP available=0.")
+            blocked, why = is_short_unavailable_now(
+                symbol, short_map=short_map, screener_avail_map=screener_avail_map,
+            )
+            if blocked:
+                src = "FTP available=0" if why == "ftp_avail0" else "screener shares_available<=0"
+                tprint(f"[HEDGE][{under}] SKIP {symbol}: {src}.")
                 return [{
                     "filled_at": now, "run_date": run_date,
                     "strategy_tag": strategy_tag,
@@ -1569,7 +1599,7 @@ def _hedge_worker(
                     "target_sh_under": 0, "target_sh_etf": 0,
                     "delta_sh_under": 0, "delta_sh_etf": -qty,
                     "filled_sh_under": 0, "filled_sh_etf": 0,
-                    "notes": "HEDGE_SKIP_FTP_AVAIL0",
+                    "notes": f"HEDGE_SKIP_NO_LOCATE_{why.upper()}",
                 }], False, True
 
         # Log pre-hedge state
@@ -1667,6 +1697,7 @@ def execute_hedge_pass_parallel(
     dry_run: bool,
     parallel_n: int,
     short_map: Dict[str, dict],
+    screener_avail_map: Dict[str, int],
     cancel_service: CoordinatorCancelService,
     log_exposure_event,
     long_trigger_net_pct: float,
@@ -1720,6 +1751,7 @@ def execute_hedge_pass_parallel(
                 strategy_tag=strategy_tag, run_date=run_date,
                 limit_bps=limit_bps, timeout=timeout, max_retries=max_retries,
                 dry_run=dry_run, short_map=short_map,
+                screener_avail_map=screener_avail_map,
                 cancel_service=cancel_service,
                 log_exposure_event=log_exposure_event,
                 long_trigger_net_pct=long_trigger_net_pct,
@@ -2373,8 +2405,15 @@ def main() -> None:
     screened["ETF"]        = screened["ETF"].astype(str).map(norm_sym)
     screened["Underlying"] = screened["Underlying"].astype(str).map(norm_sym)
 
-    purgatory_etfs = build_purgatory_set(screened)
-    borrow_by_etf  = build_borrow_by_etf(screened)
+    purgatory_etfs       = build_purgatory_set(screened)
+    borrow_by_etf        = build_borrow_by_etf(screened)
+    screener_avail_map   = build_screener_avail_by_etf(screened)
+    n_screener_no_locate = sum(1 for v in screener_avail_map.values() if v <= 0)
+    tprint(
+        f"[SHORT] Screener shares_available map: {len(screener_avail_map)} ETFs "
+        f"({n_screener_no_locate} with shares_available<=0; treated as no-locate "
+        f"by pre-submit gates)."
+    )
 
     # Build ETF -> underlying + beta maps from screened CSV
     _etf_to_under_raw, _etf_to_beta_raw = load_etf_beta_map(screened_csv)
@@ -2575,7 +2614,9 @@ def main() -> None:
                     strategy_tag=strategy_tag, run_date=run_date,
                     limit_bps=limit_bps, timeout=timeout, max_retries=max_retries,
                     dry_run=dry_run, parallel_n=parallel_n,
-                    short_map=short_map, cancel_service=cancel_service,
+                    short_map=short_map,
+                    screener_avail_map=screener_avail_map,
+                    cancel_service=cancel_service,
                     log_exposure_event=log_exposure_event,
                     short_first=short_first, log_lock=log_lock,
                 )
@@ -2702,6 +2743,7 @@ def main() -> None:
                         ib=ib,
                         trades=resize_trades,
                         short_map=short_map,
+                        screener_avail_map=screener_avail_map,
                         blocked_short_etfs=blocked_short_etfs,
                         exec_cfg=exec_cfg,
                         strategy_tag=strategy_tag,
@@ -2865,6 +2907,7 @@ def main() -> None:
                     min_trade_usd=min_trade_usd,
                     etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                     short_map=short_map,
+                    screener_avail_map=screener_avail_map,
                     blocked_short_etfs=blocked_short_etfs,
                     flow_etfs=flow_etfs,
                     blacklist=blacklist,
@@ -2918,7 +2961,9 @@ def main() -> None:
                         strategy_tag=strategy_tag, run_date=run_date,
                         limit_bps=limit_bps, timeout=timeout, max_retries=max_retries,
                         dry_run=dry_run, parallel_n=parallel_n,
-                        short_map=short_map, cancel_service=cancel_service,
+                        short_map=short_map,
+                        screener_avail_map=screener_avail_map,
+                        cancel_service=cancel_service,
                         log_exposure_event=log_exposure_event,
                         long_trigger_net_pct=long_trigger_net_pct,
                         short_trigger_net_pct=short_trigger_net_pct,
@@ -2965,6 +3010,7 @@ def main() -> None:
                         min_trade_usd=min_trade_usd,
                         etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                         short_map=short_map,
+                        screener_avail_map=screener_avail_map,
                         blocked_short_etfs=blocked_short_etfs,
                         flow_etfs=flow_etfs,
                         blacklist=blacklist,
@@ -2993,7 +3039,9 @@ def main() -> None:
                             strategy_tag=strategy_tag, run_date=run_date,
                             limit_bps=limit_bps, timeout=timeout, max_retries=max_retries,
                             dry_run=dry_run, parallel_n=parallel_n,
-                            short_map=short_map, cancel_service=cancel_service,
+                            short_map=short_map,
+                            screener_avail_map=screener_avail_map,
+                            cancel_service=cancel_service,
                             log_exposure_event=log_exposure_event,
                             long_trigger_net_pct=long_trigger_net_pct,
                             short_trigger_net_pct=short_trigger_net_pct,
@@ -3032,6 +3080,7 @@ def main() -> None:
                     min_trade_usd=min_trade_usd,
                     etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
                     short_map=short_map,
+                    screener_avail_map=screener_avail_map,
                     blocked_short_etfs=blocked_short_etfs,
                     flow_etfs=flow_etfs,
                     blacklist=blacklist,
@@ -3091,7 +3140,9 @@ def main() -> None:
                         limit_bps=limit_bps, timeout=timeout,
                         max_retries=max_retries,
                         dry_run=dry_run, parallel_n=parallel_n,
-                        short_map=short_map, cancel_service=cancel_service,
+                        short_map=short_map,
+                        screener_avail_map=screener_avail_map,
+                        cancel_service=cancel_service,
                         log_exposure_event=log_exposure_event,
                         long_trigger_net_pct=long_trigger_net_pct,
                         short_trigger_net_pct=short_trigger_net_pct,

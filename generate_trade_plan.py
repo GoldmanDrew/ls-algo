@@ -10,6 +10,8 @@ Implements:
     * Post-B4 gross is split vs ``yieldboost`` using normalized ``target_weight`` on each sleeve.
 - ``yieldboost`` sleeve: bucket‑2 / YieldBoost only (`is_yieldboost`), gated by
   ``portfolio.sleeves.yieldboost.rules.min_net_edge_annual`` on ``net_edge_p50_annual``.
+  Stock sleeves do **not** apply a blanket ``net_decay_annual >= 0`` rule; core may still use
+  ``min_net_decay_annual`` / hysteresis from YAML.
 
 - Bucket 4: ``inverse_decay_bucket4`` unchanged.
 
@@ -139,7 +141,6 @@ def _core_net_decay_gate_for_core(
     *,
     core_pre_decay: pd.Series,
     core_neg_decay_reset: pd.Series,
-    net_decay_non_negative: pd.Series,
     core_rules: dict,
     state_path: Path,
     run_date: str,
@@ -149,9 +150,8 @@ def _core_net_decay_gate_for_core(
     ``core_neg_decay_reset``: structural core shape (beta, borrow) but **negative** net decay —
     clears that ETF's sticky flag so a later recovery requires the enter threshold again.
 
-    Only rows satisfying ``core_pre_decay`` (structural core candidate + non-negative decay) can
-    be gated off; all other rows return pass-through True so non-core rows do not corrupt
-    sticky state.
+    Only rows satisfying ``core_pre_decay`` (structural core candidate) can be gated off; all
+    other rows return pass-through True so non-core rows do not corrupt sticky state.
 
     - If hysteresis disabled and min_net_decay_annual <= 0: all-True.
     - If hysteresis disabled and min_net_decay_annual > 0: require finite net_decay >= min on
@@ -198,9 +198,7 @@ def _core_net_decay_gate_for_core(
         prev = prev_entry.get("sticky_in") if isinstance(prev_entry, dict) else None
         prev_on = prev is True
 
-        if not bool(net_decay_non_negative.loc[idx]):
-            raw = False
-        elif not np.isfinite(v):
+        if not np.isfinite(v):
             raw = prev_on
         elif prev_on:
             raw = bool(v >= exit_b)
@@ -1486,8 +1484,8 @@ def main() -> None:
         is_yieldboost, in_b2_universe, in_flow_program = _b2_b4_universe_masks(
             eligible, flow_program_etfs=flow_program_etfs
         )
-        # Hard rule: negative net decay names are excluded from stock sleeve.
-        net_decay_non_negative = ~(eligible["net_decay_annual"] < 0)
+        nd_annual = pd.to_numeric(eligible["net_decay_annual"], errors="coerce")
+        neg_net_decay = nd_annual < 0
 
         b = eligible["borrow_annual"]
         core_borrow_ok = (~np.isfinite(b)) | (b <= b1_entry_borrow_cap)
@@ -1518,20 +1516,18 @@ def main() -> None:
             positive_beta
             & eligible["beta_abs"].ge(core_beta_min)
             & core_borrow_ok
-            & net_decay_non_negative
         )
         core_neg_decay_reset = (
             positive_beta
             & eligible["beta_abs"].ge(core_beta_min)
             & core_borrow_ok
-            & ~net_decay_non_negative
+            & neg_net_decay
         )
         try:
             core_decay_gate = _core_net_decay_gate_for_core(
                 eligible,
                 core_pre_decay=core_pre_decay,
                 core_neg_decay_reset=core_neg_decay_reset,
-                net_decay_non_negative=net_decay_non_negative,
                 core_rules=core_rules,
                 state_path=core_decay_state_path,
                 run_date=args.run_date,
@@ -1546,7 +1542,6 @@ def main() -> None:
             & ~in_flow_program
             & yb_borrow_ok
             & yieldboost_edge_ok
-            & net_decay_non_negative
         )
 
         n_b2_yb_rows = int(in_b2_universe.sum())
@@ -1586,9 +1581,6 @@ def main() -> None:
         b4_names = eligible.loc[eligible["in_b4"]].copy()
         if not b4_enabled:
             b4_names = eligible.loc[[]].copy()
-        n_neg_decay_excluded = int((~net_decay_non_negative).sum())
-        if n_neg_decay_excluded:
-            print(f"[INFO] Excluded {n_neg_decay_excluded} names with negative net_decay_annual from stock sleeves.")
         n_core_decay_blocked = int((core_pre_decay & ~core_decay_gate).sum())
         if n_core_decay_blocked:
             print(

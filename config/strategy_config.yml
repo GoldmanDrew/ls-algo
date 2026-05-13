@@ -11,7 +11,7 @@ accounting:
 
 strategy:
   tag: ETF_LS
-  capital_usd: 800000
+  capital_usd: 80000
   gross_leverage: 4
   blacklist:
     - JPM
@@ -25,11 +25,11 @@ strategy:
     enabled: true
     max_pair_weight_cap: 0.10
     max_underlying_weight_cap: 0.15
-    aum_use_pct: 0.25
+    aum_use_pct: 0.5
     short_avail_use_pct: 1.00
-    missing_shares_cap: 0.20
-    shares_outstanding_use_frac: 0.25
-    median_daily_volume_use_pct: 0.25
+    missing_shares_cap: 0.15
+    shares_outstanding_use_frac: 0.35
+    median_daily_volume_use_pct: 0.3
     # Stability #2: per-pair weight hysteresis (production only — defaults disable it).
     weight_hysteresis_abs: 0.0       # snap to prior gross when |delta| <= abs * sum(gross), e.g. 0.005
     weight_hysteresis_rel: 0.0       # OR |delta| <= rel * prev, e.g. 0.10
@@ -90,30 +90,35 @@ execution:
   market_done_timeout_sec: 180         # terminal-state timeout for ADAPTIVE_MKT legs
 
 screener:
-  # Diagnostic-only globals. Stamp diagnostic columns inside ``screen_universe``;
-  # authoritative purgatory is recomputed per row in
-  # ``daily_screener.recompute_purgatory_by_bucket`` using ``per_bucket`` below.
-  # These globals do NOT gate generate_trade_plan or rebalance_strategy decisions.
-  borrow_low: 0.55                  # diagnostic
-  purgatory_margin: 0.25            # diagnostic
-  hard_borrow_cap: 0.75             # diagnostic
   # Authoritative net-edge soft-purgatory band (read by ``recompute_purgatory_by_bucket``).
   # With borrow OK, ``net_edge_p50_annual`` must exceed this to avoid purgatory.
   purgatory_net_edge_max_annual: 0.05
+  # No-locate purgatory: keep-open semantics (no new entry) for ETFs that the
+  # daily IBKR FTP feed says we cannot short. ``exclude_no_shares`` fires when
+  # ``shares_available < min_shares_available`` (default 1000 sh);
+  # ``borrow_missing_from_ftp`` fires when the symbol was absent from the FTP
+  # feed at screener pull time. Either is sufficient — both default ON.
+  # Toggling either to false reverts to legacy behaviour for that signal only.
+  no_locate_purgatory:
+    exclude_no_shares: true
+    borrow_missing_from_ftp: true
+  # Per-bucket borrow bands — the SINGLE source of truth for new-entry borrow caps
+  # and purgatory keep bands used by ``daily_screener`` and ``generate_trade_plan``.
+  #
+  # Per row (after bucket assignment), ``recompute_purgatory_by_bucket`` flags
+  # the row as purgatory when:
+  #   entry_borrow_cap < borrow_current <= keep_borrow_cap
   per_bucket:
     bucket_1:
-      borrow_low: 0.55            # new exposure when borrow cost <= this
-      purgatory_margin: 0.25      # hold band through min(low+margin, hard)
-      hard_borrow_cap: 0.75       # force-exit / no new adds above this borrow cost
+      entry_borrow_cap: 0.55      # new B1 exposure when borrow cost <= this
+      keep_borrow_cap: 0.75       # keep-open purgatory band ends above this borrow cost
     bucket_2:
-      borrow_low: 0.20
-      purgatory_margin: 0.15
-      hard_borrow_cap: 0.35
+      entry_borrow_cap: 0.20
+      keep_borrow_cap: 0.35
     bucket_4:
-      borrow_low: 1.00
-      purgatory_margin: 0.20
-      hard_borrow_cap: 1.20
-  min_beta_days: 5
+      entry_borrow_cap: 0.90
+      keep_borrow_cap: 1.20
+  min_beta_days: 30
   max_stale_days: 5             # drop ETFs with no trade in last N calendar days (delisted/liquidated)
   # Vol-ratio data-quality gate. ``vol_ratio_value = vol_etf / (|β| · vol_und)``;
   # an ETF with Beta=2 should sit near 1.0. Outliers (e.g. unhandled reverse
@@ -133,12 +138,17 @@ screener:
 portfolio:
   # Rebalance thresholds used by rebalance_strategy.py and harvest_underexposed_shorts.py.
   rebalance:
-    min_trade_usd: 200            # skip deltas below $200
-    net_trigger_long_pct: 0.02    # trigger when net long > 2% of gross
-    net_trigger_short_pct: 0.01   # trigger when net short > 1% of gross
-    net_target_long_pct: 0.01     # correct net-long to 1% (50% hedge-back)
-    net_target_short_pct: 0.00    # correct net-short to 0% (full flat)
-    establish_threshold_usd: 100.0  # rebalance_strategy: skip Phase 2 if position already > $100
+    min_trade_usd: 250            # skip deltas below $250
+    # Phase 3 hedge rule: compare beta-adjusted net exposure to gross exposure.
+    # Trigger is when to act; target is where to stop after acting.
+    hedge:
+      too_long:
+        trigger_net_pct: 0.04     # trigger when net long > 4% of gross
+        target_net_pct: 0.01      # hedge back to +1%, not fully flat
+      too_short:
+        trigger_net_pct: 0.01     # trigger when net short > 1% of gross
+        target_net_pct: 0.00      # hedge back to flat
+    establish_threshold_usd: 1000.0  # rebalance_strategy: skip Phase 2 if position already > $100
 
     # Phase 2b — Resize Existing Pairs (rebalance_strategy.py).
     # Bidirectional leg-by-leg trim/grow toward plan USD targets, gated
@@ -153,10 +163,10 @@ portfolio:
     # B4 pairs where percentage bands fall below transaction costs.
     resize:
       enabled: true
-      enter_band_pct: 0.05        # trigger when leg notional drifts >15% from target
-      exit_band_pct: 0.02         # trim/grow until within 5% (hysteresis)
+      enter_band_pct: 0.12        # trigger when leg notional drifts >12% from target
+      exit_band_pct: 0.04         # trim/grow until within 4% (hysteresis)
       min_trim_usd: 250           # absolute floor for SELL/BTC trades
-      min_grow_usd: 250           # absolute floor for BUY/grow-short trades
+      min_grow_usd: 250          # absolute floor for BUY/grow-short trades
 
     # Phase 2b — Stage 2 tax routing (tax_router.py).
     # When enabled, TRIM trades (SELL on long leg, BUY-to-cover on short leg)
@@ -222,21 +232,16 @@ portfolio:
     margin_efficiency_power: 0.5     # favour 2x over 3x: score x (1/|B|)^0.5
     # --- Iteration knobs (defaults are no-ops; flip per sleeve to test) -----
     score_concavity_p: 2           # Candidate A: <1 flattens the top tail (try 0.85 / 0.90)
-    sigma_aware_sizing: false        # Candidate B: requires pair_sigma_map at call site
-    sigma_aware_floor: 0.25
-    sigma_aware_min_mult: 0.5
-    sigma_aware_max_mult: 2.0
-    score_ema_rho: 0.0               # Stability #1: 0 disables; production: 0.3 / 0.5 / 0.7
 
   sleeves:
     core_leveraged:
       # Share of gross after inverse_decay_bucket4, split vs ``yieldboost`` (normalized together).
-      target_weight: 0.475
+      target_weight: 0.48
       rules:
         min_beta_used: 1.50
         # Core = accounting bucket-1 style levered longs. Optional net-decay floor (annual fraction).
         # If min_net_decay_annual > 0: ALWAYS enforced (hard cap) even when hysteresis is ON — no bypass.
-        # With hysteresis OFF: require net_decay_annual >= min_net_decay_annual (still never < 0).
+        # With hysteresis OFF: require net_decay_annual >= min_net_decay_annual when min > 0.
         # With hysteresis ON: persist per-ETF sticky flag in core_leveraged_decay_state_json — enter
         # only when decay >= enter_above; once in, stay until decay < exit_below (enter_above > exit_below).
         min_net_decay_annual: 0.06
@@ -265,24 +270,23 @@ portfolio:
         <<: *weighting_defaults
         max_name_weight: 0.20
         eq_blend: 0.02
-        borrow_aversion: 0.3
-        score_concavity_p: 1
+        borrow_aversion: 0.45
+        score_concavity_p: 1.5
 
     inverse_decay_bucket4:
       enabled: true                  # sleeve split vs stock: inverse_decay_bucket4.target_weight remainder → stock
-      target_weight: 0.025
+      target_weight: 0.02
       # B4 universe = every inverse (β<0, ``inverse_shortable``) ticker in the screener,
       # MINUS ``rules.excluded_etfs`` (per-name overrides like KOLD)
       # MINUS ``flow_program.universe.shorts`` (those are sized in the weekly flow sleeve).
       rules:
         partial_hedge_ratio: 0.8      # 1.0 = fully hedge inverse beta exposure
-        min_net_edge_annual: 0.25      # require bucket4_net_edge_annual >= this
-        min_underlying_vol: 0.45      # universe entry: annual vol floor (aligned with DCQ bucket_4)
-        bucket4_borrow_cap: 0.90      # v16 selected B4 max annual borrow (decimal)
+        min_net_edge_annual: 0.3      # require bucket4_net_edge_annual >= this
+        min_underlying_vol: 0.4      # universe entry: annual vol floor (aligned with DCQ bucket_4)
         excluded_etfs:                # never allocate inverse_decay_bucket4 to these tickers
           - KOLD
           - SCO
-        max_shares_outstanding_frac: 0.25
+        max_shares_outstanding_frac: 0.3
       weighting:
         <<: *weighting_defaults
         max_name_weight: 0.18

@@ -51,11 +51,12 @@ def _block_bootstrap_annual_gross_draws(
     n_boot: int = _BOOT_N,
     block_len: int = _BLOCK_LEN_DEFAULT,
     seed: int = 42,
+    min_days: int = _MIN_DAYS_DECAY,
 ) -> np.ndarray | None:
     """Return length-`n_boot` array of annualized gross from block-resampled mean(drag)*252."""
     x = np.asarray(daily_drag, dtype=float)
     t = int(x.size)
-    if t < _MIN_DAYS_DECAY:
+    if t < int(min_days):
         return None
     b = min(block_len, max(5, t // 5))
     n_blocks = int(np.ceil(t / b))
@@ -74,11 +75,16 @@ def _block_bootstrap_annual_gross(
     n_boot: int = _BOOT_N,
     block_len: int = _BLOCK_LEN_DEFAULT,
     seed: int = 42,
+    min_days: int = _MIN_DAYS_DECAY,
 ) -> tuple[float, float, float, float] | None:
     """Return (p05, p50, p95, mean) of *annualized* gross from resampled mean(drag)*252."""
     x = np.asarray(daily_drag, dtype=float)
     draws = _block_bootstrap_annual_gross_draws(
-        x, n_boot=n_boot, block_len=block_len, seed=seed
+        x,
+        n_boot=n_boot,
+        block_len=block_len,
+        seed=seed,
+        min_days=min_days,
     )
     if draws is None:
         return None
@@ -350,8 +356,9 @@ def _gross_edge_definition(
     realized_ok: bool,
     *,
     is_yieldboost: bool = False,
+    min_days: int = _MIN_DAYS_DECAY,
 ) -> str:
-    if n_obs < _MIN_DAYS_DECAY or not realized_ok:
+    if n_obs < int(min_days) or not realized_ok:
         return "expected_only"
     if is_yieldboost:
         # YieldBOOST income strategies: blend realized log-drag with the
@@ -513,6 +520,7 @@ def enrich_screener_v2_fields(
             beta,
             realized_ok and n_obs >= min_days,
             is_yieldboost=is_yb,
+            min_days=min_days,
         )
 
         g_real = row.get("gross_decay_annual")
@@ -566,6 +574,7 @@ def enrich_screener_v2_fields(
                 n_boot=_BOOT_N,
                 block_len=_BLOCK_LEN_DEFAULT,
                 seed=bootstrap_seed,
+                min_days=min_days,
             )
             if drag is not None
             else None

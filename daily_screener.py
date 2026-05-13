@@ -1561,7 +1561,7 @@ def apply_sub2_borrow_floor(
 # (new-entry caps = ``entry_borrow_cap``).
 _FALLBACK = {
     "min_shares_available": 1000,
-    "min_beta_days": 20,
+    "min_beta_days": 30,
     "borrow_floor_price_usd": 2.0,
 }
 
@@ -1613,11 +1613,14 @@ def recompute_purgatory_by_bucket(
     screener_cfg: dict | None,
     sleeves_cfg: dict | None,
 ) -> pd.DataFrame:
-    """After ``bucket`` is assigned, set ``purgatory`` (borrow band OR soft net edge).
+    """After ``bucket`` is assigned, set ``purgatory`` (borrow band OR soft net edge
+    OR no-locate evidence).
 
-    **Not purgatory** requires both: (1) borrow not in the per-bucket elevated band below,
-    and (2) ``net_edge_p50_annual`` > ``purgatory_net_edge_max_annual`` (default 5%),
-    when that column exists. Otherwise the row is purgatory (0 new size downstream).
+    **Not purgatory** requires all of: (1) borrow not in the per-bucket elevated band
+    below, (2) ``net_edge_p50_annual`` > ``purgatory_net_edge_max_annual`` (default 5%)
+    when that column exists, and (3) IBKR has positive evidence of a locate
+    (``shares_available >= min_shares_available`` AND ``borrow_missing_from_ftp != True``).
+    Otherwise the row is purgatory (0 new size downstream).
 
     **Hard exclusion** of negative median net edge is done in ``generate_trade_plan``
     (``net_edge_p50_annual < 0``), not via this flag.
@@ -1628,6 +1631,16 @@ def recompute_purgatory_by_bucket(
     Protected (weekly flow sleeve only): flow uses ``flow_program.rules.hard_borrow_cap``.
     Above that cap => ``protected_bad``.
     => purgatory (keep-open semantics downstream).
+
+    No-locate gating (``no_locate_purgatory``):
+      * ``exclude_no_shares=True`` → IBKR FTP reports < min_shares_available shares.
+      * ``borrow_missing_from_ftp=True`` → symbol absent from the FTP file at
+        screener time (cannot be located via the standard route).
+    Either signal flips the row into purgatory so ``generate_trade_plan`` will not
+    allocate fresh exposure to it. Existing positions retain keep-open semantics.
+    Both terms can be disabled individually via
+    ``screener.no_locate_purgatory.{exclude_no_shares,borrow_missing_from_ftp}: false``
+    (defaults to enabled).
     """
     out = screened.copy()
     sc = screener_cfg or {}
@@ -1711,7 +1724,31 @@ def recompute_purgatory_by_bucket(
     else:
         vol_ratio_purg = pd.Series(False, index=out.index)
 
-    out["purgatory"] = (borrow_purg | net_purg | vol_ratio_purg).fillna(False)
+    # No-locate purgatory: positive screener evidence that we cannot short
+    # this ETF (zero shares offered or missing from the FTP feed entirely).
+    # ``screen_universe`` already stamps ``exclude_no_shares`` from
+    # ``shares_available < min_shares_available`` (default 1000 sh), and
+    # ``borrow_missing_from_ftp`` is True when IBKR FTP did not list the
+    # symbol at screener-pull time. Either is sufficient for keep-open
+    # semantics; both are individually configurable.
+    nl_cfg = sc.get("no_locate_purgatory") or {}
+    nl_no_shares_on = bool(nl_cfg.get("exclude_no_shares", True))
+    nl_missing_ftp_on = bool(nl_cfg.get("borrow_missing_from_ftp", True))
+    no_shares = out.get(
+        "exclude_no_shares", pd.Series(False, index=out.index, dtype=bool)
+    ).fillna(False).astype(bool)
+    missing_ftp = out.get(
+        "borrow_missing_from_ftp", pd.Series(False, index=out.index, dtype=bool)
+    ).fillna(False).astype(bool)
+    no_locate_purg = pd.Series(False, index=out.index, dtype=bool)
+    if nl_no_shares_on:
+        no_locate_purg = no_locate_purg | no_shares
+    if nl_missing_ftp_on:
+        no_locate_purg = no_locate_purg | missing_ftp
+
+    out["purgatory"] = (
+        borrow_purg | net_purg | vol_ratio_purg | no_locate_purg
+    ).fillna(False)
     return out
 
 

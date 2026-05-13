@@ -45,6 +45,7 @@ from execute_trade_plan import (
     execute_leg, ExecResult,
     norm_sym, append_csv_row,
     CoordinatorCancelService,
+    is_short_unavailable_now,
 )
 
 
@@ -464,6 +465,7 @@ def execute_resize_serial(
     cancel_service: CoordinatorCancelService,
     log_exposure_event: Callable,
     short_first: bool = True,
+    screener_avail_map: Optional[Dict[str, int]] = None,
 ) -> List[Dict]:
     """
     Execute resize trades serially through the coordinator IB connection.
@@ -520,24 +522,29 @@ def execute_resize_serial(
                 })
                 continue
 
+            blocked, why = is_short_unavailable_now(
+                symbol, short_map=short_map, screener_avail_map=screener_avail_map,
+            )
+            if blocked:
+                src = "FTP available=0" if why == "ftp_avail0" else "screener shares_available<=0"
+                tprint(f"[PHASE2B][{under}/{symbol}] SKIP: {src} (wanted {qty}).")
+                fills.append({
+                    "filled_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "run_date": run_date, "strategy_tag": strategy_tag,
+                    "pair_id": f"{under}__RESIZE",
+                    "underlying": under, "etf": etf,
+                    "px_under": None, "px_etf": float(px),
+                    "target_sh_under": None, "target_sh_etf": None,
+                    "delta_sh_under": 0, "delta_sh_etf": -qty,
+                    "filled_sh_under": 0, "filled_sh_etf": 0,
+                    "notes": f"P2B_SKIP_NO_LOCATE_{why.upper()} wants_short={qty}",
+                })
+                continue
+
             sm = short_map.get(symbol, {}) or {}
             avail = sm.get("available")
             if avail is not None:
                 avail = int(avail)
-                if avail <= 0:
-                    tprint(f"[PHASE2B][{under}/{symbol}] SKIP: FTP available=0 (wanted {qty}).")
-                    fills.append({
-                        "filled_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "run_date": run_date, "strategy_tag": strategy_tag,
-                        "pair_id": f"{under}__RESIZE",
-                        "underlying": under, "etf": etf,
-                        "px_under": None, "px_etf": float(px),
-                        "target_sh_under": None, "target_sh_etf": None,
-                        "delta_sh_under": 0, "delta_sh_etf": -qty,
-                        "filled_sh_under": 0, "filled_sh_etf": 0,
-                        "notes": f"P2B_SKIP_FTP_AVAIL0 wants_short={qty}",
-                    })
-                    continue
                 if avail < qty:
                     capped_qty = avail
                     tprint(

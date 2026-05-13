@@ -292,7 +292,8 @@ def mirror_generate_trade_plan_sizing(
         eligible, flow_program_etfs=flow_program_etfs
     )
 
-    net_decay_non_negative = ~(eligible["net_decay_annual"] < 0)
+    nd_annual = pd.to_numeric(eligible["net_decay_annual"], errors="coerce")
+    neg_net_decay = nd_annual < 0
     b = eligible["borrow_annual"]
     core_borrow_ok = (~np.isfinite(b)) | (b <= b1_entry_borrow_cap)
     yb_borrow_ok = (~np.isfinite(b)) | (b <= b2_entry_borrow_cap)
@@ -315,18 +316,15 @@ def mirror_generate_trade_plan_sizing(
     b4_und_vol = pd.to_numeric(eligible.get("vol_underlying_annual"), errors="coerce")
     b4_vol_ok = np.isfinite(b4_und_vol) & (b4_und_vol >= b4_min_underlying_vol)
 
-    core_pre_decay = (
-        positive_beta & eligible["beta_abs"].ge(core_beta_min) & core_borrow_ok & net_decay_non_negative
-    )
+    core_pre_decay = positive_beta & eligible["beta_abs"].ge(core_beta_min) & core_borrow_ok
     core_neg_decay_reset = (
-        positive_beta & eligible["beta_abs"].ge(core_beta_min) & core_borrow_ok & ~net_decay_non_negative
+        positive_beta & eligible["beta_abs"].ge(core_beta_min) & core_borrow_ok & neg_net_decay
     )
     try:
         core_decay_gate = _core_net_decay_gate_for_core(
             eligible,
             core_pre_decay=core_pre_decay,
             core_neg_decay_reset=core_neg_decay_reset,
-            net_decay_non_negative=net_decay_non_negative,
             core_rules=core_rules,
             state_path=core_decay_state_path,
             run_date=run_date,
@@ -342,7 +340,6 @@ def mirror_generate_trade_plan_sizing(
         & ~in_flow_program
         & yb_borrow_ok
         & yieldboost_edge_ok
-        & net_decay_non_negative
     )
     b4_not_excluded = ~eligible["ETF"].isin(b4_excluded_etfs)
     eligible["in_b4"] = (

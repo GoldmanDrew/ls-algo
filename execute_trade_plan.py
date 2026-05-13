@@ -466,15 +466,59 @@ def build_limit_order(action: str, qty: int, lmt_price: float, order_ref: str) -
 TERMINAL: Set[str] = {"filled", "cancelled", "inactive"}
 ACCEPTED: Set[str] = {"presubmitted", "submitted", "filled", "pendingsubmit"}
 
+# When a 201 ("not available for short sale") rejection comes in, IB
+# transitions the order PendingSubmit → Inactive → Cancelled(errorCode=201).
+# The Inactive→Cancelled gap is small (typically < 500 ms) but the
+# errorCode=201 entry is appended only with the Cancelled event.
+#
+# A naive ``wait_for_trade_terminal`` that returns at the first TERMINAL
+# status would exit at "Inactive" with no errorCode in trade.log, so the
+# caller's ``is_short_not_available(code, msg)`` check misses, the order
+# falls into the retry path, and a *second* identical order is submitted
+# only to be rejected with the same 201. To avoid that double‑attempt,
+# we treat "Inactive" as transient and keep polling until either:
+#   * status reaches a hard terminal ("cancelled" / "filled"), OR
+#   * an errorCode (>0) gets appended to trade.log, OR
+#   * a small grace window elapses (default 1.5 s).
+INACTIVE_GRACE_SEC: float = 1.5
+HARD_TERMINAL: Set[str] = {"filled", "cancelled"}
+
+
+def _trade_has_error_code(trade: Trade) -> bool:
+    try:
+        for entry in (getattr(trade, "log", None) or []):
+            code = getattr(entry, "errorCode", None)
+            if code and int(code) != 0:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def wait_for_trade_terminal(ib: IB, trade: Trade, timeout: float = 180.0) -> Trade:
     t0 = time.time()
+    inactive_since: Optional[float] = None
     while time.time() - t0 < timeout:
         if stop_requested():
             return trade
         st = (trade.orderStatus.status or "").lower()
-        if st in TERMINAL:
+        if st in HARD_TERMINAL:
             return trade
-        ib.waitOnUpdate(timeout=0.5)
+        if st == "inactive":
+            # Resolve "inactive" only when the cause is known (errorCode
+            # logged) or after a short grace window, so the caller can
+            # distinguish 201 (do-not-retry) from a benign Inactive that
+            # later cancels.
+            now = time.time()
+            if inactive_since is None:
+                inactive_since = now
+            if _trade_has_error_code(trade):
+                return trade
+            if now - inactive_since >= INACTIVE_GRACE_SEC:
+                return trade
+        else:
+            inactive_since = None
+        ib.waitOnUpdate(timeout=0.25)
     return trade
 
 def wait_for_trade_accepted(ib: IB, trade: Trade, timeout: float = 120.0) -> Tuple[bool, Trade]:
@@ -529,6 +573,42 @@ def last_ib_error(trade: Optional[Trade]) -> Tuple[Optional[int], Optional[str]]
 def is_short_not_available(code: Optional[int], msg: Optional[str]) -> bool:
     m = (msg or "").lower()
     return (code == 201) and ("not available for short sale" in m)
+
+
+def is_short_unavailable_now(
+    symbol: str,
+    *,
+    short_map: Optional[Dict[str, dict]] = None,
+    screener_avail_map: Optional[Dict[str, int]] = None,
+) -> Tuple[bool, str]:
+    """Pre-submit "no locate" gate combining live FTP and screener evidence.
+
+    Returns ``(blocked, reason)`` where ``reason`` is one of
+    ``""``, ``"ftp_avail0"``, or ``"screener_avail0"``.
+
+    Block conditions (positive evidence only — unknown stays "allow"):
+      * FTP says ``available <= 0`` (existing behaviour).
+      * Screener-CSV ``shares_available <= 0`` for this symbol — covers
+        the FTP-missing case where ``daily_screener`` coerced NaN→0 and
+        flagged ``borrow_missing_from_ftp=True``. Without this, a symbol
+        absent from the live FTP feed (``avail=None``) would slip past
+        the check and get rejected by IB with error 201.
+
+    A symbol absent from BOTH maps is treated as "unknown → allow",
+    matching the legacy behaviour for off-plan / off-screener tickers.
+    """
+    short_map = short_map or {}
+    screener_avail_map = screener_avail_map or {}
+    sym = str(symbol or "").upper().strip()
+    if not sym:
+        return False, ""
+    avail = (short_map.get(sym) or {}).get("available")
+    if avail is not None and int(avail) <= 0:
+        return True, "ftp_avail0"
+    sc_avail = screener_avail_map.get(sym)
+    if sc_avail is not None and int(sc_avail) <= 0:
+        return True, "screener_avail0"
+    return False, ""
 
 def is_mktdata_block(code: Optional[int], msg: Optional[str]) -> bool:
     m = (msg or "").lower()
@@ -1071,6 +1151,29 @@ def build_purgatory_set(screened: pd.DataFrame) -> Set[str]:
     tmp["ETF"] = tmp["ETF"].astype(str).map(norm_sym)
     purg = tmp.loc[tmp["purgatory"] == True, "ETF"]  # noqa: E712
     return set(purg.dropna().astype(str).tolist())
+
+
+def build_screener_avail_by_etf(screened: pd.DataFrame) -> Dict[str, int]:
+    """ETF → ``shares_available`` int from the screened CSV.
+
+    ``daily_screener.screen_universe`` already coerces NaN→0 and casts to
+    int; symbols missing from the IBKR FTP file end up as 0 here. Used by
+    ``is_short_unavailable_now`` as positive screener evidence that a
+    locate is not available, even when the live FTP precheck returns
+    ``avail=None`` (symbol absent from the FTP file at rebalance time).
+    Conservative: if either column is missing, return ``{}``.
+    """
+    if "shares_available" not in screened.columns or "ETF" not in screened.columns:
+        return {}
+    tmp = screened[["ETF", "shares_available"]].copy()
+    tmp["ETF"] = tmp["ETF"].astype(str).map(norm_sym)
+    sh = pd.to_numeric(tmp["shares_available"], errors="coerce").fillna(0).astype(int)
+    out: Dict[str, int] = {}
+    for etf, val in zip(tmp["ETF"].tolist(), sh.tolist()):
+        if not etf or etf == "NAN":
+            continue
+        out[str(etf)] = int(val)
+    return out
 
 
 # =============================================================================
