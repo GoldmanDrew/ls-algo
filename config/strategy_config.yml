@@ -128,8 +128,8 @@ screener:
       entry_borrow_cap: 0.55      # new B1 exposure when borrow cost <= this
       keep_borrow_cap: 0.75       # keep-open purgatory band ends above this borrow cost
     bucket_2:
-      entry_borrow_cap: 0.20
-      keep_borrow_cap: 0.35
+      entry_borrow_cap: 0.40
+      keep_borrow_cap: 0.50
     bucket_4:
       entry_borrow_cap: 0.90
       keep_borrow_cap: 1.20
@@ -271,7 +271,7 @@ portfolio:
         realized_trust_days: 252
         max_name_weight: 0.10         # align with per-sleeve pair cap
         eq_blend: 0.0                 # v16 selected: pure score weight
-        borrow_aversion: 0.3         # v16 selected B1 borrow aversion
+        borrow_aversion: 0.25         # v16 selected B1 borrow aversion
         score_concavity_p: 2.0        # v16 selected B1 score shape
 
     yieldboost:
@@ -285,7 +285,7 @@ portfolio:
         <<: *weighting_defaults
         max_name_weight: 0.20
         eq_blend: 0.02
-        borrow_aversion: 0.45
+        borrow_aversion: 0.75
         score_concavity_p: 1.5
 
     inverse_decay_bucket4:
@@ -295,8 +295,8 @@ portfolio:
       # MINUS ``rules.excluded_etfs`` (per-name overrides like KOLD)
       # MINUS ``flow_program.universe.shorts`` (those are sized in the weekly flow sleeve).
       rules:
-        partial_hedge_ratio: 0.8      # 1.0 = fully hedge inverse beta exposure
-        min_net_edge_annual: 0.3      # require bucket4_net_edge_annual >= this
+        partial_hedge_ratio: 0.775      # 1.0 = fully hedge inverse beta exposure
+        min_net_edge_annual: 0.35      # require bucket4_net_edge_annual >= this
         min_underlying_vol: 0.4      # universe entry: annual vol floor (aligned with DCQ bucket_4)
         excluded_etfs:                # never allocate inverse_decay_bucket4 to these tickers
           - KOLD
@@ -304,8 +304,8 @@ portfolio:
         max_shares_outstanding_frac: 0.3
       weighting:
         <<: *weighting_defaults
-        max_name_weight: 0.18
-        eq_blend: 0.1
+        max_name_weight: 0.15
+        eq_blend: 0.05
         borrow_aversion: 3.0
     flow_program:
       rules:
