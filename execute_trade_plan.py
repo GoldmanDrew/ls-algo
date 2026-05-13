@@ -1334,14 +1334,67 @@ def build_contract_cache(ib: IB, symbols: List[str]) -> Dict[str, Stock]:
 # NOTE: unchanged except for being called with purgatory-safe cleanup list.
 # =============================================================================
 
-def _make_worker_pool(*, parallel_n: int, host: str, port: int, base_client_id: int) -> List[IB]:
+# ---------------------------------------------------------------------------
+# Worker-pool sizing
+# ---------------------------------------------------------------------------
+# Hard ceiling on concurrent IB API connections from this process. TWS allows
+# ~32 client IDs by default; we leave headroom for the coordinator (clientId=0
+# / cleanup base / cancel coordinator / etc.) and any operator-side tools.
+MAX_TWS_CLIENTS: int = 30
+
+
+def pick_worker_count(
+    *,
+    n_trades: int,
+    parallel_n_cfg: int,
+    hard_cap: int,
+    label: str = "",
+) -> int:
+    """Return the worker count for a phase.
+
+    Workers = ``min(parallel_n_cfg, n_trades, hard_cap, MAX_TWS_CLIENTS)``,
+    floored at 1. This guarantees we never spin up more IB connections than
+    there are trades to execute (a 1-trade cleanup uses 1 worker, not 25)
+    while still allowing each phase to scale up to its configured ceiling
+    when the work justifies it.
+
+    Emits a single ``tprint`` so the operator can see *why* the chosen
+    count was picked.
+    """
+    n = max(1, int(n_trades))
+    cfg = max(1, int(parallel_n_cfg))
+    cap = max(1, int(hard_cap))
+    chosen = min(n, cfg, cap, MAX_TWS_CLIENTS)
+    chosen = max(1, chosen)
+    tag = f"[{label}]" if label else "[WORKERS]"
+    tprint(
+        f"{tag} workers={chosen} (trades={n_trades}, cfg={parallel_n_cfg}, "
+        f"phase_cap={hard_cap}, tws_cap={MAX_TWS_CLIENTS})"
+    )
+    return chosen
+
+
+def _make_worker_pool(
+    *,
+    parallel_n: int,
+    host: str,
+    port: int,
+    base_client_id: int,
+    connect_stagger_sec: float = 0.25,
+) -> List[IB]:
+    """Open exactly ``parallel_n`` IB connections, sleeping briefly between
+    each so TWS isn't asked to accept all of them in the same tick.
+
+    ``connect_stagger_sec`` defaults to 0.25 s — at 25 workers that's a
+    ~6 s ramp-up, well within TWS's per-second client tolerance and far
+    below the default API request burst limits."""
     ibs: List[IB] = []
-    for i in range(parallel_n):
+    for i in range(int(parallel_n)):
         cid = base_client_id + i
         ibw = connect_ib(host, port, cid)
         tprint(f"[CLEANUP] Worker connected clientId={ibw.client.clientId}")
         ibs.append(ibw)
-        time.sleep(0.10)
+        time.sleep(max(0.0, float(connect_stagger_sec)))
     return ibs
 
 # =============================================================================
@@ -1492,8 +1545,21 @@ def execute_cleanup_trades_parallel(
     port = int(exec_cfg.get("ib_port_override", cfg.get("ibkr", {}).get("port", 7497)))
     base_client = int(cfg.get("ibkr", {}).get("client_id", 3)) + 500
 
-    n_workers = max(1, int(parallel_n))
-    worker_ibs = _make_worker_pool(parallel_n=n_workers, host=host, port=port, base_client_id=base_client)
+    cleanup_cap = int(exec_cfg.get("cleanup_max_workers", parallel_n) or parallel_n)
+    connect_stagger_sec = float(exec_cfg.get("worker_connect_stagger_sec", 0.25))
+    n_workers = pick_worker_count(
+        n_trades=len(approved_trades),
+        parallel_n_cfg=parallel_n,
+        hard_cap=cleanup_cap,
+        label="CLEANUP",
+    )
+    worker_ibs = _make_worker_pool(
+        parallel_n=n_workers,
+        host=host,
+        port=port,
+        base_client_id=base_client,
+        connect_stagger_sec=connect_stagger_sec,
+    )
 
     try:
         def worker_execute_trade(tr: dict, worker_idx: int) -> None:
