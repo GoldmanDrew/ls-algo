@@ -77,6 +77,19 @@ paths:
 
 execution:
   parallel_n: 25
+  # Per-phase ceilings on concurrent IB worker connections. Each phase
+  # spawns ``min(parallel_n, trades_in_phase, <phase>_max_workers,
+  # MAX_TWS_CLIENTS)`` workers, so a single-trade phase opens exactly one
+  # connection rather than the full ``parallel_n`` pool.
+  cleanup_max_workers: 25
+  establish_max_workers: 25
+  hedge_max_workers: 25
+  # Pacing: ``worker_connect_stagger_sec`` spaces out IB connection setup
+  # in ``_make_worker_pool`` (cleanup); ``worker_submit_stagger_sec`` spaces
+  # out *order submission* in establish/hedge pools so 25 orders don't all
+  # hit TWS in the same tick.
+  worker_connect_stagger_sec: 0.25
+  worker_submit_stagger_sec: 1.5
   auto_approve: true
   # ``execute_trade_plan.execute_leg`` only honors ``ADAPTIVE_MKT``; other styles
   # fall through to the limit-order path with ``limit_bps`` offset.

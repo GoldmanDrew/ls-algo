@@ -61,6 +61,8 @@ from execute_trade_plan import (
     # Short availability
     fetch_ibkr_short_availability_map, is_short_not_available,
     is_short_unavailable_now,
+    # Worker-pool sizing
+    pick_worker_count,
     # Cleanup (Phase 1)
     build_cleanup_trades_to_match_plan, print_cleanup_trade_list,
     build_contract_cache, execute_cleanup_trades_parallel,
@@ -642,11 +644,19 @@ def execute_establish_parallel(
 
     all_fills: List[dict] = []
 
-    # Cap concurrent workers to avoid TWS connection limit (~8 max),
-    # matching the Phase 3 hedge pattern.
-    MAX_ESTABLISH_WORKERS = 6
-    n_workers = min(parallel_n, len(establish_trades), MAX_ESTABLISH_WORKERS)
-    stagger_delay = 1.5   # seconds between submitting each worker
+    # Phase concurrency: scale to the number of trades, capped by the
+    # configurable per-phase ceiling (``execution.establish_max_workers``,
+    # default 25) and the global TWS-clients hard cap. Workers connect
+    # lazily inside ``_establish_worker``; the stagger below spaces out
+    # *order submission*, not connection setup.
+    establish_cap = int(exec_cfg.get("establish_max_workers", parallel_n) or parallel_n)
+    n_workers = pick_worker_count(
+        n_trades=len(establish_trades),
+        parallel_n_cfg=parallel_n,
+        hard_cap=establish_cap,
+        label="ESTABLISH",
+    )
+    stagger_delay = float(exec_cfg.get("worker_submit_stagger_sec", 1.5))
 
     tprint(
         f"[ESTABLISH] Launching {len(establish_trades)} workers with "
@@ -1710,8 +1720,11 @@ def execute_hedge_pass_parallel(
 ) -> Tuple[List[dict], int, int]:
     """Execute Phase 3 hedge trades in parallel (one IB connection per worker).
 
-    TWS limits concurrent API connections (~8). Workers are capped at 6
-    concurrent and staggered 1.5s apart to avoid overwhelming the gateway.
+    Phase concurrency scales to the number of trades, capped by the
+    configurable per-phase ceiling (``execution.hedge_max_workers``,
+    default 25) and the global TWS-clients hard cap (``MAX_TWS_CLIENTS``).
+    Workers are staggered ``execution.worker_submit_stagger_sec`` apart
+    (default 1.5 s) so order submissions don't all arrive in the same tick.
 
     Returns (fill_records, n_triggered, n_traded).
     """
@@ -1724,10 +1737,14 @@ def execute_hedge_pass_parallel(
     n_triggered = len(hedge_trades)
     n_traded    = 0
 
-    # Cap concurrent workers to avoid TWS connection limit (default ~8 max)
-    MAX_HEDGE_WORKERS = 6
-    n_workers = min(parallel_n, len(hedge_trades), MAX_HEDGE_WORKERS)
-    stagger_delay = 1.5   # seconds between submitting each worker
+    hedge_cap = int(exec_cfg.get("hedge_max_workers", parallel_n) or parallel_n)
+    n_workers = pick_worker_count(
+        n_trades=len(hedge_trades),
+        parallel_n_cfg=parallel_n,
+        hard_cap=hedge_cap,
+        label="HEDGE",
+    )
+    stagger_delay = float(exec_cfg.get("worker_submit_stagger_sec", 1.5))
 
     tprint(
         f"[HEDGE] Launching {len(hedge_trades)} trades with "
