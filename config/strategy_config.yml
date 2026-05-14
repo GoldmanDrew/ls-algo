@@ -20,7 +20,8 @@ strategy:
     - APLD
   # Gross caps after sleeve budgets. With ``per_sleeve``, pair / underlying limits apply **within
   # each sleeve's gross** (Diamond-Creek-Quant sizing.yaml parity); root caps are fallbacks for
-  # unknown sleeves. Liquidity rows still cap vs whole-book ``target_gross_usd``.
+  # unknown sleeves. Liquidity clips implied book weights using ``liquidity_book_reference``
+  # (deployed SUM(gross) vs YAML ``capital_usd × gross_leverage``).
   gross_sizing_caps:
     enabled: true
     max_pair_weight_cap: 0.10
@@ -30,6 +31,20 @@ strategy:
     missing_shares_cap: 0.15
     shares_outstanding_use_frac: 0.35
     median_daily_volume_use_pct: 0.3
+    # Liquidity ladders (``ref_short = T × short_leg_frac``): match placed book scale vs YAML target gross.
+    liquidity_book_reference: deployed_book   # deployed_book | target_book
+    # After caps+covariance, rescale each sleeve toward its YAML budget then re-run caps once.
+    # ``absolute_budget`` (default): each sleeve sum := YAML ``budget_sleeve_usd`` (then caps clip).
+    # ``fraction_of_deployed``: legacy — each sleeve sum := budget_s/target_gross_usd × current total.
+    rebalance_sleeve_weights_to_budget: true
+    rebalance_sleeve_target_mode: absolute_budget
+    # Pre-cap **score haircut**: limit how much an under-scored row (low decay/edge × borrow penalty)
+    # can grow when the simplex projector redistributes mass from over-cap names. Cap_v[i] is clipped
+    # to ``min(pair_cap, ha × v[i])`` where v[i] is sleeve-internal pre-cap weight from
+    # ``_decay_score_weights``. ha=2.0 ⇒ row may grow at most 2× its score weight; ha=1.0 ⇒ no growth;
+    # ``0`` (or unset) disables (legacy headroom-only redistribution). Applies per sleeve via
+    # ``per_sleeve.<sleeve>.pre_cap_score_haircut_multiplier`` (overrides the root default).
+    pre_cap_score_haircut_multiplier: 0.0
     # Stability #2: per-pair weight hysteresis (production only — defaults disable it).
     weight_hysteresis_abs: 0.0       # snap to prior gross when |delta| <= abs * sum(gross), e.g. 0.005
     weight_hysteresis_rel: 0.0       # OR |delta| <= rel * prev, e.g. 0.10
@@ -40,19 +55,30 @@ strategy:
       yieldboost:
         max_pair_weight: 0.20
         max_underlying_weight: 0.2
+        # Block low-score (high-borrow) YB names from being lifted to ``max_pair_weight`` by the
+        # cap projector's headroom redistribution. 2.0 ⇒ row can grow at most 2× its decay-score share.
+        pre_cap_score_haircut_multiplier: 1
       inverse_decay_bucket4:
         max_pair_weight: 0.20
         max_underlying_weight: 0.30
+        pre_cap_score_haircut_multiplier: 1
   # One-shot covariance penalty on final post-cap gross_target_usd; tilts mass away from
-  # underlyings with high marginal contribution to portfolio variance, then re-applies the
-  # same gross_sizing_caps so pair / underlying / liquidity ceilings still bind.
+  # underlyings with high marginal contribution to portfolio variance (within sleeve when
+  # ``per_sleeve_scopes`` set), then re-applies gross_sizing_caps so pair /
+  # underlying / liquidity ceilings still bind.
   covariance_balance:
     enabled: true
     lookback_days: 252
     min_obs: 60
-    shrink: 0.25
-    penalty_strength: 1
-    max_relative_shift: 0.75
+    shrink: 0.5
+    penalty_strength: .5
+    max_relative_shift: 0.5
+    # Run covariance_balance separately per sleeve (Bucket 1 core, Bucket 2 YieldBoost, Bucket 4 inverse).
+    # Omit or leave empty → legacy: one pass across the combined book.
+    per_sleeve_scopes:
+      - core_leveraged
+      - yieldboost
+      - inverse_decay_bucket4
 
 paths:
   screened_csv: data/etf_screened_today.csv
@@ -154,6 +180,15 @@ portfolio:
   # Rebalance thresholds used by rebalance_strategy.py and harvest_underexposed_shorts.py.
   rebalance:
     min_trade_usd: 250            # skip deltas below $250
+    # Phase 2b target_basis selects which target columns drive the resize band.
+    # - hybrid (default): band uses ``optimal_long_usd / optimal_short_usd`` as the
+    #   structural anchor (so we don't trim positions when today's IBKR shares_available
+    #   squeezes executable down), but each day's submitted order qty is clipped to the
+    #   executable target (``long_usd / short_usd``) so we never ask for shares that aren't
+    #   available today.
+    # - executable: legacy behavior; band and orders both read executable columns.
+    # - optimal: band and orders both read optimal columns. Pair with FTP cap in the executor.
+    target_basis: "hybrid"
     # Phase 3 hedge rule: compare beta-adjusted net exposure to gross exposure.
     # Trigger is when to act; target is where to stop after acting.
     hedge:
@@ -285,8 +320,8 @@ portfolio:
         <<: *weighting_defaults
         max_name_weight: 0.20
         eq_blend: 0.02
-        borrow_aversion: 1
-        score_concavity_p: 1.25
+        borrow_aversion: 0.6
+        score_concavity_p: 1
 
     inverse_decay_bucket4:
       enabled: true                  # sleeve split vs stock: inverse_decay_bucket4.target_weight remainder → stock
@@ -311,7 +346,7 @@ portfolio:
         <<: *weighting_defaults
         max_name_weight: 0.15
         eq_blend: 0.05
-        borrow_aversion: 3.0
+        borrow_aversion: .6
     flow_program:
       rules:
         hard_borrow_cap: 0.40        # weekly flow adds only when borrow <= 40% and net_edge_p50 > 0

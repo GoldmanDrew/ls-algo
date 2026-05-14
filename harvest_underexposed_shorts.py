@@ -65,13 +65,66 @@ def resolve_proposed_trades_path(run_date: str, paths_cfg: dict) -> Path:
     )
 
 
+def _resolve_target_basis_columns(plan: pd.DataFrame, target_basis: str) -> tuple[str, str]:
+    """Return the ``(long_col, short_col)`` to use for harvest target sizing.
+
+    - ``optimal`` (default): ``optimal_long_usd`` / ``optimal_short_usd`` if present in
+      ``proposed_trades.csv`` (or merged from ``optimal_targets.csv``). Falls back to
+      executable when columns are missing (legacy CSVs).
+    - ``executable`` (legacy): ``long_usd`` / ``short_usd``.
+    - ``max``: row-level max(|optimal|, |executable|), signed by sleeve direction. Implemented
+      by callers (this helper just resolves which absolute columns to read).
+    """
+    basis = str(target_basis or "optimal").strip().lower()
+    if basis == "executable":
+        return ("long_usd", "short_usd")
+    if "optimal_long_usd" in plan.columns and "optimal_short_usd" in plan.columns:
+        opt_l = pd.to_numeric(plan["optimal_long_usd"], errors="coerce").abs().fillna(0.0).sum()
+        opt_s = pd.to_numeric(plan["optimal_short_usd"], errors="coerce").abs().fillna(0.0).sum()
+        if (opt_l + opt_s) > 1e-9:
+            return ("optimal_long_usd", "optimal_short_usd")
+    return ("long_usd", "short_usd")
+
+
+def _maybe_merge_optimal_targets(plan: pd.DataFrame, run_date: str) -> pd.DataFrame:
+    """Merge ``optimal_targets.csv`` into ``plan`` when available so harvest can use ``optimal_*``
+    even if the in-hand ``proposed_trades.csv`` predates the dual-pipeline output.
+    """
+    if plan is None or plan.empty:
+        return plan
+    if "optimal_long_usd" in plan.columns and "optimal_short_usd" in plan.columns:
+        return plan
+    optimal_path = run_dir(run_date) / "optimal_targets.csv"
+    if not optimal_path.exists():
+        return plan
+    try:
+        opt = pd.read_csv(optimal_path)
+    except Exception:
+        return plan
+    if opt.empty or "ETF" not in opt.columns or "Underlying" not in opt.columns:
+        return plan
+    keep_cols = [c for c in opt.columns if c.startswith("optimal_") or c in ("ETF", "Underlying", "binding_cap", "liquidity_gap_usd")]
+    opt = opt[keep_cols].copy()
+    return plan.merge(opt, on=["ETF", "Underlying"], how="left", suffixes=("", "_opt"))
+
+
 def _position_discrepancy_merge(
     plan: pd.DataFrame,
     actual: pd.DataFrame,
     screened_csv: Path,
     cfg: dict,
+    *,
+    target_basis: str = "optimal",
 ) -> pd.DataFrame:
-    """Match ``run_eod_pnl_email.load_position_discrepancies`` merge (ETF-universe filter on symbols)."""
+    """Match ``run_eod_pnl_email.load_position_discrepancies`` merge (ETF-universe filter on symbols).
+
+    ``target_basis`` selects the planned-notional columns:
+      - ``optimal`` (default): use ``optimal_long_usd`` / ``optimal_short_usd`` so harvest fills
+        the **standing structural gap** as soon as borrow comes back, even if today's executable
+        was clipped by ``shares_available``.
+      - ``executable``: legacy behavior, only fills gaps vs today's executable target.
+      - ``max``: per-symbol max(|optimal|, |executable|), signed by sleeve direction.
+    """
     strategy_tag = str((cfg.get("strategy", {}) or {}).get("tag", "")).strip()
     if strategy_tag and plan is not None and not plan.empty and "strategy_tag" in plan.columns:
         plan = plan[plan["strategy_tag"].astype(str) == strategy_tag].copy()
@@ -99,16 +152,34 @@ def _position_discrepancy_merge(
     plan["Underlying"] = plan["Underlying"].astype(str).map(canonical_symbol)
     plan["long_usd"] = pd.to_numeric(plan.get("long_usd", 0.0), errors="coerce").fillna(0.0)
     plan["short_usd"] = pd.to_numeric(plan.get("short_usd", 0.0), errors="coerce").fillna(0.0)
+    if "optimal_long_usd" in plan.columns:
+        plan["optimal_long_usd"] = pd.to_numeric(plan["optimal_long_usd"], errors="coerce").fillna(0.0)
+    if "optimal_short_usd" in plan.columns:
+        plan["optimal_short_usd"] = pd.to_numeric(plan["optimal_short_usd"], errors="coerce").fillna(0.0)
+
+    long_col, short_col = _resolve_target_basis_columns(plan, target_basis)
+
+    if str(target_basis or "").strip().lower() == "max":
+        # max basis: row-wise max magnitude across optimal/executable, sign preserved by source.
+        # Long target: max of two non-negative columns.
+        long_a = pd.to_numeric(plan.get("long_usd", 0.0), errors="coerce").fillna(0.0)
+        long_b = pd.to_numeric(plan.get("optimal_long_usd", long_a), errors="coerce").fillna(long_a)
+        plan["_harvest_long"] = np.where(long_a.abs() >= long_b.abs(), long_a, long_b)
+        # Short target: max magnitude of two non-positive columns; pick the more-negative.
+        short_a = pd.to_numeric(plan.get("short_usd", 0.0), errors="coerce").fillna(0.0)
+        short_b = pd.to_numeric(plan.get("optimal_short_usd", short_a), errors="coerce").fillna(short_a)
+        plan["_harvest_short"] = np.where(short_a.abs() >= short_b.abs(), short_a, short_b)
+        long_col, short_col = "_harvest_long", "_harvest_short"
 
     target_under = (
-        plan.groupby("Underlying", as_index=False)["long_usd"]
+        plan.groupby("Underlying", as_index=False)[long_col]
         .sum()
-        .rename(columns={"Underlying": "symbol", "long_usd": "target_net_usd"})
+        .rename(columns={"Underlying": "symbol", long_col: "target_net_usd"})
     )
     target_etf = (
-        plan.groupby("ETF", as_index=False)["short_usd"]
+        plan.groupby("ETF", as_index=False)[short_col]
         .sum()
-        .rename(columns={"ETF": "symbol", "short_usd": "target_net_usd"})
+        .rename(columns={"ETF": "symbol", short_col: "target_net_usd"})
     )
     target = pd.concat([target_under, target_etf], ignore_index=True)
     target = target[target["symbol"].astype(bool)].copy()
@@ -160,10 +231,16 @@ def build_discrepancy_from_live_ib(
     baseline_csv: Path,
     prefer_delayed: bool,
     paths_cfg: dict,
+    target_basis: str = "optimal",
 ) -> pd.DataFrame:
-    """Actual notionals from strategy-only IB positions × snapshot marks vs proposed plan."""
+    """Actual notionals from strategy-only IB positions × snapshot marks vs proposed plan.
+
+    ``target_basis`` selects what counts as "the plan": ``optimal`` reads the structural-only
+    target so the harvester fills the **standing** shortfall when borrow returns;
+    ``executable`` reads only today's clipped target; ``max`` takes the row-wise max."""
     proposed_path = resolve_proposed_trades_path(run_date, paths_cfg)
     plan = pd.read_csv(proposed_path)
+    plan = _maybe_merge_optimal_targets(plan, run_date)
 
     baseline = load_baseline_qty(baseline_csv)
     ib_pos = current_ib_positions(ib)
@@ -187,7 +264,7 @@ def build_discrepancy_from_live_ib(
         rows.append({"symbol": sym, "actual_net_usd": sh_f * px})
 
     actual_df = pd.DataFrame(rows)
-    return _position_discrepancy_merge(plan, actual_df, screened_csv, cfg)
+    return _position_discrepancy_merge(plan, actual_df, screened_csv, cfg, target_basis=target_basis)
 
 
 def resolve_discrepancy_csv(run_date: str, explicit_path: str | None = None) -> Path:
@@ -247,6 +324,17 @@ def main() -> int:
         "--file-discrepancies-only",
         action="store_true",
         help="Skip live IB discrepancy build; use position_discrepancies_all.csv (dated or data/).",
+    )
+    ap.add_argument(
+        "--target-basis",
+        choices=("optimal", "executable", "max"),
+        default="optimal",
+        help=(
+            "Which target columns drive harvest sizing. 'optimal' (default) uses the "
+            "structural-only target so harvest fills the standing gap when borrow returns. "
+            "'executable' uses today's clipped target (legacy). 'max' picks the larger "
+            "magnitude per row."
+        ),
     )
     args = ap.parse_args()
 
@@ -313,8 +401,10 @@ def main() -> int:
                     baseline_csv=baseline_csv,
                     prefer_delayed=prefer_delayed,
                     paths_cfg=paths_cfg,
+                    target_basis=args.target_basis,
                 )
-                disc_source = "live_ib"
+                disc_source = f"live_ib(target_basis={args.target_basis})"
+                tprint(f"[HARVEST] target_basis={args.target_basis} (gap measured vs '{args.target_basis}' target)")
             finally:
                 try:
                     ib_pre.disconnect()

@@ -184,6 +184,29 @@ def _band_decide(
 # Build phase: turn plan rows into resize candidates with bands applied
 # --------------------------------------------------------------------------
 
+def _resize_target_columns(
+    plan: pd.DataFrame, target_basis: str
+) -> Tuple[str, str, str, str]:
+    """Resolve the (band_long_col, band_short_col, exec_long_col, exec_short_col) used by
+    :func:`build_resize_trades` based on ``target_basis``.
+
+    - ``executable`` (legacy): bands and orders both use ``long_usd`` / ``short_usd``.
+    - ``optimal``: bands and orders both use ``optimal_long_usd`` / ``optimal_short_usd``
+      (no clipping by today's executable — pair with FTP cap in the executor).
+    - ``hybrid`` (default): bands use ``optimal_*`` (so we don't trim winners that today's
+      liquidity squeezed), orders are **clipped** by ``long_usd`` / ``short_usd`` so we never
+      ask for more shares than today's pipeline said are available.
+    """
+    basis = str(target_basis or "hybrid").strip().lower()
+    has_opt = "optimal_long_usd" in plan.columns and "optimal_short_usd" in plan.columns
+    if basis == "executable" or not has_opt:
+        return ("long_usd", "short_usd", "long_usd", "short_usd")
+    if basis == "optimal":
+        return ("optimal_long_usd", "optimal_short_usd",
+                "optimal_long_usd", "optimal_short_usd")
+    return ("optimal_long_usd", "optimal_short_usd", "long_usd", "short_usd")
+
+
 def build_resize_trades(
     *,
     hedgeable_plan: pd.DataFrame,
@@ -196,6 +219,7 @@ def build_resize_trades(
     skip_underlyings: Optional[Set[str]] = None,
     tax_router: Optional[Callable[[List[Dict], List[ResizeDecision]],
                                   Tuple[List[Dict], List[ResizeDecision]]]] = None,
+    target_basis: str = "hybrid",
 ) -> Tuple[List[Dict], List[ResizeDecision]]:
     """
     Iterate the hedgeable plan and produce resize trade candidates whose
@@ -233,6 +257,10 @@ def build_resize_trades(
     if hedgeable_plan is None or hedgeable_plan.empty:
         return trades, decisions
 
+    band_long_col, band_short_col, exec_long_col, exec_short_col = _resize_target_columns(
+        hedgeable_plan, target_basis
+    )
+
     grouped = hedgeable_plan.groupby("Underlying", sort=True)
 
     for under, grp in grouped:
@@ -247,7 +275,7 @@ def build_resize_trades(
                 etf = norm_sym(str(row["ETF"]))
                 decisions.append(ResizeDecision(
                     underlying=under, etf=etf, leg_side="long_under",
-                    target_usd=float(row.get("long_usd", 0.0) or 0.0),
+                    target_usd=float(row.get(band_long_col, row.get("long_usd", 0.0)) or 0.0),
                     decision="skip", reason="no_price_for_underlying",
                 ))
             continue
@@ -255,19 +283,44 @@ def build_resize_trades(
         cur_under_sh  = float(strat_pos.get(under, 0.0))
         cur_under_usd = cur_under_sh * px_under
 
-        total_long_usd = float(pd.to_numeric(
-            grp.get("long_usd", grp.get("underlying_target_usd", 0.0)),
+        total_band_long = float(pd.to_numeric(
+            grp.get(band_long_col, grp.get("long_usd", grp.get("underlying_target_usd", 0.0))),
+            errors="coerce",
+        ).fillna(0.0).sum())
+        total_exec_long = float(pd.to_numeric(
+            grp.get(exec_long_col, grp.get("long_usd", grp.get("underlying_target_usd", 0.0))),
             errors="coerce",
         ).fillna(0.0).sum())
 
         u_dec = _band_decide(
             side="long_under",
-            target_usd=total_long_usd,
+            target_usd=total_band_long,
             current_usd=cur_under_usd,
             cfg=cfg,
         )
         u_dec.underlying = under
         u_dec.etf = ",".join(sorted({norm_sym(str(e)) for e in grp["ETF"]}))
+
+        if u_dec.decision in ("trim", "grow") and u_dec.action and u_dec.trade_usd > 0:
+            # Hybrid mode: clip a "grow" step so we don't push past today's executable target.
+            # Trim steps remain unchanged — selling out of an over-sized position never violates
+            # liquidity (we already hold the shares) and we want to honor the structural target.
+            if (
+                str(target_basis or "hybrid").strip().lower() == "hybrid"
+                and u_dec.decision == "grow"
+                and band_long_col != exec_long_col
+            ):
+                # max growth this run = |total_exec_long - cur_under_usd|, sign-aware.
+                if total_band_long >= 0:
+                    max_step_usd = max(0.0, total_exec_long - cur_under_usd)
+                else:
+                    max_step_usd = max(0.0, cur_under_usd - total_exec_long)
+                if u_dec.trade_usd > max_step_usd + 1e-9:
+                    u_dec.trade_usd = float(max_step_usd)
+                    u_dec.reason = (u_dec.reason or "") + "|clipped_to_executable"
+                    if u_dec.trade_usd <= 0:
+                        u_dec.decision = "skip"
+                        u_dec.reason = u_dec.reason + "|qty=0_after_exec_clip"
 
         if u_dec.decision in ("trim", "grow") and u_dec.action and u_dec.trade_usd > 0:
             qty = int(math.floor(u_dec.trade_usd / px_under))
@@ -301,7 +354,8 @@ def build_resize_trades(
                     "trade_usd_target": float(u_dec.trade_usd),
                     "decision":         u_dec.decision,
                     "reason":           u_dec.reason,
-                    "target_usd":       float(total_long_usd),
+                    "target_usd":       float(total_band_long),
+                    "executable_target_usd": float(total_exec_long),
                     "current_usd":      float(cur_under_usd),
                 })
 
@@ -309,7 +363,9 @@ def build_resize_trades(
 
         for _, row in grp.iterrows():
             etf = norm_sym(str(row["ETF"]))
-            target_usd = float(row.get("short_usd", row.get("etf_target_usd", 0.0)) or 0.0)
+            band_target_usd = float(row.get(band_short_col, row.get("short_usd", row.get("etf_target_usd", 0.0))) or 0.0)
+            exec_target_usd = float(row.get(exec_short_col, row.get("short_usd", row.get("etf_target_usd", 0.0))) or 0.0)
+            target_usd = band_target_usd
             cur_etf_sh  = float(strat_pos.get(etf, 0.0))
 
             if etf in purgatory_etfs or etf in flow_etfs:
@@ -342,6 +398,24 @@ def build_resize_trades(
             e_dec.etf = etf
 
             if e_dec.decision in ("trim", "grow") and e_dec.action and e_dec.trade_usd > 0:
+                if (
+                    str(target_basis or "hybrid").strip().lower() == "hybrid"
+                    and e_dec.decision == "grow"
+                    and band_short_col != exec_short_col
+                ):
+                    # Short targets are negative; growing means making position more negative.
+                    if band_target_usd <= 0:
+                        max_step_usd = max(0.0, cur_etf_usd - exec_target_usd)
+                    else:
+                        max_step_usd = max(0.0, exec_target_usd - cur_etf_usd)
+                    if e_dec.trade_usd > max_step_usd + 1e-9:
+                        e_dec.trade_usd = float(max_step_usd)
+                        e_dec.reason = (e_dec.reason or "") + "|clipped_to_executable"
+                        if e_dec.trade_usd <= 0:
+                            e_dec.decision = "skip"
+                            e_dec.reason = e_dec.reason + "|qty=0_after_exec_clip"
+
+            if e_dec.decision in ("trim", "grow") and e_dec.action and e_dec.trade_usd > 0:
                 qty = int(math.floor(e_dec.trade_usd / px_etf))
                 if e_dec.action == "BUY":
                     qty = min(qty, max(0, int(abs(round(cur_etf_sh)))))
@@ -363,6 +437,7 @@ def build_resize_trades(
                         "decision":         e_dec.decision,
                         "reason":           e_dec.reason,
                         "target_usd":       float(target_usd),
+                        "executable_target_usd": float(exec_target_usd),
                         "current_usd":      float(cur_etf_usd),
                     })
 

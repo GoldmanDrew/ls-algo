@@ -264,6 +264,13 @@ def load_plan(
                          if "sleeve" in plan.columns else "core_leveraged"
     plan["long_usd"]   = pd.to_numeric(plan.get("long_usd", 0), errors="coerce").fillna(0.0)
     plan["short_usd"]  = pd.to_numeric(plan.get("short_usd", 0), errors="coerce").fillna(0.0)
+    # Optional optimal-target columns from generate_trade_plan dual pipeline. These let
+    # phase 2b distinguish "today's executable order" from "the structural anchor" so it can
+    # avoid trimming positions that were temporarily clipped by IBKR ``shares_available``.
+    if "optimal_long_usd" in plan.columns:
+        plan["optimal_long_usd"] = pd.to_numeric(plan["optimal_long_usd"], errors="coerce").fillna(plan["long_usd"])
+    if "optimal_short_usd" in plan.columns:
+        plan["optimal_short_usd"] = pd.to_numeric(plan["optimal_short_usd"], errors="coerce").fillna(plan["short_usd"])
     plan = plan.reset_index(drop=True)
 
     common_mask = (~plan["purgatory"]) & (~plan["ETF"].isin(flow_etfs))
@@ -2693,6 +2700,12 @@ def main() -> None:
         # become SELL-original / BUY-substitute pairs; loss-trims without
         # one are deferred. GAIN trims may be limited to LT inventory.
         resize_cfg = ResizeBandConfig.from_dict(reb_cfg.get("resize", {}))
+        # ``portfolio.rebalance.target_basis`` selects what target columns drive the resize
+        # band. ``hybrid`` (default) anchors the band to ``optimal_*`` so winners aren't
+        # trimmed when today's IBKR shares_available squeezes executable, but clips each
+        # day's order qty to the executable target so we never ask for more shares than
+        # today's pipeline said are available. ``executable`` reverts to legacy behavior.
+        resize_target_basis = str(reb_cfg.get("target_basis", "hybrid")).strip().lower()
         if not args.skip_phase_2b and resize_cfg.enabled and not resize_df.empty:
             tprint("\n" + "=" * 60)
             tprint("  PHASE 2b — RESIZE EXISTING PAIRS")
@@ -2701,7 +2714,8 @@ def main() -> None:
                 f"[PHASE2B] band: enter={resize_cfg.enter_band_pct*100:.0f}% "
                 f"exit={resize_cfg.exit_band_pct*100:.0f}% "
                 f"min_trim=${resize_cfg.min_trim_usd:,.0f} "
-                f"min_grow=${resize_cfg.min_grow_usd:,.0f}"
+                f"min_grow=${resize_cfg.min_grow_usd:,.0f} "
+                f"target_basis={resize_target_basis}"
             )
 
             # Stage 2: tax routing setup (no-op when disabled in config)
@@ -2764,6 +2778,7 @@ def main() -> None:
                 cfg=resize_cfg,
                 skip_underlyings=established_underlyings,
                 tax_router=tax_router_fn,
+                target_basis=resize_target_basis,
             )
 
             decisions_csv = rb_dir / "resize_decisions.csv"

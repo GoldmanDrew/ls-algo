@@ -108,6 +108,66 @@ def test_higher_vol_underlying_gets_attenuated():
     assert g[1] < g[0], f"high-vol underlying should be attenuated, got {g}"
 
 
+_CAP_OFF = {
+    "gross_sizing_caps": {"enabled": False},
+}
+
+
+def _make_returns3(
+    n: int = 252, *, rho12: float = 0.0, vol2: float = 4.0, seed: int = 1
+) -> pd.DataFrame:
+    """U1, U2 correlated (optional), U3 independent — for multi-sleeve scope tests."""
+    rng = np.random.default_rng(seed)
+    z1 = rng.standard_normal(n)
+    z2 = rho12 * z1 + np.sqrt(max(1.0 - rho12 * rho12, 0.0)) * rng.standard_normal(n)
+    z3 = rng.standard_normal(n)
+    r1 = 0.01 * z1
+    r2 = 0.01 * float(vol2) * z2
+    r3 = 0.01 * z3
+    idx = pd.date_range("2024-01-01", periods=n, freq="B")
+    return pd.DataFrame({"U1": r1, "U2": r2, "U3": r3}, index=idx)
+
+
+def _mixed_book_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "ETF": ["CAAA", "CBBB", "YZZZ"],
+            "Underlying": ["U1", "U2", "U3"],
+            "Beta": [2.0, 2.0, 1.0],
+            "beta_abs": [2.0, 2.0, 1.0],
+            "sleeve": ["core_leveraged", "core_leveraged", "yieldboost"],
+            "gross_target_usd": [400.0, 400.0, 100.0],
+            "borrow_price_ref": [50.0, 50.0, 50.0],
+            "shares_available": [1e9, 1e9, 1e9],
+        }
+    )
+
+
+def test_covariance_scope_core_only_leaves_yieldboost_unchanged_with_caps_off():
+    """Per-sleeve scope: YieldBoost gross must not absorb core covariance penalty."""
+    df = _mixed_book_df()
+    strategy = {
+        **_CAP_OFF,
+        "covariance_balance": {"enabled": True, "shrink": 0.0, "penalty_strength": 1.5, "min_obs": 30},
+    }
+    R = _make_returns3(vol2=4.0, rho12=0.0)
+    yb_before = float(df.loc[df["sleeve"].eq("yieldboost"), "gross_target_usd"].iloc[0])
+    out, diag = apply_covariance_balance(
+        df,
+        target_gross_usd=1_000_000.0,
+        beta_floor=0.1,
+        strategy=strategy,
+        returns_df=R,
+        covariance_scope=("core_leveraged",),
+    )
+    assert diag.get("applied")
+    assert diag.get("covariance_scope") == ["core_leveraged"]
+    yb_after = float(out.loc[out["sleeve"].eq("yieldboost"), "gross_target_usd"].iloc[0])
+    np.testing.assert_allclose(yb_after, yb_before, rtol=0, atol=1e-6)
+    core = out.loc[out["sleeve"].eq("core_leveraged"), "gross_target_usd"].to_numpy(float)
+    assert core[1] < core[0], "higher-vol U2 exposure should attenuate versus U1"
+
+
 def test_post_cov_recap_enforces_pair_cap():
     df = _two_pair_df(g1=900.0, g2=100.0)
     strategy = {

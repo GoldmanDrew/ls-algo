@@ -39,6 +39,8 @@ Notes:
 
 from __future__ import annotations
 
+from collections.abc import Collection, Mapping
+
 import argparse
 import json
 from copy import deepcopy
@@ -579,6 +581,29 @@ def _project_pair_and_underlying_numpy(
     return w
 
 
+_STRUCTURAL_CAP_KEYS = ("aum", "shares_outstanding")
+_DAY_LIQUIDITY_CAP_KEYS = ("shares_available", "adv")
+_ALL_LIQUIDITY_CAP_KEYS = _STRUCTURAL_CAP_KEYS + _DAY_LIQUIDITY_CAP_KEYS
+
+
+def _resolve_cap_subset(cap_mode: str | None) -> tuple[str, ...]:
+    """Map ``cap_mode`` to the liquidity inputs that participate in
+    :func:`_liquidity_tight_book_weights`.
+
+    Modes:
+      - ``structural_only`` — AUM + shares_outstanding (used for the **optimal** target).
+      - ``day_liquidity_only`` — shares_available + ADV (used for what today's market allows).
+      - ``structural_plus_day_liquidity`` (default) — full legacy stack used to size the
+        **executable** target. Behavior unchanged from prior versions when this is the mode.
+    """
+    raw = str(cap_mode or "structural_plus_day_liquidity").strip().lower()
+    if raw in ("structural_only", "structural", "optimal"):
+        return _STRUCTURAL_CAP_KEYS
+    if raw in ("day_liquidity_only", "day", "liquidity_only", "executable_only"):
+        return _DAY_LIQUIDITY_CAP_KEYS
+    return _ALL_LIQUIDITY_CAP_KEYS
+
+
 def _liquidity_tight_book_weights(
     sized: pd.DataFrame,
     *,
@@ -586,20 +611,31 @@ def _liquidity_tight_book_weights(
     beta_floor: float,
     caps: dict[str, Any],
     shares_out_map: dict[str, float],
-) -> np.ndarray:
+    cap_subset: tuple[str, ...] | None = None,
+    return_binding_label: bool = False,
+) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """
     Per-row upper bound on **book** weight ``gross_i / sum(gross)`` implied by liquidity
     inputs only (AUM, shares available, shares outstanding, median volume vs short leg).
+
+    ``cap_subset`` selects which inputs participate; ``None`` keeps the full legacy stack.
+    With ``return_binding_label=True``, also returns an array of strings labeling which input
+    bound each row (``aum`` / ``shares_outstanding`` / ``shares_available`` / ``adv`` /
+    ``missing_shares``).
     """
     n = len(sized)
     if n == 0:
-        return np.zeros(0, dtype=float)
+        empty = np.zeros(0, dtype=float)
+        if return_binding_label:
+            return empty, np.array([], dtype=object)
+        return empty
     T = max(float(target_gross_usd), 1.0)
+    subset = set(cap_subset) if cap_subset is not None else set(_ALL_LIQUIDITY_CAP_KEYS)
     missing = float(caps.get("missing_shares_cap", 0.02) or 0.02)
-    aum_pct = float(caps.get("aum_use_pct", 0.0) or 0.0)
-    sh_av_pct = float(caps.get("short_avail_use_pct", 0.25) or 0.25)
-    sout_frac = float(caps.get("shares_outstanding_use_frac", 0.0) or 0.0)
-    mv_pct = float(caps.get("median_daily_volume_use_pct", 0.0) or 0.0)
+    aum_pct = float(caps.get("aum_use_pct", 0.0) or 0.0) if "aum" in subset else 0.0
+    sh_av_pct = float(caps.get("short_avail_use_pct", 0.25) or 0.25) if "shares_available" in subset else 0.0
+    sout_frac = float(caps.get("shares_outstanding_use_frac", 0.0) or 0.0) if "shares_outstanding" in subset else 0.0
+    mv_pct = float(caps.get("median_daily_volume_use_pct", 0.0) or 0.0) if "adv" in subset else 0.0
 
     if "beta_abs" in sized.columns:
         ba = pd.to_numeric(sized["beta_abs"], errors="coerce").to_numpy(dtype=float)
@@ -656,27 +692,39 @@ def _liquidity_tight_book_weights(
         out = np.where(np.isfinite(out) & (out > 0), out, np.nan)
         return out
 
-    pieces = []
+    pieces: list[np.ndarray] = []
+    labels: list[str] = []
     if aum_pct > 0:
         num = aum_pct * np.where(np.isfinite(aum) & (aum > 0), aum, np.nan)
-        pieces.append(_w_cap(num, ref_short))
+        pieces.append(_w_cap(num, ref_short)); labels.append("aum")
     if sh_av_pct > 0:
         num = sh_av_pct * np.where(np.isfinite(sh_av) & (sh_av > 0), sh_av, np.nan) * px
-        pieces.append(_w_cap(num, ref_short))
+        pieces.append(_w_cap(num, ref_short)); labels.append("shares_available")
     if sout_frac > 0 and shares_out_map:
         num = sout_frac * np.where(np.isfinite(sh_out) & (sh_out > 0), sh_out, np.nan) * px
-        pieces.append(_w_cap(num, ref_short))
+        pieces.append(_w_cap(num, ref_short)); labels.append("shares_outstanding")
     if mv_pct > 0:
         num = mv_pct * np.where(np.isfinite(med_vol) & (med_vol > 0), med_vol, np.nan) * px
-        pieces.append(_w_cap(num, ref_short))
+        pieces.append(_w_cap(num, ref_short)); labels.append("adv")
 
     if pieces:
         mat = np.column_stack(pieces)
         row_min = np.nanmin(mat, axis=1)
         tight = np.where(np.isfinite(row_min), row_min, missing)
+        if return_binding_label:
+            arg = np.zeros(n, dtype=int)
+            finite_mask = np.isfinite(mat)
+            mat_for_argmin = np.where(finite_mask, mat, np.inf)
+            arg = np.argmin(mat_for_argmin, axis=1)
+            binding = np.array([labels[i] for i in arg], dtype=object)
+            binding[~np.isfinite(row_min)] = "missing_shares"
     else:
         tight = np.full(n, missing, dtype=float)
-    return np.clip(tight, 0.0, None).astype(float)
+        binding = np.full(n, "missing_shares", dtype=object) if return_binding_label else None
+    out = np.clip(tight, 0.0, None).astype(float)
+    if return_binding_label:
+        return out, binding  # type: ignore[return-value]
+    return out
 
 
 def _compute_pair_weight_caps_array(
@@ -686,10 +734,12 @@ def _compute_pair_weight_caps_array(
     beta_floor: float,
     caps: dict[str, Any],
     shares_out_map: dict[str, float],
+    cap_subset: tuple[str, ...] | None = None,
 ) -> np.ndarray:
     """
     Per-row max weight (fraction of total book gross) from hard pair cap + liquidity.
     Liquidity caps mirror backtest notebooks (AUM, shares_available, float, median volume).
+    ``cap_subset`` restricts which liquidity inputs participate (see :func:`_resolve_cap_subset`).
     """
     n = len(sized)
     if n == 0:
@@ -701,8 +751,122 @@ def _compute_pair_weight_caps_array(
         beta_floor=beta_floor,
         caps=caps,
         shares_out_map=shares_out_map,
+        cap_subset=cap_subset,
     )
     return np.minimum(max_pair, tight).astype(float)
+
+
+def _liquidity_book_anchor_usd(
+    *,
+    deployed_gross_sum: float,
+    strategy_target_gross_usd: float,
+    caps: dict[str, Any],
+) -> float:
+    """Scale factor ``T`` in :func:`_liquidity_tight_book_weights` ``ref_short = T * sf``."""
+    raw = str(caps.get("liquidity_book_reference", "target_book") or "target_book").strip().lower()
+    if raw in {"deployed_book", "deployed", "current_book", "deployed_scale", "sum"}:
+        return max(float(deployed_gross_sum), 1.0)
+    if raw in {"target_book", "target", "strategy", "strategy_target"}:
+        return max(float(strategy_target_gross_usd), 1.0)
+    return max(float(strategy_target_gross_usd), 1.0)
+
+
+def rescale_gross_targets_to_sleeve_budget_weights(
+    sized: pd.DataFrame,
+    *,
+    target_gross_usd: float,
+    sleeve_budget_usd: Mapping[str, float],
+    rescale_to: str = "absolute_budget",
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """
+    Multiply ``gross_target_usd`` within each YAML budgeted sleeve to match the budget target.
+
+    Two modes via ``rescale_to``:
+    - ``absolute_budget`` (default): each sleeve's deployed sum becomes its YAML
+      ``budget_sleeve_usd`` directly. The total deployed gross matches sum(budgets) =
+      ``target_gross_usd`` if all sleeves are present. Per-row caps run downstream may then clip
+      excess (sleeves with insufficient capacity will under-fill).
+    - ``fraction_of_deployed``: legacy — each sleeve's sum becomes
+      ``budget_s / target_gross_usd × current_total_gross``, preserving total deployed gross.
+
+    Within each sleeve, relative weights across rows are preserved. Sleeves with zero deployed
+    gross are reported in ``skipped_zero_deployed``; leftover budget share is **not** reallocated
+    here.
+    """
+    diag: dict[str, Any] = {"applied": False}
+    if sized is None or sized.empty:
+        return sized, diag
+    tg = float(target_gross_usd)
+    if tg <= 1e-18 or not isinstance(sleeve_budget_usd, Mapping):
+        return sized.copy(), diag
+    if "sleeve" not in sized.columns:
+        diag["reason"] = "no_sleeve_column"
+        return sized.copy(), diag
+
+    mode = str(rescale_to or "absolute_budget").strip().lower()
+    if mode not in ("absolute_budget", "fraction_of_deployed"):
+        mode = "absolute_budget"
+
+    out = sized.copy()
+    gross = pd.to_numeric(out["gross_target_usd"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+    slv = out["sleeve"].astype(str).to_numpy()
+    S_before = float(np.sum(gross))
+    if S_before <= 1e-18:
+        diag["reason"] = "zero_gross"
+        return out, diag
+
+    fracs_before: dict[str, float] = {}
+    skipped: list[str] = []
+    budgets_f: dict[str, float] = {str(k): float(v) for k, v in sleeve_budget_usd.items()}
+
+    for sleeve_key in budgets_f:
+        m = slv == str(sleeve_key)
+        if not bool(np.any(m)):
+            continue
+        fracs_before[str(sleeve_key)] = float(np.sum(gross[m])) / S_before
+
+    for sleeve_key, bud in budgets_f.items():
+        if mode == "absolute_budget":
+            desired = float(bud)
+        else:
+            f_tar = bud / tg
+            if f_tar <= 1e-15:
+                continue
+            desired = f_tar * S_before
+        if desired <= 1e-15:
+            continue
+        m = slv == str(sleeve_key)
+        if not np.any(m):
+            continue
+        curr = float(np.sum(gross[m]))
+        if curr <= 1e-15:
+            if desired > 1e-9:
+                skipped.append(str(sleeve_key))
+            continue
+        gross[m] *= desired / curr
+
+    S_after = float(np.sum(gross))
+    fracs_after: dict[str, float] = {}
+    if S_after > 1e-18:
+        for sleeve_key in budgets_f:
+            m = slv == str(sleeve_key)
+            if not bool(np.any(m)):
+                continue
+            fracs_after[str(sleeve_key)] = float(np.sum(gross[m])) / S_after
+
+    out["gross_target_usd"] = gross
+    diag.update(
+        {
+            "applied": True,
+            "rescale_to": mode,
+            "gross_sum_before": S_before,
+            "gross_sum_after": S_after,
+            "sleeve_fractions_before_rescale": fracs_before,
+            "sleeve_fractions_after_rescale": fracs_after,
+            "skipped_zero_deployed": skipped,
+        }
+    )
+    return out, diag
 
 
 def _enforce_max_pair_weight_within_deployed_sleeve_gross(
@@ -730,6 +894,11 @@ def _enforce_max_pair_weight_within_deployed_sleeve_gross(
     for sleeve, meta_cap in sleeve_caps.items():
         cap = float((meta_cap or {}).get("max_pair_weight", 1.0))
         if cap >= 1.0 - 1e-12:
+            continue
+        # When pre-cap score haircut already imposes per-row ceilings tighter than ``cap`` for
+        # under-scored rows, this function would re-fill them via proportional redistribution
+        # and undo the haircut. Skip the deployed-sleeve enforcement for those sleeves.
+        if bool((meta_cap or {}).get("_skip_deployed_enforce", False)):
             continue
         idx = np.where(slv == str(sleeve))[0]
         if len(idx) <= 1:
@@ -816,41 +985,56 @@ def _apply_gross_sizing_per_sleeve_book_caps(
     beta_floor: float,
     caps: dict[str, Any],
     shares_out_map: dict[str, float],
+    cap_subset: tuple[str, ...] | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """
     Diamond-Creek-style **per-sleeve** concentration: ``max_pair_weight`` and
     ``max_underlying_weight`` apply to weights **within each sleeve's allocated gross**,
     while liquidity rows still cap **book** weights (same construction as
-    :func:`_liquidity_tight_book_weights`). Preserves each sleeve's share of total gross.
+    :func:`_liquidity_tight_book_weights`), passing ``target_gross_usd`` as the resolved **liquidity
+    book anchor** ``T`` from ``strategy.gross_sizing_caps.liquidity_book_reference`` (deployed sum vs YAML).
+    Otherwise preserves each sleeve's share of total gross through the capped simplex projection.
+
+    ``cap_subset`` selects which liquidity inputs participate (structural vs day-liquidity).
+    Returned meta exposes ``binding_per_row`` strings for downstream ``binding_cap`` columns.
     """
     meta: dict[str, Any] = {}
     n = len(sized)
     if n == 0:
+        meta["binding_per_row"] = np.array([], dtype=object)
         return gross, meta
     gsum = float(np.sum(gross))
     if gsum <= 1e-18:
+        meta["binding_per_row"] = np.full(n, "none", dtype=object)
         return gross, meta
     per_sleeve = caps.get("per_sleeve") or {}
     if not isinstance(per_sleeve, dict) or not per_sleeve:
+        meta["binding_per_row"] = np.full(n, "none", dtype=object)
         return gross, meta
     if "sleeve" not in sized.columns:
+        meta["binding_per_row"] = np.full(n, "none", dtype=object)
         return gross, meta
 
-    liq_book = _liquidity_tight_book_weights(
+    liq_book, liq_binding = _liquidity_tight_book_weights(
         sized,
         target_gross_usd=target_gross_usd,
         beta_floor=beta_floor,
         caps=caps,
         shares_out_map=shares_out_map,
+        cap_subset=cap_subset,
+        return_binding_label=True,
     )
     default_pair = float(caps.get("max_pair_weight_cap", 0.05) or 0.05)
     default_und = float(caps.get("max_underlying_weight_cap", 0.11) or 0.11)
+    default_haircut = float(caps.get("pre_cap_score_haircut_multiplier", 0.0) or 0.0)
 
     slv = sized["sleeve"].astype(str).to_numpy()
     w = gross / gsum
     w_out = np.zeros_like(w, dtype=float)
+    binding_per_row = np.full(n, "none", dtype=object)
 
     sleeve_caps_out: dict[str, dict[str, float]] = {}
+    haircut_meta: dict[str, dict[str, Any]] = {}
     for sleeve in sorted({str(x) for x in slv.tolist()}):
         idx = np.where(slv == sleeve)[0]
         s_b = float(w[idx].sum())
@@ -862,8 +1046,11 @@ def _apply_gross_sizing_per_sleeve_book_caps(
             mu_raw = rules.get("max_underlying_weight", default_und)
             mp_f = float(mp_raw) if mp_raw is not None and float(mp_raw) > 0 else default_pair
             mu_f = float(mu_raw) if mu_raw is not None and float(mu_raw) > 0 else default_und
+            ha_raw = rules.get("pre_cap_score_haircut_multiplier", default_haircut)
+            ha_f = float(ha_raw) if ha_raw is not None else default_haircut
         else:
             mp_f, mu_f = default_pair, default_und
+            ha_f = default_haircut
         sleeve_caps_out[str(sleeve)] = {"max_pair_weight": mp_f, "max_underlying_weight": mu_f}
 
         v = w[idx] / s_b
@@ -873,9 +1060,49 @@ def _apply_gross_sizing_per_sleeve_book_caps(
             # knob across pairs and does not apply below 100% of sleeve gross. Liquidity still can.
             cap0 = min(1.0, float(liq_slice[0]) / max(s_b, 1e-18))
             cap_v = np.array([max(cap0, 1e-18)], dtype=float)
+            cap_pair = np.array([1.0], dtype=float)
+            cap_liq_v = np.array([float(liq_slice[0]) / max(s_b, 1e-18)], dtype=float)
+            cap_haircut_v = np.full(1, np.inf, dtype=float)
         else:
+            cap_pair = np.full(len(idx), float(mp_f), dtype=float)
+            cap_liq_v = liq_slice / max(s_b, 1e-18)
             cap_v = np.minimum(mp_f, liq_slice / max(s_b, 1e-18))
             cap_v = np.clip(cap_v, 1e-18, None)
+            cap_haircut_v = np.full(len(idx), np.inf, dtype=float)
+            # Pre-cap **score haircut**: limit how much an under-weighted (low decay/edge score)
+            # row can grow when the simplex projector redistributes excess from over-cap names.
+            # Without this, the projector reallocates proportionally to **headroom** (cap − w),
+            # which can lift a weak row like a high-borrow YieldBoost name from ~6% → 20%.
+            #
+            # ``ha_f`` is the maximum multiple of the row's pre-cap sleeve-internal weight that
+            # the projector may grow it to. The baseline is the **frozen** ``_pre_cap_score_weight``
+            # column (sleeve-internal, sums to 1 within sleeve) when present — survives covariance
+            # and post-rebalance cap re-runs. If the column is absent (legacy), fall back to the
+            # current sleeve-internal share ``v``.
+            if ha_f > 0:
+                if "_pre_cap_score_weight" in sized.columns:
+                    base_w = pd.to_numeric(
+                        sized["_pre_cap_score_weight"].iloc[idx], errors="coerce"
+                    ).fillna(0.0).to_numpy(dtype=float)
+                    bs = float(base_w.sum())
+                    if bs > 1e-18:
+                        base_w = base_w / bs
+                    else:
+                        base_w = v
+                else:
+                    base_w = v
+                cap_haircut_v = np.maximum(ha_f * base_w, 1e-18)
+                cap_v = np.minimum(cap_v, cap_haircut_v)
+                cap_v = np.clip(cap_v, 1e-18, None)
+                haircut_meta[str(sleeve)] = {
+                    "pre_cap_score_haircut_multiplier": float(ha_f),
+                    "n_rows_capped_by_haircut": int(np.sum(cap_v < mp_f - 1e-12)),
+                }
+                # ``_enforce_max_pair_weight_within_deployed_sleeve_gross`` would otherwise project
+                # back to ``max_pair_weight × deployed_sleeve_sum``, redistributing mass from haircut
+                # winners back into the under-scored rows we just clipped down — defeats the haircut.
+                # Mark this sleeve so the deployed enforcement step skips it.
+                sleeve_caps_out[str(sleeve)]["_skip_deployed_enforce"] = True
 
         und_sub = sized.iloc[idx]["Underlying"].astype(str).map(_norm_sym).to_numpy()
         und_code = pd.factorize(und_sub)[0]
@@ -885,7 +1112,25 @@ def _apply_gross_sizing_per_sleeve_book_caps(
         v2 = _project_pair_and_underlying_numpy(v1, cap_v, und_code, mu_eff)
         w_out[idx] = v2 * s_b
 
+        # Record which cap is binding per row using the lowest finite cap value seen here.
+        # Liquidity bucket label comes from ``_liquidity_tight_book_weights``; pair / haircut
+        # are sleeve-internal projector caps.
+        if len(idx) > 0:
+            cap_stack = np.stack([cap_pair, cap_liq_v, cap_haircut_v], axis=0)
+            argmin_local = np.argmin(cap_stack, axis=0)
+            for k_local, irow in enumerate(idx):
+                src = int(argmin_local[k_local])
+                if src == 0:
+                    binding_per_row[irow] = "pair_cap"
+                elif src == 1:
+                    binding_per_row[irow] = str(liq_binding[irow]) if irow < len(liq_binding) else "liquidity"
+                else:
+                    binding_per_row[irow] = "haircut"
+
     meta["per_sleeve_caps"] = sleeve_caps_out
+    meta["binding_per_row"] = binding_per_row
+    if haircut_meta:
+        meta["pre_cap_score_haircut"] = haircut_meta
     new_gross = w_out * gsum
     new_gross = _enforce_max_pair_weight_within_deployed_sleeve_gross(
         new_gross,
@@ -961,6 +1206,108 @@ def _normalize_underlying_returns(
     return df, None
 
 
+def _run_book_cap_pipeline_quiet(
+    sized: pd.DataFrame,
+    *,
+    target_gross_usd: float,
+    beta_floor: float,
+    strategy: dict[str, Any],
+    paths: dict[str, Any] | None,
+    shares_out_map: dict[str, float],
+    returns_df: pd.DataFrame | None,
+    sleeve_budget_usd: Mapping[str, float] | None,
+    cap_mode: str | None,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Re-run the executable cap → covariance → sleeve-rebalance → cap stack with a chosen
+    ``cap_mode``. Used to compute the **optimal** (structural-only) target alongside the
+    **executable** target, without duplicating logging or pipeline branching in main().
+
+    Returns the rebuilt sized frame and a diag dict with both cap-stack diagnostics and
+    a final ``binding_per_row`` array (per row: ``pair_cap`` / ``und_cap`` / ``shares_outstanding``
+    / ``aum`` / ``shares_available`` / ``adv`` / ``haircut`` / ``missing_shares`` / ``none``).
+    """
+    out = sized.copy()
+    diag: dict[str, Any] = {"cap_mode": str(cap_mode or "structural_plus_day_liquidity")}
+
+    out, init_diag = apply_gross_sizing_book_caps(
+        out,
+        target_gross_usd=float(target_gross_usd),
+        beta_floor=float(beta_floor),
+        strategy=strategy,
+        shares_out_map=shares_out_map,
+        cap_mode=cap_mode,
+    )
+    diag["initial_cap"] = init_diag
+    binding = init_diag.get("binding_per_row") if isinstance(init_diag, dict) else None
+
+    cov_cfg = strategy.get("covariance_balance") or {}
+    if isinstance(cov_cfg, dict) and bool(cov_cfg.get("enabled", False)) and returns_df is not None:
+        per_scopes_raw = cov_cfg.get("per_sleeve_scopes")
+        per_scopes = (
+            [str(s).strip() for s in per_scopes_raw if str(s).strip()]
+            if isinstance(per_scopes_raw, list) else []
+        )
+        if per_scopes:
+            for sc in per_scopes:
+                if "sleeve" not in out.columns:
+                    break
+                if str(sc) not in set(out["sleeve"].astype(str).unique()):
+                    continue
+                out, _ = apply_covariance_balance(
+                    out,
+                    target_gross_usd=float(target_gross_usd),
+                    beta_floor=float(beta_floor),
+                    strategy=strategy,
+                    paths=paths,
+                    shares_out_map=shares_out_map,
+                    returns_df=returns_df,
+                    covariance_scope=[sc],
+                    cap_mode=cap_mode,
+                )
+        else:
+            out, _ = apply_covariance_balance(
+                out,
+                target_gross_usd=float(target_gross_usd),
+                beta_floor=float(beta_floor),
+                strategy=strategy,
+                paths=paths,
+                shares_out_map=shares_out_map,
+                returns_df=returns_df,
+                cap_mode=cap_mode,
+            )
+
+    gs_reb_raw = strategy.get("gross_sizing_caps") or {}
+    if (
+        isinstance(gs_reb_raw, dict)
+        and bool(gs_reb_raw.get("enabled", False))
+        and bool(gs_reb_raw.get("rebalance_sleeve_weights_to_budget", False))
+        and sleeve_budget_usd is not None
+    ):
+        rescale_to = str(gs_reb_raw.get("rebalance_sleeve_target_mode", "absolute_budget")).strip().lower()
+        out, _ = rescale_gross_targets_to_sleeve_budget_weights(
+            out,
+            target_gross_usd=float(target_gross_usd),
+            sleeve_budget_usd=sleeve_budget_usd,
+            rescale_to=rescale_to,
+        )
+        out, final_diag = apply_gross_sizing_book_caps(
+            out,
+            target_gross_usd=float(target_gross_usd),
+            beta_floor=float(beta_floor),
+            strategy=strategy,
+            shares_out_map=shares_out_map,
+            cap_mode=cap_mode,
+        )
+        diag["final_cap"] = final_diag
+        if isinstance(final_diag, dict) and final_diag.get("binding_per_row") is not None:
+            binding = final_diag.get("binding_per_row")
+
+    if binding is None:
+        binding = np.full(len(out), "none", dtype=object)
+    diag["binding_per_row"] = binding
+    return out, diag
+
+
 def apply_covariance_balance(
     sized: pd.DataFrame,
     *,
@@ -970,6 +1317,8 @@ def apply_covariance_balance(
     paths: dict[str, Any] | None = None,
     shares_out_map: dict[str, float] | None = None,
     returns_df: pd.DataFrame | None = None,
+    covariance_scope: Collection[str] | None = None,
+    cap_mode: str | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """
     One-shot covariance penalty on per-pair ``gross_target_usd`` to attenuate exposure to
@@ -984,6 +1333,11 @@ def apply_covariance_balance(
 
     Config: ``strategy.covariance_balance`` (enabled, lookback_days, min_obs, shrink,
     penalty_strength, max_relative_shift). Disabled → no-op.
+
+    When ``covariance_scope`` lists ``sleeve`` names, exposure uses only those rows, multipliers
+    apply only there, and sleeve gross is preserved across the penalty before caps; other rows are
+    untouched until the global cap projection. When omitted or empty, all rows run together
+    (legacy whole-book pass).
     """
     diag: dict[str, Any] = {"applied": False}
     if sized is None or sized.empty:
@@ -998,6 +1352,12 @@ def apply_covariance_balance(
     lam = float(cfg.get("penalty_strength", 0.85) or 0.85)
     max_shift = float(cfg.get("max_relative_shift", 0.50) or 0.50)
 
+    scope_set: set[str] | None = None
+    if covariance_scope is not None:
+        scope_set = {str(s).strip() for s in covariance_scope if str(s).strip()}
+        if not scope_set:
+            scope_set = None
+
     df = sized.copy()
     df["ETF"] = df["ETF"].astype(str).map(_norm_sym)
     df["Underlying"] = df["Underlying"].astype(str).map(_norm_sym)
@@ -1005,11 +1365,19 @@ def apply_covariance_balance(
         df["beta_abs"] = pd.to_numeric(df["Beta"], errors="coerce").abs()
 
     g = pd.to_numeric(df["gross_target_usd"], errors="coerce").fillna(0.0).clip(lower=0.0)
-    gsum = float(g.sum())
-    if gsum <= 1e-18:
+    gsum_book = float(g.sum())
+    if gsum_book <= 1e-18:
         return sized, diag
 
-    needed = sorted({str(u) for u in df["Underlying"].astype(str).tolist()})
+    if scope_set is not None:
+        row_mask = df["sleeve"].astype(str).isin(scope_set)
+    else:
+        row_mask = pd.Series(True, index=df.index)
+    if not bool(row_mask.any()):
+        diag.update({"applied": False, "reason": "empty_covariance_scope"})
+        return sized, diag
+
+    needed = sorted({str(u) for u in df.loc[row_mask, "Underlying"].astype(str).tolist()})
     R, ret_detail = _normalize_underlying_returns(
         returns_df, lookback=lookback, min_obs=min_obs, needed_underlyings=needed,
     )
@@ -1028,7 +1396,10 @@ def apply_covariance_balance(
 
     beta_abs = pd.to_numeric(df["beta_abs"], errors="coerce").fillna(1.0).clip(lower=float(beta_floor))
     exposure = np.zeros(len(syms), dtype=float)
-    for u, w_pair, b in zip(df["Underlying"].tolist(), g.tolist(), beta_abs.tolist()):
+    sub_und = df.loc[row_mask, "Underlying"].astype(str).tolist()
+    sub_g = g.loc[row_mask].tolist()
+    sub_b = beta_abs.loc[row_mask].tolist()
+    for u, w_pair, b in zip(sub_und, sub_g, sub_b):
         i = sym_idx.get(str(u))
         if i is None:
             continue
@@ -1051,15 +1422,22 @@ def apply_covariance_balance(
         mult = np.clip(mult, 1.0 - max_shift, 1.0 + max_shift)
     mult_by_und = {syms[i]: float(mult[i]) for i in range(len(syms))}
 
-    new_g = np.zeros(len(df), dtype=float)
-    for k, (u, w_pair) in enumerate(zip(df["Underlying"].tolist(), g.tolist())):
-        m = float(mult_by_und.get(str(u), 1.0))
-        new_g[k] = float(w_pair) * m
-    s2 = float(new_g.sum())
-    if s2 <= 1e-18:
+    g_arr = g.to_numpy(dtype=float)
+    mask_np = row_mask.to_numpy(dtype=bool)
+    new_g = g_arr.copy()
+    for i in range(len(df)):
+        if not mask_np[i]:
+            continue
+        u = str(df["Underlying"].iloc[i])
+        m = float(mult_by_und.get(u, 1.0))
+        new_g[i] = float(g_arr[i]) * m
+    scope_sum_before = float(np.sum(g_arr[mask_np]))
+    scope_sum_after = float(np.sum(new_g[mask_np]))
+    if scope_sum_after <= 1e-18:
         diag.update({"applied": False, "reason": "all_zero_after_penalty"})
         return sized, diag
-    new_g = new_g * (gsum / s2)
+
+    new_g[mask_np] *= scope_sum_before / scope_sum_after
 
     out = sized.copy()
     out["gross_target_usd"] = new_g
@@ -1070,23 +1448,32 @@ def apply_covariance_balance(
         beta_floor=float(beta_floor),
         strategy=strategy,
         shares_out_map=(shares_out_map or {}),
+        cap_mode=cap_mode,
     )
 
     attenuated = sorted(
         ((u, float(m)) for u, m in mult_by_und.items() if m < 1.0 - 1e-9),
         key=lambda kv: kv[1],
     )[:5]
+    book_after = float(pd.to_numeric(out["gross_target_usd"], errors="coerce").fillna(0).sum())
     diag.update(
         {
             "applied": True,
+            "covariance_scope": sorted(scope_set) if scope_set else None,
+            "n_rows_scope": int(np.sum(mask_np)),
             "n_underlyings": int(len(syms)),
             "obs_used": int(len(R)),
             "lookback_used": int(min(len(R), lookback)),
             "shrink": float(shrink),
             "penalty_strength": float(lam),
             "max_relative_shift": float(max_shift),
-            "gross_sum_before": gsum,
-            "gross_sum_after": float(pd.to_numeric(out["gross_target_usd"], errors="coerce").fillna(0).sum()),
+            "gross_sum_book_before": gsum_book,
+            "gross_sum_scope_before": scope_sum_before,
+            "gross_sum_scope_after_caps": float(
+                pd.to_numeric(out.loc[row_mask, "gross_target_usd"], errors="coerce").fillna(0.0).sum()
+            ),
+            "gross_sum_before": gsum_book,
+            "gross_sum_after": book_after,
             "median_risk_contrib": float(med),
             "top_attenuated_underlyings": attenuated,
             "post_cov_cap_diag": _cap_diag,
@@ -1145,6 +1532,7 @@ def apply_gross_sizing_book_caps(
     strategy: dict[str, Any],
     shares_out_map: dict[str, float] | None = None,
     prev_gross_by_pair: dict[tuple[str, str], float] | None = None,
+    cap_mode: str | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """
     Enforce book-level max pair / max underlying weights and liquidity-style per-pair caps
@@ -1153,6 +1541,17 @@ def apply_gross_sizing_book_caps(
     single-name book), total gross is scaled down.
 
     Config: ``strategy.gross_sizing_caps`` in YAML. Omitted or ``enabled: false`` → no-op.
+
+    Liquidity-style rows use ``ref_short = T * short_leg_frac`` inside
+    :func:`_liquidity_tight_book_weights`. Pick ``T`` via ``liquidity_book_reference``:
+    ``target_book`` (default) anchors to YAML ``target_gross_usd`` passed in; ``deployed_book``
+    anchors to the current SUM(``gross_target_usd``) so ladders match placed scale after shrinks.
+
+    ``cap_mode`` selects the liquidity inputs that participate (see :func:`_resolve_cap_subset`).
+    Default ``None`` keeps the legacy ``structural_plus_day_liquidity`` (what's executable today).
+    Pass ``structural_only`` to compute the **optimal** target ignoring today's IBKR
+    ``shares_available`` / ADV. The returned ``diag`` includes ``binding_per_row`` and
+    ``cap_mode`` for downstream column emission.
     """
     diag: dict[str, Any] = {"applied": False}
     if sized is None or sized.empty:
@@ -1163,11 +1562,19 @@ def apply_gross_sizing_book_caps(
     caps = dict(raw)
     und_cap = float(caps.get("max_underlying_weight_cap", 0.11) or 0.11)
     som = shares_out_map if shares_out_map is not None else {}
+    cap_subset = _resolve_cap_subset(cap_mode)
 
     gross = pd.to_numeric(sized["gross_target_usd"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
     gsum = float(gross.sum())
     if gsum <= 1e-18:
         return sized, diag
+
+    liquidity_anchor_usd = _liquidity_book_anchor_usd(
+        deployed_gross_sum=gsum,
+        strategy_target_gross_usd=float(target_gross_usd),
+        caps=caps,
+    )
+    liq_ref_raw = str(caps.get("liquidity_book_reference", "target_book") or "target_book").strip()
 
     per_sleeve_cfg = caps.get("per_sleeve") or caps.get("per_bucket")
     use_per_sleeve = (
@@ -1184,10 +1591,11 @@ def apply_gross_sizing_book_caps(
         new_gross, ps_meta = _apply_gross_sizing_per_sleeve_book_caps(
             sized,
             gross,
-            target_gross_usd=float(target_gross_usd),
+            target_gross_usd=float(liquidity_anchor_usd),
             beta_floor=float(beta_floor),
             caps=caps,
             shares_out_map=som,
+            cap_subset=cap_subset,
         )
         if apply_hyst:
             new_gross = _apply_weight_hysteresis(
@@ -1208,17 +1616,24 @@ def apply_gross_sizing_book_caps(
                 "max_underlying_weight_cap": float(und_cap),
                 "per_sleeve_enforced": True,
                 "per_sleeve_caps": ps_meta.get("per_sleeve_caps", {}),
+                "pre_cap_score_haircut": ps_meta.get("pre_cap_score_haircut", {}),
                 "hysteresis_applied": bool(apply_hyst),
+                "liquidity_book_anchor_usd": float(liquidity_anchor_usd),
+                "liquidity_book_reference_raw": liq_ref_raw,
+                "cap_mode": str(cap_mode or "structural_plus_day_liquidity"),
+                "cap_subset": list(cap_subset),
+                "binding_per_row": ps_meta.get("binding_per_row", np.full(len(sized), "none", dtype=object)),
             }
         )
         return out, diag
 
     pair_caps = _compute_pair_weight_caps_array(
         sized,
-        target_gross_usd=float(target_gross_usd),
+        target_gross_usd=float(liquidity_anchor_usd),
         beta_floor=float(beta_floor),
         caps=caps,
         shares_out_map=som,
+        cap_subset=cap_subset,
     )
     desired = gross / gsum
     w1 = _project_to_capped_simplex_numpy(desired, pair_caps)
@@ -1235,6 +1650,16 @@ def apply_gross_sizing_book_caps(
         )
     out = sized.copy()
     out["gross_target_usd"] = new_gross
+    # Best-effort binding label for the non-per-sleeve branch using liquidity-only categories.
+    _, liq_binding_flat = _liquidity_tight_book_weights(
+        sized,
+        target_gross_usd=float(liquidity_anchor_usd),
+        beta_floor=float(beta_floor),
+        caps=caps,
+        shares_out_map=som,
+        cap_subset=cap_subset,
+        return_binding_label=True,
+    )
     diag.update(
         {
             "applied": True,
@@ -1244,6 +1669,11 @@ def apply_gross_sizing_book_caps(
             "max_underlying_weight_cap": float(und_cap),
             "per_sleeve_enforced": False,
             "hysteresis_applied": bool(apply_hyst),
+            "liquidity_book_anchor_usd": float(liquidity_anchor_usd),
+            "liquidity_book_reference_raw": liq_ref_raw,
+            "cap_mode": str(cap_mode or "structural_plus_day_liquidity"),
+            "cap_subset": list(cap_subset),
+            "binding_per_row": liq_binding_flat,
         }
     )
     return out, diag
@@ -1707,9 +2137,13 @@ def main() -> None:
                 w = np.ones(len(core_names_fit)) / len(core_names_fit)
             core_names_fit["gross_target_usd"] = core_budget * w
             core_names_fit["sleeve"] = "core_leveraged"
+            # Frozen pre-cap sleeve-internal weight (sums to 1) — used by the gross-cap stack as
+            # the haircut baseline so covariance + sleeve rebalance can't widen the per-row cap.
+            core_names_fit["_pre_cap_score_weight"] = w
         elif not core_names_fit.empty:
             core_names_fit["gross_target_usd"] = 0.0
             core_names_fit["sleeve"] = "core_leveraged"
+            core_names_fit["_pre_cap_score_weight"] = 0.0
 
         # -----------------------------
         # Allocate YIELDBOOST sleeve (bucket‑2 candidates only)
@@ -1721,9 +2155,11 @@ def main() -> None:
                 w = np.ones(len(yb_names_fit)) / len(yb_names_fit)
             yb_names_fit["gross_target_usd"] = yb_budget * w
             yb_names_fit["sleeve"] = "yieldboost"
+            yb_names_fit["_pre_cap_score_weight"] = w
         elif not yb_names_fit.empty:
             yb_names_fit["gross_target_usd"] = 0.0
             yb_names_fit["sleeve"] = "yieldboost"
+            yb_names_fit["_pre_cap_score_weight"] = 0.0
 
         stock_frames = []
         if not core_names_fit.empty:
@@ -1745,6 +2181,9 @@ def main() -> None:
             else:
                 w = _decay_score_weights(b4c, b4_weighting_cfg, sleeve_name="inverse_decay_bucket4")
             b4c["gross_target_usd"] = b4_core_cash * w
+            # ``_pre_cap_score_weight`` here is the b4-core-slice-internal weight; combined-sleeve
+            # baseline is normalized below in the ``b4_names`` concat once all slices are merged.
+            b4c["_pre_cap_score_weight"] = w
             b4_opt2 = b4_rules.get("bucket4_weekly_opt2") or {}
             if bool(b4_opt2.get("enabled")):
                 try:
@@ -1836,10 +2275,20 @@ def main() -> None:
             else:
                 wv = _decay_score_weights(b4v, b4_weighting_cfg, sleeve_name="inverse_decay_bucket4")
             b4v["gross_target_usd"] = b4_vol_cash * wv
+            b4v["_pre_cap_score_weight"] = wv
             b4_parts.append(b4v)
 
         if b4_parts:
             b4_names = pd.concat(b4_parts, axis=0, ignore_index=False)
+            # Re-normalize pre-cap weights across the COMBINED inverse_decay_bucket4 sleeve so
+            # the haircut baseline matches the merged sleeve seen by the cap stack.
+            if "_pre_cap_score_weight" in b4_names.columns:
+                _b4_g = pd.to_numeric(b4_names["gross_target_usd"], errors="coerce").fillna(0.0)
+                _b4_s = float(_b4_g.sum())
+                if _b4_s > 1e-18:
+                    b4_names["_pre_cap_score_weight"] = (_b4_g / _b4_s).to_numpy()
+                else:
+                    b4_names["_pre_cap_score_weight"] = 0.0
             # Cap bucket-4 ETF notionals by shares outstanding and reference price (combined sleeve).
             b4_names["shares_outstanding_total"] = b4_names["ETF"].map(shares_out_map)
             b4_names["price_ref"] = pd.to_numeric(
@@ -1887,6 +2336,11 @@ def main() -> None:
         sized = pd.concat([stock_names, b4_names], axis=0, ignore_index=False)
         sized = sized[~sized.index.duplicated(keep="first")].copy()
 
+        # Snapshot the post-decay-score / pre-cap-stack frame so we can later run a parallel
+        # **structural-only** pipeline for the optimal end-state target (independent of today's
+        # IBKR shares_available + ADV constraints). See ``_run_book_cap_pipeline_quiet``.
+        sized_pre_caps = sized.copy()
+
         sized, _cap_diag = apply_gross_sizing_book_caps(
             sized,
             target_gross_usd=float(target_gross_usd),
@@ -1894,15 +2348,24 @@ def main() -> None:
             strategy=strategy,
             shares_out_map=shares_out_map,
         )
+        executable_binding = _cap_diag.get("binding_per_row") if isinstance(_cap_diag, dict) else None
         if _cap_diag.get("applied"):
             if _cap_diag.get("per_sleeve_enforced"):
                 _ps = _cap_diag.get("per_sleeve_caps") or {}
+                _hc = _cap_diag.get("pre_cap_score_haircut") or {}
                 print(
                     "[INFO] gross_sizing_caps (per-sleeve, DCQ-style): "
                     f"sleeves={list(_ps.keys())} "
                     f"gross_before=${_cap_diag.get('gross_sum_before', 0):,.0f} "
                     f"gross_after=${_cap_diag.get('gross_sum_after', 0):,.0f}"
                 )
+                if _hc:
+                    bits = ", ".join(
+                        f"{k}: x{v.get('pre_cap_score_haircut_multiplier'):.2f}"
+                        f" (rows_capped={v.get('n_rows_capped_by_haircut', 0)})"
+                        for k, v in _hc.items()
+                    )
+                    print(f"[INFO] pre_cap_score_haircut active per sleeve: {bits}")
             else:
                 print(
                     "[INFO] gross_sizing_caps: "
@@ -1933,93 +2396,296 @@ def main() -> None:
                     except Exception as ex:
                         ur_df = None
                         ur_load_msg = f"failed to read {ur_path}: {ex}"
-            sized, _cov_diag = apply_covariance_balance(
+            per_scopes_raw = cov_cfg.get("per_sleeve_scopes")
+            per_scopes = (
+                [str(s).strip() for s in per_scopes_raw if str(s).strip()]
+                if isinstance(per_scopes_raw, list)
+                else []
+            )
+
+            def _log_cov_applied(d: dict) -> None:
+                top = ", ".join(f"{u}(x{m:.2f})" for u, m in (d.get("top_attenuated_underlyings") or []))
+                sc_l = d.get("covariance_scope") or []
+                sc_s = ",".join(sc_l) if sc_l else "book"
+                print(
+                    f"[INFO] covariance_balance[{sc_s}]: shrink={d.get('shrink'):.2f} "
+                    f"lambda={d.get('penalty_strength'):.2f} "
+                    f"n_und={d.get('n_underlyings')} obs={d.get('obs_used')} "
+                    f"rows_scope={d.get('n_rows_scope')} "
+                    f"gross_scope=${d.get('gross_sum_scope_before', 0):,.0f}->{d.get('gross_sum_scope_after_caps', 0):,.0f} "
+                    f"attenuated=[{top}] book_gross_after=${d.get('gross_sum_after', 0):,.0f}"
+                )
+
+            if ur_df is None:
+                if ur_load_msg:
+                    print(f"[WARN] covariance_balance: {ur_load_msg}")
+            elif per_scopes:
+                cov_last_diag: dict[str, Any] = {}
+                printed_rs_detail = False
+                matched_any_scope = False
+                for sc in per_scopes:
+                    if str(sc) not in set(sized["sleeve"].astype(str).unique()):
+                        continue
+                    matched_any_scope = True
+                    sized, cov_last_diag = apply_covariance_balance(
+                        sized,
+                        target_gross_usd=float(target_gross_usd),
+                        beta_floor=float(beta_floor),
+                        strategy=strategy,
+                        paths=paths,
+                        shares_out_map=shares_out_map,
+                        returns_df=ur_df,
+                        covariance_scope=[sc],
+                    )
+                    if cov_last_diag.get("applied"):
+                        _log_cov_applied(cov_last_diag)
+                    elif cov_last_diag.get("returns_skip_detail"):
+                        if not printed_rs_detail:
+                            print(
+                                f"[WARN] covariance_balance: insufficient_returns — "
+                                f"{cov_last_diag['returns_skip_detail']}"
+                            )
+                            printed_rs_detail = True
+                    else:
+                        print(
+                            f"[INFO] covariance_balance[{sc}] skipped ({cov_last_diag.get('reason', '')})"
+                        )
+                if not matched_any_scope:
+                    print("[INFO] covariance_balance: no per_sleeve_scopes matched sized rows — skipped")
+            else:
+                sized, _cov_diag = apply_covariance_balance(
+                    sized,
+                    target_gross_usd=float(target_gross_usd),
+                    beta_floor=float(beta_floor),
+                    strategy=strategy,
+                    paths=paths,
+                    shares_out_map=shares_out_map,
+                    returns_df=ur_df,
+                )
+                if _cov_diag.get("applied"):
+                    _log_cov_applied(_cov_diag)
+                else:
+                    if _cov_diag.get("returns_skip_detail"):
+                        print(
+                            f"[WARN] covariance_balance: insufficient_returns — "
+                            f"{_cov_diag['returns_skip_detail']}"
+                        )
+                    else:
+                        print(f"[INFO] covariance_balance: skipped ({_cov_diag.get('reason', 'disabled')})")
+
+        gs_reb_raw = strategy.get("gross_sizing_caps") or {}
+        if (
+            isinstance(gs_reb_raw, dict)
+            and bool(gs_reb_raw.get("enabled", False))
+            and bool(gs_reb_raw.get("rebalance_sleeve_weights_to_budget", False))
+        ):
+            rescale_to = str(gs_reb_raw.get("rebalance_sleeve_target_mode", "absolute_budget")).strip().lower()
+            sleeve_targets = {
+                "core_leveraged": float(core_budget),
+                "yieldboost": float(yb_budget),
+                "inverse_decay_bucket4": float(b4_reserved),
+            }
+            sized, sleeve_reb_diag = rescale_gross_targets_to_sleeve_budget_weights(
                 sized,
+                target_gross_usd=float(target_gross_usd),
+                sleeve_budget_usd=sleeve_targets,
+                rescale_to=rescale_to,
+            )
+            if sleeve_reb_diag.get("applied"):
+                print(
+                    f"[INFO] sleeve_budget_rescale (mode={sleeve_reb_diag.get('rescale_to')}) "
+                    f"vs YAML target_gross_usd: "
+                    f"gross=${sleeve_reb_diag.get('gross_sum_before', 0):,.0f}→${sleeve_reb_diag.get('gross_sum_after', 0):,.0f}; "
+                    f"fraction_before={sleeve_reb_diag.get('sleeve_fractions_before_rescale')} "
+                    f"fraction_after={sleeve_reb_diag.get('sleeve_fractions_after_rescale')}"
+                )
+                sk = sleeve_reb_diag.get("skipped_zero_deployed") or []
+                if sk:
+                    print(
+                        "[WARN] sleeve_budget_rescale: skipped sleeves with zero deployed gross "
+                        f"(nonzero YAML budget fraction): {sk}"
+                    )
+            sized, _final_cap_diag = apply_gross_sizing_book_caps(
+                sized,
+                target_gross_usd=float(target_gross_usd),
+                beta_floor=float(beta_floor),
+                strategy=strategy,
+                shares_out_map=shares_out_map,
+            )
+            if isinstance(_final_cap_diag, dict) and _final_cap_diag.get("binding_per_row") is not None:
+                executable_binding = _final_cap_diag.get("binding_per_row")
+            if _final_cap_diag.get("applied"):
+                print(
+                    "[INFO] gross_sizing_caps (final pass after sleeve rebalance): "
+                    f"gross_before=${_final_cap_diag.get('gross_sum_before', 0):,.0f} "
+                    f"gross_after=${_final_cap_diag.get('gross_sum_after', 0):,.0f}"
+                )
+                if "sleeve" in sized.columns:
+                    g_post = pd.to_numeric(sized["gross_target_usd"], errors="coerce").fillna(0.0)
+                    print(
+                        "[INFO] sleeve deployed vs YAML budget after final cap pass: "
+                        + ", ".join(
+                            f"{name}: ${float(g_post[sized['sleeve']==name].sum()):,.0f}/"
+                            f"${tgt:,.0f} "
+                            f"({100.0*float(g_post[sized['sleeve']==name].sum())/max(tgt,1e-9):.0f}%)"
+                            for name, tgt in sleeve_targets.items()
+                            if tgt > 1e-9
+                        )
+                    )
+
+        # ----------------------------------------------------------------- optimal target pass
+        # Re-run the full cap stack against the **structural** caps only (drops today's IBKR
+        # ``shares_available`` and median-volume liquidity). This is the steady-state target
+        # we'd hold if borrow returned and ADV were unconstrained — used by harvest +
+        # rebalancers to anchor drift detection independently of today's tradeable size.
+        try:
+            ur_for_opt = ur_df if ('ur_df' in locals() and isinstance(ur_df, pd.DataFrame) and not ur_df.empty) else None
+        except Exception:
+            ur_for_opt = None
+        sleeve_targets_for_opt = {
+            "core_leveraged": float(core_budget),
+            "yieldboost": float(yb_budget),
+            "inverse_decay_bucket4": float(b4_reserved),
+        }
+        try:
+            optimal_sized, _optimal_diag = _run_book_cap_pipeline_quiet(
+                sized_pre_caps,
                 target_gross_usd=float(target_gross_usd),
                 beta_floor=float(beta_floor),
                 strategy=strategy,
                 paths=paths,
                 shares_out_map=shares_out_map,
-                returns_df=ur_df,
+                returns_df=ur_for_opt,
+                sleeve_budget_usd=sleeve_targets_for_opt,
+                cap_mode="structural_only",
             )
-            if _cov_diag.get("applied"):
-                top = ", ".join(f"{u}(x{m:.2f})" for u, m in (_cov_diag.get("top_attenuated_underlyings") or []))
-                print(
-                    f"[INFO] covariance_balance: shrink={_cov_diag.get('shrink'):.2f} "
-                    f"lambda={_cov_diag.get('penalty_strength'):.2f} "
-                    f"n_und={_cov_diag.get('n_underlyings')} obs={_cov_diag.get('obs_used')} "
-                    f"attenuated=[{top}] gross_after=${_cov_diag.get('gross_sum_after', 0):,.0f}"
+        except Exception as ex:
+            print(f"[WARN] optimal-target pipeline failed ({ex}); optimal columns will mirror executable.")
+            optimal_sized = sized.copy()
+            _optimal_diag = {"binding_per_row": np.full(len(sized), "fallback_to_executable", dtype=object)}
+        optimal_binding = _optimal_diag.get("binding_per_row")
+        if "sleeve" in sized.columns:
+            opt_summary = []
+            for sname, sbud in sleeve_targets_for_opt.items():
+                if sbud <= 1e-9:
+                    continue
+                opt_g = float(pd.to_numeric(optimal_sized.loc[optimal_sized["sleeve"].eq(sname), "gross_target_usd"], errors="coerce").fillna(0.0).sum())
+                exe_g = float(pd.to_numeric(sized.loc[sized["sleeve"].eq(sname), "gross_target_usd"], errors="coerce").fillna(0.0).sum())
+                opt_summary.append(
+                    f"{sname}: opt=${opt_g:,.0f} exe=${exe_g:,.0f} ({100.0 * exe_g / max(opt_g, 1e-9):.0f}%)"
                 )
+            if opt_summary:
+                print("[INFO] sleeve optimal vs executable: " + "; ".join(opt_summary))
+
+        # Refresh sleeve subsets from sized so weight diagnostics reflect caps + covariance.
+        if not core_names_fit.empty:
+            core_names_fit["gross_target_usd"] = sized.loc[core_names_fit.index, "gross_target_usd"].to_numpy()
+        if not yb_names_fit.empty:
+            yb_names_fit["gross_target_usd"] = sized.loc[yb_names_fit.index, "gross_target_usd"].to_numpy()
+
+        def _populate_long_short_columns(frame: pd.DataFrame) -> pd.DataFrame:
+            """Apply the standard core/yieldboost stock split + bucket-4 inverse legs to a sized
+            frame. Same math as the executable pipeline; kept as a helper so we can run it twice
+            (once for executable ``gross_target_usd``, once for ``optimal_gross_target_usd``).
+            """
+            frame = frame.copy()
+            frame["beta_used_abs"] = frame["beta_abs"].clip(lower=beta_floor).fillna(1.0)
+            frame["hedge_ratio"] = 1.0 / frame["beta_used_abs"]
+            b4m = frame["sleeve"].eq("inverse_decay_bucket4")
+            sm = ~b4m
+            frame.loc[sm, "long_usd"] = frame.loc[sm, "gross_target_usd"] / (1.0 + frame.loc[sm, "hedge_ratio"])
+            frame.loc[sm, "short_usd"] = -(frame.loc[sm, "hedge_ratio"] * frame.loc[sm, "long_usd"])
+
+            opt2_cols = {"b4_opt2_inverse_etf_short_usd", "b4_opt2_underlying_short_usd"}
+            if opt2_cols.issubset(set(frame.columns)):
+                inv_leg = pd.to_numeric(frame["b4_opt2_inverse_etf_short_usd"], errors="coerce")
+                und_leg = pd.to_numeric(frame["b4_opt2_underlying_short_usd"], errors="coerce")
+                opt2_rows = inv_leg.notna() & und_leg.notna()
             else:
-                if ur_load_msg and ur_df is None:
-                    print(f"[WARN] covariance_balance: {ur_load_msg}")
-                elif _cov_diag.get("returns_skip_detail"):
-                    print(
-                        f"[WARN] covariance_balance: insufficient_returns — "
-                        f"{_cov_diag['returns_skip_detail']}"
-                    )
-                else:
-                    print(f"[INFO] covariance_balance: skipped ({_cov_diag.get('reason', 'disabled')})")
-
-        # Now compute long/short for each sized row
-        sized["beta_used_abs"] = sized["beta_abs"].clip(lower=beta_floor).fillna(1.0)
-        sized["hedge_ratio"] = 1.0 / sized["beta_used_abs"]
-        b4_mask = sized["sleeve"].eq("inverse_decay_bucket4")
-        stock_mask = ~b4_mask
-
-        sized.loc[stock_mask, "long_usd"] = sized.loc[stock_mask, "gross_target_usd"] / (
-            1.0 + sized.loc[stock_mask, "hedge_ratio"]
-        )
-        sized.loc[stock_mask, "short_usd"] = -(
-            sized.loc[stock_mask, "hedge_ratio"] * sized.loc[stock_mask, "long_usd"]
-        )
-
-        # Bucket 4: short inverse ETF (`short_usd` / `etf_target_usd`) and short underlying hedge
-        # (`long_usd` / `underlying_target_usd` — column names are GTP-wide; both USD amounts are negative).
-        opt2_leg_cols = {"b4_opt2_inverse_etf_short_usd", "b4_opt2_underlying_short_usd"}
-        if opt2_leg_cols.issubset(set(sized.columns)):
-            inv_leg = pd.to_numeric(sized["b4_opt2_inverse_etf_short_usd"], errors="coerce")
-            und_leg = pd.to_numeric(sized["b4_opt2_underlying_short_usd"], errors="coerce")
-            b4_opt2_rows = inv_leg.notna() & und_leg.notna()
-        else:
-            b4_opt2_rows = pd.Series(False, index=sized.index)
-        b4_opt2_mask = b4_mask & b4_opt2_rows
-        b4_default_mask = b4_mask & ~b4_opt2_mask
-        sized.loc[b4_default_mask, "short_usd"] = -sized.loc[b4_default_mask, "gross_target_usd"]
-        sized.loc[b4_default_mask, "long_usd"] = -(
-            b4_partial_hedge_ratio
-            * sized.loc[b4_default_mask, "beta_used_abs"]
-            * sized.loc[b4_default_mask, "gross_target_usd"]
-        )
-        if bool(b4_opt2_mask.any()):
-            opt2_gross = (
-                pd.to_numeric(sized.loc[b4_opt2_mask, "b4_opt2_inverse_etf_short_usd"], errors="coerce").fillna(0.0)
-                + pd.to_numeric(sized.loc[b4_opt2_mask, "b4_opt2_underlying_short_usd"], errors="coerce").fillna(0.0)
-            ).replace(0.0, np.nan)
-            cap_scale = (
-                pd.to_numeric(sized.loc[b4_opt2_mask, "gross_target_usd"], errors="coerce").fillna(0.0) / opt2_gross
-            ).fillna(0.0).clip(lower=0.0)
-            sized.loc[b4_opt2_mask, "short_usd"] = -(
-                pd.to_numeric(sized.loc[b4_opt2_mask, "b4_opt2_inverse_etf_short_usd"], errors="coerce").fillna(0.0)
-                * cap_scale
+                opt2_rows = pd.Series(False, index=frame.index)
+            o2m = b4m & opt2_rows
+            b4dm = b4m & ~o2m
+            frame.loc[b4dm, "short_usd"] = -frame.loc[b4dm, "gross_target_usd"]
+            frame.loc[b4dm, "long_usd"] = -(
+                b4_partial_hedge_ratio * frame.loc[b4dm, "beta_used_abs"] * frame.loc[b4dm, "gross_target_usd"]
             )
-            sized.loc[b4_opt2_mask, "long_usd"] = -(
-                pd.to_numeric(sized.loc[b4_opt2_mask, "b4_opt2_underlying_short_usd"], errors="coerce").fillna(0.0)
-                * cap_scale
-            )
-            if "b4_opt2_hedge_ratio" in sized.columns:
-                sized.loc[b4_opt2_mask, "hedge_ratio"] = pd.to_numeric(
-                    sized.loc[b4_opt2_mask, "b4_opt2_hedge_ratio"], errors="coerce"
-                ).fillna(sized.loc[b4_opt2_mask, "hedge_ratio"])
-        sized["underlying_target_usd"] = sized["long_usd"]
-        sized["etf_target_usd"] = sized["short_usd"]
+            if bool(o2m.any()):
+                opt2_gross = (
+                    pd.to_numeric(frame.loc[o2m, "b4_opt2_inverse_etf_short_usd"], errors="coerce").fillna(0.0)
+                    + pd.to_numeric(frame.loc[o2m, "b4_opt2_underlying_short_usd"], errors="coerce").fillna(0.0)
+                ).replace(0.0, np.nan)
+                cap_scale = (
+                    pd.to_numeric(frame.loc[o2m, "gross_target_usd"], errors="coerce").fillna(0.0) / opt2_gross
+                ).fillna(0.0).clip(lower=0.0)
+                frame.loc[o2m, "short_usd"] = -(
+                    pd.to_numeric(frame.loc[o2m, "b4_opt2_inverse_etf_short_usd"], errors="coerce").fillna(0.0)
+                    * cap_scale
+                )
+                frame.loc[o2m, "long_usd"] = -(
+                    pd.to_numeric(frame.loc[o2m, "b4_opt2_underlying_short_usd"], errors="coerce").fillna(0.0)
+                    * cap_scale
+                )
+                if "b4_opt2_hedge_ratio" in frame.columns:
+                    frame.loc[o2m, "hedge_ratio"] = pd.to_numeric(
+                        frame.loc[o2m, "b4_opt2_hedge_ratio"], errors="coerce"
+                    ).fillna(frame.loc[o2m, "hedge_ratio"])
+            frame["underlying_target_usd"] = frame["long_usd"]
+            frame["etf_target_usd"] = frame["short_usd"]
+            return frame
+
+        sized = _populate_long_short_columns(sized)
+        optimal_sized = _populate_long_short_columns(optimal_sized)
 
         # Write sized notionals back into KEEP (purgatory remains 0)
+        if "gross_target_usd" not in keep.columns:
+            keep["gross_target_usd"] = 0.0
+        keep.loc[sized.index, "gross_target_usd"] = pd.to_numeric(
+            sized["gross_target_usd"], errors="coerce"
+        ).fillna(0.0)
         keep.loc[sized.index, "long_usd"] = sized["long_usd"]
         keep.loc[sized.index, "short_usd"] = sized["short_usd"]
         keep.loc[sized.index, "underlying_target_usd"] = sized["underlying_target_usd"]
         keep.loc[sized.index, "etf_target_usd"] = sized["etf_target_usd"]
         keep.loc[sized.index, "sleeve"] = sized["sleeve"]
+
+        # ---- Optimal (structural-only) target columns: parallel set written next to executable.
+        # ``optimal_*`` reflects "where the position should sit" if today's IBKR shares_available
+        # and ADV were unconstrained. ``binding_cap`` / ``optimal_binding_cap`` label what bound
+        # each row in the executable / structural pass respectively. ``liquidity_gap_usd`` and
+        # ``executable_pct_of_optimal`` summarize the daily gap that harvest fills as borrow returns.
+        for col in (
+            "optimal_gross_target_usd",
+            "optimal_long_usd",
+            "optimal_short_usd",
+            "optimal_underlying_target_usd",
+            "optimal_etf_target_usd",
+            "optimal_binding_cap",
+            "binding_cap",
+            "liquidity_gap_usd",
+            "executable_pct_of_optimal",
+        ):
+            if col not in keep.columns:
+                keep[col] = 0.0 if col not in ("optimal_binding_cap", "binding_cap") else "none"
+
+        keep.loc[optimal_sized.index, "optimal_gross_target_usd"] = pd.to_numeric(
+            optimal_sized["gross_target_usd"], errors="coerce"
+        ).fillna(0.0)
+        keep.loc[optimal_sized.index, "optimal_long_usd"] = optimal_sized["long_usd"]
+        keep.loc[optimal_sized.index, "optimal_short_usd"] = optimal_sized["short_usd"]
+        keep.loc[optimal_sized.index, "optimal_underlying_target_usd"] = optimal_sized["underlying_target_usd"]
+        keep.loc[optimal_sized.index, "optimal_etf_target_usd"] = optimal_sized["etf_target_usd"]
+
+        if executable_binding is not None and len(executable_binding) == len(sized):
+            keep.loc[sized.index, "binding_cap"] = list(executable_binding)
+        if optimal_binding is not None and len(optimal_binding) == len(optimal_sized):
+            keep.loc[optimal_sized.index, "optimal_binding_cap"] = list(optimal_binding)
+
+        opt_g_series = pd.to_numeric(keep["optimal_gross_target_usd"], errors="coerce").fillna(0.0)
+        exe_g_series = pd.to_numeric(keep["gross_target_usd"], errors="coerce").fillna(0.0)
+        keep["liquidity_gap_usd"] = (opt_g_series - exe_g_series).astype(float)
+        keep["executable_pct_of_optimal"] = (
+            exe_g_series / opt_g_series.where(opt_g_series.abs() > 1e-9, np.nan)
+        ).astype(float).fillna(1.0).clip(lower=0.0, upper=2.0)
 
         print(
             f"[INFO] sized core={len(core_names_fit)} yb={len(yb_names_fit)} b4={len(b4_names)} | "
@@ -2087,7 +2753,12 @@ def main() -> None:
 
         # Output proposed trades:
         proposed = keep.copy()
-        nonzero_mask = (proposed["long_usd"] != 0) | (proposed["short_usd"] != 0)
+        nonzero_mask = (
+            (proposed["long_usd"] != 0)
+            | (proposed["short_usd"] != 0)
+            | (proposed.get("optimal_long_usd", 0) != 0)
+            | (proposed.get("optimal_short_usd", 0) != 0)
+        )
         proposed = proposed[nonzero_mask | (proposed["purgatory"] == True)]  # noqa: E712
 
         cols_to_drop = ["Leverage", "ExpectedLeverage", "cagr_positive", "beta_abs"]
@@ -2101,6 +2772,85 @@ def main() -> None:
 
         print(f"[OK] Wrote proposed trades -> {dated_path}  (n={len(proposed)})")
         print(f"[OK] Updated latest proposed trades -> {proposed_latest_csv}  (n={len(proposed)})")
+
+        # ----- optimal_targets.csv: structural-only target slice for harvest + rebalance.
+        # Same row-level granularity as proposed_trades.csv but only the optimal_* columns
+        # plus identifiers. Downstream tools (harvest, rebalancer) can read this even when an
+        # older proposed_trades.csv lacks the new columns.
+        optimal_path = run_dir(args.run_date) / "optimal_targets.csv"
+        opt_keep_cols = [
+            c for c in (
+                "ETF",
+                "Underlying",
+                "sleeve",
+                "strategy_tag",
+                "Beta",
+                "borrow_current",
+                "optimal_gross_target_usd",
+                "optimal_long_usd",
+                "optimal_short_usd",
+                "optimal_underlying_target_usd",
+                "optimal_etf_target_usd",
+                "optimal_binding_cap",
+                "binding_cap",
+                "liquidity_gap_usd",
+                "executable_pct_of_optimal",
+                "gross_target_usd",
+                "long_usd",
+                "short_usd",
+            ) if c in proposed.columns
+        ]
+        proposed[opt_keep_cols].to_csv(optimal_path, index=False)
+        print(f"[OK] Wrote optimal targets -> {optimal_path}  (rows={len(proposed)})")
+
+        # ----- liquidity_gap_state.json: sticky per-pair gap age tracker. Records how many
+        # consecutive run-dates a pair's structural target has exceeded its executable target,
+        # so harvest + rebalance scripts can prioritize the longest-standing gaps when borrow
+        # returns. Existing state is loaded and merged so days_open carries across runs.
+        try:
+            import json
+            gap_state_path = Path("data") / "liquidity_gap_state.json"
+            run_date_str = str(args.run_date)
+            prior: dict[str, Any] = {}
+            if gap_state_path.exists():
+                try:
+                    prior = json.loads(gap_state_path.read_text(encoding="utf-8"))
+                    if not isinstance(prior, dict):
+                        prior = {}
+                except Exception:
+                    prior = {}
+            new_state: dict[str, Any] = {}
+            for _, row in proposed.iterrows():
+                etf_s = str(row.get("ETF", "")).strip()
+                und_s = str(row.get("Underlying", "")).strip()
+                if not etf_s or not und_s:
+                    continue
+                key = f"{etf_s}|{und_s}"
+                gap = float(row.get("liquidity_gap_usd", 0.0) or 0.0)
+                opt = float(row.get("optimal_gross_target_usd", 0.0) or 0.0)
+                exe = float(row.get("gross_target_usd", 0.0) or 0.0)
+                prev = prior.get(key, {}) if isinstance(prior.get(key), dict) else {}
+                if abs(gap) > 1.0 and opt > 1.0:
+                    days_open = int(prev.get("days_open", 0) or 0) + (
+                        0 if str(prev.get("last_seen_run_date", "")) == run_date_str else 1
+                    )
+                else:
+                    days_open = 0
+                new_state[key] = {
+                    "ETF": etf_s,
+                    "Underlying": und_s,
+                    "optimal_target": opt,
+                    "last_executable": exe,
+                    "gap": gap,
+                    "days_open": days_open,
+                    "last_seen_run_date": run_date_str,
+                }
+            gap_state_path.parent.mkdir(parents=True, exist_ok=True)
+            gap_state_path.write_text(json.dumps(new_state, indent=2, sort_keys=True), encoding="utf-8")
+            n_open = sum(1 for v in new_state.values() if int(v.get("days_open", 0) or 0) > 0)
+            print(f"[OK] Updated liquidity gap state -> {gap_state_path}  (rows={len(new_state)}, gaps_open={n_open})")
+        except Exception as ex:
+            print(f"[WARN] liquidity_gap_state.json update failed: {ex}")
 
     print("[OK] Bucket 1/2/4 position generation complete. Flow sleeve execution remains separate.")
 

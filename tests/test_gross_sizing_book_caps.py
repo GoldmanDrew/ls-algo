@@ -4,6 +4,7 @@ import pandas as pd
 from generate_trade_plan import (
     _enforce_max_pair_weight_within_deployed_sleeve_gross,
     apply_gross_sizing_book_caps,
+    rescale_gross_targets_to_sleeve_budget_weights,
 )
 
 
@@ -100,6 +101,163 @@ def test_liquidity_cap_tightens_pair_weight():
     assert abs(float(out["gross_target_usd"].sum()) - 1000.0) < 1e-5
     w = out["gross_target_usd"].to_numpy(float) / 1000.0
     assert np.all(w <= 0.50 + 1e-8)
+
+
+def test_deployed_liquidity_anchor_uses_sum_gross_not_yaml_target():
+    """With ``liquidity_book_reference: deployed_book``, liquidity ladders use current book sum."""
+    df = pd.DataFrame(
+        {
+            "ETF": ["X", "Y"],
+            "Underlying": ["U1", "U2"],
+            "Beta": [2.0, 2.0],
+            "beta_abs": [2.0, 2.0],
+            "sleeve": ["core_leveraged", "core_leveraged"],
+            "gross_target_usd": [400.0, 600.0],
+            "borrow_price_ref": [100.0, 100.0],
+            "shares_available": [1000.0, 1000.0],
+        }
+    )
+    strategy = {
+        "gross_sizing_caps": {
+            "enabled": True,
+            "liquidity_book_reference": "deployed_book",
+            "max_pair_weight_cap": 0.50,
+            "max_underlying_weight_cap": 0.60,
+            "aum_use_pct": 0.0,
+            "short_avail_use_pct": 0.25,
+            "missing_shares_cap": 0.02,
+            "shares_outstanding_use_frac": 0.0,
+            "median_daily_volume_use_pct": 0.0,
+        }
+    }
+    out, diag = apply_gross_sizing_book_caps(
+        df,
+        target_gross_usd=10_000.0,
+        beta_floor=0.1,
+        strategy=strategy,
+        shares_out_map={},
+    )
+    assert diag.get("applied")
+    assert abs(float(diag.get("liquidity_book_anchor_usd", 0)) - 1000.0) < 1e-5
+    assert abs(float(out["gross_target_usd"].sum()) - 1000.0) < 1e-5
+
+
+def _three_sleeve_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "ETF": ["A", "B", "C"],
+            "Underlying": ["U1", "U2", "U3"],
+            "Beta": [2.0, 2.0, -1.0],
+            "beta_abs": [2.0, 2.0, 1.0],
+            "sleeve": ["core_leveraged", "yieldboost", "inverse_decay_bucket4"],
+            "gross_target_usd": [500_000.0, 200_000.0, 200_000.0],
+            "borrow_price_ref": [50.0, 50.0, 50.0],
+            "shares_available": [1e9, 1e9, 1e9],
+        }
+    )
+
+
+def _three_sleeve_bud() -> dict[str, float]:
+    return {"core_leveraged": 600_000.0, "yieldboost": 280_000.0, "inverse_decay_bucket4": 120_000.0}
+
+
+def test_rescale_sleeves_absolute_budget_default():
+    """Default mode rescales each sleeve's deployed sum to its YAML absolute dollar budget."""
+    tg = 1_000_000.0
+    out, diag = rescale_gross_targets_to_sleeve_budget_weights(
+        _three_sleeve_df(), target_gross_usd=tg, sleeve_budget_usd=_three_sleeve_bud(),
+    )
+    assert diag.get("applied")
+    assert diag.get("rescale_to") == "absolute_budget"
+    core = float(out.loc[out["sleeve"] == "core_leveraged", "gross_target_usd"].sum())
+    yb = float(out.loc[out["sleeve"] == "yieldboost", "gross_target_usd"].sum())
+    b4 = float(out.loc[out["sleeve"] == "inverse_decay_bucket4", "gross_target_usd"].sum())
+    np.testing.assert_allclose(core, 600_000.0, rtol=1e-8)
+    np.testing.assert_allclose(yb, 280_000.0, rtol=1e-8)
+    np.testing.assert_allclose(b4, 120_000.0, rtol=1e-8)
+    np.testing.assert_allclose(float(out["gross_target_usd"].sum()), 1_000_000.0, rtol=1e-8)
+
+
+def test_rescale_sleeves_fraction_of_deployed_legacy():
+    """``fraction_of_deployed`` preserves the current total and aligns sleeve fractions only."""
+    tg = 1_000_000.0
+    out, diag = rescale_gross_targets_to_sleeve_budget_weights(
+        _three_sleeve_df(),
+        target_gross_usd=tg,
+        sleeve_budget_usd=_three_sleeve_bud(),
+        rescale_to="fraction_of_deployed",
+    )
+    assert diag.get("applied")
+    assert diag.get("rescale_to") == "fraction_of_deployed"
+    S = 900_000.0
+    core = float(out.loc[out["sleeve"] == "core_leveraged", "gross_target_usd"].sum())
+    yb = float(out.loc[out["sleeve"] == "yieldboost", "gross_target_usd"].sum())
+    b4 = float(out.loc[out["sleeve"] == "inverse_decay_bucket4", "gross_target_usd"].sum())
+    assert abs(core / S - 0.60) < 1e-5
+    assert abs(yb / S - 0.28) < 1e-5
+    assert abs(b4 / S - 0.12) < 1e-5
+    np.testing.assert_allclose(float(out["gross_target_usd"].sum()), S, rtol=1e-8)
+
+
+def test_pre_cap_score_haircut_blocks_low_score_uplift_to_pair_cap():
+    """A low-score row (e.g. high-borrow YB name) should not be lifted to ``max_pair_weight`` by
+    the cap projector's headroom redistribution when ``pre_cap_score_haircut_multiplier`` is set."""
+    df = pd.DataFrame(
+        {
+            "ETF": ["A", "B", "C", "D", "E"],
+            "Underlying": ["U1", "U2", "U3", "U4", "U5"],
+            "Beta": [2.0] * 5,
+            "beta_abs": [2.0] * 5,
+            "sleeve": ["yb"] * 5,
+            "gross_target_usd": [400.0, 400.0, 400.0, 30.0, 30.0],
+            "borrow_price_ref": [50.0] * 5,
+            "shares_available": [1e9] * 5,
+        }
+    )
+    base = {
+        "enabled": True,
+        "max_pair_weight_cap": 0.99,
+        "max_underlying_weight_cap": 0.99,
+        "aum_use_pct": 0.0,
+        "short_avail_use_pct": 0.0,
+        "missing_shares_cap": 0.99,
+        "shares_outstanding_use_frac": 0.0,
+        "median_daily_volume_use_pct": 0.0,
+        "per_sleeve": {"yb": {"max_pair_weight": 0.20, "max_underlying_weight": 0.99}},
+    }
+    out_no, _ = apply_gross_sizing_book_caps(
+        df,
+        target_gross_usd=10_000.0,
+        beta_floor=0.1,
+        strategy={"gross_sizing_caps": base},
+        shares_out_map={},
+    )
+    cfg_with = {**base, "per_sleeve": {"yb": {**base["per_sleeve"]["yb"], "pre_cap_score_haircut_multiplier": 1.5}}}
+    out_yes, diag_yes = apply_gross_sizing_book_caps(
+        df,
+        target_gross_usd=10_000.0,
+        beta_floor=0.1,
+        strategy={"gross_sizing_caps": cfg_with},
+        shares_out_map={},
+    )
+
+    g_no = out_no["gross_target_usd"].to_numpy(float)
+    g_yes = out_yes["gross_target_usd"].to_numpy(float)
+    w_low_no = g_no[4] / float(g_no.sum())
+    w_low_yes = g_yes[4] / float(g_yes.sum())
+    sleeve_cap = 0.20
+    assert w_low_no >= 0.15, (
+        f"setup sanity: without haircut the low-score row should be lifted via headroom redistribution; got {w_low_no:.4f}"
+    )
+    assert w_low_yes < 0.5 * sleeve_cap + 1e-6, (
+        f"haircut should hold low-score row well below sleeve max_pair_weight={sleeve_cap}, got {w_low_yes:.4f}"
+    )
+    assert w_low_yes < w_low_no * 0.5, (
+        f"haircut should materially reduce the low-score row vs no-haircut: {w_low_yes:.4f} vs {w_low_no:.4f}"
+    )
+    hc = diag_yes.get("pre_cap_score_haircut") or {}
+    assert "yb" in hc and abs(hc["yb"]["pre_cap_score_haircut_multiplier"] - 1.5) < 1e-9
+    assert int(hc["yb"]["n_rows_capped_by_haircut"]) >= 1
 
 
 def test_per_sleeve_concentration_vs_book_level():
