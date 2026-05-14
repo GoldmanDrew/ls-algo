@@ -17,6 +17,11 @@ Usage:
     python rebalance_strategy.py [--dry-run] [--run-date YYYY-MM-DD]
                                  [--skip-phase-1] [--skip-phase-2]
                                  [--skip-phase-2b] [--skip-phase-3]
+
+Graceful stop: first Ctrl+C sets a shutdown flag (stops new work between phases).
+Press Ctrl+C again to force-quit after disconnecting IB. During a Y/N prompt,
+Ctrl+C also stops the run. Touch file STOP_EXECUTION for the same effect as the
+first Ctrl+C.
 """
 
 from __future__ import annotations
@@ -28,14 +33,15 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 import pandas as pd
 from ib_insync import IB, Trade
 
 from execute_trade_plan import (
     # Thread / shutdown
-    tprint, stop_requested, handle_sigint, ensure_thread_event_loop,
+    tprint, stop_requested, handle_sigint, register_sigint_cleanup,
+    interruptible_input, ensure_thread_event_loop,
     PRINT_LOCK, SHUTDOWN,
     # Exposure logging
     EXPOSURE_COLS, compute_portfolio_notionals,
@@ -2196,7 +2202,7 @@ def prompt_unmapped_close(
     # closes.  This is intentional: unmapped positions are an abnormal
     # condition (screener data issue, ticker change, etc.) and need review.
     tprint("  NOTE: auto_approve does NOT apply to unmapped closes.\n")
-    ans = input("  Close ALL priceable unmapped positions? (y/n): ").strip().lower()
+    ans = interruptible_input("  Close ALL priceable unmapped positions? (y/n): ").strip().lower()
 
     if ans == "y":
         tprint(f"  Approved: closing {len(priceable)} unmapped positions.\n")
@@ -2321,6 +2327,11 @@ def execute_unmapped_closes(
 
 def main() -> None:
     signal.signal(signal.SIGINT, handle_sigint)
+    if hasattr(signal, "SIGTERM"):
+        try:
+            signal.signal(signal.SIGTERM, handle_sigint)
+        except (ValueError, OSError):
+            pass
 
     parser = argparse.ArgumentParser(description="Hybrid four-phase strategy rebalancer (Cleanup, Establish, Resize, Hedge).")
     parser.add_argument("--dry-run",      action="store_true", help="No orders placed.")
@@ -2455,6 +2466,8 @@ def main() -> None:
         tprint(f"[SHORT] WARNING: FTP precheck failed ({ex}); continuing without it.")
         short_map = {}
 
+    undo_sigint_cleanup: Optional[Callable[[], None]] = None
+
     # Connect IBKR coordinator
     tprint(f"[IB] Connecting coordinator: {host}:{port}  clientId={client_id}")
     ib = connect_ib(host, port, client_id, coordinator=True)
@@ -2463,6 +2476,18 @@ def main() -> None:
     cancel_service = CoordinatorCancelService(host=host, port=port)
     cancel_service.start()
     tprint("[CANCEL_COORD] Started cancel coordinator.")
+
+    def _emergency_ib_cleanup() -> None:
+        try:
+            cancel_service.stop()
+        except Exception:
+            pass
+        try:
+            ib.disconnect()
+        except Exception:
+            pass
+
+    undo_sigint_cleanup = register_sigint_cleanup(_emergency_ib_cleanup)
 
     log_lock:  threading.Lock = threading.Lock()
     prices:    Dict[str, float] = {}
@@ -2535,7 +2560,9 @@ def main() -> None:
                 if auto_approve:
                     do_cleanup = True
                 else:
-                    ans = input("[CLEANUP] Approve executing these trades? (y/n): ").strip().lower()
+                    ans = interruptible_input(
+                        "[CLEANUP] Approve executing these trades? (y/n): "
+                    ).strip().lower()
                     do_cleanup = (ans == "y")
 
                 if do_cleanup:
@@ -2752,7 +2779,9 @@ def main() -> None:
                 if auto_approve:
                     do_resize = True
                 else:
-                    ans = input("[PHASE2B] Approve executing these resize trades? (y/n): ").strip().lower()
+                    ans = interruptible_input(
+                        "[PHASE2B] Approve executing these resize trades? (y/n): "
+                    ).strip().lower()
                     do_resize = (ans == "y")
 
                 if do_resize:
@@ -3225,6 +3254,11 @@ def main() -> None:
         tprint("\n[DONE] Rebalance complete.")
 
     finally:
+        if undo_sigint_cleanup is not None:
+            try:
+                undo_sigint_cleanup()
+            except Exception:
+                pass
         try:
             cancel_service.stop()
         except Exception:

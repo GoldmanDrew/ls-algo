@@ -58,7 +58,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -79,16 +79,60 @@ def tprint(msg: str) -> None:
 SHUTDOWN = threading.Event()
 STOP_FILE = Path("STOP_EXECUTION")
 
+_SIGINT_CLEANUP_FUNCS: List[Callable[[], None]] = []
+_CLEANUP_LOCK = threading.Lock()
+
 def stop_requested() -> bool:
     return STOP_FILE.exists() or SHUTDOWN.is_set()
 
+def register_sigint_cleanup(fn: Callable[[], None]) -> Callable[[], None]:
+    """
+    Register cleanup to run on forced exit (second Ctrl+C / repeated SIGINT).
+    Normal shutdown should `unregister()` in a finally block to avoid double
+    disconnect; the registry exists so a signal-handler sys.exit still closes IB.
+    """
+    with _CLEANUP_LOCK:
+        _SIGINT_CLEANUP_FUNCS.append(fn)
+
+    def unregister() -> None:
+        with _CLEANUP_LOCK:
+            try:
+                _SIGINT_CLEANUP_FUNCS.remove(fn)
+            except ValueError:
+                pass
+
+    return unregister
+
+def interruptible_input(prompt: str) -> str:
+    """
+    Console input that cooperates with graceful shutdown: on Windows, Ctrl+C
+    during input() often raises KeyboardInterrupt instead of invoking SIGINT.
+    """
+    try:
+        return input(prompt)
+    except KeyboardInterrupt:
+        tprint("\n[CTRL+C] Shutdown requested.")
+        SHUTDOWN.set()
+        raise SystemExit(130) from None
+
 def handle_sigint(signum, frame):
-    # First Ctrl+C => graceful; second Ctrl+C => hard exit
+    # First Ctrl+C => graceful; second Ctrl+C => emergency cleanups then exit
     if not stop_requested():
-        tprint("\n[CTRL+C] Shutdown requested. Stopping new work…")
+        tprint(
+            "\n[CTRL+C] Shutdown requested. Stopping new work… "
+            "(Ctrl+C again to force quit)"
+        )
         SHUTDOWN.set()
     else:
-        tprint("\n[CTRL+C] Forced exit.")
+        tprint("\n[CTRL+C] Forced exit. Running emergency cleanups…")
+        with _CLEANUP_LOCK:
+            fns = list(reversed(_SIGINT_CLEANUP_FUNCS))
+        for fn in fns:
+            try:
+                fn()
+            except Exception:
+                pass
+        tprint("[CTRL+C] Exiting.")
         sys.exit(1)
 
 def ensure_thread_event_loop() -> asyncio.AbstractEventLoop:
