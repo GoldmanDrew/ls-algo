@@ -3211,6 +3211,19 @@ def main() -> int:
             "(not already in splits_overrides.csv) into that file."
         ),
     )
+    ap.add_argument(
+        "--skip-underlying-returns",
+        action="store_true",
+        help=(
+            "Do not download Yahoo adjusted closes into paths.underlying_returns_csv "
+            "(otherwise written after screened CSV when that path is configured)."
+        ),
+    )
+    ap.add_argument(
+        "--underlying-returns-period",
+        default="5y",
+        help="yfinance period for underlying_returns_csv (default 5y).",
+    )
     args = ap.parse_args()
 
     run_date = args.run_date
@@ -3657,6 +3670,33 @@ def main() -> int:
     print(f"\n{'=' * 70}")
     print(f"[DONE] Saved: {output_path}")
     print(f"[DONE] Dated: {dated_dir / 'etf_screened_today.csv'}")
+
+    # Wide underlying price history for generate_trade_plan.covariance_balance
+    if not args.skip_underlying_returns:
+        ur_path_str = paths_cfg.get("underlying_returns_csv")
+        if ur_path_str:
+            try:
+                from underlying_returns_builder import (
+                    build_wide_adj_close,
+                    write_underlying_returns_csv,
+                )
+
+                p = Path(ur_path_str)
+                syms = screened["Underlying"].dropna().astype(str).unique().tolist()
+                wide, ok_cols = build_wide_adj_close(
+                    syms, period=str(args.underlying_returns_period)
+                )
+                write_underlying_returns_csv(wide, p)
+                print(
+                    f"[UNDERLYING_RETURNS] Wrote {wide.shape[0]} rows × {len(ok_cols)} symbols -> {p}"
+                )
+            except Exception as ex:
+                print(
+                    f"[WARN] underlying_returns failed ({ex}) - covariance_balance may skip"
+                )
+        else:
+            print("[UNDERLYING_RETURNS] paths.underlying_returns_csv unset — skipping")
+
     active = int((screened["purgatory"] != True).sum())  # noqa: E712
     print(f"[DONE] {len(screened)} pairs | {active} active (non-purgatory) | {purg} purgatory")
 

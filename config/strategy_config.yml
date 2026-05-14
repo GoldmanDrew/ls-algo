@@ -1,7 +1,7 @@
 ibkr:
   host: 127.0.0.1
-  port: 7496
-  client_id: 41
+  port: 7497
+  client_id: 31
   prefer_delayed: true
   suppress_error_codes: [10089]
 
@@ -51,7 +51,7 @@ strategy:
     lookback_days: 252
     min_obs: 60
     shrink: 0.25
-    penalty_strength: 1.0
+    penalty_strength: 1
     max_relative_shift: 0.75
 
 paths:
@@ -244,7 +244,7 @@ portfolio:
     # raw_score = signal - borrow_aversion * borrow_current (keep borrow_aversion small when signal is already net).
     sizing_signal: "net_edge"
     sizing_edge_column: "net_edge_p50_annual"
-    margin_efficiency_power: 0.5     # favour 2x over 3x: score x (1/|B|)^0.5
+    margin_efficiency_power: 0.75     # favour 2x over 3x: score x (1/|B|)^0.5
     # --- Iteration knobs (defaults are no-ops; flip per sleeve to test) -----
     score_concavity_p: 2           # Candidate A: <1 flattens the top tail (try 0.85 / 0.90)
 
@@ -285,8 +285,8 @@ portfolio:
         <<: *weighting_defaults
         max_name_weight: 0.20
         eq_blend: 0.02
-        borrow_aversion: 0.75
-        score_concavity_p: 1.5
+        borrow_aversion: 1
+        score_concavity_p: 1.25
 
     inverse_decay_bucket4:
       enabled: true                  # sleeve split vs stock: inverse_decay_bucket4.target_weight remainder → stock
@@ -295,13 +295,18 @@ portfolio:
       # MINUS ``rules.excluded_etfs`` (per-name overrides like KOLD)
       # MINUS ``flow_program.universe.shorts`` (those are sized in the weekly flow sleeve).
       rules:
-        partial_hedge_ratio: 0.775      # 1.0 = fully hedge inverse beta exposure
+        partial_hedge_ratio: 0.75      # 1.0 = fully hedge inverse beta exposure
         min_net_edge_annual: 0.35      # require bucket4_net_edge_annual >= this
         min_underlying_vol: 0.4      # universe entry: annual vol floor (aligned with DCQ bucket_4)
         excluded_etfs:                # never allocate inverse_decay_bucket4 to these tickers
           - KOLD
           - SCO
         max_shares_outstanding_frac: 0.3
+        # Volatility ETPs (UVIX/SVIX, etc.) often have β≥0 so they miss ``negative_beta`` B4.
+        # Optional slice: same B4 gates except β<0; capped at ``share_of_b4_budget`` of total B4 dollars.
+        volatility_etp_bucket4:
+          enabled: true
+          share_of_b4_budget: 0.01    # 1% of total inverse_decay_bucket4 gross when vol rows exist
       weighting:
         <<: *weighting_defaults
         max_name_weight: 0.15

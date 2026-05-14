@@ -73,6 +73,27 @@ def _clamp01(x: float) -> float:
     return max(0.0, min(1.0, float(x)))
 
 
+def _volatility_etp_rows_mask(df: pd.DataFrame) -> pd.Series:
+    """True for screener rows classified as volatility ETPs (VIX complex, etc.)."""
+    out = pd.Series(False, index=df.index)
+    for col in ("Beta_product_class", "product_class"):
+        if col in df.columns:
+            s = df[col].astype(str).str.strip().str.lower()
+            out |= s.eq("volatility_etp")
+    try:
+        from daily_screener import VOLATILITY_ETP_SYMBOLS as _VOL_SYMS
+    except ImportError:
+        _VOL_SYMS = frozenset()
+    if _VOL_SYMS and "ETF" in df.columns:
+        out |= df["ETF"].astype(str).map(_norm_sym).isin(_VOL_SYMS)
+    if _VOL_SYMS and "Underlying" in df.columns:
+        und = df["Underlying"].map(
+            lambda x: _norm_sym(x) if pd.notna(x) and str(x).strip() else ""
+        )
+        out |= und.isin(_VOL_SYMS)
+    return out
+
+
 def _normalize_two_nonnegative_weights(a: float, b: float) -> tuple[float, float]:
     """Return (frac_a, frac_b) that sum to 1; if both zero, (1, 0)."""
     aa = max(0.0, float(a))
@@ -889,13 +910,16 @@ def _normalize_underlying_returns(
     lookback: int,
     min_obs: int,
     needed_underlyings: list[str],
-) -> pd.DataFrame | None:
+) -> tuple[pd.DataFrame | None, str | None]:
     """
     Coerce a wide returns frame (dates × underlyings) of EITHER prices OR returns into
-    log returns covering the *needed_underlyings* list. Returns ``None`` when coverage is thin.
+    log returns covering the *needed_underlyings* list.
+
+    Returns ``(frame, None)`` on success, or ``(None, detail)`` when coverage is thin —
+    *detail* is suitable for operator logs.
     """
     if returns_df is None or returns_df.empty:
-        return None
+        return None, "no_returns_frame (missing csv or empty table; see paths.underlying_returns_csv)"
     need_set = {_norm_sym(str(u)) for u in needed_underlyings}
     # Subset columns **before** copy — avoids O(rows × full_universe) allocation when callers
     # pass the full Yahoo matrix (notebook grid / diagnostics).
@@ -908,7 +932,14 @@ def _normalize_underlying_returns(
         seen_nc.add(nc)
         pick.append(col)
     if len(pick) < 2:
-        return None
+        hit = need_set & {_norm_sym(str(c)) for c in returns_df.columns}
+        return (
+            None,
+            (
+                f"need ≥2 overlapping underlying columns vs sized book; "
+                f"matched={sorted(hit)} sized_underlyings={sorted(need_set)}"
+            ),
+        )
     df = returns_df.loc[:, pick].copy()
     df.columns = [_norm_sym(str(c)) for c in pick]
     df = df.replace([np.inf, -np.inf], np.nan)
@@ -919,9 +950,15 @@ def _normalize_underlying_returns(
     if len(df) > int(lookback):
         df = df.iloc[-int(lookback) :]
     df = df.dropna(axis=1, how="all")
-    if df.shape[1] < 2 or len(df) < int(min_obs):
-        return None
-    return df
+    if df.shape[1] < 2:
+        return None, "fewer than 2 return columns after dropping all-NaN columns"
+    if len(df) < int(min_obs):
+        return (
+            None,
+            f"history rows {len(df)} < covariance_balance.min_obs ({min_obs}) "
+            f"after lookback={lookback}",
+        )
+    return df, None
 
 
 def apply_covariance_balance(
@@ -973,11 +1010,17 @@ def apply_covariance_balance(
         return sized, diag
 
     needed = sorted({str(u) for u in df["Underlying"].astype(str).tolist()})
-    R = _normalize_underlying_returns(
+    R, ret_detail = _normalize_underlying_returns(
         returns_df, lookback=lookback, min_obs=min_obs, needed_underlyings=needed,
     )
     if R is None:
-        diag.update({"applied": False, "reason": "insufficient_returns"})
+        diag.update(
+            {
+                "applied": False,
+                "reason": "insufficient_returns",
+                "returns_skip_detail": ret_detail,
+            }
+        )
         return sized, diag
 
     syms = [c for c in R.columns]
@@ -1573,14 +1616,27 @@ def main() -> None:
             & b4_not_excluded
             & ~in_flow_program
         )
+        is_volatility_etp = _volatility_etp_rows_mask(eligible)
+        in_b4_volatility_etp = (
+            is_volatility_etp
+            & inverse_shortable
+            & b4_borrow_ok
+            & b4_edge_ok
+            & b4_vol_ok
+            & b4_not_excluded
+            & ~in_flow_program
+            & ~eligible["in_b4"]
+        )
 
         core_names = eligible.loc[eligible["in_core"]].copy()
         yb_names = eligible.loc[in_yieldboost_stock].copy()
         if not yb_enabled:
             yb_names = eligible.loc[[]].copy()
-        b4_names = eligible.loc[eligible["in_b4"]].copy()
+        b4_core_names = eligible.loc[eligible["in_b4"]].copy()
+        b4_vol_names = eligible.loc[in_b4_volatility_etp].copy()
         if not b4_enabled:
-            b4_names = eligible.loc[[]].copy()
+            b4_core_names = eligible.loc[[]].copy()
+            b4_vol_names = eligible.loc[[]].copy()
         n_core_decay_blocked = int((core_pre_decay & ~core_decay_gate).sum())
         if n_core_decay_blocked:
             print(
@@ -1595,11 +1651,40 @@ def main() -> None:
             )
 
         # Budgeting:
-        # - Bucket 4 gets ``target_weight`` of total gross when active.
+        # - Bucket 4 gets ``target_weight`` of total gross when the B4 sleeve (core inverse and/or
+        #   optional volatility-ETP slice) is active.
         # - Remaining gross is split core vs yieldboost using normalized YAML ``target_weights``.
-        b4_budget = target_gross_usd * b4_w if (not b4_names.empty and b4_w > 0) else 0.0
-        b4_budget = min(b4_budget, target_gross_usd)
-        remainder_budget = max(0.0, target_gross_usd - b4_budget)
+        vol_etp_b4_cfg = (b4_rules.get("volatility_etp_bucket4") or {})
+        vol_etp_b4_enabled = bool(vol_etp_b4_cfg.get("enabled", False))
+        vol_etp_share = _clamp01(float(vol_etp_b4_cfg.get("share_of_b4_budget", 0.0) or 0.0))
+
+        b4_any = bool(
+            b4_enabled
+            and b4_w > 0
+            and (not b4_core_names.empty or not b4_vol_names.empty)
+        )
+        b4_budget_total = min(target_gross_usd * b4_w, target_gross_usd) if b4_any else 0.0
+
+        b4_vol_cash = 0.0
+        if (
+            b4_budget_total > 1e-12
+            and vol_etp_b4_enabled
+            and vol_etp_share > 0.0
+            and not b4_vol_names.empty
+        ):
+            b4_vol_cash = b4_budget_total * vol_etp_share
+        b4_core_cash = max(0.0, b4_budget_total - b4_vol_cash)
+
+        b4_reserved = 0.0
+        if not b4_core_names.empty:
+            b4_reserved += b4_core_cash
+        if not b4_vol_names.empty:
+            b4_reserved += b4_vol_cash
+
+        b4_core_reserved = b4_core_cash if not b4_core_names.empty else 0.0
+        b4_vol_reserved = b4_vol_cash if not b4_vol_names.empty else 0.0
+
+        remainder_budget = max(0.0, target_gross_usd - b4_reserved)
         core_budget = remainder_budget * core_stock_frac
         yb_budget = remainder_budget * yb_stock_frac
         if core_budget > 1e-9 and core_names.empty:
@@ -1648,14 +1733,18 @@ def main() -> None:
         stock_names = pd.concat(stock_frames, axis=0, ignore_index=False) if stock_frames else eligible.loc[[]].copy()
 
         # -----------------------------
-        # Allocate BUCKET 4
+        # Allocate BUCKET 4 (core inverse β<0 + optional volatility-ETP slice)
         # -----------------------------
-        if not b4_names.empty and b4_budget > 0:
+        b4_parts: list[pd.DataFrame] = []
+
+        if not b4_core_names.empty and b4_core_cash > 1e-9:
+            b4c = b4_core_names.copy()
+            b4c["_b4_slice"] = "core"
             if b4_weight_method == "equal":
-                w = np.ones(len(b4_names)) / len(b4_names)
+                w = np.ones(len(b4c)) / len(b4c)
             else:
-                w = _decay_score_weights(b4_names, b4_weighting_cfg, sleeve_name="inverse_decay_bucket4")
-            b4_names["gross_target_usd"] = b4_budget * w
+                w = _decay_score_weights(b4c, b4_weighting_cfg, sleeve_name="inverse_decay_bucket4")
+            b4c["gross_target_usd"] = b4_core_cash * w
             b4_opt2 = b4_rules.get("bucket4_weekly_opt2") or {}
             if bool(b4_opt2.get("enabled")):
                 try:
@@ -1669,7 +1758,7 @@ def main() -> None:
 
                     pairs_subset = [
                         (_norm_sym(str(r["ETF"])), _norm_sym(str(r["Underlying"])))
-                        for _, r in b4_names[["ETF", "Underlying"]].iterrows()
+                        for _, r in b4c[["ETF", "Underlying"]].iterrows()
                     ]
                     excl_inv = frozenset({"SCO"} | {_norm_sym(x) for x in (b4_opt2.get("excluded_inverse_etfs") or [])})
                     mp = int(b4_opt2.get("pf_min_pairs", 5))
@@ -1695,7 +1784,7 @@ def main() -> None:
                         st_b4,
                         pw,
                         args.run_date,
-                        float(b4_budget),
+                        float(b4_core_cash),
                         fee_bps=float(b4_opt2.get("fee_bps", 1.0)),
                         slippage_bps=float(b4_opt2.get("slippage_bps", 20.0)),
                         partial_hedge_ratio=b4_partial_hedge_ratio,
@@ -1721,23 +1810,37 @@ def main() -> None:
                         for _, r in tgt_df.iterrows()
                         if pd.notna(r.get("hedge_ratio"))
                     }
-                    for idx in b4_names.index:
+                    for idx in b4c.index:
                         k = (
-                            _norm_sym(str(b4_names.at[idx, "ETF"])),
-                            _norm_sym(str(b4_names.at[idx, "Underlying"])),
+                            _norm_sym(str(b4c.at[idx, "ETF"])),
+                            _norm_sym(str(b4c.at[idx, "Underlying"])),
                         )
                         if k in gross_by_key:
-                            b4_names.at[idx, "gross_target_usd"] = gross_by_key[k]
+                            b4c.at[idx, "gross_target_usd"] = gross_by_key[k]
                         if k in inv_short_by_key:
-                            b4_names.at[idx, "b4_opt2_inverse_etf_short_usd"] = inv_short_by_key[k]
+                            b4c.at[idx, "b4_opt2_inverse_etf_short_usd"] = inv_short_by_key[k]
                         if k in und_short_by_key:
-                            b4_names.at[idx, "b4_opt2_underlying_short_usd"] = und_short_by_key[k]
+                            b4c.at[idx, "b4_opt2_underlying_short_usd"] = und_short_by_key[k]
                         if k in hedge_by_key:
-                            b4_names.at[idx, "b4_opt2_hedge_ratio"] = hedge_by_key[k]
+                            b4c.at[idx, "b4_opt2_hedge_ratio"] = hedge_by_key[k]
                     print(f"[INFO] bucket4_weekly_opt2: tail-risk weights + dynamic hedge targets (n={len(tgt_df)})")
                 except Exception as e:
                     print(f"[WARN] bucket4_weekly_opt2 disabled for this run ({e}); using decay_score sizing")
-            # Cap bucket-4 ETF notionals by shares outstanding and reference price.
+            b4_parts.append(b4c)
+
+        if not b4_vol_names.empty and b4_vol_cash > 1e-9:
+            b4v = b4_vol_names.copy()
+            b4v["_b4_slice"] = "vol_etp"
+            if b4_weight_method == "equal":
+                wv = np.ones(len(b4v)) / len(b4v)
+            else:
+                wv = _decay_score_weights(b4v, b4_weighting_cfg, sleeve_name="inverse_decay_bucket4")
+            b4v["gross_target_usd"] = b4_vol_cash * wv
+            b4_parts.append(b4v)
+
+        if b4_parts:
+            b4_names = pd.concat(b4_parts, axis=0, ignore_index=False)
+            # Cap bucket-4 ETF notionals by shares outstanding and reference price (combined sleeve).
             b4_names["shares_outstanding_total"] = b4_names["ETF"].map(shares_out_map)
             b4_names["price_ref"] = pd.to_numeric(
                 b4_names.get("borrow_price_ref", np.nan), errors="coerce"
@@ -1760,6 +1863,26 @@ def main() -> None:
                         f"requested=${before_sum:,.0f}, capped=${after_sum:,.0f}"
                     )
             b4_names["sleeve"] = "inverse_decay_bucket4"
+
+            if b4_weight_method == "decay_score":
+                b4c_w = b4_names.loc[b4_names["_b4_slice"].eq("core")]
+                b4v_w = b4_names.loc[b4_names["_b4_slice"].eq("vol_etp")]
+                if not b4c_w.empty and b4_core_cash > 1e-9:
+                    cw_b4 = b4c_w["gross_target_usd"] / b4_core_cash
+                    print(
+                        f"[INFO] b4 (core inverse β<0) weights: max={cw_b4.max():.3f} min={cw_b4.min():.3f} "
+                        f"nonzero={int((cw_b4 > 1e-9).sum())}/{len(b4c_w)}"
+                    )
+                if not b4v_w.empty and b4_vol_cash > 1e-9:
+                    vw_b4 = b4v_w["gross_target_usd"] / b4_vol_cash
+                    print(
+                        f"[INFO] b4 (volatility ETP) weights: max={vw_b4.max():.3f} min={vw_b4.min():.3f} "
+                        f"nonzero={int((vw_b4 > 1e-9).sum())}/{len(b4v_w)}"
+                    )
+
+            b4_names = b4_names.drop(columns=["_b4_slice"])
+        else:
+            b4_names = eligible.loc[[]].copy()
 
         sized = pd.concat([stock_names, b4_names], axis=0, ignore_index=False)
         sized = sized[~sized.index.duplicated(keep="first")].copy()
@@ -1793,13 +1916,23 @@ def main() -> None:
         if isinstance(cov_cfg, dict) and bool(cov_cfg.get("enabled", False)):
             ur_csv = paths.get("underlying_returns_csv") if isinstance(paths, dict) else None
             ur_df: pd.DataFrame | None = None
-            if isinstance(ur_csv, str) and ur_csv.strip():
+            ur_load_msg: str | None = None
+            if not isinstance(ur_csv, str) or not str(ur_csv).strip():
+                ur_load_msg = "paths.underlying_returns_csv is empty — covariance_balance needs a wide CSV (dates × underlyings)"
+            else:
                 ur_path = Path(ur_csv)
-                if ur_path.exists():
+                if not ur_path.is_file():
+                    ur_load_msg = f"underlying returns file not found: {ur_path}"
+                else:
                     try:
-                        ur_df = pd.read_csv(ur_path, index_col=0)
-                    except Exception:
+                        ur_df = pd.read_csv(ur_path, index_col=0, parse_dates=True)
+                        ur_df.index = pd.to_datetime(ur_df.index, utc=False)
+                        if ur_df.empty:
+                            ur_df = None
+                            ur_load_msg = f"underlying returns file is empty: {ur_path}"
+                    except Exception as ex:
                         ur_df = None
+                        ur_load_msg = f"failed to read {ur_path}: {ex}"
             sized, _cov_diag = apply_covariance_balance(
                 sized,
                 target_gross_usd=float(target_gross_usd),
@@ -1818,7 +1951,15 @@ def main() -> None:
                     f"attenuated=[{top}] gross_after=${_cov_diag.get('gross_sum_after', 0):,.0f}"
                 )
             else:
-                print(f"[INFO] covariance_balance: skipped ({_cov_diag.get('reason', 'disabled')})")
+                if ur_load_msg and ur_df is None:
+                    print(f"[WARN] covariance_balance: {ur_load_msg}")
+                elif _cov_diag.get("returns_skip_detail"):
+                    print(
+                        f"[WARN] covariance_balance: insufficient_returns — "
+                        f"{_cov_diag['returns_skip_detail']}"
+                    )
+                else:
+                    print(f"[INFO] covariance_balance: skipped ({_cov_diag.get('reason', 'disabled')})")
 
         # Now compute long/short for each sized row
         sized["beta_used_abs"] = sized["beta_abs"].clip(lower=beta_floor).fillna(1.0)
@@ -1836,7 +1977,13 @@ def main() -> None:
         # Bucket 4: short inverse ETF (`short_usd` / `etf_target_usd`) and short underlying hedge
         # (`long_usd` / `underlying_target_usd` — column names are GTP-wide; both USD amounts are negative).
         opt2_leg_cols = {"b4_opt2_inverse_etf_short_usd", "b4_opt2_underlying_short_usd"}
-        b4_opt2_mask = b4_mask & opt2_leg_cols.issubset(set(sized.columns))
+        if opt2_leg_cols.issubset(set(sized.columns)):
+            inv_leg = pd.to_numeric(sized["b4_opt2_inverse_etf_short_usd"], errors="coerce")
+            und_leg = pd.to_numeric(sized["b4_opt2_underlying_short_usd"], errors="coerce")
+            b4_opt2_rows = inv_leg.notna() & und_leg.notna()
+        else:
+            b4_opt2_rows = pd.Series(False, index=sized.index)
+        b4_opt2_mask = b4_mask & b4_opt2_rows
         b4_default_mask = b4_mask & ~b4_opt2_mask
         sized.loc[b4_default_mask, "short_usd"] = -sized.loc[b4_default_mask, "gross_target_usd"]
         sized.loc[b4_default_mask, "long_usd"] = -(
@@ -1877,7 +2024,7 @@ def main() -> None:
         print(
             f"[INFO] sized core={len(core_names_fit)} yb={len(yb_names_fit)} b4={len(b4_names)} | "
             f"budgets: core=${core_budget:,.0f} yb=${yb_budget:,.0f} (post-b4 ${remainder_budget:,.0f}) "
-            f"b4=${b4_budget:,.0f}"
+            f"b4=${b4_reserved:,.0f} (core=${b4_core_reserved:,.0f} vol_etp=${b4_vol_reserved:,.0f})"
         )
 
         # Weight diagnostics
@@ -1893,14 +2040,6 @@ def main() -> None:
                 f"[INFO] yieldboost weights: max={yw.max():.3f} min={yw.min():.3f} "
                 f"nonzero={int((yw > 1e-9).sum())}/{len(yb_names_fit)}"
             )
-        if b4_weight_method == "decay_score" and not b4_names.empty and b4_budget > 0:
-            bw = b4_names["gross_target_usd"] / b4_budget
-            print(
-                f"[INFO] b4 weights: max={bw.max():.3f} min={bw.min():.3f} "
-                f"nonzero={int((bw > 1e-9).sum())}/{len(b4_names)}"
-            )
-
-        # Internalization diagnostics by underlying.
         if not keep.empty:
             stock_mask_plan = keep["sleeve"].astype(str).isin(["core_leveraged", "yieldboost"])
             b12_under = (
