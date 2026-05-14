@@ -5,8 +5,10 @@ plot_proposed_trades.py — Visualise bucket-level proposed trades for a run dat
 Also appends **screened** ETFs with IBKR ``shares_available``≈0 (or ``exclude_no_shares``) that
 do not appear in the sized plan (often purgatory / no-locate): they get a **proxy** hatched
 optimal bar (median structural gross in the bucket × edge rank) so you can see where the
-sleeve would like to be if inventory existed — see plot footnote †. Disable with
-``--skip-no-ibkr-proxy``.
+sleeve would like to be if inventory existed — see plot footnote †. Bucket 4 includes both
+inverse-shortable negative-β names and **volatility ETP** rows (same classification as
+``generate_trade_plan``), even when ``inverse_shortable`` is false on screened data. Disable
+with ``--skip-no-ibkr-proxy``.
 
 Outputs:
   - proposed_trades_bucket_1_plot.png   (beta > 1.5, stock sleeves only)
@@ -26,6 +28,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
 import pandas as pd
+
+from generate_trade_plan import _volatility_etp_rows_mask
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -187,7 +191,14 @@ def append_no_ibkr_share_screened_rows(
     elif bucket == "b1":
         bucket_mask = (~yb) & (beta_abs > 1.5) & (beta > 0)
     elif bucket == "b4":
-        bucket_mask = (~yb) & (beta < 0) & inv_ok
+        # Core B4 proxy: negative β + inverse_shortable (matches ``in_b4`` spirit).
+        # Volatility ETPs (UVIX/SVIX/VIX complex) often have ``inverse_shortable`` false on
+        # screened rows but still use the B4 vol sleeve in GTP when eligible — include them
+        # here for chart parity only (still a hatched proxy, not live sizing).
+        vol_etp = _volatility_etp_rows_mask(sc)
+        b4_core_proxy = (~yb) & (beta < 0) & inv_ok
+        b4_vol_etp_proxy = vol_etp & (~yb) & (beta < 0)
+        bucket_mask = b4_core_proxy | b4_vol_etp_proxy
     else:
         return bucket_df
 

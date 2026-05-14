@@ -13,7 +13,9 @@ Implements:
   Stock sleeves do **not** apply a blanket ``net_decay_annual >= 0`` rule; core may still use
   ``min_net_decay_annual`` / hysteresis from YAML.
 
-- Bucket 4: ``inverse_decay_bucket4`` unchanged.
+- Bucket 4: ``inverse_decay_bucket4`` unchanged; core inverse rows still require
+  ``inverse_shortable``. The optional volatility-ETP B4 slice does not (see
+  ``_in_b4_volatility_etp_sleeve_mask``).
 
 - Purgatory handling (from screened CSV; see daily_screener ``recompute_purgatory_by_bucket``):
     * OUTPUT purgatory rows with 0 targets so execution won’t auto-close.
@@ -94,6 +96,33 @@ def _volatility_etp_rows_mask(df: pd.DataFrame) -> pd.Series:
         )
         out |= und.isin(_VOL_SYMS)
     return out
+
+
+def _in_b4_volatility_etp_sleeve_mask(
+    eligible: pd.DataFrame,
+    *,
+    b4_borrow_ok: pd.Series,
+    b4_edge_ok: pd.Series,
+    b4_vol_ok: pd.Series,
+    b4_not_excluded: pd.Series,
+    in_flow_program: pd.Series,
+    in_b4_core: pd.Series,
+) -> pd.Series:
+    """Volatility-ETP bucket-4 slice (separate from core inverse ``in_b4``).
+
+    Core ``in_b4`` still requires ``inverse_shortable``; VIX-complex ETPs are often flagged
+    false on screened rows despite being the intended B4 vol sleeve, so this path omits it.
+    """
+    is_volatility_etp = _volatility_etp_rows_mask(eligible)
+    return (
+        is_volatility_etp
+        & b4_borrow_ok
+        & b4_edge_ok
+        & b4_vol_ok
+        & b4_not_excluded
+        & ~in_flow_program
+        & ~in_b4_core
+    )
 
 
 def _normalize_two_nonnegative_weights(a: float, b: float) -> tuple[float, float]:
@@ -2046,16 +2075,14 @@ def main() -> None:
             & b4_not_excluded
             & ~in_flow_program
         )
-        is_volatility_etp = _volatility_etp_rows_mask(eligible)
-        in_b4_volatility_etp = (
-            is_volatility_etp
-            & inverse_shortable
-            & b4_borrow_ok
-            & b4_edge_ok
-            & b4_vol_ok
-            & b4_not_excluded
-            & ~in_flow_program
-            & ~eligible["in_b4"]
+        in_b4_volatility_etp = _in_b4_volatility_etp_sleeve_mask(
+            eligible,
+            b4_borrow_ok=b4_borrow_ok,
+            b4_edge_ok=b4_edge_ok,
+            b4_vol_ok=b4_vol_ok,
+            b4_not_excluded=b4_not_excluded,
+            in_flow_program=in_flow_program,
+            in_b4_core=eligible["in_b4"],
         )
 
         core_names = eligible.loc[eligible["in_core"]].copy()
