@@ -10,8 +10,10 @@ Phase 2b — Resize:    Bidirectional leg-by-leg trim/grow toward plan USD
                       targets for already-established pairs, gated by a
                       hysteresis band (see phase2b_resize.py).
 Phase 3  — Hedge:     Directional net-exposure correction for stock sleeves
-                      (``core_leveraged`` and ``yieldboost``), excluding flow and B4.
-                      Trades ONE leg per underlying to minimise transaction count.
+                      (``core_leveraged`` and ``yieldboost``). Flow-program ETF legs
+                      are omitted from beta-adjusted net; non-flow inverse (B4)
+                      shorts are included. Trades ONE leg per underlying to minimise
+                      transaction count.
 
 Usage:
     python rebalance_strategy.py [--dry-run] [--run-date YYYY-MM-DD]
@@ -724,7 +726,7 @@ def has_blind_etfs(
     """
     Check if an underlying has any ETFs that are:
         1. Positioned (non-zero shares in strat_pos)
-        2. Positive beta (core pair, not flow/inverse)
+        2. Not in ``flow_etfs`` (flow legs are invisible to hedge net)
         3. Cannot be priced (px <= 0)
 
     When this returns True, compute_beta_adjusted_net_notional is blind
@@ -741,9 +743,6 @@ def has_blind_etfs(
         if u != underlying:
             continue
         if sym in flow_etfs:
-            continue
-        beta = etf_to_beta.get(sym, 1.0)
-        if beta < 0:
             continue
         sh = float(strat_pos.get(sym, 0.0))
         if sh == 0.0:
@@ -762,6 +761,7 @@ def compute_beta_adjusted_net_notional(
     underlying: str,
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
+    flow_etfs: Optional[Set[str]] = None,
 ) -> Tuple[float, float]:
     """
     Beta-adjusted net notional for one underlying group.
@@ -770,14 +770,17 @@ def compute_beta_adjusted_net_notional(
         contribution = shares_s * price_s * beta_s
     where beta=1.0 for the spot underlying, and ETF shares are negative (short).
 
-    Negative-beta ETFs (inverse products) are EXCLUDED entirely.
-    Their exposure belongs to bucket 3 (flow program) and must not
-    influence core pair hedge decisions.
+    ETFs listed in ``flow_etfs`` (flow / accounting bucket-3 sleeve) are
+    omitted entirely so they do not affect pair hedge math. All other
+    mapped ETFs on this underlying contribute, including negative-beta
+    (B4) inverse shorts: short shares × negative beta adds long-equivalent
+    exposure to the net.
 
     Returns (net_notional, gross_notional).
         net > 0  =>  net long exposure
         net < 0  =>  net short exposure
     """
+    fe = set(flow_etfs) if flow_etfs is not None else set()
     net   = 0.0
     gross = 0.0
 
@@ -794,9 +797,8 @@ def compute_beta_adjusted_net_notional(
 
         beta = etf_to_beta.get(sym, 1.0) if is_etf else 1.0
 
-        # Skip negative-beta ETFs — inverse products whose exposure
-        # is managed separately in the flow program (bucket 3).
-        if is_etf and beta < 0:
+        # Flow-program ETFs: independent of beta sign (bucket 3 sleeve).
+        if is_etf and sym in fe:
             continue
 
         px   = float(prices.get(sym) or 0.0)
@@ -995,9 +997,10 @@ def build_hedge_trades(
            → generate a full close trade (orphan_close=True)
         4. Otherwise: normal threshold check + resolve single leg
 
-    Negative-beta / flow-program ETFs are excluded so bucket-3 exposure
-    is not disturbed.  Blacklisted underlyings are skipped entirely
-    (they should not be traded by the strategy).
+    Negative-beta / flow-program ETFs are excluded from ``target_gross``
+    (hedgeable plan) only; flow legs are omitted from beta-adjusted net,
+    while non-flow inverse (B4) shorts are included in net. Blacklisted
+    underlyings are skipped entirely (they should not be traded by the strategy).
 
     Returns list of trade dicts ordered by abs(correction_usd) descending
     (largest imbalances traded first).
@@ -1016,19 +1019,16 @@ def build_hedge_trades(
 
     # ── Build the full set of underlyings with any strategy position ──
     # Include: direct underlying positions + underlyings mapped from ETFs
-    # Exclude: flow ETFs and negative-beta (inverse) ETFs — bucket 3
+    # Exclude: flow ETFs only (bucket 3 sleeve — invisible to hedge net).
     # Exclude: blacklisted underlyings (not managed by Phase 3)
     positioned_underlyings: Set[str] = set()
     for sym, sh in strat_pos.items():
         if float(sh) == 0.0:
             continue
-        # Is this symbol an ETF?  Add its underlying unless it's
-        # a flow ETF or a negative-beta (inverse) product.
+        # Is this symbol an ETF?  Add its underlying unless it is a flow ETF.
         u = etf_to_under.get(sym)
         if u and sym not in flow_etfs:
-            beta = etf_to_beta.get(sym, 1.0)
-            if beta >= 0:
-                positioned_underlyings.add(u)
+            positioned_underlyings.add(u)
         # Is this symbol an underlying itself?
         elif sym in set(etf_to_under.values()):
             positioned_underlyings.add(sym)
@@ -1075,6 +1075,7 @@ def build_hedge_trades(
         net_notional, actual_gross = compute_beta_adjusted_net_notional(
             strat_pos=strat_pos, prices=prices, underlying=under,
             etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+            flow_etfs=flow_etfs,
         )
 
         # ── Check for positioned ETFs with no price ──────────────────
@@ -1103,18 +1104,14 @@ def build_hedge_trades(
 
         # ── Check if the underlying is the only remaining leg ────────
         # (all core ETF shorts gone — orphaned position)
-        # Negative-beta (inverse) ETFs and flow ETFs are excluded from
-        # this check — they belong to bucket 3 and don't constitute
-        # a hedge for the underlying long.
+        # Flow ETFs are excluded — they do not hedge the underlying in
+        # Phase 3 net. Non-flow inverse (B4) shorts count as ETF exposure.
         under_sh = float(strat_pos.get(under, 0.0))
         has_etf_exposure = False
         for sym, u in etf_to_under.items():
             if u != under:
                 continue
             if sym in flow_etfs:
-                continue
-            beta = etf_to_beta.get(sym, 1.0)
-            if beta < 0:
                 continue
             if float(strat_pos.get(sym, 0.0)) != 0.0:
                 has_etf_exposure = True
@@ -1267,6 +1264,7 @@ def execute_hedge_pass_serial(
     short_target_net_pct: float,
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
+    flow_etfs: Optional[Set[str]] = None,
 ) -> Tuple[List[dict], int, int]:
     """
     Execute Phase 3 hedge trades serially on the coordinator connection.
@@ -1282,6 +1280,7 @@ def execute_hedge_pass_serial(
     fill_records: List[dict] = []
     n_triggered = len(hedge_trades)
     n_traded    = 0
+    fe = set(flow_etfs) if flow_etfs is not None else set()
 
     for trade_info in hedge_trades:
         if stop_requested():
@@ -1318,6 +1317,7 @@ def execute_hedge_pass_serial(
             net_now, _ = compute_beta_adjusted_net_notional(
                 strat_pos=strat_now, prices=prices, underlying=under,
                 etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+                flow_etfs=fe,
             )
             triggered_now, _ = compute_hedge_delta(
                 net_notional=net_now, target_gross=target_gross,
@@ -1480,6 +1480,7 @@ def _hedge_worker(
     short_target_net_pct: float,
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
+    flow_etfs: Optional[Set[str]] = None,
     log_lock: threading.Lock,
 ) -> Tuple[List[dict], bool, bool]:
     """Execute a single Phase 3 hedge trade on its own IB connection.
@@ -1538,6 +1539,7 @@ def _hedge_worker(
             net_now, _ = compute_beta_adjusted_net_notional(
                 strat_pos=strat_now, prices=prices, underlying=under,
                 etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+                flow_etfs=flow_etfs,
             )
             triggered_now, correction_now = compute_hedge_delta(
                 net_notional=net_now, target_gross=target_gross,
@@ -1729,6 +1731,7 @@ def execute_hedge_pass_parallel(
     short_target_net_pct: float,
     etf_to_under: Dict[str, str],
     etf_to_beta: Dict[str, float],
+    flow_etfs: Optional[Set[str]] = None,
     log_lock: threading.Lock,
 ) -> Tuple[List[dict], int, int]:
     """Execute Phase 3 hedge trades in parallel (one IB connection per worker).
@@ -1789,6 +1792,7 @@ def execute_hedge_pass_parallel(
                 long_target_net_pct=long_target_net_pct,
                 short_target_net_pct=short_target_net_pct,
                 etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+                flow_etfs=flow_etfs,
                 log_lock=log_lock,
             )
             futures[fut] = t
@@ -1966,9 +1970,7 @@ def build_reconciliation_trades(
             continue
         u = etf_to_under.get(sym)
         if u and sym not in flow_etfs:
-            beta = etf_to_beta.get(sym, 1.0)
-            if beta >= 0:
-                check_underlyings.add(u)
+            check_underlyings.add(u)
         elif sym in all_under_values:
             check_underlyings.add(sym)
     check_underlyings -= blacklist
@@ -1989,9 +1991,6 @@ def build_reconciliation_trades(
         has_etf = False
         for sym, u in etf_to_under.items():
             if u != under or sym in flow_etfs:
-                continue
-            beta = etf_to_beta.get(sym, 1.0)
-            if beta < 0:
                 continue
             if float(strat_pos.get(sym, 0.0)) != 0.0:
                 has_etf = True
@@ -2015,6 +2014,7 @@ def build_reconciliation_trades(
         net_notional, actual_gross = compute_beta_adjusted_net_notional(
             strat_pos=strat_pos, prices=prices, underlying=under,
             etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+            flow_etfs=flow_etfs,
         )
         target_gross = compute_target_gross_per_underlying(
             underlying=under, plan=hedgeable_plan,
@@ -2925,9 +2925,7 @@ def main() -> None:
                     continue
                 u = etf_to_under.get(sym)
                 if u and sym not in flow_etfs:
-                    beta = etf_to_beta.get(sym, 1.0)
-                    if beta >= 0:
-                        _snapshot_underlyings.add(u)
+                    _snapshot_underlyings.add(u)
                 elif sym in _all_under_values:
                     _snapshot_underlyings.add(sym)
             _snapshot_underlyings -= set(blacklist)
@@ -2936,6 +2934,7 @@ def main() -> None:
                 net, _ = compute_beta_adjusted_net_notional(
                     strat_pos=strat_pos, prices=prices, underlying=u,
                     etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+                    flow_etfs=flow_etfs,
                 )
                 tgt = compute_target_gross_per_underlying(
                     underlying=u, plan=hedgeable_df,
@@ -3031,6 +3030,7 @@ def main() -> None:
                         long_target_net_pct=long_target_net_pct,
                         short_target_net_pct=short_target_net_pct,
                         etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+                        flow_etfs=flow_etfs,
                         log_lock=log_lock,
                     )
                     all_fills.extend(fills3a)
@@ -3109,6 +3109,7 @@ def main() -> None:
                             long_target_net_pct=long_target_net_pct,
                             short_target_net_pct=short_target_net_pct,
                             etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+                            flow_etfs=flow_etfs,
                             log_lock=log_lock,
                         )
                         all_fills.extend(fills3b)
@@ -3210,6 +3211,7 @@ def main() -> None:
                         long_target_net_pct=long_target_net_pct,
                         short_target_net_pct=short_target_net_pct,
                         etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+                        flow_etfs=flow_etfs,
                         log_lock=log_lock,
                     )
                     all_fills.extend(fills_rec)
@@ -3237,6 +3239,7 @@ def main() -> None:
                 net, actual_gross = compute_beta_adjusted_net_notional(
                     strat_pos=strat_pos_final, prices=prices, underlying=u,
                     etf_to_under=etf_to_under, etf_to_beta=etf_to_beta,
+                    flow_etfs=flow_etfs,
                 )
                 plan_tgt = pre_tgt.get(u, 0.0)
                 post_net[u] = net
