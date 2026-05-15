@@ -837,7 +837,10 @@ def rescale_gross_targets_to_sleeve_budget_weights(
         mode = "absolute_budget"
 
     out = sized.copy()
-    gross = pd.to_numeric(out["gross_target_usd"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+    # ``to_numpy`` can return a read-only view; we mutate ``gross`` in-place below.
+    gross = pd.to_numeric(out["gross_target_usd"], errors="coerce").fillna(0.0).to_numpy(
+        dtype=float, copy=True
+    )
     slv = out["sleeve"].astype(str).to_numpy()
     S_before = float(np.sum(gross))
     if S_before <= 1e-18:
