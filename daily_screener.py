@@ -159,6 +159,8 @@ leverage_pairs_leverageshares = [
     ("AAOG", "AAOI"), ("AMAU", "AMAT"), ("CATG", "CAT"), ("CIEG", "CIEN"),
     ("COHH", "COHR"), ("ETNG", "ETN"), ("HONG", "HON"), ("SNDG", "SNDK"),
     ("STXU", "STX"),
+    # 2026-05-15 Leverage Shares — 2X long CBRS (post-IPO) + 2X long CRML (CRMX)
+    ("CBRG", "CBRS"), ("CRMX", "CRML"),
 ]
 
 new_pairs = [
@@ -289,7 +291,7 @@ BENCHMARK_MAP = {
     "GDX": "GDX",  "SLV": "SLV",   "XLE": "XLE",   "XOP": "XOP",
     "TLT": "TLT",  "MSCIJP": "EWJ","APLD": "APLD", "CLSK": "CLSK",
     "IREN": "IREN", "BE": "BE", "NBIS": "NBIS", "SMR": "SMR", "SPHB": "SPHB",
-    "AMD": "AMD", "ASTS": "ASTS", "BMNR": "BMNR", "HOOD": "HOOD", "IONQ": "IONQ",
+    "AMD": "AMD", "ASTS": "ASTS", "BMNR": "BMNR", "CBRS": "CBRS", "HOOD": "HOOD", "IONQ": "IONQ",
     "OKLO": "OKLO", "PLTR": "PLTR", "QBTS": "QBTS", "RGTI": "RGTI", "RKLB": "RKLB",
     "SMCI": "SMCI", "TSM": "TSM",
     # Volatility pair: UVIX (−2× daily vs SVIX) hedged to SVIX; both legs short in book.
@@ -319,6 +321,8 @@ INVERSE_ETF_UNIVERSE = [
     ("STSM", -2, "TSM"), ("OKLS", -2, "OKLO"),     ("ASTN", -2, "ASTS"),
     # 2026-04-23 Tradr 2X inverse (Lumentum, SanDisk — underlying SNDK)
     ("LITZ", -2, "LITE"), ("SNDQ", -2, "SNDK"),
+    # 2026-05-15 Leverage Shares 2X Short CBRS Daily ETF (SCBR)
+    ("SCBR", -2, "CBRS"),
     ("UVIX", -2, "SVIX"),
 ]
 
