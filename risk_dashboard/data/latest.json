@@ -1,6 +1,6 @@
 {
   "run_date": "2026-05-18",
-  "generated_at_utc": "2026-05-18T17:26:34.032257+00:00",
+  "generated_at_utc": "2026-05-18T17:32:27.998019+00:00",
   "nav_usd": 800000.0,
   "book": {
     "nav_usd": 800000.0,
@@ -45,11 +45,11 @@
       },
       {
         "bucket": "bucket_4",
-        "gross_usd": 1026608.62405956,
-        "net_usd": 816701.6994730587,
-        "actual_weight": 0.3719700662706992,
+        "gross_usd": 1017913.2483583282,
+        "net_usd": 825397.0751742905,
+        "actual_weight": 0.3688194795718988,
         "target_weight": 0.25,
-        "drift_pp": 12.197006627069918,
+        "drift_pp": 11.881947957189881,
         "drift_status": "hard",
         "pnl_usd": -2402.333930796729
       }
@@ -5576,8 +5576,8 @@
         {
           "underlying": "MSTR",
           "symbols": "MSDD, MSTR, MSTZ",
-          "net_notional_usd": -6990.991094176066,
-          "gross_notional_usd": 19095.13600951907,
+          "net_notional_usd": 1704.384607055645,
+          "gross_notional_usd": 10399.760308287356,
           "n_legs": 3
         },
         {
@@ -5606,13 +5606,6 @@
           "symbols": "AXON",
           "net_notional_usd": 391.88,
           "gross_notional_usd": 391.88,
-          "n_legs": 1
-        },
-        {
-          "underlying": "AMD",
-          "symbols": "AMD",
-          "net_notional_usd": 0.0,
-          "gross_notional_usd": 0.0,
           "n_legs": 1
         },
         {
@@ -5693,8 +5686,8 @@
           "n_legs": 1
         },
         {
-          "underlying": "XRPZ",
-          "symbols": "XRPZ",
+          "underlying": "AMD",
+          "symbols": "AMD",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 0.0,
           "n_legs": 1
@@ -5786,6 +5779,13 @@
         {
           "underlying": "BE",
           "symbols": "BE",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
+          "underlying": "XRPZ",
+          "symbols": "XRPZ",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 0.0,
           "n_legs": 1
@@ -5958,15 +5958,15 @@
         "name": "bucket_gross_vs_book_gross",
         "status": "hard",
         "book_value": 2759922.6850486705,
-        "component_sum": 3706133.211611757,
-        "diff_pct": 0.342839504776345
+        "component_sum": 3697437.835910525,
+        "diff_pct": 0.3396889180775446
       },
       {
         "name": "bucket_net_vs_book_net",
         "status": "hard",
         "book_value": 2733.568539232423,
-        "component_sum": 737893.8860353741,
-        "diff_pct_of_gross": 0.2663698956056725
+        "component_sum": 746589.2617366059,
+        "diff_pct_of_gross": 0.2695204823044729
       }
     ],
     "row_counts": {
@@ -8609,8 +8609,8 @@
     "gross_exposure_bucket_2": 283009.20482372685,
     "net_exposure_bucket_3": 91261.1676515004,
     "gross_exposure_bucket_3": 92404.45213194359,
-    "net_exposure_bucket_4": 816701.6994730587,
-    "gross_exposure_bucket_4": 1026608.62405956,
+    "net_exposure_bucket_4": 825397.0751742905,
+    "gross_exposure_bucket_4": 1017913.2483583282,
     "yfinance_override": false,
     "yfinance_symbols_overridden": 0,
     "bucket_split_method": "held_exposure",
