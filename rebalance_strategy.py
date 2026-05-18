@@ -593,7 +593,14 @@ def _establish_worker(
                 return local_fills
 
         etfs_str = ",".join(sorted({norm_sym(str(l["etf"])) for l in etf_legs})) or "(none)"
-        order_ref = f"{strategy_tag}|{under}__ESTABLISH|{under}|UNDER"
+        b4_leg = next(
+            (leg for leg in etf_legs if float(leg.get("long_usd", 0.0) or 0.0) < 0),
+            None,
+        )
+        if net_long_usd < 0 and b4_leg is not None:
+            order_ref = f"{strategy_tag}|{under}__ESTABLISH|{norm_sym(b4_leg['etf'])}|UNDER"
+        else:
+            order_ref = f"{strategy_tag}|{under}__ESTABLISH|{under}|UNDER"
         res = exec_leg_local(under, under_action, scaled_qty, px_under, order_ref)
         filled_signed = int(res.filled) if under_action == "BUY" else -int(res.filled)
 

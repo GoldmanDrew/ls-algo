@@ -158,7 +158,7 @@ def _format_underlying_section(
 def format_underlying_table(pnl_under_csv: Path, pnl_symbol_csv: Path) -> tuple[str, float]:
     """
     Returns:
-      - formatted table (plain text) of total_pnl by underlying (bucket 1&2 only),
+      - formatted table (plain text) of total_pnl by underlying (buckets 1, 2 & 4),
         with per-symbol PnL rows indented underneath each underlying
       - total_pnl sum
     """
@@ -175,7 +175,7 @@ def format_underlying_table(pnl_under_csv: Path, pnl_symbol_csv: Path) -> tuple[
             sym_df = pd.read_csv(pnl_symbol_csv)
             sym_df["total_pnl"] = pd.to_numeric(sym_df["total_pnl"], errors="coerce").fillna(0.0)
             if "bucket" in sym_df.columns:
-                sym_df = sym_df[sym_df["bucket"].isin(["bucket_1", "bucket_2"])]
+                sym_df = sym_df[sym_df["bucket"].isin(["bucket_1", "bucket_2", "bucket_4"])]
         except Exception:
             sym_df = pd.DataFrame()
 
@@ -227,9 +227,12 @@ def format_bucket_3_pnl(pnl_b3_csv: Path) -> tuple[str, float]:
     return "\n".join(lines), total
 
 
-def format_bucket_4_pnl(pnl_b4_csv: Path) -> tuple[str, float]:
+def format_bucket_4_pnl(
+    pnl_b4_csv: Path,
+    pnl_symbol_csv: Path,
+) -> tuple[str, float]:
     """
-    Format Bucket 4 (inverse decay basket) PnL as a plain-text table by symbol.
+    Format Bucket 4 (inverse decay) PnL by underlying with per-symbol detail.
     Returns (table_str, total).
     """
     if not pnl_b4_csv.exists():
@@ -240,34 +243,40 @@ def format_bucket_4_pnl(pnl_b4_csv: Path) -> tuple[str, float]:
         return "(no bucket 4 positions)", 0.0
 
     df["total_pnl"] = pd.to_numeric(df["total_pnl"], errors="coerce").fillna(0.0)
+    sym_df = pd.DataFrame()
+    if pnl_symbol_csv.exists():
+        try:
+            sym_df = pd.read_csv(pnl_symbol_csv)
+            sym_df["total_pnl"] = pd.to_numeric(sym_df["total_pnl"], errors="coerce").fillna(0.0)
+            if "bucket" in sym_df.columns:
+                sym_df = sym_df[sym_df["bucket"] == "bucket_4"]
+        except Exception:
+            sym_df = pd.DataFrame()
+
+    if "underlying" in df.columns:
+        return _format_underlying_section(df, sym_df)
+
+    if "symbol" not in df.columns:
+        return "(bucket 4 data missing underlying/symbol columns)", 0.0
+
     df = df.dropna(subset=["symbol"]).copy()
     df["symbol"] = df["symbol"].astype(str)
     df = df.sort_values("total_pnl", ascending=False)
     total = float(df["total_pnl"].sum())
-
     all_labels = list(df["symbol"]) + ["TOTAL"]
     label_width = max(12, max(len(s) for s in all_labels))
     all_pnl = [f"{v:,.2f}" for v in list(df["total_pnl"]) + [total]]
     pnl_width = max(12, max(len(s) for s in all_pnl))
-
     lines: list[str] = []
     header = f"{'SYMBOL'.ljust(label_width)}  {'TOTAL_PNL'.rjust(pnl_width)}"
     lines.append(header)
     lines.append("-" * (label_width + 2 + pnl_width))
-
     for _, r in df.iterrows():
         sym = str(r["symbol"])
         pnl_str = f"{float(r['total_pnl']):,.2f}"
-        detail = ""
-        if "realized_pnl" in r and "unrealized_pnl" in r:
-            r_pnl = float(r["realized_pnl"])
-            u_pnl = float(r["unrealized_pnl"])
-            detail = f"  (r: {r_pnl:,.2f}  u: {u_pnl:,.2f})"
-        lines.append(f"{sym.ljust(label_width)}  {pnl_str.rjust(pnl_width)}{detail}")
-
+        lines.append(f"{sym.ljust(label_width)}  {pnl_str.rjust(pnl_width)}")
     lines.append("-" * (label_width + 2 + pnl_width))
     lines.append(f"{'TOTAL'.ljust(label_width)}  {f'{total:,.2f}'.rjust(pnl_width)}")
-
     return "\n".join(lines), total
 
 
@@ -328,7 +337,7 @@ def format_pair_exposure_flags(
     |net| >= min_abs_net_usd. Returns multi-line text for the email body.
     """
     if exposure_df is None or exposure_df.empty:
-        return "Pair exposure: (no bucket 1&2 underlying exposure table)."
+        return "Pair exposure: (no bucket 1/2/4 underlying exposure table)."
     if label_col not in exposure_df.columns or net_col not in exposure_df.columns or gross_col not in exposure_df.columns:
         return "Pair exposure: (missing columns for net/gross check)."
 
@@ -354,7 +363,7 @@ def format_pair_exposure_flags(
     if not rows:
         return (
             "Pair exposure: no underlying exceeds 5% |net| vs gross "
-            f"(bucket 1&2 pairs; |net| ≥ ${min_abs_net_usd:,.0f} only)."
+            f"(buckets 1, 2 & 4; |net| ≥ ${min_abs_net_usd:,.0f} only)."
         )
 
     rows.sort(key=lambda t: abs(t[1]), reverse=True)
@@ -1413,7 +1422,7 @@ def main() -> int:
 
     # Bucket 3 PnL (inverse/hedge by symbol)
     b3_pnl_table, b3_pnl_total = format_bucket_3_pnl(pnl_b3_csv)
-    b4_pnl_table, b4_pnl_total = format_bucket_4_pnl(pnl_b4_csv)
+    b4_pnl_table, b4_pnl_total = format_bucket_4_pnl(pnl_b4_csv, pnl_symbol_csv)
 
     # 4b) Load pre-computed exposure tables from accounting outputs
     exposure_csv_path = outdir / "net_exposure_by_underlying.csv"
@@ -1422,7 +1431,7 @@ def main() -> int:
     exposure_b3_csv_path = outdir / "net_exposure_bucket_3.csv"
     exposure_b4_csv_path = outdir / "net_exposure_bucket_4.csv"
 
-    # Combined bucket 1+2 exposure
+    # Combined bucket 1+2+4 exposure
     exposure_table_str = "(exposure data unavailable)"
     total_net = 0.0
     total_gross = 0.0
@@ -1580,11 +1589,11 @@ def main() -> int:
         "----------------------------------------\n"
         f"{b3_pnl_table}\n"
         "----------------------------------------\n\n"
-        "PnL Bucket 4 — Inverse Decay / Internalized (by symbol):\n"
+        "PnL Bucket 4 — Inverse Decay / Internalized (by underlying, pair legs indented):\n"
         "----------------------------------------\n"
         f"{b4_pnl_table}\n"
         "----------------------------------------\n\n"
-        "PnL by underlying (Bucket 1&2 combined):\n"
+        "PnL by underlying (Buckets 1, 2 & 4 combined):\n"
         "----------------------------------------\n"
         f"{underlying_table}\n"
         "----------------------------------------\n\n"
@@ -1616,7 +1625,7 @@ def main() -> int:
         "----------------------------------------\n"
         f"{b4_exposure_table_str}\n"
         "----------------------------------------\n\n"
-        f"NET EXPOSURE by underlying (Bucket 1&2 combined, beta-normalized):\n"
+        f"NET EXPOSURE by underlying (Buckets 1, 2 & 4 combined, beta-normalized):\n"
         f"  Net notional:   {total_net:,.2f}\n"
         f"  Gross notional: {total_gross:,.2f}\n"
         "----------------------------------------\n"
@@ -1631,7 +1640,9 @@ def main() -> int:
         "Attribution plot: long/short split uses EOD position sign (short if net shares < 0); "
         "realized on flat symbols is booked to long. Excluded cash interest is not in strategy total_pnl.\n\n"
         "Attachments:\n"
-        "- pnl_by_underlying.csv  (bucket 1&2 combined)\n"
+        "- pnl_by_underlying.csv  (buckets 1, 2 & 4 combined)\n"
+        "- pnl_by_underlying_b12.csv  (legacy buckets 1&2 only)\n"
+        "- pnl_bucket_4_by_pair.csv\n"
         "- pnl_bucket_1.csv\n"
         "- pnl_bucket_2.csv\n"
         "- pnl_bucket_3.csv\n"
@@ -1663,7 +1674,8 @@ def main() -> int:
     ]
     if pnl_symbol_csv.exists():
         attachments.insert(1, pnl_symbol_csv)
-    for csv_path in [pnl_b1_csv, pnl_b2_csv, pnl_b3_csv, pnl_b4_csv, pnl_bucket_csv]:
+    pnl_b4_pair_csv = outdir / "pnl_bucket_4_by_pair.csv"
+    for csv_path in [pnl_b1_csv, pnl_b2_csv, pnl_b3_csv, pnl_b4_csv, pnl_b4_pair_csv, pnl_bucket_csv]:
         if csv_path.exists():
             attachments.append(csv_path)
     for csv_path in [exposure_csv_path, exposure_b1_csv_path, exposure_b2_csv_path, exposure_b3_csv_path, exposure_b4_csv_path]:
