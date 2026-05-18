@@ -1,0 +1,179 @@
+name: Risk Dashboard
+
+# Two responsibilities, one workflow:
+#   1) build  : after each EOD run (or on demand), regenerate the JSON
+#               snapshot under risk_dashboard/data/ and commit it back
+#               to main. This is the data plane.
+#   2) deploy : redeploy the static site under site/ to GitHub Pages.
+#               The site is just an HTML/CSS/JS shell - it fetches the
+#               snapshot at runtime via the GitHub Contents API, gated
+#               by the user's PAT. So the static site itself is harmless
+#               and can be public.
+
+on:
+  # Run after the existing EOD pipeline (eod_pnl_email.yml) succeeds.
+  workflow_run:
+    workflows: ["EOD PnL Email + Daily Screener"]
+    types: [completed]
+
+  # Manual trigger.
+  workflow_dispatch:
+    inputs:
+      run_date:
+        description: "Run date YYYY-MM-DD (blank = latest under data/runs/)"
+        required: false
+        default: ""
+      nav_usd:
+        description: "Account NAV used as the %-of-NAV denominator"
+        required: false
+        default: "800000"
+      skip_build:
+        description: "Skip rebuilding snapshot (deploy site only)"
+        required: false
+        default: "false"
+        type: boolean
+
+  # Rebuild the site shell whenever the dashboard code changes.
+  push:
+    branches: [main]
+    paths:
+      - "risk_dashboard/**"
+      - "site/**"
+      - ".github/workflows/risk_dashboard.yml"
+
+# Pages deploy needs these.
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+# Only one concurrent deploy. Build jobs may stack but we don't push
+# multiple Pages deploys simultaneously.
+concurrency:
+  group: "risk-dashboard-pages"
+  cancel-in-progress: true
+
+jobs:
+  # ----------------------------------------------------------------
+  # Build the JSON snapshot and commit it. Skipped when the trigger
+  # is a docs-only push or the user passed skip_build=true.
+  # ----------------------------------------------------------------
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.skip_build != 'true'
+      || github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+
+    outputs:
+      run_date: ${{ steps.compute.outputs.run_date }}
+      committed: ${{ steps.commit.outputs.committed }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run risk-dashboard tests
+        run: |
+          python -m pytest risk_dashboard/tests -q
+
+      - name: Compute run date
+        id: compute
+        run: |
+          if [ -n "${{ inputs.run_date }}" ]; then
+            RUN_DATE="${{ inputs.run_date }}"
+          else
+            RUN_DATE=$(python -c "
+          from pathlib import Path
+          dirs = sorted([p.name for p in Path('data/runs').iterdir() if p.is_dir() and p.name[:4].isdigit()], reverse=True)
+          print(dirs[0] if dirs else '')
+          ")
+          fi
+          if [ -z "$RUN_DATE" ]; then
+            echo "No run-date folder under data/runs; aborting."
+            exit 1
+          fi
+          echo "run_date=$RUN_DATE" >> "$GITHUB_OUTPUT"
+          echo "Selected run_date=$RUN_DATE"
+
+      - name: Build snapshot
+        env:
+          MAGIS_NAV_USD: ${{ inputs.nav_usd || vars.MAGIS_NAV_USD || '800000' }}
+        run: |
+          python -m risk_dashboard.build_site \
+            --run-date "${{ steps.compute.outputs.run_date }}" \
+            --runs-root data/runs \
+            --nav-usd "$MAGIS_NAV_USD" \
+            --out-dir risk_dashboard/data
+
+      - name: Commit snapshot
+        id: commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add risk_dashboard/data || true
+          if git diff --cached --quiet; then
+            echo "No snapshot changes to commit"
+            echo "committed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "risk_dashboard: snapshot ${{ steps.compute.outputs.run_date }}"
+            git pull --no-rebase -X ours origin main || true
+            git push
+            echo "committed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ----------------------------------------------------------------
+  # Deploy the static site to GitHub Pages.
+  # Runs whenever the workflow runs (build or skip_build path).
+  # ----------------------------------------------------------------
+  deploy:
+    needs: build
+    if: |
+      always() &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout (post-commit)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v4
+
+      - name: Inject build metadata into site
+        run: |
+          mkdir -p site
+          cat > site/build_meta.json <<EOF
+          {
+            "deployed_at_utc": "$(date -u +%FT%TZ)",
+            "commit_sha": "${{ github.sha }}",
+            "trigger": "${{ github.event_name }}"
+          }
+          EOF
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
