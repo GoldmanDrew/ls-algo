@@ -2395,6 +2395,25 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         )
 
     _lot_exact_cols = {"realized_pnl", "unrealized_pnl"} | carry_cols
+    # The lot-timed override writes the per-underlying lot value onto
+    # exactly ONE row per (underlying, bucket). When multiple symbols
+    # share an underlying (e.g. GXRP / XRP / XRPZ -> underlying XRPZ),
+    # writing the same value onto every row would multiply each bucket
+    # sum by N and break conservation; writing it once keeps the
+    # bucket-level sum equal to ``_lot_components[u][bucket][col]``.
+    # Map each underlying to the index value of its first row in the
+    # original ``split_source``. We use the actual DataFrame index (not a
+    # reset positional one) so the comparison ``part.index == first``
+    # works on identical labels in the copies below.
+    if not split_source.empty:
+        _ufirst_idx = (
+            split_source.assign(_u=split_source["underlying"].astype(str))
+            .groupby("_u")
+            .apply(lambda g: g.index[0])
+            .to_dict()
+        )
+    else:
+        _ufirst_idx = {}
     split_parts: list[pd.DataFrame] = []
     for bkt_label in ["bucket_1", "bucket_2", "bucket_4"]:
         part = split_source.copy()
@@ -2402,11 +2421,19 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         _rk = {"bucket_1": "b1", "bucket_2": "b2", "bucket_4": "b4"}[bkt_label]
         for col in component_cols:
             if component_split_method == "lot_timed" and col in _lot_exact_cols:
-                part[col] = part["underlying"].astype(str).map(
+                _u_series = part["underlying"].astype(str)
+                # All rows default to 0; the canonical first row per
+                # underlying receives the full per-underlying lot value.
+                part[col] = 0.0
+                _is_first = part.index.to_series().eq(
+                    _u_series.map(_ufirst_idx)
+                )
+                _vals = _u_series.map(
                     lambda u, _bk=bkt_label, _c=col: float(
                         _lot_components.get(u, {}).get(_bk, {}).get(_c, 0.0)
                     )
                 )
+                part.loc[_is_first, col] = _vals[_is_first]
             else:
                 if component_split_method == "current_only":
                     _ratio_col = f"_ratio_{_rk}_current"
@@ -2420,36 +2447,133 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                     _ratio_col = f"_ratio_{_rk}_current"
                 part[col] = part[col] * part[_ratio_col]
         part["total_pnl"] = part[component_cols].sum(axis=1)
-        part["_abs_component_sum"] = part[component_cols].abs().sum(axis=1)
-        part = part[part["_abs_component_sum"] > 0].drop(columns=["_abs_component_sum"])
+        # Note: do NOT drop zero-component rows here. The lot-timed residual
+        # fixup below needs the canonical bucket_1 row (which may legitimately
+        # start at zero for an underlying whose lot ledger has no bucket_1
+        # component) to attribute the IBKR-vs-lot residual onto. Dropping
+        # zero rows is deferred until after the fixup.
         split_parts.append(part)
 
+    # ── Lot-exact residual fixup ─────────────────────────────────────────
+    # The lot-timed split copies per-bucket values out of ``_lot_components``
+    # (built from our FIFO replay). When the FIFO ordering or cost basis
+    # we computed differs from what IBKR's Flex statement reports as
+    # ``fifoPnlRealized`` / ``fifoPnlUnrealized`` for the same underlying,
+    # the per-bucket sum will not equal the IBKR-reported total. We close
+    # the gap by adding the residual ``(ibkr_total - lot_sum)`` to the
+    # bucket_1 row of each underlying. This preserves global conservation
+    # without distorting per-bucket attribution beyond what IBKR's own
+    # FIFO would also have done.
     if component_split_method == "lot_timed" and split_parts and not split_source.empty:
-        _src_by_u = split_source.set_index(split_source["underlying"].astype(str))
-        for _u in _src_by_u.index.unique():
-            if _u not in _lot_components:
+        # The lot-timed override above wrote ``_lot_components[u][b][col]``
+        # onto exactly one row per (underlying, bucket). The remaining
+        # gap vs the IBKR-reported totals is ``ibkr_total(u, col) -
+        # sum_buckets(_lot_components[u][b][col])`` (or just
+        # ``ibkr_total(u, col)`` when the underlying isn't in the lot
+        # ledger). We attribute that residual to bucket_1's canonical
+        # first row so the per-underlying / per-column sum equals the
+        # IBKR-reported total.
+        for _u in split_source["underlying"].astype(str).unique():
+            _u_rows = split_source[split_source["underlying"].astype(str) == _u]
+            if _u_rows.empty:
                 continue
-            for _col in _lot_exact_cols:
-                if _col not in component_cols:
-                    continue
-                _ibkr_val = float(_src_by_u.at[_u, _col])
-                _lot_sum = sum(
-                    float(_lot_components[_u].get(_bk, {}).get(_col, 0.0)) for _bk in _BUCKET_KEYS
+            _lot_sum_one_by_col = {
+                _col: (
+                    sum(
+                        float(_lot_components.get(_u, {}).get(_bk, {}).get(_col, 0.0))
+                        for _bk in _BUCKET_KEYS
+                    )
+                    if _u in _lot_components
+                    else 0.0
                 )
+                for _col in _lot_exact_cols
+                if _col in component_cols
+            }
+            for _col, _lot_sum in _lot_sum_one_by_col.items():
+                _ibkr_val = float(_u_rows[_col].sum())
                 _resid = _ibkr_val - _lot_sum
                 if abs(_resid) <= 1e-6:
                     continue
                 for _part in split_parts:
-                    _mask = (_part["bucket"] == "bucket_1") & (_part["underlying"].astype(str) == _u)
-                    if _mask.any():
-                        _part.loc[_mask, _col] = _part.loc[_mask, _col] + _resid
-                        _part.loc[_mask, "total_pnl"] = _part.loc[_mask, component_cols].sum(axis=1)
+                    if _part.empty:
+                        continue
+                    _mask = (_part["bucket"] == "bucket_1") & (
+                        _part["underlying"].astype(str) == _u
+                    )
+                    if not _mask.any():
+                        continue
+                    _first_idx = _part.index[_mask][0]
+                    _part.at[_first_idx, _col] = (
+                        float(_part.at[_first_idx, _col]) + _resid
+                    )
+                    _part.at[_first_idx, "total_pnl"] = float(
+                        _part.loc[_first_idx, component_cols].sum()
+                    )
+                    break
+
+    # Drop rows where all PnL components net to zero AFTER residual fixup.
+    # Deferring this filter (rather than doing it inside the per-bucket
+    # build loop) is required so that the lot-timed residual fixup above
+    # can attribute the IBKR-vs-lot gap onto the canonical bucket_1 row
+    # of each underlying even when that row started at zero.
+    split_parts = [
+        _p[_p[component_cols].abs().sum(axis=1) > 0].copy()
+        for _p in split_parts
+        if not _p.empty
+    ]
 
     df = pd.concat([fixed_rows] + split_parts, ignore_index=True)
     _global_pre = df_pre_bucket[base_cols].sum(numeric_only=True)
     _global_post = df[base_cols].sum(numeric_only=True)
-    _max_diff = float((_global_post - _global_pre).abs().max()) if not _global_post.empty else 0.0
-    if _max_diff > 1e-6:
+    _max_diff = (
+        float((_global_post - _global_pre).abs().max())
+        if not _global_post.empty
+        else 0.0
+    )
+    # Tolerance: 1 cent. The lot-timed residual fixup sums many per-bucket
+    # floats and then back-fills the canonical bucket_1 row of each
+    # underlying, so per-column rounding can accumulate a few µ-dollars
+    # across hundreds of symbols. Anything beyond 1 cent indicates a real
+    # attribution bug (the kind that previously caused $1k+ breakages
+    # when multiple symbols shared an underlying).
+    if _max_diff > 1e-2:
+        # Emit a per-column + worst-symbol breakdown before raising so
+        # future conservation breakages don't require ad-hoc debugging.
+        try:
+            _per_col = (_global_post - _global_pre).round(6)
+            _per_col = _per_col[_per_col.abs() > 1e-6]
+            print(
+                "[ACCOUNTING] conservation diff by column (post-pre):\n"
+                + _per_col.to_string()
+            )
+            _worst_col = _per_col.abs().idxmax() if not _per_col.empty else None
+            if _worst_col is not None and _worst_col in df_pre_bucket.columns:
+                _pre_by_s = df_pre_bucket.groupby("symbol")[_worst_col].sum()
+                _post_by_s = df.groupby("symbol")[_worst_col].sum()
+                _diff_by_s = (_post_by_s - _pre_by_s).reindex(
+                    _pre_by_s.index.union(_post_by_s.index), fill_value=0.0
+                )
+                _diff_by_s = _diff_by_s[_diff_by_s.abs() > 1e-6].sort_values(
+                    key=lambda s: s.abs(), ascending=False
+                )
+                print(
+                    f"[ACCOUNTING] worst column '{_worst_col}' top-10 symbols (post-pre):\n"
+                    + _diff_by_s.head(10).round(2).to_string()
+                )
+                _pre_by_u = df_pre_bucket.groupby("underlying")[_worst_col].sum()
+                _post_by_u = df.groupby("underlying")[_worst_col].sum()
+                _diff_by_u = (_post_by_u - _pre_by_u).reindex(
+                    _pre_by_u.index.union(_post_by_u.index), fill_value=0.0
+                )
+                _diff_by_u = _diff_by_u[_diff_by_u.abs() > 1e-6].sort_values(
+                    key=lambda s: s.abs(), ascending=False
+                )
+                print(
+                    f"[ACCOUNTING] worst column '{_worst_col}' top-10 underlyings (post-pre):\n"
+                    + _diff_by_u.head(10).round(2).to_string()
+                )
+        except Exception as _diag_exc:
+            print(f"[ACCOUNTING] conservation diagnostic failed: {_diag_exc}")
         raise AssertionError(
             "Bucket split conservation failed. "
             f"max_abs_diff={_max_diff:.8f}"
