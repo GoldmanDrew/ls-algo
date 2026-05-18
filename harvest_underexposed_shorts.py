@@ -47,6 +47,24 @@ from ibkr_accounting import (
 from strategy_config import load_config
 
 
+def harvest_execution_dir(run_date: str, cfg: dict | None = None) -> Path:
+    """Absolute ``data/runs/<date>/execution``; creates parents if missing."""
+    if cfg and cfg.get("_repo_root"):
+        root = Path(str(cfg["_repo_root"]))
+    else:
+        root = Path(__file__).resolve().parent
+    outdir = (root / "data" / "runs" / run_date / "execution").resolve()
+    outdir.mkdir(parents=True, exist_ok=True)
+    return outdir
+
+
+def write_harvest_csv(path: Path, frame: pd.DataFrame) -> None:
+    """Write a harvest artifact CSV, ensuring the parent directory exists."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(path, index=False)
+
+
 def resolve_proposed_trades_path(run_date: str, paths_cfg: dict) -> Path:
     dated = run_dir(run_date) / "proposed_trades.csv"
     if dated.exists():
@@ -370,8 +388,7 @@ def main() -> int:
     if not screened_csv.exists():
         raise FileNotFoundError(f"Screened CSV not found: {screened_csv}")
 
-    outdir = run_dir(run_date) / "execution"
-    outdir.mkdir(parents=True, exist_ok=True)
+    outdir = harvest_execution_dir(run_date, cfg)
     candidates_path = outdir / "harvest_candidates.csv"
     attempted_path = outdir / "harvest_attempted_trades.csv"
     fills_path = outdir / "harvest_fills.csv"
@@ -419,13 +436,14 @@ def main() -> int:
             disc = pd.read_csv(discrepancy_csv)
             disc_source = f"file_fallback:{discrepancy_csv}"
 
+    disc_source_path.parent.mkdir(parents=True, exist_ok=True)
     disc_source_path.write_text(disc_source.strip() + "\n", encoding="utf-8")
     if disc.empty:
         tprint(f"[HARVEST] Discrepancy table has no rows (source={disc_source})")
-        pd.DataFrame().to_csv(candidates_path, index=False)
-        pd.DataFrame().to_csv(attempted_path, index=False)
-        pd.DataFrame().to_csv(fills_path, index=False)
-        pd.DataFrame().to_csv(summary_path, index=False)
+        write_harvest_csv(candidates_path, pd.DataFrame())
+        write_harvest_csv(attempted_path, pd.DataFrame())
+        write_harvest_csv(fills_path, pd.DataFrame())
+        write_harvest_csv(summary_path, pd.DataFrame())
         return 0
 
     for col in ("symbol", "abs_discrepancy_usd", "gross_gap_usd", "under_exposed"):
@@ -436,7 +454,7 @@ def main() -> int:
     disc["abs_discrepancy_usd"] = pd.to_numeric(disc["abs_discrepancy_usd"], errors="coerce").fillna(0.0)
     disc["gross_gap_usd"] = pd.to_numeric(disc["gross_gap_usd"], errors="coerce").fillna(0.0)
     disc["under_exposed"] = to_bool_series(disc["under_exposed"])
-    disc.to_csv(disc_input_path, index=False)
+    write_harvest_csv(disc_input_path, disc)
     tprint(f"[HARVEST] Discrepancy input ({disc_source}) -> {disc_input_path}")
 
     _etf_to_under_raw, _etf_to_beta_raw = load_etf_beta_map(screened_csv)
@@ -456,13 +474,13 @@ def main() -> int:
     cands = cands.sort_values("abs_discrepancy_usd", ascending=False).reset_index(drop=True)
     if args.top_n > 0:
         cands = cands.head(int(args.top_n)).copy()
-    cands.to_csv(candidates_path, index=False)
+    write_harvest_csv(candidates_path, cands)
 
     if cands.empty:
         tprint("[HARVEST] No valid under-exposed ETF candidates after filters.")
-        pd.DataFrame().to_csv(attempted_path, index=False)
-        pd.DataFrame().to_csv(fills_path, index=False)
-        pd.DataFrame().to_csv(summary_path, index=False)
+        write_harvest_csv(attempted_path, pd.DataFrame())
+        write_harvest_csv(fills_path, pd.DataFrame())
+        write_harvest_csv(summary_path, pd.DataFrame())
         return 0
 
     short_map: dict[str, dict[str, Any]]
@@ -486,11 +504,12 @@ def main() -> int:
         ib = connect_ib(host, port, client_id + 510, coordinator=True)
     except Exception as ex:
         tprint(f"[HARVEST] ERROR: IB connection failed: {ex}")
-        pd.DataFrame(attempted_rows).to_csv(attempted_path, index=False)
-        pd.DataFrame(fill_rows).to_csv(fills_path, index=False)
-        pd.DataFrame(
-            [{"status": "IB_CONNECTION_FAILED", "error": str(ex), "run_date": run_date}]
-        ).to_csv(summary_path, index=False)
+        write_harvest_csv(attempted_path, pd.DataFrame(attempted_rows))
+        write_harvest_csv(fills_path, pd.DataFrame(fill_rows))
+        write_harvest_csv(
+            summary_path,
+            pd.DataFrame([{"status": "IB_CONNECTION_FAILED", "error": str(ex), "run_date": run_date}]),
+        )
         return 2
 
     cancel_service = CoordinatorCancelService(host=host, port=port)
@@ -672,9 +691,9 @@ def main() -> int:
                     }
                     for r in planned_rows
                 )
-                pd.DataFrame(attempted_rows).to_csv(attempted_path, index=False)
-                pd.DataFrame(fill_rows).to_csv(fills_path, index=False)
-                pd.DataFrame(summary_rows).to_csv(summary_path, index=False)
+                write_harvest_csv(attempted_path, pd.DataFrame(attempted_rows))
+                write_harvest_csv(fills_path, pd.DataFrame(fill_rows))
+                write_harvest_csv(summary_path, pd.DataFrame(summary_rows))
                 return 0
 
         for row in planned_rows:
@@ -838,9 +857,9 @@ def main() -> int:
         except Exception:
             pass
 
-    pd.DataFrame(attempted_rows).to_csv(attempted_path, index=False)
-    pd.DataFrame(fill_rows).to_csv(fills_path, index=False)
-    pd.DataFrame(summary_rows).to_csv(summary_path, index=False)
+    write_harvest_csv(attempted_path, pd.DataFrame(attempted_rows))
+    write_harvest_csv(fills_path, pd.DataFrame(fill_rows))
+    write_harvest_csv(summary_path, pd.DataFrame(summary_rows))
 
     tprint(f"[HARVEST] Wrote candidates -> {candidates_path}")
     tprint(f"[HARVEST] Wrote attempted trades -> {attempted_path}")
