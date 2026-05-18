@@ -235,6 +235,42 @@ main {
 .pill-unknown { background: var(--border); color: var(--text-muted); }
 
 /* ============================================================ */
+/* Data quality pill button + drill-down                          */
+/* ============================================================ */
+.dq-pill-button {
+  background: transparent; border: 0; padding: 0; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  font: inherit; color: inherit;
+}
+.dq-pill-button:hover .pill { filter: brightness(0.95); }
+.dq-pill-button[aria-expanded="true"] .pill {
+  outline: 1px solid var(--border-strong, var(--border));
+}
+.dq-expand-hint {
+  font-size: 10.5px; color: var(--text-muted); font-style: italic;
+}
+.dq-drilldown {
+  margin-top: 14px; padding: 12px 14px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-alt, var(--bg-panel));
+  max-height: 540px; overflow: auto;
+}
+.dq-header { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+.dq-meta { font-size: 11px; color: var(--text-muted); }
+.dq-group { margin-top: 10px; }
+.dq-group:first-of-type { margin-top: 0; }
+.dq-group h4 {
+  margin: 8px 0 4px; font-size: 12.5px;
+  color: var(--text-primary); font-weight: 600;
+}
+.dq-group code {
+  font-size: 11.5px; background: var(--bg-deep, transparent);
+  padding: 1px 4px; border-radius: 3px;
+}
+.dq-empty { font-size: 12px; color: var(--text-muted); }
+.bad { color: var(--neg); font-weight: 600; }
+
+/* ============================================================ */
 /* Tables                                                         */
 /* ============================================================ */
 table.tight {

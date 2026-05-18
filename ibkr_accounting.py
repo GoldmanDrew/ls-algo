@@ -3037,6 +3037,14 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     b124_underlyings = (
         set(pnl_by_underlying["underlying"].dropna().astype(str)) if not pnl_by_underlying.empty else set()
     )
+    # Underlyings registered as part of bucket-4 structural pairs MUST be
+    # included in the book exposure aggregate even if they have zero
+    # realized/unrealized P&L today (e.g. brand-new structural shorts
+    # like APLD). Otherwise ``net_exposure_by_underlying.csv`` omits
+    # them, while ``net_exposure_bucket_4.csv`` still includes the leg,
+    # breaking bucket↔book reconciliation by the orphan's notional.
+    if b4_underlyings:
+        b124_underlyings = b124_underlyings | {str(u) for u in b4_underlyings}
     if not pos_b124.empty and b124_underlyings:
         exposure_df, exposure_detail_df = compute_net_exposure(
             flex_positions_path,
@@ -3133,25 +3141,23 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         )
 
     # ── Pair-exposure underlying qty ─────────────────────────────────────
-    # Defaults to the FIFO ledger's ``qty_b4`` slice. When plan-aware B4
-    # attribution is active and the plan has a non-zero ``inverse_decay_bucket4``
-    # ``long_usd`` target for this underlying, prefer
-    # ``plan_b4_long_usd / mark_price`` (signed; short = negative shares) so
-    # ``net_exposure_bucket_4_detail.csv`` shows the structural short
-    # underlying leg even when the net IBKR line is long.
+    # CRITICAL: This dict is used ONLY by ``compute_bucket4_pair_exposure``
+    # to emit the underlying leg in ``net_exposure_bucket_4*.csv``. It must
+    # use the FIFO-tracked ``qty_b4`` slice so the per-bucket exposure
+    # files reconcile to ``net_exposure_by_underlying.csv``.
+    #
+    # The plan-aware B4 attribution (which would substitute a plan-derived
+    # structural-short quantity) is INTENTIONALLY disabled here. Using
+    # a plan-derived qty here caused the same spot leg to be counted at
+    # full in both ``net_exposure_bucket_1.csv`` (via ``_ledger_spot_ratio``
+    # which is FIFO-derived) AND ``net_exposure_bucket_4.csv`` (via the
+    # plan-derived ``_b4_under_qty``), inflating bucket gross by 30%+
+    # across multi-bucket underlyings. Plan-aware P&L attribution
+    # continues to work because it uses ``_plan_ratio_b4`` directly
+    # (see lines ~2520-2526), not this dict.
     _b4_under_qty: dict[str, float] = {}
     for _u_b4 in b4_underlyings:
         _u_str = str(_u_b4)
-        _plan_b4_usd = float(_plan_sleeve_usd.get(_u_str, {}).get("b4", 0.0))
-        if _plan_aware_b4 and abs(_plan_b4_usd) > 1e-9:
-            _px_rows = pos[pos["symbol"] == _u_str]
-            if not _px_rows.empty:
-                _mark = float(_px_rows.iloc[0]["markPrice"]) * float(
-                    _px_rows.iloc[0]["fxRateToBase"]
-                )
-                if _mark > 1e-9:
-                    _b4_under_qty[_u_str] = _plan_b4_usd / _mark
-                    continue
         _b4_under_qty[_u_str] = float(
             _ledger_qty_map.get(_u_str, {}).get("bucket_4", 0.0)
         )
@@ -3259,6 +3265,41 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     print(f"[ACCOUNTING] Bucket 2: net={totals['net_exposure_bucket_2']:,.0f}, gross={totals['gross_exposure_bucket_2']:,.0f}")
     print(f"[ACCOUNTING] Bucket 3: net={totals['net_exposure_bucket_3']:,.0f}, gross={totals['gross_exposure_bucket_3']:,.0f}")
     print(f"[ACCOUNTING] Bucket 4: net={totals['net_exposure_bucket_4']:,.0f}, gross={totals['gross_exposure_bucket_4']:,.0f}")
+
+    # ── Reconciliation gate ────────────────────────────────────────────
+    # Bucket gross/net components must sum to the book aggregate within
+    # 1% of book gross. Bucket 3 is an overlay (beta-normalized hedge view)
+    # that doesn't claim share notional, so it is excluded from the sum.
+    # Fail the build if the gap exceeds the threshold so a future plan-
+    # aware / FIFO drift can never silently inflate the dashboard again.
+    _book_gross = float(totals["gross_exposure_total"])
+    _book_net = float(totals["net_exposure_total"])
+    _bucket_gross_sum = (
+        float(totals["gross_exposure_bucket_1"])
+        + float(totals["gross_exposure_bucket_2"])
+        + float(totals["gross_exposure_bucket_4"])
+    )
+    _bucket_net_sum = (
+        float(totals["net_exposure_bucket_1"])
+        + float(totals["net_exposure_bucket_2"])
+        + float(totals["net_exposure_bucket_4"])
+    )
+    _tol_pct = 0.01
+    if abs(_book_gross) > 1e-6:
+        _gross_diff_pct = abs(_bucket_gross_sum - _book_gross) / abs(_book_gross)
+        _net_diff_pct = abs(_bucket_net_sum - _book_net) / abs(_book_gross)
+        print(
+            f"[ACCOUNTING] Reconciliation: bucket_sum_gross={_bucket_gross_sum:,.0f} "
+            f"(diff {_gross_diff_pct:.2%}), bucket_sum_net={_bucket_net_sum:,.0f} "
+            f"(diff {_net_diff_pct:.2%})"
+        )
+        if _gross_diff_pct > _tol_pct or _net_diff_pct > _tol_pct:
+            print(
+                "[ACCOUNTING][ERROR] Bucket exposures do not reconcile to book "
+                f"aggregate within {_tol_pct:.1%}. Gross diff {_gross_diff_pct:.2%}, "
+                f"net diff {_net_diff_pct:.2%}. Refusing to claim totals are correct."
+            )
+            return 2
 
     return 0
 

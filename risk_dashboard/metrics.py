@@ -163,8 +163,14 @@ class BookSummary:
 def _bucket_reconciles(totals: dict[str, Any]) -> tuple[bool, str]:
     """Return (sleeve_attribution_available, reason).
 
-    Bucket gross/net components must sum to within 1% of the book aggregate.
-    Otherwise rendering the broken sleeve numbers is worse than hiding them.
+    Bucket gross/net components (b1 + b2 + b4) must sum to within 1% of
+    the book aggregate. Bucket 3 is intentionally excluded because it is
+    a beta-normalized hedge OVERLAY (sum of |beta| * notional for
+    inverse / flow-hedge ETFs only), not a share-notional bucket -
+    including it would double-count those legs against book gross.
+
+    Mirrors the upstream accounting reconciliation gate in
+    ``ibkr_accounting.py`` (see Phase G).
     """
     book_gross = float(totals.get("gross_exposure_total", 0.0) or 0.0)
     book_net = float(totals.get("net_exposure_total", 0.0) or 0.0)
@@ -172,11 +178,11 @@ def _bucket_reconciles(totals: dict[str, Any]) -> tuple[bool, str]:
         return True, ""
     bucket_gross = sum(
         float(totals.get(f"gross_exposure_{b}", 0.0) or 0.0)
-        for b in ("bucket_1", "bucket_2", "bucket_3", "bucket_4")
+        for b in ("bucket_1", "bucket_2", "bucket_4")
     )
     bucket_net = sum(
         float(totals.get(f"net_exposure_{b}", 0.0) or 0.0)
-        for b in ("bucket_1", "bucket_2", "bucket_3", "bucket_4")
+        for b in ("bucket_1", "bucket_2", "bucket_4")
     )
     gross_diff = abs(bucket_gross - book_gross) / abs(book_gross)
     net_diff = abs(bucket_net - book_net) / abs(book_gross)
@@ -184,7 +190,7 @@ def _bucket_reconciles(totals: dict[str, Any]) -> tuple[bool, str]:
         return True, ""
     return False, (
         f"Bucket exposures do not reconcile to book aggregate "
-        f"(gross diff {gross_diff:.0%}, net diff {net_diff:.0%}). "
+        f"(gross diff {gross_diff:.1%}, net diff {net_diff:.1%}). "
         f"Showing sleeve P&L only; gross/net per sleeve suppressed."
     )
 
@@ -550,8 +556,15 @@ def compute_data_quality(
     totals = totals or {}
     book_gross = float(totals.get("gross_exposure_total", 0.0) or 0.0)
     book_net = float(totals.get("net_exposure_total", 0.0) or 0.0)
-    bucket_gross = sum(float(totals.get(f"gross_exposure_{b}", 0.0) or 0.0) for b in ("bucket_1", "bucket_2", "bucket_3", "bucket_4"))
-    bucket_net = sum(float(totals.get(f"net_exposure_{b}", 0.0) or 0.0) for b in ("bucket_1", "bucket_2", "bucket_3", "bucket_4"))
+    # b1+b2+b4 only - bucket_3 is a beta-normalized overlay and excluded
+    # to match the sleeve-attribution gate in ``_bucket_reconciles``.
+    _reconcile_buckets = ("bucket_1", "bucket_2", "bucket_4")
+    bucket_gross = sum(
+        float(totals.get(f"gross_exposure_{b}", 0.0) or 0.0) for b in _reconcile_buckets
+    )
+    bucket_net = sum(
+        float(totals.get(f"net_exposure_{b}", 0.0) or 0.0) for b in _reconcile_buckets
+    )
     if book_gross:
         gross_diff_pct = abs(bucket_gross - book_gross) / abs(book_gross)
         reconciliations.append(
@@ -561,6 +574,7 @@ def compute_data_quality(
                 "book_value": book_gross,
                 "component_sum": bucket_gross,
                 "diff_pct": gross_diff_pct,
+                "components_included": list(_reconcile_buckets),
             }
         )
     if book_gross:
@@ -572,6 +586,7 @@ def compute_data_quality(
                 "book_value": book_net,
                 "component_sum": bucket_net,
                 "diff_pct_of_gross": net_diff_pct,
+                "components_included": list(_reconcile_buckets),
             }
         )
 

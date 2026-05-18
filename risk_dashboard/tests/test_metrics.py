@@ -24,23 +24,28 @@ from risk_dashboard.metrics import (
 
 @pytest.fixture
 def fake_totals() -> dict:
-    # Bucket components must sum to the book aggregate within 1% so the
-    # sleeve attribution gate stays green; matches what the upstream
-    # accounting pipeline guarantees once b1/b2/b3/b4 reconciliation
-    # is fixed.
+    # Bucket components (b1+b2+b4) must sum to the book aggregate within
+    # 1% so the sleeve attribution gate stays green. Bucket 3 is a
+    # beta-normalized OVERLAY and intentionally excluded from the sum
+    # (mirrors the upstream accounting reconciliation gate after the
+    # Phase G fix in ``ibkr_accounting.py``).
+    b1_g, b2_g, b4_g = 3_966_574.48, 228_552.80, 437_084.68
+    b1_n, b2_n, b4_n = -707_601.71, -44_860.52, 437_084.68
     return {
         "run_date": "2026-05-15",
         "total_pnl": 48626.58,
-        "net_exposure_total": -230_329.74,
-        "gross_exposure_total": 4_718_448.32,
-        "net_exposure_bucket_1": -707601.71,
-        "gross_exposure_bucket_1": 3_966_574.48,
-        "net_exposure_bucket_2": -44860.52,
-        "gross_exposure_bucket_2": 228_552.80,
+        "net_exposure_total": b1_n + b2_n + b4_n,
+        "gross_exposure_total": b1_g + b2_g + b4_g,
+        "net_exposure_bucket_1": b1_n,
+        "gross_exposure_bucket_1": b1_g,
+        "net_exposure_bucket_2": b2_n,
+        "gross_exposure_bucket_2": b2_g,
+        # Bucket 3 is a beta-normalized hedge overlay; NOT included in
+        # the gross/net reconciliation sum on purpose.
         "net_exposure_bucket_3": 85047.29,
         "gross_exposure_bucket_3": 86236.36,
-        "net_exposure_bucket_4": 437084.68,
-        "gross_exposure_bucket_4": 437084.68,
+        "net_exposure_bucket_4": b4_n,
+        "gross_exposure_bucket_4": b4_g,
         "bucket_pnl": {
             "bucket_1": 10714.78,
             "bucket_2": 25381.18,
@@ -56,13 +61,14 @@ def test_book_summary_pct_nav(fake_totals):
         pnl_by_bucket=pd.DataFrame(),
         nav_usd=800_000.0,
     )
-    assert book.gross_notional_usd == pytest.approx(4_718_448.32)
-    assert book.gross_exposure_pct_nav == pytest.approx(4_718_448.32 / 800_000.0)
+    expected_gross = fake_totals["gross_exposure_total"]
+    assert book.gross_notional_usd == pytest.approx(expected_gross)
+    assert book.gross_exposure_pct_nav == pytest.approx(expected_gross / 800_000.0)
     assert book.pnl_today_pct_nav == pytest.approx(48626.58 / 800_000.0)
     assert len(book.sleeve_table) == 4
     b4 = next(r for r in book.sleeve_table if r["bucket"] == "bucket_4")
     assert b4["target_weight"] == 0.25
-    assert b4["actual_weight"] == pytest.approx(437084.68 / 4_718_448.32)
+    assert b4["actual_weight"] == pytest.approx(437084.68 / expected_gross)
 
 
 def test_book_summary_breach_when_gross_exceeds(fake_totals):
@@ -151,8 +157,9 @@ def test_data_quality_counts_no_blank_top_rows(tmp_path: Path):
         flex_dir=flex,
         buckets=buckets,
         totals={
-            "gross_exposure_total": 4.0,
-            "net_exposure_total": 4.0,
+            # b1+b2+b4 must sum to book; b3 is an overlay (not in sum).
+            "gross_exposure_total": 3.0,
+            "net_exposure_total": 3.0,
             "gross_exposure_bucket_1": 1.0,
             "gross_exposure_bucket_2": 1.0,
             "gross_exposure_bucket_3": 1.0,
@@ -392,6 +399,80 @@ def test_action_queue_emits_quantitative_trim(tmp_path: Path):
     assert a["status"] == "hard"
     assert "$25,000" in a["detail"]
     assert a["priority"] == 0
+
+
+def test_data_quality_emits_drilldown_payload_when_sources_missing(tmp_path: Path):
+    """Phase H: when files are missing, ``compute_data_quality`` must
+    surface enough detail (per-source path, missing columns, blanks)
+    for the UI drill-down to render an actionable list."""
+    accounting = tmp_path / "accounting"
+    flex = tmp_path / "ibkr_flex"
+    accounting.mkdir()
+    flex.mkdir()
+    # Provide only totals.json; everything else is intentionally missing.
+    (accounting / "totals.json").write_text("{}", encoding="utf-8")
+    # Provide ONE bucket CSV with malformed schema to force a missing-
+    # column error in the drill-down list.
+    (accounting / "pnl_bucket_1.csv").write_text(
+        "wrong_col,another_col\n1,2\n",
+        encoding="utf-8",
+    )
+
+    dq = compute_data_quality(
+        accounting_dir=accounting,
+        flex_dir=flex,
+        buckets={
+            "bucket_1": {
+                "n_pnl_rows": 1,
+                "n_exposure_rows": 0,
+                "winners": [{"display_name": "", "description": ""}],
+                "losers": [],
+                "exposure_rows": [{"underlying": "", "symbols": ""}],
+            }
+        },
+        totals={"gross_exposure_total": 100.0, "net_exposure_total": 50.0},
+        run_date="2026-05-18",
+    )
+
+    assert dq["missing_source_count"] >= 1, dq
+    src_by_name = {s["name"]: s for s in dq["sources"]}
+    missing_paths = [s["path"] for s in dq["sources"] if not s["exists"]]
+    assert any("net_exposure_bucket_1.csv" in p for p in missing_paths), missing_paths
+    bad_pnl = src_by_name.get("pnl_bucket_1") or {}
+    assert "total_pnl" in bad_pnl.get("missing_required_columns", []), bad_pnl
+    assert dq["blank_render_field_count"] >= 2
+    blank_fields = {b["field"] for b in dq["blank_render_fields"]}
+    assert {"display_name", "underlying"}.issubset(blank_fields)
+
+
+def test_live_snapshot_reconciles_bucket_to_book():
+    """Regression: bucket gross/net (b1+b2+b4) must sum to book aggregate
+    within 1% on the LIVE on-disk snapshot. This catches plan-aware /
+    orphan-underlying double-counting bugs that would silently inflate
+    bucket sums vs the book file (see Phase G fix in ibkr_accounting.py)."""
+    totals_path = Path("data/runs/2026-05-18/accounting/totals.json")
+    if not totals_path.exists():
+        pytest.skip(f"live snapshot not present: {totals_path}")
+    totals = json.loads(totals_path.read_text(encoding="utf-8"))
+    book_g = float(totals.get("gross_exposure_total", 0.0))
+    book_n = float(totals.get("net_exposure_total", 0.0))
+    bucket_g = sum(
+        float(totals.get(f"gross_exposure_bucket_{i}", 0.0)) for i in (1, 2, 4)
+    )
+    bucket_n = sum(
+        float(totals.get(f"net_exposure_bucket_{i}", 0.0)) for i in (1, 2, 4)
+    )
+    assert abs(book_g) > 0, "snapshot has zero book gross"
+    gross_diff_pct = abs(bucket_g - book_g) / abs(book_g)
+    net_diff_pct = abs(bucket_n - book_n) / abs(book_g)
+    assert gross_diff_pct < 0.01, (
+        f"bucket gross {bucket_g:,.0f} does not reconcile to book {book_g:,.0f} "
+        f"(diff {gross_diff_pct:.2%})"
+    )
+    assert net_diff_pct < 0.01, (
+        f"bucket net {bucket_n:,.0f} does not reconcile to book {book_n:,.0f} "
+        f"(diff {net_diff_pct:.2%})"
+    )
 
 
 def test_default_limits_are_sane():

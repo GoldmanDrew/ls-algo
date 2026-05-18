@@ -22,6 +22,7 @@
     generatedAtLabel: document.getElementById("generated-at-label"),
     cockpitStrip: document.getElementById("cockpit-strip"),
     dataQuality: document.getElementById("data-quality"),
+    dqDrilldown: document.getElementById("dq-drilldown"),
     alertRows: document.getElementById("alert-rows"),
     scenarioContent: document.getElementById("scenario-content"),
     contributorContent: document.getElementById("contributor-content"),
@@ -133,17 +134,249 @@
   function renderDataQuality(dq) {
     if (!dq) {
       els.dataQuality.innerHTML = statusPill("unknown", "data quality unknown");
+      if (els.dqDrilldown) {
+        els.dqDrilldown.hidden = true;
+        els.dqDrilldown.innerHTML = "";
+      }
       return;
     }
+    const breaks = (dq.reconciliations || []).filter((r) => r.status !== "ok").length;
+    const missing = dq.missing_source_count || 0;
+    const missCols = dq.missing_required_column_count || 0;
+    const blanks = dq.blank_render_field_count || 0;
+    const issues = missing + missCols + blanks + breaks;
     const label =
-      dq.status === "ok"
-        ? "data quality ok"
-        : `${dq.status}: ${dq.missing_source_count || 0} missing sources, ${
-            dq.missing_required_column_count || 0
-          } missing columns, ${dq.blank_render_field_count || 0} blanks, ${
-            (dq.reconciliations || []).filter((r) => r.status === "hard").length
-          } reconciliation breaks`;
-    els.dataQuality.innerHTML = statusPill(dq.status, label);
+      dq.status === "ok" && issues === 0
+        ? `data quality ok (${(dq.sources || []).length} sources)`
+        : `${dq.status}: ${missing} missing sources, ${missCols} missing columns, ${blanks} blanks, ${breaks} reconciliation breaks`;
+    const expandHint = `<span class="dq-expand-hint">(click for details)</span>`;
+    els.dataQuality.innerHTML = `<button type="button" class="dq-pill-button" aria-expanded="false">${statusPill(dq.status, label)}${expandHint}</button>`;
+    const btn = els.dataQuality.querySelector(".dq-pill-button");
+    if (btn) {
+      btn.addEventListener("click", () => {
+        if (!els.dqDrilldown) return;
+        const open = !els.dqDrilldown.hidden;
+        if (open) {
+          els.dqDrilldown.hidden = true;
+          btn.setAttribute("aria-expanded", "false");
+        } else {
+          renderDataQualityDetail(dq);
+          els.dqDrilldown.hidden = false;
+          btn.setAttribute("aria-expanded", "true");
+        }
+      });
+    }
+    if (els.dqDrilldown) {
+      els.dqDrilldown.hidden = true;
+      els.dqDrilldown.innerHTML = "";
+    }
+  }
+
+  function renderDataQualityDetail(dq) {
+    if (!els.dqDrilldown) return;
+    const sections = [];
+
+    const recs = dq.reconciliations || [];
+    const recBreaks = recs.filter((r) => r.status !== "ok");
+    if (recBreaks.length) {
+      sections.push(`<div class="dq-group">
+        <h4>Reconciliation breaks (${recBreaks.length})</h4>
+        <table class="tight">
+          <thead><tr>
+            <th>Check</th><th>Book</th><th>Sum of components</th>
+            <th>Components</th><th>Diff</th><th>Status</th>
+          </tr></thead>
+          <tbody>
+            ${recBreaks
+              .map((r) => {
+                const diff = r.diff_pct ?? r.diff_pct_of_gross ?? 0;
+                const comps = (r.components_included || []).join(", ") || "-";
+                return `<tr>
+                  <td>${r.name || "-"}</td>
+                  <td>${fmtUsd(r.book_value)}</td>
+                  <td>${fmtUsd(r.component_sum)}</td>
+                  <td>${comps}</td>
+                  <td>${fmtPct(diff, 2)}</td>
+                  <td>${statusPill(r.status, r.status)}</td>
+                </tr>`;
+              })
+              .join("")}
+          </tbody>
+        </table>
+      </div>`);
+    }
+
+    const sources = dq.sources || [];
+    const missingSources = sources.filter((s) => !s.exists);
+    if (missingSources.length) {
+      sections.push(`<div class="dq-group">
+        <h4>Missing source files (${missingSources.length})</h4>
+        <table class="tight">
+          <thead><tr><th>Name</th><th>Expected path</th></tr></thead>
+          <tbody>
+            ${missingSources
+              .map(
+                (s) => `<tr>
+                <td>${s.name}</td>
+                <td><code>${s.path}</code></td>
+              </tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>`);
+    }
+
+    const missingCols = sources.filter(
+      (s) => (s.missing_required_columns || []).length > 0
+    );
+    if (missingCols.length) {
+      sections.push(`<div class="dq-group">
+        <h4>Sources missing required columns (${missingCols.length})</h4>
+        <table class="tight">
+          <thead><tr>
+            <th>Name</th><th>Path</th><th>Missing required columns</th>
+          </tr></thead>
+          <tbody>
+            ${missingCols
+              .map(
+                (s) => `<tr>
+                <td>${s.name}</td>
+                <td><code>${s.path}</code></td>
+                <td>${(s.missing_required_columns || []).join(", ")}</td>
+              </tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>`);
+    }
+
+    const blanks = dq.blank_render_fields || [];
+    if (blanks.length) {
+      const grouped = {};
+      blanks.forEach((b) => {
+        const key = `${b.bucket}|${b.section}|${b.field}`;
+        grouped[key] = grouped[key] || {
+          bucket: b.bucket,
+          section: b.section,
+          field: b.field,
+          rows: [],
+        };
+        grouped[key].rows.push(b.row);
+      });
+      const groupRows = Object.values(grouped).sort(
+        (a, b) => b.rows.length - a.rows.length
+      );
+      sections.push(`<div class="dq-group">
+        <h4>Blank rendering fields (${blanks.length})</h4>
+        <table class="tight">
+          <thead><tr>
+            <th>Bucket</th><th>Section</th><th>Field</th>
+            <th>Row count</th><th>Row indices (first 10)</th>
+          </tr></thead>
+          <tbody>
+            ${groupRows
+              .map(
+                (g) => `<tr>
+                <td>${g.bucket}</td>
+                <td>${g.section}</td>
+                <td><code>${g.field}</code></td>
+                <td>${g.rows.length}</td>
+                <td>${g.rows
+                  .slice(0, 10)
+                  .map((r) => `#${r}`)
+                  .join(", ")}${g.rows.length > 10 ? ", ..." : ""}</td>
+              </tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>`);
+    }
+
+    const rowCounts = dq.row_counts || {};
+    const rcEntries = Object.entries(rowCounts);
+    if (rcEntries.length) {
+      sections.push(`<div class="dq-group">
+        <h4>Per-bucket row counts</h4>
+        <table class="tight">
+          <thead><tr><th>Bucket</th><th>P&amp;L rows</th><th>Exposure rows</th></tr></thead>
+          <tbody>
+            ${rcEntries
+              .map(
+                ([bucket, rc]) => `<tr>
+                <td>${bucket}</td>
+                <td>${rc.pnl_rows ?? 0}</td>
+                <td>${rc.exposure_rows ?? 0}</td>
+              </tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>`);
+    }
+
+    // All sources (collapsed, for reference)
+    if (sources.length) {
+      sections.push(`<div class="dq-group">
+        <h4>All sources (${sources.length})</h4>
+        <table class="tight sortable">
+          <thead><tr>
+            <th>Name</th><th>Exists</th><th>Path</th><th># columns</th>
+          </tr></thead>
+          <tbody>
+            ${sources
+              .map(
+                (s) => `<tr>
+                <td>${s.name}</td>
+                <td>${s.exists ? "yes" : '<span class="bad">missing</span>'}</td>
+                <td><code>${s.path}</code></td>
+                <td>${(s.columns || []).length}</td>
+              </tr>`
+              )
+              .join("")}
+          </tbody>
+        </table>
+      </div>`);
+    }
+
+    const okRecs = recs.filter((r) => r.status === "ok");
+    if (okRecs.length) {
+      sections.push(`<div class="dq-group">
+        <h4>Reconciliation checks passing (${okRecs.length})</h4>
+        <table class="tight">
+          <thead><tr>
+            <th>Check</th><th>Book</th><th>Sum of components</th>
+            <th>Components</th><th>Diff</th>
+          </tr></thead>
+          <tbody>
+            ${okRecs
+              .map((r) => {
+                const diff = r.diff_pct ?? r.diff_pct_of_gross ?? 0;
+                const comps = (r.components_included || []).join(", ") || "-";
+                return `<tr>
+                  <td>${r.name || "-"}</td>
+                  <td>${fmtUsd(r.book_value)}</td>
+                  <td>${fmtUsd(r.component_sum)}</td>
+                  <td>${comps}</td>
+                  <td>${fmtPct(diff, 2)}</td>
+                </tr>`;
+              })
+              .join("")}
+          </tbody>
+        </table>
+      </div>`);
+    }
+
+    els.dqDrilldown.innerHTML = sections.length
+      ? `<div class="dq-header"><span class="dq-meta">Run date: ${dq.run_date || "-"}</span></div>${sections.join(
+          ""
+        )}`
+      : `<div class="dq-empty">No data quality issues to report.</div>`;
+    if (typeof enableSortableTables === "function") {
+      enableSortableTables();
+    }
   }
 
   function sparklineSvg(values, opts) {
