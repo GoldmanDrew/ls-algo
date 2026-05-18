@@ -477,13 +477,24 @@ def compute_bucket_capital_snapshot(
 
         lot_qty = lot_qty_by_under.get(sym)
         if lot_qty:
-            any_lot = False
-            for bucket, qty in lot_qty.items():
-                if abs(qty) <= 1e-12:
-                    continue
-                any_lot = True
-                _add(bucket, qty * px_base, None)
-            if any_lot:
+            # Attributed capital per bucket = qty_b* * mark price. Cap the
+            # total attributed |MV| at the actual EOD position |MV| so a
+            # stale ledger (qty_b* total >> live IBKR line) cannot inflate
+            # bucket capital, while orphan shares (qty_b* total < live line,
+            # e.g. blacklisted / pre-strategy holdings) are simply excluded.
+            raw_per_bucket = {
+                b: float(q) * px_base
+                for b, q in lot_qty.items()
+                if abs(q) > 1e-12
+            }
+            total_raw_abs = sum(abs(v) for v in raw_per_bucket.values())
+            position_mv_abs = abs(signed_mv)
+            if total_raw_abs > 1e-12:
+                scale = 1.0
+                if total_raw_abs > position_mv_abs and position_mv_abs > 1e-12:
+                    scale = position_mv_abs / total_raw_abs
+                for bucket, raw in raw_per_bucket.items():
+                    _add(bucket, raw * scale, None)
                 continue
 
         _add(unique_bucket, signed_mv, None)
@@ -519,11 +530,43 @@ def _fmt_pct(value: float | None) -> str:
     return "n/a" if value is None or pd.isna(value) else f"{100.0 * float(value):,.2f}%"
 
 
+def compute_average_bucket_capital(history: pd.DataFrame) -> dict[str, float]:
+    """
+    Time-average each per-bucket capital column across persisted history rows.
+
+    Each row in ``pnl_history.csv`` is one EOD snapshot. Treating each row as one
+    period (trading day) gives a simple equal-weighted mean of capital deployed
+    over time, which is a "weighted average capital" denominator paired with the
+    YTD PnL numerator. Rows where a column is NaN (legacy rows before capital
+    tracking) are skipped per-column so partial backfill still yields a sensible
+    average over the dates we do have.
+    """
+    out = {c: 0.0 for c in PNL_HISTORY_CAPITAL_COLS}
+    if history is None or history.empty:
+        return out
+    for c in PNL_HISTORY_CAPITAL_COLS:
+        if c not in history.columns:
+            continue
+        vals = pd.to_numeric(history[c], errors="coerce").dropna()
+        if not vals.empty:
+            out[c] = float(vals.mean())
+    return out
+
+
 def format_bucket_return_table(
     bucket_pnl: dict[str, float],
     capital_snapshot: dict[str, float],
 ) -> str:
-    headers = ["BUCKET", "PNL", "NET_CAP", "GROSS_CAP", "MAINT_MARGIN", "ROC", "ROG", "ROM"]
+    headers = [
+        "BUCKET",
+        "PNL_YTD",
+        "AVG_NET_CAP",
+        "AVG_GROSS_CAP",
+        "AVG_MAINT_MARGIN",
+        "ROC",
+        "ROG",
+        "ROM",
+    ]
     rows: list[list[str]] = []
     for bucket in BUCKET_KEYS:
         pnl = float(bucket_pnl.get(bucket, 0.0) or 0.0)
@@ -1764,7 +1807,6 @@ def main() -> int:
         "bucket_4": b4_pnl_total,
     }
     bucket_capital_snapshot = build_bucket_capital_snapshot_from_run(run_date)
-    bucket_return_table = format_bucket_return_table(bucket_pnl_map, bucket_capital_snapshot)
     hist = update_pnl_history(
         run_date,
         b1=b1_pnl_total,
@@ -1773,6 +1815,8 @@ def main() -> int:
         b4=b4_pnl_total,
         bucket_capital=bucket_capital_snapshot,
     )
+    bucket_capital_avg = compute_average_bucket_capital(hist)
+    bucket_return_table = format_bucket_return_table(bucket_pnl_map, bucket_capital_avg)
     period_pnl_summary = format_period_pnl_summary(hist, run_date)
     plot_path = make_pnl_plot(hist)
 
@@ -1844,12 +1888,14 @@ def main() -> int:
         f"  Bucket 2 (Standard, 0 < β ≤ 1.5): {b2_pnl_total:,.2f}\n"
         f"  Bucket 3 (Inverse, β < 0):       {b3_pnl_total:,.2f}\n\n"
         f"  Bucket 4 (Inverse decay, β < 0): {b4_pnl_total:,.2f}\n\n"
-        "BUCKET RETURNS ON CAPITAL:\n"
+        f"BUCKET RETURNS ON CAPITAL (denominators = average per-day capital since {START_DATE}):\n"
         "----------------------------------------\n"
         f"{bucket_return_table}\n"
         "----------------------------------------\n"
-        "ROC = PnL / net capital deployed (long MV - abs(short MV)); "
-        "ROG = PnL / gross capital; ROM = PnL / maintenance margin requirement.\n\n"
+        "AVG_NET_CAP = average daily net capital deployed (long MV - abs(short MV)); "
+        "AVG_GROSS_CAP = average daily gross MV; "
+        "AVG_MAINT_MARGIN = average daily maintenance margin requirement. "
+        "ROC / ROG / ROM = YTD PnL divided by the matching averaged denominator.\n\n"
         f"{period_pnl_summary}\n\n"
         "════════════════════════════════════════\n"
         "PnL Bucket 1 — Levered (β > 1.5) by underlying:\n"

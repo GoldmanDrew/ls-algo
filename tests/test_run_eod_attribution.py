@@ -4,6 +4,7 @@ import pytest
 import pandas as pd
 
 from run_eod_pnl_email import (
+    compute_average_bucket_capital,
     compute_bucket_capital_snapshot,
     format_bucket_return_table,
     build_attribution_row,
@@ -112,12 +113,87 @@ def test_compute_bucket_capital_snapshot_splits_spot_and_uses_maintenance_margin
 
     snap = compute_bucket_capital_snapshot(positions, pnl_symbol, screened, lot_state)
 
+    # SPOT ledger attributes 25 + 75 = 100 shares vs the actual 100-share IBKR
+    # long line, so no capping. Each bucket gets qty * price directly.
     assert snap["net_capital_bucket_1"] == pytest.approx(-500.0)
     assert snap["gross_capital_bucket_1"] == pytest.approx(1500.0)
     assert snap["margin_req_bucket_1"] == pytest.approx(725.0)
     assert snap["net_capital_bucket_2"] == pytest.approx(1500.0)
     assert snap["gross_capital_bucket_2"] == pytest.approx(1500.0)
     assert snap["margin_req_bucket_2"] == pytest.approx(375.0)
+
+
+def test_compute_bucket_capital_snapshot_caps_at_position_when_lot_state_is_stale():
+    # Stale ledger reports 1,000 shares (10x) but the IBKR line is only 100.
+    positions = pd.DataFrame(
+        [
+            {
+                "symbol": "SPOT",
+                "position": 100.0,
+                "markPrice": 20.0,
+                "fxRateToBase": 1.0,
+                "positionValue_base": 2000.0,
+            }
+        ]
+    )
+    pnl_symbol = pd.DataFrame(
+        [
+            {"symbol": "SPOT", "bucket": "bucket_1"},
+            {"symbol": "SPOT", "bucket": "bucket_2"},
+        ]
+    )
+    lot_state = pd.DataFrame(
+        [
+            {
+                "underlying": "SPOT",
+                "qty_b1": 250.0,
+                "qty_b2": 750.0,
+                "qty_b4": 0.0,
+            }
+        ]
+    )
+
+    snap = compute_bucket_capital_snapshot(positions, pnl_symbol, pd.DataFrame(), lot_state)
+
+    # Total attributed MV scaled down to the actual $2,000 position.
+    assert snap["net_capital_bucket_1"] + snap["net_capital_bucket_2"] == pytest.approx(2000.0)
+    assert snap["gross_capital_bucket_1"] + snap["gross_capital_bucket_2"] == pytest.approx(2000.0)
+    assert snap["net_capital_bucket_1"] == pytest.approx(500.0)
+    assert snap["net_capital_bucket_2"] == pytest.approx(1500.0)
+
+
+def test_compute_bucket_capital_snapshot_excludes_orphan_position_shares():
+    # IBKR line is 1,000 shares but ledger only attributes 100 to a bucket
+    # (the other 900 are pre-strategy / blacklist holdings). Bucket capital
+    # should reflect only the 100 attributed shares (worth $1,000), not the
+    # full $10,000 position market value.
+    positions = pd.DataFrame(
+        [
+            {
+                "symbol": "SPOT",
+                "position": 1000.0,
+                "markPrice": 10.0,
+                "fxRateToBase": 1.0,
+                "positionValue_base": 10000.0,
+            }
+        ]
+    )
+    pnl_symbol = pd.DataFrame([{"symbol": "SPOT", "bucket": "bucket_1"}])
+    lot_state = pd.DataFrame(
+        [
+            {
+                "underlying": "SPOT",
+                "qty_b1": 100.0,
+                "qty_b2": 0.0,
+                "qty_b4": 0.0,
+            }
+        ]
+    )
+
+    snap = compute_bucket_capital_snapshot(positions, pnl_symbol, pd.DataFrame(), lot_state)
+
+    assert snap["net_capital_bucket_1"] == pytest.approx(1000.0)
+    assert snap["gross_capital_bucket_1"] == pytest.approx(1000.0)
 
 
 def test_format_bucket_return_table_includes_return_metrics():
@@ -130,7 +206,57 @@ def test_format_bucket_return_table_includes_return_metrics():
         },
     )
 
+    assert "AVG_NET_CAP" in table
+    assert "AVG_GROSS_CAP" in table
+    assert "AVG_MAINT_MARGIN" in table
     assert "ROC" in table
     assert "10.00%" in table
     assert "5.00%" in table
     assert "20.00%" in table
+
+
+def test_compute_average_bucket_capital_means_daily_history():
+    history = pd.DataFrame(
+        [
+            {
+                "date": "2026-02-27",
+                "net_capital_bucket_1": 100.0,
+                "gross_capital_bucket_1": 200.0,
+                "margin_req_bucket_1": 50.0,
+            },
+            {
+                "date": "2026-02-28",
+                "net_capital_bucket_1": 300.0,
+                "gross_capital_bucket_1": 400.0,
+                "margin_req_bucket_1": 150.0,
+            },
+        ]
+    )
+
+    avg = compute_average_bucket_capital(history)
+
+    assert avg["net_capital_bucket_1"] == pytest.approx(200.0)
+    assert avg["gross_capital_bucket_1"] == pytest.approx(300.0)
+    assert avg["margin_req_bucket_1"] == pytest.approx(100.0)
+    assert avg["net_capital_bucket_2"] == pytest.approx(0.0)
+
+
+def test_compute_average_bucket_capital_skips_nan_legacy_rows():
+    history = pd.DataFrame(
+        [
+            {"date": "2026-02-27", "net_capital_bucket_1": float("nan")},
+            {"date": "2026-02-28", "net_capital_bucket_1": 400.0},
+            {"date": "2026-03-02", "net_capital_bucket_1": 600.0},
+        ]
+    )
+
+    avg = compute_average_bucket_capital(history)
+
+    assert avg["net_capital_bucket_1"] == pytest.approx(500.0)
+
+
+def test_compute_average_bucket_capital_handles_empty_history():
+    avg = compute_average_bucket_capital(pd.DataFrame())
+    assert avg["net_capital_bucket_1"] == 0.0
+    assert avg["gross_capital_bucket_4"] == 0.0
+    assert avg["margin_req_bucket_3"] == 0.0
