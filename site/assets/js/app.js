@@ -25,6 +25,15 @@
     alertRows: document.getElementById("alert-rows"),
     scenarioContent: document.getElementById("scenario-content"),
     contributorContent: document.getElementById("contributor-content"),
+    factorSummary: document.getElementById("factor-summary"),
+    factorSectors: document.getElementById("factor-sectors"),
+    factorLong: document.getElementById("factor-long"),
+    factorShort: document.getElementById("factor-short"),
+    concentrationSummary: document.getElementById("concentration-summary"),
+    concentrationNames: document.getElementById("concentration-names"),
+    concentrationSectors: document.getElementById("concentration-sectors"),
+    squeezeContent: document.getElementById("squeeze-content"),
+    actionQueue: document.getElementById("action-queue"),
     strip: document.getElementById("strip"),
     breaches: document.getElementById("breaches"),
     sleeveBody: document.querySelector("#sleeve-table tbody"),
@@ -137,29 +146,120 @@
     els.dataQuality.innerHTML = statusPill(dq.status, label);
   }
 
+  function sparklineSvg(values, opts) {
+    const cleaned = (values || []).map((v) => (v == null ? null : Number(v)));
+    const real = cleaned.filter((v) => v != null && !Number.isNaN(v));
+    if (real.length < 2) return "";
+    const width = 80;
+    const height = 22;
+    const min = Math.min(...real);
+    const max = Math.max(...real);
+    const span = max - min || 1;
+    const n = cleaned.length;
+    const pts = cleaned.map((v, i) => {
+      const x = (i / (n - 1)) * (width - 2) + 1;
+      if (v == null) return null;
+      const y = height - 2 - ((v - min) / span) * (height - 4);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    const segments = [];
+    let buf = [];
+    pts.forEach((p) => {
+      if (p == null) {
+        if (buf.length) segments.push(buf);
+        buf = [];
+      } else {
+        buf.push(p);
+      }
+    });
+    if (buf.length) segments.push(buf);
+    const polylines = segments
+      .map(
+        (s) =>
+          `<polyline fill="none" stroke="${opts?.stroke || "#16537e"}" stroke-width="1.4" points="${s.join(
+            " "
+          )}"/>`
+      )
+      .join("");
+    const lastVal = real[real.length - 1];
+    const lastIdx = cleaned.lastIndexOf(lastVal);
+    const lastX = (lastIdx / (n - 1)) * (width - 2) + 1;
+    const lastY = height - 2 - ((lastVal - min) / span) * (height - 4);
+    return `<svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" class="spark">${polylines}<circle cx="${lastX.toFixed(
+      1
+    )}" cy="${lastY.toFixed(1)}" r="1.6" fill="${opts?.stroke || "#16537e"}"/></svg>`;
+  }
+
+  function deltaBadge(value, opts) {
+    if (value == null || Number.isNaN(value)) return "";
+    const isPct = !!opts?.isPct;
+    const isInt = !!opts?.isInt;
+    const lowerIsBetter = opts?.lowerIsBetter !== false;
+    const sign = value > 0 ? "+" : value < 0 ? "" : "";
+    const display = isPct
+      ? sign + (value * 100).toFixed(2) + "pp"
+      : isInt
+      ? sign + Math.round(value)
+      : sign + value.toFixed(2);
+    const positive = lowerIsBetter ? value < 0 : value > 0;
+    const cls = value === 0 ? "delta-flat" : positive ? "delta-pos" : "delta-neg";
+    return `<span class="delta ${cls}">${display}</span>`;
+  }
+
   function renderCockpit(snap) {
     const book = snap.book || {};
     const worst = snap.worst_shock || {};
     const top = worst.top_contributor || {};
     const alertRows = snap.alert_rows || [];
+    const factor = snap.factor_panel || {};
+    const factorTotals = factor.totals || {};
+    const history = snap.history || [];
+    const deltas = snap.deltas || {};
+
+    const series = (key) => history.map((h) => h?.[key]);
+
     const items = [
-      { label: "NAV", value: fmtUsd(book.nav_usd) },
+      {
+        label: "NAV",
+        value: fmtUsd(book.nav_usd),
+        spark: sparklineSvg(series("nav_usd")),
+        delta: "",
+      },
       {
         label: "Gross / NAV",
         value: fmtPct(book.gross_exposure_pct_nav, 0),
         sub: fmtUsd(book.gross_notional_usd),
+        spark: sparklineSvg(series("gross_pct_nav")),
+        delta: deltaBadge(deltas.delta_gross_pct_nav, { isPct: true }),
       },
       {
         label: "Net / NAV",
         value: fmtPct(book.net_exposure_pct_nav, 1),
         sub: fmtUsd(book.net_notional_usd),
         cls: signedClass(book.net_notional_usd),
+        spark: sparklineSvg(series("net_pct_nav")),
+        delta: deltaBadge(deltas.delta_net_pct_nav, { isPct: true, lowerIsBetter: false }),
+      },
+      {
+        label: "Net beta",
+        value:
+          factorTotals.net_beta_to_spy == null
+            ? "-"
+            : factorTotals.net_beta_to_spy.toFixed(2) + "x",
+        sub: factorTotals.beta_coverage_gross_pct == null
+          ? "coverage unknown"
+          : `${fmtPct(factorTotals.beta_coverage_gross_pct, 0)} curated`,
+        cls: signedClass(factorTotals.net_beta_to_spy),
+        spark: sparklineSvg(series("net_beta_to_spy")),
+        delta: deltaBadge(deltas.delta_net_beta_to_spy, { lowerIsBetter: false }),
       },
       {
         label: "Worst shock",
         value: fmtUsdSigned(worst.pnl_usd),
         sub: `${safeText(worst.label, "no scenario")} / ${fmtPct(worst.pnl_pct_nav, 2)}`,
         cls: signedClass(worst.pnl_usd),
+        spark: sparklineSvg(series("worst_shock_pct_nav"), { stroke: "#c0392b" }),
+        delta: deltaBadge(deltas.delta_worst_shock_pct_nav, { isPct: true, lowerIsBetter: false }),
       },
       {
         label: "Top offender",
@@ -172,6 +272,8 @@
         value: String(alertRows.length),
         sub: `${alertRows.filter((r) => r.status === "hard").length} hard`,
         cls: alertRows.some((r) => r.status === "hard") ? "neg" : "",
+        spark: sparklineSvg(series("n_alerts_hard"), { stroke: "#c0392b" }),
+        delta: deltaBadge(deltas.delta_n_alerts_hard, { isInt: true }),
       },
     ];
     els.cockpitStrip.innerHTML = items
@@ -180,7 +282,9 @@
         <div class="stat stat-${it.cls || "neutral"}">
           <div class="label">${it.label}</div>
           <div class="value ${it.cls || ""}">${it.value}</div>
+          ${it.delta ? `<div class="delta-row">${it.delta}</div>` : ""}
           ${it.sub ? `<div class="sub">${it.sub}</div>` : ""}
+          ${it.spark ? `<div class="spark-row">${it.spark}</div>` : ""}
         </div>`
       )
       .join("");
@@ -216,33 +320,66 @@
         .join("")}</tbody></table>`;
   }
 
+  function scenarioHeatClass(pct) {
+    if (pct == null || Number.isNaN(pct)) return "";
+    const a = Math.abs(pct);
+    const tier = a >= 0.05 ? 3 : a >= 0.03 ? 2 : a >= 0.01 ? 1 : 0;
+    if (tier === 0) return "";
+    return pct < 0 ? `heat-neg-${tier}` : `heat-pos-${tier}`;
+  }
+
   function renderScenarios(panel) {
     const scenarios = panel?.scenarios || [];
+    const bookOnly = !!panel?.book_only_mode;
+    const bookOnlyBadge = bookOnly
+      ? `<div class="callout warn" role="status"><strong>Book-only mode.</strong> ${safeText(
+          panel.book_only_reason,
+          "Bucket attribution unavailable; scenarios computed from book aggregates."
+        )}</div>`
+      : "";
     if (!scenarios.length) {
-      els.scenarioContent.innerHTML = `<p class="dim">No scenario data available.</p>`;
+      els.scenarioContent.innerHTML = `${bookOnlyBadge}<p class="dim">No scenario data available.</p>`;
       els.contributorContent.innerHTML = `<p class="dim">No contributor data available.</p>`;
       return;
     }
+    const sleeveCols = bookOnly
+      ? "<th>Book</th>"
+      : "<th>B1</th><th>B2</th><th>B3</th><th>B4</th>";
     els.scenarioContent.innerHTML = `
+      ${bookOnlyBadge}
       <table class="tight scenario-table"><thead><tr>
         <th>Scenario</th><th>Total P&amp;L</th><th>% NAV</th>
-        <th>Book/Other</th><th>B1</th><th>B2</th><th>B3</th><th>B4</th><th>Top offender</th><th>Status</th>
+        ${sleeveCols}<th>Top offender</th><th>Status</th>
       </tr></thead><tbody>${scenarios
         .map((s) => {
           const b = s.bucket_pnl || {};
           const top = s.top_contributor || {};
+          const sleeveCells = bookOnly
+            ? `<td class="num ${signedClass(b.book)}">${fmtUsdSigned(b.book || 0)}</td>`
+            : `<td class="num ${signedClass(b.bucket_1)}">${fmtUsdSigned(
+                b.bucket_1 || 0
+              )}</td>
+            <td class="num ${signedClass(b.bucket_2)}">${fmtUsdSigned(
+                b.bucket_2 || 0
+              )}</td>
+            <td class="num ${signedClass(b.bucket_3)}">${fmtUsdSigned(
+                b.bucket_3 || 0
+              )}</td>
+            <td class="num ${signedClass(b.bucket_4)}">${fmtUsdSigned(
+                b.bucket_4 || 0
+              )}</td>`;
           return `<tr class="${rowStatusClass(s.status)}">
             <td><strong>${safeText(s.label)}</strong><div class="dim small">${safeText(
               s.description,
               ""
             )}</div></td>
-            <td class="num ${signedClass(s.pnl_usd)}">${fmtUsdSigned(s.pnl_usd)}</td>
-            <td class="num ${signedClass(s.pnl_pct_nav)}">${fmtPct(s.pnl_pct_nav, 2)}</td>
-            <td class="num ${signedClass(b.book)}">${fmtUsdSigned(b.book || 0)}</td>
-            <td class="num ${signedClass(b.bucket_1)}">${fmtUsdSigned(b.bucket_1 || 0)}</td>
-            <td class="num ${signedClass(b.bucket_2)}">${fmtUsdSigned(b.bucket_2 || 0)}</td>
-            <td class="num ${signedClass(b.bucket_3)}">${fmtUsdSigned(b.bucket_3 || 0)}</td>
-            <td class="num ${signedClass(b.bucket_4)}">${fmtUsdSigned(b.bucket_4 || 0)}</td>
+            <td class="num ${signedClass(s.pnl_usd)} ${scenarioHeatClass(
+            s.pnl_pct_nav
+          )}">${fmtUsdSigned(s.pnl_usd)}</td>
+            <td class="num ${signedClass(s.pnl_pct_nav)} ${scenarioHeatClass(
+            s.pnl_pct_nav
+          )}">${fmtPct(s.pnl_pct_nav, 2)}</td>
+            ${sleeveCells}
             <td>${safeText(top.underlying, "none")} <span class="dim small">${fmtUsdSigned(
             top.pnl_usd
           )}</span></td>
@@ -272,6 +409,264 @@
         .join("")}</tbody></table>`;
   }
 
+  function renderFactor(panel) {
+    if (!panel || panel.available === false) {
+      els.factorSummary.innerHTML = `<div class="callout warn">${safeText(
+        panel?.reason,
+        "Factor panel unavailable: missing net_exposure_by_underlying.csv."
+      )}</div>`;
+      els.factorSectors.innerHTML = "";
+      els.factorLong.innerHTML = "";
+      els.factorShort.innerHTML = "";
+      return;
+    }
+    const t = panel.totals || {};
+    const summary = [
+      { label: "Underlyings", value: String(t.n_underlyings ?? 0) },
+      {
+        label: "Beta-weighted net",
+        value: fmtUsdSigned(t.beta_weighted_net_usd),
+        sub: t.net_beta_to_spy == null ? "-" : t.net_beta_to_spy.toFixed(2) + "x NAV",
+        cls: signedClass(t.beta_weighted_net_usd),
+      },
+      {
+        label: "Beta-weighted gross",
+        value: fmtUsd(t.beta_weighted_gross_usd),
+        sub: t.gross_beta_to_spy == null ? "-" : t.gross_beta_to_spy.toFixed(2) + "x NAV",
+      },
+      {
+        label: "Beta coverage",
+        value: fmtPct(t.beta_coverage_gross_pct, 0),
+        sub: "% of gross with curated beta",
+        cls: (t.beta_coverage_gross_pct ?? 0) >= 0.7 ? "pos" : "neg",
+      },
+    ];
+    els.factorSummary.innerHTML = summary
+      .map(
+        (it) => `
+        <div class="stat stat-${it.cls || "neutral"}">
+          <div class="label">${it.label}</div>
+          <div class="value ${it.cls || ""}">${it.value}</div>
+          ${it.sub ? `<div class="sub">${it.sub}</div>` : ""}
+        </div>`
+      )
+      .join("");
+
+    const sectors = panel.by_sector || [];
+    els.factorSectors.innerHTML = `
+      <table class="tight"><thead><tr>
+        <th>Sector</th><th>Names</th><th>Net $</th><th>Gross $</th>
+        <th>Beta-wtd net</th><th>Beta-wtd gross</th>
+      </tr></thead><tbody>${sectors
+        .map(
+          (r) => `<tr>
+            <td><strong>${safeText(r.sector)}</strong></td>
+            <td class="num">${r.n_names}</td>
+            <td class="num ${signedClass(r.net_notional_usd)}">${fmtUsdSigned(
+            r.net_notional_usd
+          )}</td>
+            <td class="num">${fmtUsd(r.gross_notional_usd)}</td>
+            <td class="num ${signedClass(r.beta_weighted_net_usd)}">${fmtUsdSigned(
+            r.beta_weighted_net_usd
+          )}</td>
+            <td class="num">${fmtUsd(r.beta_weighted_gross_usd)}</td>
+          </tr>`
+        )
+        .join("")}</tbody></table>`;
+
+    function rowTbl(rows) {
+      return `<table class="tight"><thead><tr>
+        <th>Underlying</th><th>Sector</th><th>Beta</th><th>Net $</th><th>Beta net $</th>
+      </tr></thead><tbody>${(rows || [])
+        .map(
+          (r) => `<tr>
+            <td><strong>${safeText(r.underlying)}</strong> <span class="dim small">${safeText(
+            r.symbols,
+            ""
+          )}</span></td>
+            <td>${safeText(r.sector)}</td>
+            <td class="num ${r.beta_source === "default" ? "dim" : ""}" title="${
+            r.beta_source
+          }">${r.beta_to_spy.toFixed(2)}</td>
+            <td class="num ${signedClass(r.net_notional_usd)}">${fmtUsdSigned(
+            r.net_notional_usd
+          )}</td>
+            <td class="num ${signedClass(r.beta_weighted_net_usd)}">${fmtUsdSigned(
+            r.beta_weighted_net_usd
+          )}</td>
+          </tr>`
+        )
+        .join("")}</tbody></table>`;
+    }
+    els.factorLong.innerHTML = rowTbl(panel.top_beta_long);
+    els.factorShort.innerHTML = rowTbl(panel.top_beta_short);
+  }
+
+  function renderActionQueue(actions) {
+    if (!els.actionQueue) return;
+    if (!actions || !actions.length) {
+      els.actionQueue.innerHTML = `<span class="pill pill-ok">No actions required</span>`;
+      return;
+    }
+    els.actionQueue.innerHTML = `
+      <table class="tight action-table"><thead><tr>
+        <th>Priority</th><th>Action</th><th>Detail</th><th>Hedge hint</th><th>Source</th>
+      </tr></thead><tbody>${actions
+        .map(
+          (a) => `<tr class="${rowStatusClass(a.status)}">
+            <td>${statusPill(a.status, a.priority === 0 ? "P0" : "P1")}</td>
+            <td><strong>${safeText(a.title)}</strong><div class="dim small">${safeText(
+            a.category,
+            ""
+          )}</div></td>
+            <td>${safeText(a.detail)}</td>
+            <td class="dim">${safeText(a.hedge_hint, "")}</td>
+            <td class="dim small">${safeText(a.source, "")}</td>
+          </tr>`
+        )
+        .join("")}</tbody></table>`;
+  }
+
+  function renderConcentration(panel) {
+    if (!panel || panel.available === false) {
+      els.concentrationSummary.innerHTML = `<div class="callout warn">${safeText(
+        panel?.reason,
+        "Concentration panel unavailable: factor map missing."
+      )}</div>`;
+      els.concentrationNames.innerHTML = "";
+      els.concentrationSectors.innerHTML = "";
+      return;
+    }
+    const t = panel.totals || {};
+    const items = [
+      {
+        label: "Top 5 names / NAV",
+        value: fmtPct(t.top5_pct_nav, 0),
+      },
+      {
+        label: "Top 10 / NAV",
+        value: fmtPct(t.top10_pct_nav, 0),
+        cls:
+          t.top10_status === "hard"
+            ? "neg"
+            : t.top10_status === "warn"
+            ? "neg"
+            : "pos",
+      },
+      {
+        label: "HHI underlying",
+        value: (t.hhi_underlying || 0).toFixed(0),
+        sub:
+          t.hhi_underlying_status === "hard"
+            ? "concentrated"
+            : t.hhi_underlying_status === "warn"
+            ? "elevated"
+            : "diversified",
+        cls:
+          t.hhi_underlying_status === "hard"
+            ? "neg"
+            : t.hhi_underlying_status === "warn"
+            ? "neg"
+            : "pos",
+      },
+      {
+        label: "HHI sector",
+        value: (t.hhi_sector || 0).toFixed(0),
+        sub:
+          t.hhi_sector_status === "hard"
+            ? "concentrated"
+            : t.hhi_sector_status === "warn"
+            ? "elevated"
+            : "diversified",
+        cls:
+          t.hhi_sector_status === "hard"
+            ? "neg"
+            : t.hhi_sector_status === "warn"
+            ? "neg"
+            : "pos",
+      },
+    ];
+    els.concentrationSummary.innerHTML = items
+      .map(
+        (it) => `
+        <div class="stat stat-${it.cls || "neutral"}">
+          <div class="label">${it.label}</div>
+          <div class="value ${it.cls || ""}">${it.value}</div>
+          ${it.sub ? `<div class="sub">${it.sub}</div>` : ""}
+        </div>`
+      )
+      .join("");
+
+    const names = (panel.top_names || []).slice(0, 15);
+    els.concentrationNames.innerHTML = `
+      <table class="tight"><thead><tr>
+        <th>Underlying</th><th>Sector</th><th>Gross $</th><th>Gross / NAV</th><th>Status</th>
+      </tr></thead><tbody>${names
+        .map(
+          (r) => `<tr class="${rowStatusClass(r.status)}">
+            <td><strong>${safeText(r.underlying)}</strong></td>
+            <td>${safeText(r.sector)}</td>
+            <td class="num">${fmtUsd(r.gross_notional_usd)}</td>
+            <td class="num">${fmtPct(r.pct_nav_gross, 1)}</td>
+            <td>${statusPill(r.status)}</td>
+          </tr>`
+        )
+        .join("")}</tbody></table>`;
+
+    const sectors = panel.by_sector || [];
+    els.concentrationSectors.innerHTML = `
+      <table class="tight"><thead><tr>
+        <th>Sector</th><th>Names</th><th>Gross $</th><th>Gross / NAV</th><th>Status</th>
+      </tr></thead><tbody>${sectors
+        .map(
+          (r) => `<tr class="${rowStatusClass(r.status)}">
+            <td><strong>${safeText(r.sector)}</strong></td>
+            <td class="num">${r.n_names}</td>
+            <td class="num">${fmtUsd(r.gross_notional_usd)}</td>
+            <td class="num">${fmtPct(r.pct_nav_gross, 1)}</td>
+            <td>${statusPill(r.status)}</td>
+          </tr>`
+        )
+        .join("")}</tbody></table>`;
+  }
+
+  function renderSqueeze(rows) {
+    if (!els.squeezeContent) return;
+    if (!rows || !rows.length) {
+      els.squeezeContent.innerHTML = `<p class="dim small">No short positions found, or screener unavailable.</p>`;
+      return;
+    }
+    const top = rows.slice(0, 20);
+    els.squeezeContent.innerHTML = `
+      <table class="tight"><thead><tr>
+        <th>Symbol</th><th>Short qty</th><th>Shares available</th>
+        <th>Utilization</th><th>Borrow APR</th><th>Status</th>
+      </tr></thead><tbody>${top
+        .map(
+          (r) => `<tr class="${rowStatusClass(r.status)}">
+            <td><strong>${safeText(r.symbol)}</strong></td>
+            <td class="num">${Math.round(r.short_qty).toLocaleString()}</td>
+            <td class="num">${
+              r.shares_available == null
+                ? "<span class=dim>unknown</span>"
+                : Math.round(r.shares_available).toLocaleString()
+            }</td>
+            <td class="num">${
+              r.utilization == null ? "-" : fmtPct(r.utilization, 0)
+            }</td>
+            <td class="num">${
+              r.borrow_fee_annual == null
+                ? "-"
+                : (r.borrow_fee_annual * 100).toFixed(1) + "%"
+            }</td>
+            <td>${statusPill(r.status)}</td>
+          </tr>`
+        )
+        .join("")}</tbody></table>
+      <p class="dim small">Status: warn &ge; 25% utilization, hard &ge; 50% (proxy for buy-in risk).</p>
+    `;
+  }
+
   function renderBreaches(breaches) {
     if (!breaches || !breaches.length) {
       els.breaches.innerHTML = `<span class="pill pill-ok">No top-level breaches</span>`;
@@ -289,7 +684,13 @@
       .join("");
   }
 
-  function renderSleeveTable(rows) {
+  function renderSleeveTable(book) {
+    const rows = book?.sleeve_table || [];
+    const available = book?.sleeve_attribution_available !== false;
+    const unavailableCell = `<td class="num dim" title="${safeText(
+      book?.sleeve_attribution_reason,
+      "sleeve attribution unavailable"
+    )}">unavailable</td>`;
     els.sleeveBody.innerHTML = rows
       .map((r) => {
         const trCls =
@@ -298,20 +699,49 @@
             : r.drift_status === "warn"
             ? "row-warn"
             : "";
+        const grossCell = available
+          ? `<td class="num">${fmtUsd(r.gross_usd)}</td>`
+          : unavailableCell;
+        const netCell = available
+          ? `<td class="num ${signedClass(r.net_usd)}">${fmtUsd(r.net_usd)}</td>`
+          : unavailableCell;
+        const actualCell = available
+          ? `<td class="num">${fmtPct(r.actual_weight, 1)}</td>`
+          : unavailableCell;
+        const driftCell = available
+          ? `<td class="num">${fmtPp(r.drift_pp, 1)}</td>`
+          : unavailableCell;
+        const statusCell = available
+          ? `<td>${statusPill(r.drift_status)}</td>`
+          : `<td>${statusPill("unknown", "n/a")}</td>`;
         return `<tr class="${trCls}">
           <td><strong>${r.bucket}</strong></td>
-          <td class="num">${fmtUsd(r.gross_usd)}</td>
-          <td class="num ${signedClass(r.net_usd)}">${fmtUsd(r.net_usd)}</td>
-          <td class="num">${fmtPct(r.actual_weight, 1)}</td>
+          ${grossCell}
+          ${netCell}
+          ${actualCell}
           <td class="num">${
             r.target_weight == null ? "-" : fmtPct(r.target_weight, 0)
           }</td>
-          <td class="num">${fmtPp(r.drift_pp, 1)}</td>
-          <td>${statusPill(r.drift_status)}</td>
+          ${driftCell}
+          ${statusCell}
           <td class="num ${signedClass(r.pnl_usd)}">${fmtUsdSigned(r.pnl_usd)}</td>
         </tr>`;
       })
       .join("");
+
+    const banner = document.getElementById("sleeve-banner");
+    if (banner) {
+      if (!available) {
+        banner.hidden = false;
+        banner.className = "callout hard";
+        banner.innerHTML = `<strong>Sleeve attribution unavailable.</strong> ${safeText(
+          book?.sleeve_attribution_reason,
+          "Bucket totals do not reconcile to book aggregate."
+        )} Bucket P&amp;L is still shown because it sums from a separate source.`;
+      } else {
+        banner.hidden = true;
+      }
+    }
   }
 
   function renderBucketContent(bucketKey, bucket) {
@@ -428,17 +858,84 @@
   }
 
   /* ----------------------- Auth wiring ------------------------ */
+  const subnav = document.getElementById("subnav");
   function showDashboard() {
     els.loginPanel.hidden = true;
     els.dashboard.hidden = false;
     els.logoutBtn.hidden = false;
+    if (subnav) subnav.hidden = false;
+    enableSortableTables();
   }
   function showLogin() {
     els.loginPanel.hidden = false;
     els.dashboard.hidden = true;
     els.logoutBtn.hidden = true;
+    if (subnav) subnav.hidden = true;
     els.runDateLabel.textContent = "No data loaded";
     els.generatedAtLabel.textContent = "";
+  }
+
+  /* ----------------------- Theme toggle ----------------------- */
+  function applyTheme(theme) {
+    document.body.setAttribute("data-theme", theme || "light");
+    const btn = document.getElementById("theme-toggle");
+    if (btn) btn.textContent = theme === "dark" ? "Light" : "Dark";
+  }
+  (function initTheme() {
+    let stored = null;
+    try { stored = localStorage.getItem("ls-algo-theme"); } catch (e) {}
+    applyTheme(stored === "dark" ? "dark" : "light");
+    const btn = document.getElementById("theme-toggle");
+    if (btn) {
+      btn.addEventListener("click", () => {
+        const next = document.body.getAttribute("data-theme") === "dark" ? "light" : "dark";
+        applyTheme(next);
+        try { localStorage.setItem("ls-algo-theme", next); } catch (e) {}
+      });
+    }
+  })();
+
+  /* ----------------------- Sortable tables -------------------- */
+  function parseSortValue(cell) {
+    const raw = cell.textContent.trim();
+    const cleaned = raw
+      .replace(/[$,+\s]/g, "")
+      .replace(/%$/, "")
+      .replace(/pp$/, "");
+    const n = parseFloat(cleaned);
+    return Number.isFinite(n) ? n : raw.toLowerCase();
+  }
+
+  function enableSortableTables() {
+    document.querySelectorAll("table.tight").forEach((tbl) => {
+      const head = tbl.tHead;
+      if (!head) return;
+      Array.from(head.rows[0].cells).forEach((th, idx) => {
+        if (th.classList.contains("sortable")) return;
+        th.classList.add("sortable");
+        th.addEventListener("click", () => {
+          const tbody = tbl.tBodies[0];
+          if (!tbody) return;
+          const rows = Array.from(tbody.rows);
+          const dir = th.classList.contains("sort-asc") ? "desc" : "asc";
+          head.rows[0].querySelectorAll("th").forEach((h) => {
+            h.classList.remove("sort-asc", "sort-desc");
+          });
+          th.classList.add(dir === "asc" ? "sort-asc" : "sort-desc");
+          rows.sort((a, b) => {
+            const av = parseSortValue(a.cells[idx]);
+            const bv = parseSortValue(b.cells[idx]);
+            if (typeof av === "number" && typeof bv === "number") {
+              return dir === "asc" ? av - bv : bv - av;
+            }
+            return dir === "asc"
+              ? String(av).localeCompare(String(bv))
+              : String(bv).localeCompare(String(av));
+          });
+          rows.forEach((r) => tbody.appendChild(r));
+        });
+      });
+    });
   }
 
   async function loadSnapshot(pat) {
@@ -457,13 +954,18 @@
     renderDataQuality(snap.data_quality || {});
     renderCockpit(snap);
     renderAlerts(snap.alert_rows || []);
+    renderActionQueue(snap.action_queue || []);
     renderStrip(snap.book || {});
     renderBreaches(snap.book?.breaches || []);
     renderScenarios(snap.scenario_panel || {});
-    renderSleeveTable(snap.book?.sleeve_table || []);
+    renderConcentration(snap.concentration_panel || {});
+    renderFactor(snap.factor_panel || {});
+    renderSleeveTable(snap.book || {});
     bindTabs(snap);
     renderBorrow(snap.borrow_panel || {});
+    renderSqueeze((snap.borrow_panel || {}).squeeze_rows || []);
     els.rawTotals.textContent = JSON.stringify(snap.raw_totals || {}, null, 2);
+    enableSortableTables();
   }
 
   async function tryAutoLogin() {

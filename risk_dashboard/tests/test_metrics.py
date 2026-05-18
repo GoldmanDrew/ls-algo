@@ -8,23 +8,31 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from risk_dashboard.factor_map import lookup_underlying
 from risk_dashboard.metrics import (
     DEFAULT_LIMITS,
     SLEEVE_TARGET_WEIGHTS,
+    compute_action_queue,
     compute_book_summary,
     compute_bucket_detail,
+    compute_concentration_panel,
     compute_data_quality,
+    compute_factor_panel,
     compute_scenario_panel,
 )
 
 
 @pytest.fixture
 def fake_totals() -> dict:
+    # Bucket components must sum to the book aggregate within 1% so the
+    # sleeve attribution gate stays green; matches what the upstream
+    # accounting pipeline guarantees once b1/b2/b3/b4 reconciliation
+    # is fixed.
     return {
         "run_date": "2026-05-15",
         "total_pnl": 48626.58,
-        "net_exposure_total": -752462.23,
-        "gross_exposure_total": 4_195_127.28,
+        "net_exposure_total": -230_329.74,
+        "gross_exposure_total": 4_718_448.32,
         "net_exposure_bucket_1": -707601.71,
         "gross_exposure_bucket_1": 3_966_574.48,
         "net_exposure_bucket_2": -44860.52,
@@ -48,13 +56,13 @@ def test_book_summary_pct_nav(fake_totals):
         pnl_by_bucket=pd.DataFrame(),
         nav_usd=800_000.0,
     )
-    assert book.gross_notional_usd == pytest.approx(4_195_127.28)
-    assert book.gross_exposure_pct_nav == pytest.approx(4_195_127.28 / 800_000.0)
+    assert book.gross_notional_usd == pytest.approx(4_718_448.32)
+    assert book.gross_exposure_pct_nav == pytest.approx(4_718_448.32 / 800_000.0)
     assert book.pnl_today_pct_nav == pytest.approx(48626.58 / 800_000.0)
     assert len(book.sleeve_table) == 4
     b4 = next(r for r in book.sleeve_table if r["bucket"] == "bucket_4")
     assert b4["target_weight"] == 0.25
-    assert b4["actual_weight"] == pytest.approx(437084.68 / 4_195_127.28)
+    assert b4["actual_weight"] == pytest.approx(437084.68 / 4_718_448.32)
 
 
 def test_book_summary_breach_when_gross_exceeds(fake_totals):
@@ -192,6 +200,198 @@ def test_compute_scenario_panel_ranks_worst_contributor():
     assert down_5["pnl_usd"] == pytest.approx(-25.0)
     assert down_5["top_contributor"]["underlying"] == "LONG"
     assert panel["worst_shock"]["pnl_usd"] <= down_5["pnl_usd"]
+
+
+def test_sleeve_attribution_hidden_when_buckets_dont_reconcile():
+    broken = {
+        "gross_exposure_total": 1_000_000.0,
+        "net_exposure_total": -500_000.0,
+        "gross_exposure_bucket_1": 30_000_000.0,
+        "gross_exposure_bucket_2": 1.0,
+        "gross_exposure_bucket_3": 1.0,
+        "gross_exposure_bucket_4": 1.0,
+        "net_exposure_bucket_1": -10_000_000.0,
+        "net_exposure_bucket_2": 0.0,
+        "net_exposure_bucket_3": 0.0,
+        "net_exposure_bucket_4": 0.0,
+        "bucket_pnl": {"bucket_1": 100.0},
+    }
+    book = compute_book_summary(
+        totals=broken,
+        pnl_by_bucket=pd.DataFrame(),
+        nav_usd=20_000_000.0,
+    )
+    assert book.sleeve_attribution_available is False
+    assert "do not reconcile" in book.sleeve_attribution_reason
+    for row in book.sleeve_table:
+        assert row["gross_usd"] is None
+        assert row["net_usd"] is None
+        assert row["actual_weight"] is None
+        assert row["drift_pp"] is None
+        assert row["drift_status"] == "unknown"
+        assert row["attribution_available"] is False
+    pnl_total = sum(r["pnl_usd"] for r in book.sleeve_table)
+    assert pnl_total == pytest.approx(100.0)
+
+
+def test_sleeve_attribution_visible_when_buckets_reconcile(fake_totals):
+    book = compute_book_summary(
+        totals=fake_totals,
+        pnl_by_bucket=pd.DataFrame(),
+        nav_usd=800_000.0,
+    )
+    assert book.sleeve_attribution_available is True
+    assert book.sleeve_attribution_reason == ""
+    for row in book.sleeve_table:
+        assert row["gross_usd"] is not None
+        assert row["attribution_available"] is True
+
+
+def test_scenario_panel_carries_book_only_badge():
+    panel = compute_scenario_panel(
+        buckets={
+            "book": {
+                "exposure_rows": [
+                    {
+                        "underlying": "ABC",
+                        "symbols": "ABC",
+                        "net_notional_usd": 1000.0,
+                        "gross_notional_usd": 1000.0,
+                    }
+                ],
+                "pnl_rows": [],
+            }
+        },
+        nav_usd=10_000.0,
+        book_only_mode=True,
+        book_only_reason="bucket reconciliation broken",
+    )
+    assert panel["book_only_mode"] is True
+    assert "bucket reconciliation broken" in panel["book_only_reason"]
+    market = next(s for s in panel["scenarios"] if s["id"] == "market_down_5")
+    assert "book" in market["bucket_pnl"]
+
+
+def test_factor_panel_computes_beta_weighted_exposure(tmp_path: Path):
+    csv = tmp_path / "net_exposure_by_underlying.csv"
+    csv.write_text(
+        "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n"
+        "NVDA,\"NVDU, NVDA\",10000,15000,2\n"
+        "MSTR,\"MSTU, MSTR\",-5000,8000,2\n"
+        "ZZUNK,ZZUNK,1000,1000,1\n",
+        encoding="utf-8",
+    )
+    panel = compute_factor_panel(csv, nav_usd=100_000.0)
+    assert panel["available"] is True
+    rows = {r["underlying"]: r for r in panel["rows"]}
+    assert rows["NVDA"]["beta_to_spy"] == pytest.approx(1.70)
+    assert rows["NVDA"]["beta_source"] == "curated"
+    assert rows["NVDA"]["beta_weighted_net_usd"] == pytest.approx(10000 * 1.70)
+    assert rows["MSTR"]["beta_weighted_net_usd"] == pytest.approx(-5000 * 2.80)
+    # Unknown ticker -> default beta + default source.
+    assert rows["ZZUNK"]["beta_source"] == "default"
+    assert rows["ZZUNK"]["sector"] == "other"
+    totals = panel["totals"]
+    assert totals["net_beta_to_spy"] == pytest.approx(
+        (10000 * 1.70 + -5000 * 2.80 + 1000 * 1.20) / 100_000.0
+    )
+    assert 0 < totals["beta_coverage_gross_pct"] < 1.0
+
+
+def test_factor_map_lookup_defaults_safe():
+    out = lookup_underlying("DEFINITELY_NOT_A_TICKER_42")
+    assert out["sector"] == "other"
+    assert out["beta_to_spy"] > 0
+    assert out["beta_source"] == "default"
+
+
+def test_scenario_panel_appends_beta_scenarios(tmp_path: Path):
+    csv = tmp_path / "net_exposure_by_underlying.csv"
+    csv.write_text(
+        "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n"
+        "AAPL,AAPL,5000,5000,1\n",
+        encoding="utf-8",
+    )
+    factor = compute_factor_panel(csv, nav_usd=100_000.0)
+    panel = compute_scenario_panel(
+        buckets={"book": {"exposure_rows": [], "pnl_rows": []}},
+        nav_usd=100_000.0,
+        book_only_mode=True,
+        factor_panel=factor,
+    )
+    beta_ids = [s["id"] for s in panel["scenarios"] if s["id"].startswith("spx_beta_")]
+    assert "spx_beta_down_5" in beta_ids
+    spx_down_5 = next(s for s in panel["scenarios"] if s["id"] == "spx_beta_down_5")
+    assert spx_down_5["pnl_usd"] == pytest.approx(5000 * 1.20 * -0.05)
+
+
+def test_concentration_panel_flags_single_name_over_cap(tmp_path: Path):
+    csv = tmp_path / "net_exposure_by_underlying.csv"
+    csv.write_text(
+        "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n"
+        "NVDA,NVDA,90000,90000,1\n"
+        "AAPL,AAPL,10000,10000,1\n",
+        encoding="utf-8",
+    )
+    factor = compute_factor_panel(csv, nav_usd=100_000.0)
+    panel = compute_concentration_panel(factor, nav_usd=100_000.0)
+    assert panel["available"] is True
+    nvda = next(r for r in panel["top_names"] if r["underlying"] == "NVDA")
+    assert nvda["status"] == "hard"
+    assert nvda["pct_nav_gross"] == pytest.approx(0.90)
+    metrics_in_breaches = {b["metric"] for b in panel["breaches"]}
+    assert "single_name:NVDA" in metrics_in_breaches
+    assert "top10_gross_pct_nav" in metrics_in_breaches
+    assert panel["totals"]["hhi_underlying"] > 0
+
+
+def test_action_queue_emits_quantitative_trim(tmp_path: Path):
+    csv = tmp_path / "net_exposure_by_underlying.csv"
+    csv.write_text(
+        "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n"
+        "NVDA,NVDA,30000,30000,1\n"
+        "OTHER,OTHER,10000,10000,1\n",
+        encoding="utf-8",
+    )
+    factor = compute_factor_panel(csv, nav_usd=100_000.0)
+    conc = compute_concentration_panel(factor, nav_usd=100_000.0)
+    book = compute_book_summary(
+        totals={
+            "gross_exposure_total": 40_000.0,
+            "net_exposure_total": 40_000.0,
+            "bucket_pnl": {},
+            "gross_exposure_bucket_1": 40_000.0,
+            "gross_exposure_bucket_2": 0,
+            "gross_exposure_bucket_3": 0,
+            "gross_exposure_bucket_4": 0,
+            "net_exposure_bucket_1": 40_000.0,
+            "net_exposure_bucket_2": 0,
+            "net_exposure_bucket_3": 0,
+            "net_exposure_bucket_4": 0,
+        },
+        pnl_by_bucket=pd.DataFrame(),
+        nav_usd=100_000.0,
+    )
+    scenario = compute_scenario_panel(
+        buckets={"book": {"exposure_rows": [], "pnl_rows": []}},
+        nav_usd=100_000.0,
+        book_only_mode=True,
+        factor_panel=factor,
+    )
+    queue = compute_action_queue(
+        book=book,
+        factor_panel=factor,
+        concentration_panel=conc,
+        scenario_panel=scenario,
+        borrow_panel={"squeeze_rows": []},
+        nav_usd=100_000.0,
+    )
+    nvda_actions = [a for a in queue if "NVDA" in a.get("title", "")]
+    assert nvda_actions, queue
+    a = nvda_actions[0]
+    assert a["status"] == "hard"
+    assert "$25,000" in a["detail"]
+    assert a["priority"] == 0
 
 
 def test_default_limits_are_sane():

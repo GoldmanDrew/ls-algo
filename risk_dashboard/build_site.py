@@ -31,6 +31,8 @@ from pathlib import Path
 
 from .metrics import build_snapshot
 
+HISTORY_MAX_RUNS = 60
+
 
 def _discover_default_run_date(runs_root: Path) -> str:
     if not runs_root.is_dir():
@@ -47,6 +49,73 @@ def _discover_default_run_date(runs_root: Path) -> str:
 def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+
+
+def _extract_history_point(payload: dict) -> dict:
+    book = payload.get("book") or {}
+    worst = payload.get("worst_shock") or {}
+    factor = (payload.get("factor_panel") or {}).get("totals") or {}
+    conc = (payload.get("concentration_panel") or {}).get("totals") or {}
+    alerts = payload.get("alert_rows") or []
+    return {
+        "run_date": payload.get("run_date"),
+        "nav_usd": book.get("nav_usd"),
+        "gross_pct_nav": book.get("gross_exposure_pct_nav"),
+        "net_pct_nav": book.get("net_exposure_pct_nav"),
+        "pnl_pct_nav": book.get("pnl_today_pct_nav"),
+        "worst_shock_pct_nav": worst.get("pnl_pct_nav"),
+        "worst_shock_label": worst.get("label"),
+        "net_beta_to_spy": factor.get("net_beta_to_spy"),
+        "top10_pct_nav": conc.get("top10_pct_nav"),
+        "hhi_underlying": conc.get("hhi_underlying"),
+        "n_alerts": len(alerts),
+        "n_alerts_hard": sum(1 for a in alerts if a.get("status") == "hard"),
+    }
+
+
+def _load_history(out_dir: Path, current_date: str) -> list[dict]:
+    snapshots: list[dict] = []
+    for path in sorted(out_dir.glob("*.json")):
+        stem = path.stem
+        if stem in {"latest", "index"} or not stem[:4].isdigit():
+            continue
+        if stem == current_date:
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        snapshots.append(_extract_history_point(data))
+    snapshots.sort(key=lambda r: r.get("run_date") or "")
+    return snapshots[-HISTORY_MAX_RUNS:]
+
+
+def _compute_deltas(current: dict, prior: dict | None) -> dict:
+    if not prior:
+        return {}
+    deltas: dict = {"prior_run_date": prior.get("run_date")}
+    for key in (
+        "nav_usd",
+        "gross_pct_nav",
+        "net_pct_nav",
+        "pnl_pct_nav",
+        "worst_shock_pct_nav",
+        "net_beta_to_spy",
+        "top10_pct_nav",
+        "hhi_underlying",
+        "n_alerts",
+        "n_alerts_hard",
+    ):
+        cur = current.get(key)
+        pri = prior.get(key)
+        if cur is None or pri is None:
+            deltas[f"delta_{key}"] = None
+            continue
+        try:
+            deltas[f"delta_{key}"] = float(cur) - float(pri)
+        except (TypeError, ValueError):
+            deltas[f"delta_{key}"] = None
+    return deltas
 
 
 def _build_index(out_dir: Path) -> dict:
@@ -81,10 +150,16 @@ def main(argv: list[str] | None = None) -> int:
         default="risk_dashboard/data",
         help="where to write <run_date>.json + latest.json + index.json",
     )
+    ap.add_argument(
+        "--screener-csv",
+        default="data/etf_screened_today.csv",
+        help="optional screener CSV used for borrow-squeeze risk overlay",
+    )
     args = ap.parse_args(argv)
 
     runs_root = Path(args.runs_root).resolve()
     out_dir = Path(args.out_dir).resolve()
+    screener_csv = Path(args.screener_csv).resolve() if args.screener_csv else None
 
     run_date = args.run_date or _discover_default_run_date(runs_root)
 
@@ -93,8 +168,14 @@ def main(argv: list[str] | None = None) -> int:
         runs_root=runs_root,
         nav_usd=args.nav_usd,
         generated_at_utc=datetime.now(timezone.utc).isoformat(),
+        screener_csv=screener_csv,
     )
     payload = snap.to_dict()
+
+    history = _load_history(out_dir, current_date=run_date)
+    current_point = _extract_history_point(payload)
+    payload["history"] = history + [current_point]
+    payload["deltas"] = _compute_deltas(current_point, history[-1] if history else None)
 
     snap_path = out_dir / f"{run_date}.json"
     latest_path = out_dir / "latest.json"

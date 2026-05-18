@@ -18,9 +18,21 @@
   <div class="meta">
     <span id="run-date-label" class="dim">No data loaded</span>
     <span id="generated-at-label" class="dim"></span>
+    <button id="theme-toggle" class="btn btn-ghost" type="button" title="Toggle dark mode">Dark</button>
     <button id="logout-btn" class="btn btn-ghost" hidden>Sign out</button>
   </div>
 </header>
+
+<nav id="subnav" class="subnav" hidden>
+  <a href="#cockpit-section">Cockpit</a>
+  <a href="#actions-section">Actions</a>
+  <a href="#scenarios-section">Scenarios</a>
+  <a href="#concentration-section">Concentration</a>
+  <a href="#factor-section">Factor</a>
+  <a href="#sleeve-section">Sleeves</a>
+  <a href="#buckets-section">Buckets</a>
+  <a href="#borrow-section">Borrow</a>
+</nav>
 
 <main>
 
@@ -62,13 +74,19 @@
   <section id="dashboard" class="dashboard" hidden>
 
     <!-- Risk cockpit -->
-    <section class="panel panel-hero">
+    <section id="cockpit-section" class="panel panel-hero">
       <div class="panel-head">
         <h2>Risk cockpit</h2>
         <div id="data-quality" class="quality-line"></div>
       </div>
       <div id="cockpit-strip" class="strip cockpit-strip"></div>
       <div id="alert-rows" class="alert-rows"></div>
+    </section>
+
+    <!-- Action queue -->
+    <section id="actions-section" class="panel">
+      <h2>Action queue</h2>
+      <div id="action-queue"></div>
     </section>
 
     <!-- Top-line strip -->
@@ -79,16 +97,51 @@
     </section>
 
     <!-- Scenario shocks -->
-    <section class="panel">
+    <section id="scenarios-section" class="panel">
       <h2>Shock scenarios</h2>
       <div id="scenario-content"></div>
       <h3>Worst-case contributors</h3>
       <div id="contributor-content"></div>
     </section>
 
+    <!-- Concentration -->
+    <section id="concentration-section" class="panel">
+      <h2>Concentration</h2>
+      <div id="concentration-summary" class="strip"></div>
+      <div class="two-col">
+        <div>
+          <h3>Top names by gross / NAV</h3>
+          <div id="concentration-names"></div>
+        </div>
+        <div>
+          <h3>Sectors by gross / NAV</h3>
+          <div id="concentration-sectors"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Factor exposure -->
+    <section id="factor-section" class="panel">
+      <h2>Factor exposure (beta to SPY)</h2>
+      <div id="factor-summary" class="strip"></div>
+      <h3>By sector</h3>
+      <div id="factor-sectors"></div>
+      <div class="two-col">
+        <div>
+          <h3>Top long beta</h3>
+          <div id="factor-long"></div>
+        </div>
+        <div>
+          <h3>Top short beta</h3>
+          <div id="factor-short"></div>
+        </div>
+      </div>
+    </section>
+
     <!-- Sleeve allocation -->
-    <section class="panel">
+    <section id="sleeve-section" class="panel">
       <h2>Sleeve allocation</h2>
+      <div id="sleeve-banner" class="callout" hidden></div>
       <table class="tight" id="sleeve-table">
         <thead>
           <tr>
@@ -107,7 +160,7 @@
     </section>
 
     <!-- Bucket detail tabs -->
-    <section class="panel">
+    <section id="buckets-section" class="panel">
       <h2>Bucket detail</h2>
       <nav class="tabs" id="bucket-tabs">
         <button class="tab active" data-bucket="bucket_1">Bucket 1</button>
@@ -119,9 +172,11 @@
     </section>
 
     <!-- Borrow + microstructure -->
-    <section class="panel">
+    <section id="borrow-section" class="panel">
       <h2>Borrow &amp; microstructure</h2>
       <div id="borrow-content"></div>
+      <h3>Squeeze risk (short qty vs. available)</h3>
+      <div id="squeeze-content"></div>
     </section>
 
     <!-- Raw totals -->
