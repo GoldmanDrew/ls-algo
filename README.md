@@ -212,6 +212,8 @@ Full operator playbook, edge-case table, and verification checklist live in [`SP
 
 - **Sleeves** (`core_leveraged`, `yieldboost`, `inverse_decay_bucket4`, `flow_program`) are **portfolio construction** labels written into **`proposed_trades.csv`** and used by execution / rebalancing.
 - **Accounting buckets** (`bucket_1` … `bucket_4`) in **`ibkr_accounting.py`** are **attribution / reporting** groupings (e.g. high-beta levered vs inverse decay). They are related concepts but **not identical** to YAML sleeve names. When interpreting `pnl_bucket_*.csv`, read the accounting script headers.
+- **Bucket 4 (inverse decay)** attributes PnL and exposure at the **pair** level: short inverse ETF plus short underlying (see `pnl_bucket_4_by_pair.csv`, `bucket4_pairs.csv`). Spot legs are split across buckets 1 / 2 / 4 using held exposure and trade-timed ratios (`qty_b4` in `underlying_bucket_state.csv`).
+- **Combined stock-sleeve views** (`pnl_by_underlying.csv`, `net_exposure_by_underlying.csv`) sum **buckets 1 + 2 + 4** (flow inverse bucket 3 remains separate). Legacy bucket-1&2-only PnL is still written to `pnl_by_underlying_b12.csv`.
 
 ---
 
