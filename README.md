@@ -54,7 +54,7 @@ Python toolkit for a **systematic long/short** book around leveraged and inverse
 | **`strategy_config.py`** | Shared YAML loader with **path resolution** relative to repo root (used by email script and others). |
 | **`notebooks/`** | Research: **`Simple_Pair_Backtest.ipynb`** (Bucket‑4, v6 Option‑2 hedge research, regime overlays, grids), Diamond Creek / IBKR large-AUM studies, etc. |
 | **`data/`** | Working CSVs, caches, **`ledger/`**, **`runs/<date>/`** run artifacts. |
-| **`.github/workflows/eod_pnl_email.yml`** | Scheduled weekday **screener + trade plan** commit and **EOD PnL** pipeline. |
+| **`.github/workflows/eod_pnl_email.yml`** | Scheduled weekday **screener + trade plan** commit and **EOD PnL** pipeline; screener also runs on every push to `main`. |
 
 There is **no** in-repo `core/` Python package required for the main pipeline; `daily_screener.py` may optionally import helpers from a `core` package if you install one alongside this repo.
 
@@ -229,8 +229,9 @@ Full operator playbook, edge-case table, and verification checklist live in [`SP
 **`.github/workflows/eod_pnl_email.yml`**
 
 1. **Weekday schedule (`cron`)** — America/New_York calendar date for `RUN_DATE`.
-2. **Job `screener`:** `pip install -r requirements.txt` → `daily_screener.py --run-date "$RUN_DATE" --skip-ibkr-check` → `generate_trade_plan.py --run-date "$RUN_DATE"` → commits `data/etf_screened_today.csv`, `data/proposed_trades.csv`, and dated run outputs.
-3. **Job `eod`:** depends on `screener`; runs `ibkr_flex.py`, `ibkr_accounting.py`, `run_eod_pnl_email.py` with **secrets** for Flex queries and SMTP; may commit under `data/`.
+2. **Push to `main`** — re-runs the screener + trade plan only (not the EOD email pipeline). Skips commits whose message starts with `screener:`, `eod:`, or `risk_dashboard:` so bot data refreshes do not loop.
+3. **Job `screener`:** `pip install -r requirements.txt` → `daily_screener.py --run-date "$RUN_DATE" --skip-ibkr-check` → `generate_trade_plan.py --run-date "$RUN_DATE"` → commits `data/etf_screened_today.csv`, `data/proposed_trades.csv`, and dated run outputs.
+4. **Job `eod`:** depends on `screener`; runs on schedule / manual dispatch only — `ibkr_flex.py`, `ibkr_accounting.py`, `run_eod_pnl_email.py` with **secrets** for Flex queries and SMTP; may commit under `data/`.
 
 Use **workflow_dispatch** to run screener-only, EOD-only, or both.
 

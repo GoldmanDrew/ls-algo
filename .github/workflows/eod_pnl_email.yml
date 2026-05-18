@@ -4,6 +4,8 @@ on:
   schedule:
     # 06:00 UTC ≈ 02:00 America/New_York during EDT; 01:00 during EST (GitHub cron is UTC-only)
     - cron: "0 6 * * 2-6"
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       job:
@@ -18,11 +20,17 @@ on:
 
 jobs:
   # ────────────────────────────────────────────────────────
-  # Daily screener — runs on weekdays
+  # Daily screener — weekdays on schedule, plus every push to main
+  # (excluding bot commits that only refresh screener/EOD/dashboard data).
   # ────────────────────────────────────────────────────────
   screener:
     if: >-
-      (github.event_name == 'workflow_dispatch' && (inputs.job == 'screener' || inputs.job == 'both'))
+      (github.event_name == 'push'
+        && github.event.head_commit != null
+        && !startsWith(github.event.head_commit.message, 'screener:')
+        && !startsWith(github.event.head_commit.message, 'eod:')
+        && !startsWith(github.event.head_commit.message, 'risk_dashboard:'))
+      || (github.event_name == 'workflow_dispatch' && (inputs.job == 'screener' || inputs.job == 'both'))
       || (github.event_name == 'schedule' && github.event.schedule == '0 6 * * 2-6')
     runs-on: ubuntu-latest
     timeout-minutes: 45
