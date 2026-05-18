@@ -91,6 +91,11 @@ def yyyymmdd_from_run_date(run_date: str) -> str:
     return run_date.replace("-", "")
 
 
+def yyyymmdd_normalize(date_str: str) -> str:
+    """Normalize YYYY-MM-DD or YYYYMMDD to an 8-digit YYYYMMDD string."""
+    return str(date_str or "").replace("-", "")[:8]
+
+
 def find_project_root(start: Path) -> Path:
     cur = start
     for _ in range(6):
@@ -1852,10 +1857,12 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     ]:
         _state_hist[_c] = pd.to_numeric(_state_hist[_c], errors="coerce").fillna(0.0)
     _prev_cutoff = ""
+    _prev_cutoff_ymd = ""
     if not _state_hist.empty:
         _prior_dates = sorted(d for d in _state_hist["run_date"].astype(str).unique().tolist() if d < run_date)
         if _prior_dates:
             _prev_cutoff = _prior_dates[-1]
+            _prev_cutoff_ymd = yyyymmdd_from_run_date(_prev_cutoff)
 
     _prev_state = (
         _state_hist[_state_hist["run_date"] < run_date]
@@ -1878,7 +1885,23 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     _ratio_carry_map: dict[str, dict[str, float]] = {}
     _lot_components: dict[str, dict[str, dict[str, float]]] = {}
     _ledger_qty_map: dict[str, dict[str, float]] = {}
-    _all_underlyings = sorted(set(df["underlying"].dropna().astype(str)))
+    _trade_underlyings: set[str] = set()
+    if not trade_events.empty:
+        for _, _tr in trade_events.iterrows():
+            _tsym = str(_tr.get("symbol", "") or "")
+            if _tsym in etf_to_under:
+                continue
+            _tu = canonical_symbol(str(_tr.get("underlyingSymbol", "") or _tsym))
+            if _tu:
+                _trade_underlyings.add(_tu)
+    _prev_underlyings = (
+        set(_prev_state.index.astype(str)) if not _prev_state.empty else set()
+    )
+    _all_underlyings = sorted(
+        set(df["underlying"].dropna().astype(str))
+        | _prev_underlyings
+        | _trade_underlyings
+    )
     _bucket_qty: dict[str, dict[str, float]] = defaultdict(
         lambda: {"bucket_1": 0.0, "bucket_2": 0.0, "bucket_4": 0.0}
     )
@@ -1891,6 +1914,49 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     _etf_pos_qty: dict[str, float] = defaultdict(float)
     _state_series: dict[str, list[tuple[str, float, float, float]]] = defaultdict(list)
     _BUCKET_KEYS = ("bucket_1", "bucket_2", "bucket_4")
+
+    # Optional manual opening-positions seed (pre-Flex-window holdings).
+    _opening_seed: dict[str, dict[str, dict[str, float]]] = {}
+    _opening_path = PROJECT_ROOT / "data" / "accounting" / "opening_positions.csv"
+    if _opening_path.exists():
+        try:
+            _ops = pd.read_csv(_opening_path)
+        except Exception as _exc:
+            print(f"[ACCOUNTING] opening_positions.csv read failed: {_exc}")
+            _ops = pd.DataFrame()
+        if not _ops.empty:
+            _ops["as_of_date"] = _ops["as_of_date"].astype(str)
+            _ops["underlying"] = _ops["underlying"].astype(str).map(canonical_symbol)
+            _ops = _ops[_ops["as_of_date"] < run_date].copy()
+            _ops = (
+                _ops.sort_values("as_of_date")
+                .groupby("underlying", as_index=False)
+                .tail(1)
+            )
+            for _, _row in _ops.iterrows():
+                _u = str(_row["underlying"])
+                if not _u:
+                    continue
+                _opening_seed[_u] = {
+                    "bucket_1": {
+                        "qty": float(_row.get("qty_b1", 0.0) or 0.0),
+                        "cost": float(_row.get("cost_b1_base", 0.0) or 0.0)
+                        if pd.notna(_row.get("cost_b1_base", float("nan")))
+                        else float("nan"),
+                    },
+                    "bucket_2": {
+                        "qty": float(_row.get("qty_b2", 0.0) or 0.0),
+                        "cost": float(_row.get("cost_b2_base", 0.0) or 0.0)
+                        if pd.notna(_row.get("cost_b2_base", float("nan")))
+                        else float("nan"),
+                    },
+                    "bucket_4": {
+                        "qty": float(_row.get("qty_b4", 0.0) or 0.0),
+                        "cost": float(_row.get("cost_b4_base", 0.0) or 0.0)
+                        if pd.notna(_row.get("cost_b4_base", float("nan")))
+                        else float("nan"),
+                    },
+                }
 
     for _u in _all_underlyings:
         if _u in _prev_state.index:
@@ -1916,8 +1982,29 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             _bucket_cost[_u]["bucket_1"] = _pb1 * _px_seed
             _bucket_cost[_u]["bucket_2"] = _pb2 * _px_seed
             _bucket_cost[_u]["bucket_4"] = _pb4 * _px_seed
-            if _prev_cutoff:
-                _state_series[_u].append((_prev_cutoff, _pb1, _pb2, _pb4))
+            if _prev_cutoff_ymd:
+                _state_series[_u].append((_prev_cutoff_ymd, _pb1, _pb2, _pb4))
+        elif _u in _opening_seed:
+            _oseed = _opening_seed[_u]
+            _pb1 = float(_oseed["bucket_1"]["qty"])
+            _pb2 = float(_oseed["bucket_2"]["qty"])
+            _pb4 = float(_oseed["bucket_4"]["qty"])
+            _bucket_qty[_u]["bucket_1"] = _pb1
+            _bucket_qty[_u]["bucket_2"] = _pb2
+            _bucket_qty[_u]["bucket_4"] = _pb4
+            _px_seed = 0.0
+            _px_rows = pos[pos["symbol"] == _u]
+            if not _px_rows.empty:
+                _px_seed = float(_px_rows.iloc[0]["markPrice"]) * float(_px_rows.iloc[0]["fxRateToBase"])
+            for _bk, _sk in (
+                ("bucket_1", "bucket_1"),
+                ("bucket_2", "bucket_2"),
+                ("bucket_4", "bucket_4"),
+            ):
+                _cq = float(_oseed[_sk]["cost"])
+                _bucket_cost[_u][_bk] = (
+                    _cq if pd.notna(_cq) else float(_oseed[_sk]["qty"]) * _px_seed
+                )
 
     def _sum_bucket_qty(_u: str, _b: str) -> float:
         return float(_bucket_qty[_u][_b])
@@ -1986,8 +2073,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         _ev["date"] = _ev["dateTime"].astype(str).str.slice(0, 8)
         _target = yyyymmdd_from_run_date(run_date)
         _ev = _ev[_ev["date"] <= _target].copy()
-        if _prev_cutoff:
-            _ev = _ev[_ev["date"] > _prev_cutoff].copy()
+        if _prev_cutoff_ymd:
+            _ev = _ev[_ev["date"] > _prev_cutoff_ymd].copy()
         _ev = _ev.sort_values("dateTime").reset_index(drop=True)
 
     _minute_demand: dict[tuple[str, str], tuple[float, float, float]] = {}
@@ -2128,7 +2215,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             else:
                 _sd, _q1, _q2 = _entry[0], _entry[1], _entry[2]
                 _q4 = 0.0
-            if _sd <= _d:
+            if yyyymmdd_normalize(_sd) <= yyyymmdd_normalize(_d):
                 return _normalize_bucket_triple(abs(_q1), abs(_q2), abs(_q4))
         _r, _ = _bucket_ratio_entry(_u)
         return _normalize_bucket_triple(_r.get("b1", 1.0), _r.get("b2", 0.0), _r.get("b4", 0.0))
@@ -2178,7 +2265,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         _col = str(_r.get("category", "") or "")
         if _col not in _spot_carry_cols:
             _col = "other_fees"
-        _cr1, _cr2, _cr4 = _ratio_at_date(_u, _d)
+        _cr1, _cr2, _cr4 = _ratio_at_date(_u, yyyymmdd_normalize(_d))
         _carry_by_col[_u][_col]["bucket_1"] += _amt * _cr1
         _carry_by_col[_u][_col]["bucket_2"] += _amt * _cr2
         _carry_by_col[_u][_col]["bucket_4"] += _amt * _cr4
@@ -2326,6 +2413,40 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             }
         )
     pd.DataFrame(_lot_cost_rows).to_csv(outdir / "bucket_lot_cost_state.csv", index=False)
+
+    _recon_rows: list[dict] = []
+    for _u in _all_underlyings:
+        _lb1 = float(_bucket_qty[_u]["bucket_1"])
+        _lb2 = float(_bucket_qty[_u]["bucket_2"])
+        _lb4 = float(_bucket_qty[_u]["bucket_4"])
+        _ltot = _lb1 + _lb2 + _lb4
+        _ibkr_qty = float(_spot_qty.get(_u, 0.0))
+        _recon_rows.append(
+            {
+                "run_date": run_date,
+                "underlying": _u,
+                "qty_b1": _lb1,
+                "qty_b2": _lb2,
+                "qty_b4": _lb4,
+                "ledger_total": _ltot,
+                "ibkr_position": _ibkr_qty,
+                "diff_ledger_minus_ibkr": _ltot - _ibkr_qty,
+            }
+        )
+    if _recon_rows:
+        _recon_df = pd.DataFrame(_recon_rows)
+        _recon_df = _recon_df.sort_values(
+            "diff_ledger_minus_ibkr", key=lambda s: s.abs(), ascending=False
+        ).reset_index(drop=True)
+        _recon_df.to_csv(outdir / "bucket_state_reconciliation.csv", index=False)
+        _bad = _recon_df[_recon_df["diff_ledger_minus_ibkr"].abs() > 1.0]
+        if not _bad.empty:
+            print(
+                f"[ACCOUNTING] reconciliation: {len(_bad)} underlying(s) drift > 1 share "
+                f"(worst: {_bad.iloc[0]['underlying']} diff="
+                f"{_bad.iloc[0]['diff_ledger_minus_ibkr']:+.1f}); "
+                f"see {outdir / 'bucket_state_reconciliation.csv'}"
+            )
 
     # Assign buckets:
     # - ETFs are ALWAYS bucketed by their own beta (independent of held status)
