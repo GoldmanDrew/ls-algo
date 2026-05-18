@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="no-referrer">
+<title>ls-algo Risk Dashboard</title>
+<link rel="stylesheet" href="./assets/css/main.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="tag">INTERNAL</span>
+    <span class="tag">RISK</span>
+    <h1>ls-algo Risk Dashboard</h1>
+  </div>
+  <div class="meta">
+    <span id="run-date-label" class="dim">No data loaded</span>
+    <span id="generated-at-label" class="dim"></span>
+    <button id="logout-btn" class="btn btn-ghost" hidden>Sign out</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- ============================================================== -->
+  <!-- LOGIN PANEL                                                     -->
+  <!-- ============================================================== -->
+  <section id="login-panel" class="panel login-panel">
+    <h2>Sign in</h2>
+    <p>
+      Paste a GitHub fine-grained personal access token (PAT) with
+      <strong>read access to the <code id="repo-label">private repo</code></strong>.
+      The token never leaves your browser; it is stored only in this tab's
+      <code>sessionStorage</code> and discarded on logout.
+    </p>
+    <ol class="setup">
+      <li>Open <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">github.com / Settings / Developer settings / Fine-grained tokens</a> and create a new token.</li>
+      <li>Resource owner: your account. Repository access: <em>only the ls-algo repo</em>.</li>
+      <li>Permissions: Repository &raquo; Contents = <strong>Read-only</strong>; Metadata = Read-only (always).</li>
+      <li>Set a short expiration (7 / 30 days). Copy the token. Paste below.</li>
+    </ol>
+    <form id="login-form" class="login-form" autocomplete="off">
+      <label for="pat-input">GitHub PAT</label>
+      <input id="pat-input" type="password" inputmode="text" autocomplete="off" spellcheck="false"
+             placeholder="github_pat_..." required minlength="20">
+      <button type="submit" class="btn btn-primary">Sign in</button>
+      <div id="login-error" class="error" hidden></div>
+    </form>
+    <p class="dim small">
+      The static page itself is harmless. All numbers shown live in the
+      private <code>ls-algo</code> repo and are fetched only after GitHub
+      validates that you have read access. If you are not a collaborator,
+      sign-in fails.
+    </p>
+  </section>
+
+  <!-- ============================================================== -->
+  <!-- DASHBOARD                                                       -->
+  <!-- ============================================================== -->
+  <section id="dashboard" class="dashboard" hidden>
+
+    <!-- Top-line strip -->
+    <section class="panel">
+      <h2>Book summary</h2>
+      <div id="strip" class="strip"></div>
+      <div id="breaches" class="breaches"></div>
+    </section>
+
+    <!-- Sleeve allocation -->
+    <section class="panel">
+      <h2>Sleeve allocation</h2>
+      <table class="tight" id="sleeve-table">
+        <thead>
+          <tr>
+            <th>Bucket</th>
+            <th>Gross $</th>
+            <th>Net $</th>
+            <th>Actual %</th>
+            <th>Target %</th>
+            <th>Drift pp</th>
+            <th>Status</th>
+            <th>P&amp;L (today)</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- Bucket detail tabs -->
+    <section class="panel">
+      <h2>Bucket detail</h2>
+      <nav class="tabs" id="bucket-tabs">
+        <button class="tab active" data-bucket="bucket_1">Bucket 1</button>
+        <button class="tab" data-bucket="bucket_2">Bucket 2</button>
+        <button class="tab" data-bucket="bucket_3">Bucket 3 (flow)</button>
+        <button class="tab" data-bucket="bucket_4">Bucket 4 (inverse)</button>
+      </nav>
+      <div id="bucket-content"></div>
+    </section>
+
+    <!-- Borrow + microstructure -->
+    <section class="panel">
+      <h2>Borrow &amp; microstructure</h2>
+      <div id="borrow-content"></div>
+    </section>
+
+    <!-- Raw totals -->
+    <section class="panel">
+      <h2>Raw accounting totals</h2>
+      <details>
+        <summary>Show <code>totals.json</code></summary>
+        <pre id="raw-totals" class="raw"></pre>
+      </details>
+    </section>
+
+  </section>
+
+</main>
+
+<footer class="footer">
+  <span class="dim">
+    Magis Capital Partners &middot; ls-algo &middot;
+    Built by GitHub Actions &middot;
+    See <a href="https://github.com/GoldmanDrew/ls-algo/blob/main/risk_dashboard/README.md" target="_blank" rel="noopener">setup</a>.
+  </span>
+</footer>
+
+<script src="./assets/js/config.js"></script>
+<script src="./assets/js/auth.js"></script>
+<script src="./assets/js/app.js"></script>
+</body>
+</html>

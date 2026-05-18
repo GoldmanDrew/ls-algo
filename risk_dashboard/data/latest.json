@@ -1,0 +1,4453 @@
+{
+  "run_date": "2026-05-15",
+  "generated_at_utc": "2026-05-18T16:38:28.434683+00:00",
+  "nav_usd": 800000.0,
+  "book": {
+    "nav_usd": 800000.0,
+    "gross_notional_usd": 4195127.279764216,
+    "net_notional_usd": -752462.2285642165,
+    "long_notional_usd": 1721332.5255999998,
+    "short_notional_usd": -2473794.7541642166,
+    "gross_exposure_pct_nav": 5.24390909970527,
+    "net_exposure_pct_nav": -0.9405777857052706,
+    "pnl_today_usd": 48626.584821279976,
+    "pnl_today_pct_nav": 0.06078323102659997,
+    "sleeve_table": [
+      {
+        "bucket": "bucket_1",
+        "gross_usd": 3966574.483769143,
+        "net_usd": -707601.7118172762,
+        "actual_weight": 0.9455194608522297,
+        "target_weight": 0.55,
+        "drift_pp": 39.551946085222966,
+        "drift_status": "hard",
+        "pnl_usd": 10714.780026511591
+      },
+      {
+        "bucket": "bucket_2",
+        "gross_usd": 228552.79599507278,
+        "net_usd": -44860.516746940426,
+        "actual_weight": 0.054480539147770124,
+        "target_weight": 0.2,
+        "drift_pp": -14.551946085222989,
+        "drift_status": "warn",
+        "pnl_usd": 25381.1771824264
+      },
+      {
+        "bucket": "bucket_3",
+        "gross_usd": 86236.36106058919,
+        "net_usd": 85047.28575474919,
+        "actual_weight": 0.020556315770575626,
+        "target_weight": null,
+        "drift_pp": null,
+        "drift_status": "ok",
+        "pnl_usd": 10610.491811184469
+      },
+      {
+        "bucket": "bucket_4",
+        "gross_usd": 437084.676619164,
+        "net_usd": 437084.676619164,
+        "actual_weight": 0.10418865685613476,
+        "target_weight": 0.25,
+        "drift_pp": -14.581134314386524,
+        "drift_status": "warn",
+        "pnl_usd": 1920.1358011575358
+      }
+    ],
+    "breaches": [
+      {
+        "metric": "gross_exposure_pct_nav",
+        "value": 5.24390909970527,
+        "status": "hard",
+        "limit": {
+          "warn": 4.4,
+          "hard": 5.0
+        }
+      }
+    ]
+  },
+  "buckets": {
+    "bucket_1": {
+      "bucket": "bucket_1",
+      "pnl_rows": [
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 4755.992244000005,
+          "borrow_fees": -596.87,
+          "short_credit_interest": 124.69840101058988,
+          "total_pnl": 4283.820645010594
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 3757.123436,
+          "borrow_fees": -323.57,
+          "short_credit_interest": 41.441894216227055,
+          "total_pnl": 3474.995330216227
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -275.6916023,
+          "unrealized_pnl": 3598.160914,
+          "borrow_fees": -42.08,
+          "short_credit_interest": 24.36088133514529,
+          "total_pnl": 3293.910193035145
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 2147.9873981593064,
+          "borrow_fees": -29.42,
+          "short_credit_interest": 11.308694311427471,
+          "total_pnl": 2129.876092470734
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 1762.8205719,
+          "unrealized_pnl": 322.66112300000003,
+          "borrow_fees": -60.55,
+          "short_credit_interest": 11.635236194957296,
+          "total_pnl": 2036.5669310949572
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 181.83652994,
+          "unrealized_pnl": 1439.732908,
+          "borrow_fees": -213.84,
+          "short_credit_interest": 60.71223572102061,
+          "total_pnl": 1468.4416736610206
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 1364.3062750000004,
+          "borrow_fees": -274.57,
+          "short_credit_interest": 71.78107686766813,
+          "total_pnl": 1161.5173518676688
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -171.82476883215796,
+          "unrealized_pnl": 1299.4478332422425,
+          "borrow_fees": -50.4,
+          "short_credit_interest": 11.351017957861911,
+          "total_pnl": 1088.574082367946
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -117.54829516,
+          "unrealized_pnl": 1269.742761,
+          "borrow_fees": -105.02,
+          "short_credit_interest": 27.26580161134368,
+          "total_pnl": 1074.4402674513435
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 1523.645440297798,
+          "unrealized_pnl": -305.7102653325437,
+          "borrow_fees": -205.91,
+          "short_credit_interest": 60.09445999595926,
+          "total_pnl": 1072.1196349612137
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -170.91035141930806,
+          "unrealized_pnl": 1452.9897869117772,
+          "borrow_fees": -223.41,
+          "short_credit_interest": 37.90510950114064,
+          "total_pnl": 1023.9645449936093
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 950.86998489,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -0.5800000000000001,
+          "short_credit_interest": 0.0,
+          "total_pnl": 950.28998489
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -1439.76445174,
+          "unrealized_pnl": 2442.60141,
+          "borrow_fees": -110.22,
+          "short_credit_interest": 41.54031394567343,
+          "total_pnl": 922.9972722056734
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 296.6248779169643,
+          "unrealized_pnl": 571.3382276169547,
+          "borrow_fees": -93.49,
+          "short_credit_interest": 19.38802539396214,
+          "total_pnl": 793.861130927881
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 855.627215,
+          "borrow_fees": -140.63,
+          "short_credit_interest": 13.17539138850828,
+          "total_pnl": 728.1726063885083
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 739.9854930000001,
+          "borrow_fees": -103.82,
+          "short_credit_interest": 30.099358239138347,
+          "total_pnl": 666.2648512391384
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 778.6581531776499,
+          "borrow_fees": -146.2,
+          "short_credit_interest": 27.181441843246777,
+          "total_pnl": 659.6395950208966
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 754.5620000000001,
+          "borrow_fees": -142.43,
+          "short_credit_interest": 21.482930882557977,
+          "total_pnl": 633.6149308825579
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -3.35040458,
+          "unrealized_pnl": 787.4213770000001,
+          "borrow_fees": -196.81,
+          "short_credit_interest": 16.5979137592126,
+          "total_pnl": 606.9788861792126
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -18.904435080000003,
+          "unrealized_pnl": 564.672521,
+          "borrow_fees": -59.08,
+          "short_credit_interest": 12.30108606189255,
+          "total_pnl": 498.9891719818927
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 531.525572,
+          "borrow_fees": -24.86,
+          "short_credit_interest": 11.611544153746712,
+          "total_pnl": 475.5871161537468
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 267.5699855454749,
+          "unrealized_pnl": 220.75058476777963,
+          "borrow_fees": -24.55,
+          "short_credit_interest": 12.24743393944237,
+          "total_pnl": 475.1016447172299
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -1.951567959958768e-07,
+          "unrealized_pnl": 519.4231417624687,
+          "borrow_fees": -62.81,
+          "short_credit_interest": 5.435023259652675,
+          "total_pnl": 462.0481648269647
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 556.1505419999994,
+          "borrow_fees": -114.02,
+          "short_credit_interest": 13.856221296063328,
+          "total_pnl": 455.98676329606224
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 462.4918809999999,
+          "borrow_fees": -32.93,
+          "short_credit_interest": 25.45842089472092,
+          "total_pnl": 455.0203018947209
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 659.6869719999995,
+          "borrow_fees": -249.43,
+          "short_credit_interest": 36.38994021027411,
+          "total_pnl": 446.6469122102735
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 1484.75023251,
+          "unrealized_pnl": -790.935041,
+          "borrow_fees": -283.04,
+          "short_credit_interest": 29.576120659101747,
+          "total_pnl": 440.3513121691015
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 673.9188379999996,
+          "borrow_fees": -287.82,
+          "short_credit_interest": 52.02625612209994,
+          "total_pnl": 438.12509412210056
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -939.15659401,
+          "unrealized_pnl": 1491.66075,
+          "borrow_fees": -136.72,
+          "short_credit_interest": 27.74582421815273,
+          "total_pnl": 426.8499802081528
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -524.2674469,
+          "unrealized_pnl": 1139.1579029999998,
+          "borrow_fees": -207.23,
+          "short_credit_interest": 12.802327996873212,
+          "total_pnl": 420.46278409687307
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 2e-07,
+          "unrealized_pnl": 561.643179,
+          "borrow_fees": -157.06,
+          "short_credit_interest": 10.779648730997012,
+          "total_pnl": 415.362827930997
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 558.4789129999999,
+          "borrow_fees": -174.55,
+          "short_credit_interest": 29.533049448260176,
+          "total_pnl": 413.4619624482602
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -11.88782572,
+          "unrealized_pnl": 470.6090559999998,
+          "borrow_fees": -76.6,
+          "short_credit_interest": 26.34043188522553,
+          "total_pnl": 408.4616621652249
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 50.04956571,
+          "unrealized_pnl": 409.985682,
+          "borrow_fees": -80.87,
+          "short_credit_interest": 10.030876719824724,
+          "total_pnl": 389.1961244298248
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 469.46077521,
+          "unrealized_pnl": -73.4585242109638,
+          "borrow_fees": -11.95,
+          "short_credit_interest": 4.81201458374141,
+          "total_pnl": 388.8642655827777
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 388.67593575,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -0.4,
+          "short_credit_interest": 0.0,
+          "total_pnl": 388.27593575
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 498.297384,
+          "borrow_fees": -161.9,
+          "short_credit_interest": 27.254013095692784,
+          "total_pnl": 363.6513970956926
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 590.532901,
+          "borrow_fees": -267.03000000000003,
+          "short_credit_interest": 22.322560721673756,
+          "total_pnl": 345.8254617216735
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 457.3862569499203,
+          "borrow_fees": -129.6,
+          "short_credit_interest": 17.679898228624484,
+          "total_pnl": 345.4661551785448
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 2166.03152783,
+          "unrealized_pnl": -1794.406948,
+          "borrow_fees": -66.27,
+          "short_credit_interest": 19.486703895703297,
+          "total_pnl": 336.24128372570294
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 14.06518082,
+          "unrealized_pnl": 350.0639700000001,
+          "borrow_fees": -39.77,
+          "short_credit_interest": 9.123966084067249,
+          "total_pnl": 333.48311690406763
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 13.5116776,
+          "unrealized_pnl": 360.776437,
+          "borrow_fees": -64.87,
+          "short_credit_interest": 14.19972714113956,
+          "total_pnl": 321.3378417411395
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 77.44333210380266,
+          "unrealized_pnl": 273.5555952728015,
+          "borrow_fees": -47.66,
+          "short_credit_interest": 10.54471223981781,
+          "total_pnl": 317.78115320417334
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 382.146078,
+          "borrow_fees": -83.05,
+          "short_credit_interest": 14.436963830494548,
+          "total_pnl": 313.53304183049454
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 1164.03863852,
+          "unrealized_pnl": -767.4878749999998,
+          "borrow_fees": -120.08,
+          "short_credit_interest": 21.687159728090453,
+          "total_pnl": 298.1579232480908
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -3e-08,
+          "unrealized_pnl": 289.2886490000001,
+          "borrow_fees": -30.54,
+          "short_credit_interest": 14.380781490051008,
+          "total_pnl": 273.12943046005114
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -205.89726932,
+          "unrealized_pnl": 508.7119499999999,
+          "borrow_fees": -83.64,
+          "short_credit_interest": 24.273790081714644,
+          "total_pnl": 245.5084707617143
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 283.6145001351146,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -46.91,
+          "short_credit_interest": 0.0,
+          "total_pnl": 242.41461192092373
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 406.961180714512,
+          "borrow_fees": -227.61,
+          "short_credit_interest": 48.09521743968405,
+          "total_pnl": 227.44639815419575
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -1868.7283101948588,
+          "unrealized_pnl": 2214.6651109436,
+          "borrow_fees": -161.47,
+          "short_credit_interest": 36.4744149882798,
+          "total_pnl": 220.9412157370209
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 1425.98996283,
+          "unrealized_pnl": -1110.3981729999996,
+          "borrow_fees": -143.85,
+          "short_credit_interest": 36.53191994267441,
+          "total_pnl": 208.2737097726749
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -2619.0214843899994,
+          "unrealized_pnl": 2920.674661,
+          "borrow_fees": -135.89,
+          "short_credit_interest": 47.89400760425729,
+          "total_pnl": 197.48718421425747
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -1965.6733456,
+          "unrealized_pnl": 2199.828409,
+          "borrow_fees": -72.76,
+          "short_credit_interest": 11.233909118237277,
+          "total_pnl": 195.06897251823693
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 220.665117,
+          "borrow_fees": -56.06,
+          "short_credit_interest": 11.083389900109372,
+          "total_pnl": 175.68850690010947
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 255.26569685,
+          "unrealized_pnl": 25.715994999999992,
+          "borrow_fees": -118.88,
+          "short_credit_interest": 11.549065020796965,
+          "total_pnl": 173.65075687079695
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -795.37112053,
+          "unrealized_pnl": 1061.058941,
+          "borrow_fees": -131.42,
+          "short_credit_interest": 13.232580065653725,
+          "total_pnl": 162.43040053565358
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -8.452755916854065e-07,
+          "unrealized_pnl": 194.52087845365304,
+          "borrow_fees": -60.04,
+          "short_credit_interest": 24.514247048515728,
+          "total_pnl": 158.99512465689304
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 528.95017074,
+          "unrealized_pnl": -378.888727,
+          "borrow_fees": -5.8100000000000005,
+          "short_credit_interest": 12.339441866473756,
+          "total_pnl": 156.59088560647376
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 143.78664535,
+          "unrealized_pnl": 20.981833000000023,
+          "borrow_fees": -13.59,
+          "short_credit_interest": 2.453448879246263,
+          "total_pnl": 153.63192722924626
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 264.31496211,
+          "unrealized_pnl": 38.68658400000004,
+          "borrow_fees": -183.08,
+          "short_credit_interest": 27.5165519649814,
+          "total_pnl": 147.43809807498155
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -518.64500225,
+          "unrealized_pnl": 674.3502859999999,
+          "borrow_fees": -20.58,
+          "short_credit_interest": 8.457454910156457,
+          "total_pnl": 143.5827386601568
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 567.93314245,
+          "unrealized_pnl": -381.934235,
+          "borrow_fees": -54.54,
+          "short_credit_interest": 8.937822546691878,
+          "total_pnl": 140.3967299966921
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -52.83831383,
+          "unrealized_pnl": 209.501452,
+          "borrow_fees": -27.47,
+          "short_credit_interest": 10.177341838667813,
+          "total_pnl": 139.3704800086678
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 5889.6255142,
+          "unrealized_pnl": -5703.058062,
+          "borrow_fees": -107.26,
+          "short_credit_interest": 45.8082454034102,
+          "total_pnl": 129.07569760340994
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 138.53743499999973,
+          "borrow_fees": -30.94,
+          "short_credit_interest": 21.07441568653863,
+          "total_pnl": 128.67185068653816
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 146.260235,
+          "borrow_fees": -22.17,
+          "short_credit_interest": 2.9383019022244627,
+          "total_pnl": 127.02853690222446
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -27.9904798,
+          "unrealized_pnl": 154.995661,
+          "borrow_fees": -10.41,
+          "short_credit_interest": 9.778717494804336,
+          "total_pnl": 120.80389869480436
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 82.02639456,
+          "unrealized_pnl": 47.347486,
+          "borrow_fees": -22.06,
+          "short_credit_interest": 2.34326938662618,
+          "total_pnl": 109.6571499466262
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -60.21031285,
+          "unrealized_pnl": 170.351695,
+          "borrow_fees": -12.86,
+          "short_credit_interest": 12.284064595391744,
+          "total_pnl": 109.56544674539174
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 183.24061543,
+          "unrealized_pnl": -44.138032,
+          "borrow_fees": -43.74,
+          "short_credit_interest": 0.0,
+          "total_pnl": 101.78258342999996
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -472.1785,
+          "unrealized_pnl": 603.127026,
+          "borrow_fees": -11.32,
+          "short_credit_interest": 11.343916095994174,
+          "total_pnl": 101.02244209599404
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 146.5041246300001,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -70.69,
+          "short_credit_interest": 0.0,
+          "total_pnl": 99.41412463000006
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 117.744787,
+          "borrow_fees": -26.86,
+          "short_credit_interest": 4.265084962494225,
+          "total_pnl": 95.14987196249422
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 76.56464995,
+          "unrealized_pnl": 14.328270000000032,
+          "borrow_fees": -9.76,
+          "short_credit_interest": 3.945357416060164,
+          "total_pnl": 91.22827736606018
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -475.95667404,
+          "unrealized_pnl": 589.383288,
+          "borrow_fees": -41.19,
+          "short_credit_interest": 12.765898608264225,
+          "total_pnl": 85.0025125682642
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 447.30012574,
+          "unrealized_pnl": -288.63518699999986,
+          "borrow_fees": -100.66,
+          "short_credit_interest": 25.221672997478287,
+          "total_pnl": 83.22661173747838
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -33.3727942,
+          "unrealized_pnl": 174.75125499999967,
+          "borrow_fees": -61.72,
+          "short_credit_interest": 15.025182008997067,
+          "total_pnl": 81.52364280899656
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 96.87486328000004,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -17.64,
+          "short_credit_interest": 0.0,
+          "total_pnl": 79.23486328000001
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 98.83789711999998,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -22.73,
+          "short_credit_interest": 0.0,
+          "total_pnl": 76.10789711999996
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -4.11732649,
+          "unrealized_pnl": 118.63832200000002,
+          "borrow_fees": -54.83,
+          "short_credit_interest": 12.860177980994196,
+          "total_pnl": 72.55117349099419
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 124.96385199999996,
+          "borrow_fees": -61.65,
+          "short_credit_interest": 7.263939581696216,
+          "total_pnl": 70.57779158169626
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -16.34270398,
+          "unrealized_pnl": 149.787061,
+          "borrow_fees": -71.15,
+          "short_credit_interest": 7.537116867547838,
+          "total_pnl": 69.83147388754783
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 65.0769285,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -0.63,
+          "short_credit_interest": 0.0,
+          "total_pnl": 64.4469285
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 84.42875500000002,
+          "borrow_fees": -29.12,
+          "short_credit_interest": 7.903940971631089,
+          "total_pnl": 63.21269597163109
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 42.609759,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 19.395156008307072,
+          "total_pnl": 62.00491500830708
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 70.146976,
+          "borrow_fees": -10.56,
+          "short_credit_interest": 2.034525286481491,
+          "total_pnl": 61.62150128648149
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -45.7895443,
+          "unrealized_pnl": 121.234553,
+          "borrow_fees": -22.23,
+          "short_credit_interest": 3.0289872153047708,
+          "total_pnl": 56.243995915304765
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 81.97419599999998,
+          "borrow_fees": -31.21,
+          "short_credit_interest": 4.300565519355702,
+          "total_pnl": 55.06476151935567
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -12.65884088,
+          "unrealized_pnl": 144.53991099999985,
+          "borrow_fees": -86.3,
+          "short_credit_interest": 8.793255091343816,
+          "total_pnl": 54.3743252113436
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 68.46499000000006,
+          "borrow_fees": -20.02,
+          "short_credit_interest": 2.080529249997183,
+          "total_pnl": 50.52551924999728
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 154.65129745,
+          "unrealized_pnl": -93.24961299999995,
+          "borrow_fees": -17.78,
+          "short_credit_interest": 5.043472025179738,
+          "total_pnl": 48.665156475179856
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 1023.02168034,
+          "unrealized_pnl": -992.1892049999996,
+          "borrow_fees": -10.12,
+          "short_credit_interest": 23.019722036276875,
+          "total_pnl": 47.89219737627718
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -0.5202947936965215,
+          "unrealized_pnl": 52.85750138061326,
+          "borrow_fees": -26.08,
+          "short_credit_interest": 19.24777081019367,
+          "total_pnl": 45.50497739711045
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 681.94138141,
+          "unrealized_pnl": -611.332463,
+          "borrow_fees": -36.3,
+          "short_credit_interest": 7.17357054586508,
+          "total_pnl": 41.482488955865165
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 52.578705000000014,
+          "borrow_fees": -17.11,
+          "short_credit_interest": 2.372941943093802,
+          "total_pnl": 37.84164694309379
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 46.73226899999999,
+          "borrow_fees": -17.32,
+          "short_credit_interest": 3.8169776053741846,
+          "total_pnl": 33.22924660537417
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 1939.42553233,
+          "unrealized_pnl": -1873.404265,
+          "borrow_fees": -57.98,
+          "short_credit_interest": 19.99562274209564,
+          "total_pnl": 33.0368900720955
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 174.73557699,
+          "unrealized_pnl": -108.82297699999998,
+          "borrow_fees": -42.79,
+          "short_credit_interest": 5.134071080828455,
+          "total_pnl": 28.256671070828418
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 109.99453664,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -89.69,
+          "short_credit_interest": 0.0,
+          "total_pnl": 28.104536639999992
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -0.57802714,
+          "unrealized_pnl": 44.42099400000001,
+          "borrow_fees": -19.61,
+          "short_credit_interest": 2.3553454270490493,
+          "total_pnl": 26.58831228704909
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 46.596649999999954,
+          "borrow_fees": -29.22,
+          "short_credit_interest": 2.9682332309868595,
+          "total_pnl": 20.34488323098685
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.43162059,
+          "unrealized_pnl": 39.33196600000002,
+          "borrow_fees": -30.91,
+          "short_credit_interest": 10.768607779753248,
+          "total_pnl": 19.622194369753288
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 3879.21309614,
+          "unrealized_pnl": -3499.326833,
+          "borrow_fees": -397.42,
+          "short_credit_interest": 35.82271134012562,
+          "total_pnl": 18.2889744801264
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 41.48727030000009,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -24.38,
+          "short_credit_interest": 0.0,
+          "total_pnl": 17.107270300000096
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 13.84999199999993,
+          "borrow_fees": -39.2,
+          "short_credit_interest": 16.255040468634704,
+          "total_pnl": 16.555032468634522
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 16.519143,
+          "borrow_fees": -3.12,
+          "short_credit_interest": 1.6529224091188233,
+          "total_pnl": 15.052065409118825
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -118.23758782,
+          "unrealized_pnl": 135.74747100000002,
+          "borrow_fees": -6.95,
+          "short_credit_interest": 2.960355052234797,
+          "total_pnl": 13.520238232234815
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 31.88126218,
+          "unrealized_pnl": -11.867674,
+          "borrow_fees": -9.99,
+          "short_credit_interest": 2.933356476146526,
+          "total_pnl": 12.246944656146532
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 31.39212337,
+          "unrealized_pnl": -19.301307,
+          "borrow_fees": -1.58,
+          "short_credit_interest": 1.3112854750604137,
+          "total_pnl": 11.822101845060416
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 23.528132000000006,
+          "borrow_fees": -13.71,
+          "short_credit_interest": 0.984341056849828,
+          "total_pnl": 10.802473056849829
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 137.79255819,
+          "unrealized_pnl": -121.661351,
+          "borrow_fees": -9.72,
+          "short_credit_interest": 4.102345941557463,
+          "total_pnl": 10.513553131557472
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 9.26082799999999,
+          "borrow_fees": -3.07,
+          "short_credit_interest": 2.0261870680942717,
+          "total_pnl": 8.21701506809427
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 17.057037070000007,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -10.15,
+          "short_credit_interest": 0.0,
+          "total_pnl": 6.907037070000001
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -194.23346793,
+          "unrealized_pnl": 212.231201,
+          "borrow_fees": -16.59,
+          "short_credit_interest": 2.5965787107344607,
+          "total_pnl": 4.004311780734497
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 5.840784499999984,
+          "unrealized_pnl": 66.79359999999997,
+          "borrow_fees": -97.42,
+          "short_credit_interest": 27.972048708741145,
+          "total_pnl": 3.186433208741164
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 609.8052879100001,
+          "unrealized_pnl": -574.4776519999999,
+          "borrow_fees": -43.88,
+          "short_credit_interest": 7.649999093024467,
+          "total_pnl": -0.9023649969753932
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 32.04599347,
+          "unrealized_pnl": -31.788611,
+          "borrow_fees": -4.84,
+          "short_credit_interest": 2.579844769005628,
+          "total_pnl": -2.0027727609943646
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 5.603025080000002,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -8.74,
+          "short_credit_interest": 0.0,
+          "total_pnl": -3.136974919999993
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 50.2298744341815,
+          "unrealized_pnl": 149.9696524641679,
+          "borrow_fees": -204.04,
+          "short_credit_interest": 54.707913412861245,
+          "total_pnl": -4.362559688789361
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -13.22404692,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -5.57,
+          "short_credit_interest": 0.0,
+          "total_pnl": -6.044046920000007
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 5.617185559999996,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -13.52,
+          "short_credit_interest": 0.0,
+          "total_pnl": -7.902814439999986
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -46.33116399,
+          "unrealized_pnl": 46.666676,
+          "borrow_fees": -11.48,
+          "short_credit_interest": 2.856299837257741,
+          "total_pnl": -8.288188152742265
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -7.41950528,
+          "unrealized_pnl": 43.050059,
+          "borrow_fees": -44.52,
+          "short_credit_interest": 0.0,
+          "total_pnl": -8.889446280000008
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -6.768309000000016,
+          "borrow_fees": -6.07,
+          "short_credit_interest": 3.883942124766714,
+          "total_pnl": -8.95436687523329
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -1.5053460000000314,
+          "borrow_fees": -12.87,
+          "short_credit_interest": 4.611552312721782,
+          "total_pnl": -9.76379368727828
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 63.75572865,
+          "unrealized_pnl": -61.341879,
+          "borrow_fees": -14.31,
+          "short_credit_interest": 0.0,
+          "total_pnl": -11.89615035
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -11.156725980000004,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -1.09,
+          "short_credit_interest": 0.0,
+          "total_pnl": -12.246725980000008
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 10.891554472558257,
+          "borrow_fees": -36.96,
+          "short_credit_interest": 12.688008147536715,
+          "total_pnl": -12.956487703727817
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 20.5694393,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -30.45,
+          "short_credit_interest": 0.0,
+          "total_pnl": -12.970560700000078
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -14.74776343096966,
+          "borrow_fees": -0.1256610744848466,
+          "short_credit_interest": 1.7654596048690854,
+          "total_pnl": -13.107964900585422
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -10.353702999999996,
+          "borrow_fees": -15.71,
+          "short_credit_interest": 10.856504102545417,
+          "total_pnl": -15.207198897454646
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 893.00827502,
+          "unrealized_pnl": -901.372063,
+          "borrow_fees": -27.73,
+          "short_credit_interest": 8.89797161329641,
+          "total_pnl": -15.225816366703384
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 1.6124265999999992,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -17.45,
+          "short_credit_interest": 0.0,
+          "total_pnl": -15.837573400000004
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 217.41717794,
+          "unrealized_pnl": -190.465853,
+          "borrow_fees": -51.52,
+          "short_credit_interest": 6.270196464802869,
+          "total_pnl": -18.29847859519711
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -28.574893000000003,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 10.044764166311026,
+          "total_pnl": -18.530128833688977
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -18.77582677,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -0.36,
+          "short_credit_interest": 0.0,
+          "total_pnl": -19.13582677
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 16.22512993000001,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -18.54,
+          "short_credit_interest": 0.0,
+          "total_pnl": -20.154870069999987
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 6.8172742199999945,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -28.76,
+          "short_credit_interest": 0.0,
+          "total_pnl": -21.942725780000004
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -5.844027090000054,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -19.05,
+          "short_credit_interest": 0.0,
+          "total_pnl": -24.894027090000066
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 185.87911095,
+          "unrealized_pnl": -204.115365,
+          "borrow_fees": -8.57,
+          "short_credit_interest": 0.0,
+          "total_pnl": -26.80625404999998
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -14.262225819999998,
+          "unrealized_pnl": 0.09159,
+          "borrow_fees": -12.78,
+          "short_credit_interest": 0.1186327209160914,
+          "total_pnl": -26.832003099083902
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -41.64351,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 14.77293652654509,
+          "total_pnl": -26.87057347345491
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -4.449538000000075,
+          "borrow_fees": -23.31,
+          "short_credit_interest": 1.9219880907312288,
+          "total_pnl": -30.99754990926874
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -155.92123145,
+          "unrealized_pnl": 149.84200399999995,
+          "borrow_fees": -31.97,
+          "short_credit_interest": 2.9619076860034523,
+          "total_pnl": -31.08731976399656
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -38.278901000000005,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 6.836591513112634,
+          "total_pnl": -31.442309486887368
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 377.3307118199991,
+          "unrealized_pnl": -196.913288,
+          "borrow_fees": -219.74,
+          "short_credit_interest": 6.134513524908774,
+          "total_pnl": -33.61806265509404
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 2971.6028045800003,
+          "unrealized_pnl": -2980.947395,
+          "borrow_fees": -70.67,
+          "short_credit_interest": 45.832800018936695,
+          "total_pnl": -34.18179040106406
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -7.196648000000096,
+          "borrow_fees": -39.66,
+          "short_credit_interest": 8.730977225734446,
+          "total_pnl": -37.12567077426547
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -27.787646999999996,
+          "borrow_fees": -16.37,
+          "short_credit_interest": 3.6661996149515033,
+          "total_pnl": -40.4914473850485
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -42.80836925,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -0.64,
+          "short_credit_interest": 0.0,
+          "total_pnl": -43.44836925
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -45.05769025,
+          "unrealized_pnl": -0.50814,
+          "borrow_fees": -5.8100000000000005,
+          "short_credit_interest": 2.2317960325322184,
+          "total_pnl": -43.47403421746779
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -46.44045171,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -4.97,
+          "short_credit_interest": 0.0,
+          "total_pnl": -49.33045171
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -16.87533300000007,
+          "borrow_fees": -36.23,
+          "short_credit_interest": 1.4741682583831617,
+          "total_pnl": -51.631164741616885
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 8025.98048928,
+          "unrealized_pnl": -8024.113056,
+          "borrow_fees": -181.48,
+          "short_credit_interest": 112.23739367052588,
+          "total_pnl": -67.37517304947323
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -46.04692983000001,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -22.55,
+          "short_credit_interest": 0.0,
+          "total_pnl": -68.59692983000002
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 91.84272092,
+          "unrealized_pnl": -159.26121899999998,
+          "borrow_fees": -30.24,
+          "short_credit_interest": 27.092136649071943,
+          "total_pnl": -70.56636143092805
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 254.04005703,
+          "unrealized_pnl": -271.304396,
+          "borrow_fees": -60.28,
+          "short_credit_interest": 6.911980508323975,
+          "total_pnl": -70.63235846167606
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 583.2770224999999,
+          "unrealized_pnl": -606.56154,
+          "borrow_fees": -53.75,
+          "short_credit_interest": 5.914212044623004,
+          "total_pnl": -71.1203054553771
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 25.94414942,
+          "unrealized_pnl": -92.787516,
+          "borrow_fees": -11.85,
+          "short_credit_interest": 3.434943440853558,
+          "total_pnl": -75.25842313914644
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -127.80801094,
+          "unrealized_pnl": 263.65262600000096,
+          "borrow_fees": -247.42,
+          "short_credit_interest": 31.68597743584018,
+          "total_pnl": -79.88940750415895
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -31.43360642,
+          "unrealized_pnl": -40.40003999999999,
+          "borrow_fees": -7.66,
+          "short_credit_interest": 3.0405744636152856,
+          "total_pnl": -82.43307195638477
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -1.4e-07,
+          "unrealized_pnl": -84.705464,
+          "borrow_fees": -9.88,
+          "short_credit_interest": 5.289765744851875,
+          "total_pnl": -89.5256983951482
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -7.74490347,
+          "unrealized_pnl": -95.332668,
+          "borrow_fees": -85.97,
+          "short_credit_interest": 23.26196165666419,
+          "total_pnl": -101.69560981333552
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 79.130777,
+          "unrealized_pnl": -184.316464,
+          "borrow_fees": -6.18,
+          "short_credit_interest": 0.0,
+          "total_pnl": -111.36568699999998
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.1108409359355965,
+          "unrealized_pnl": -118.0175734786042,
+          "borrow_fees": -1.38,
+          "short_credit_interest": 2.3884682807803483,
+          "total_pnl": -116.89826426188824
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -93.72269201999995,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -75.62,
+          "short_credit_interest": 0.0,
+          "total_pnl": -133.58269201999997
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -138.53291727,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -0.61,
+          "short_credit_interest": 0.0,
+          "total_pnl": -139.14291727000003
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -269.00750741,
+          "unrealized_pnl": 219.38839700000017,
+          "borrow_fees": -100.05,
+          "short_credit_interest": 8.856481788700695,
+          "total_pnl": -140.81262862129915
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -124.90802199999962,
+          "borrow_fees": -66.75,
+          "short_credit_interest": 48.40698054993446,
+          "total_pnl": -143.2510414500648
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 128.86602553999998,
+          "unrealized_pnl": -175.508178,
+          "borrow_fees": -114.76,
+          "short_credit_interest": 0.0,
+          "total_pnl": -161.40215246000002
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 599.71821407,
+          "unrealized_pnl": -754.4901289999998,
+          "borrow_fees": -58.06,
+          "short_credit_interest": 43.70261524081976,
+          "total_pnl": -169.1292996891807
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 620.09321368,
+          "unrealized_pnl": -711.719985,
+          "borrow_fees": -100.09,
+          "short_credit_interest": 15.490310832617917,
+          "total_pnl": -169.3564604873818
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -11.54169324,
+          "unrealized_pnl": -146.8063000000002,
+          "borrow_fees": -62.73,
+          "short_credit_interest": 23.85478023151828,
+          "total_pnl": -176.37321300848134
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -99.279221,
+          "borrow_fees": -106.28,
+          "short_credit_interest": 7.854342948465731,
+          "total_pnl": -197.70487805153425
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -1834.23204525,
+          "unrealized_pnl": 1686.897866,
+          "borrow_fees": -91.2,
+          "short_credit_interest": 0.0,
+          "total_pnl": -229.77417924999983
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 2.397480444232029e-07,
+          "unrealized_pnl": -252.3981711025233,
+          "borrow_fees": -38.13,
+          "short_credit_interest": 10.92205975055528,
+          "total_pnl": -279.60611111221993
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 46.14641357507076,
+          "unrealized_pnl": -172.38612915902618,
+          "borrow_fees": -191.96,
+          "short_credit_interest": 51.65828191892881,
+          "total_pnl": -305.1414336650265
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 4527.13070202,
+          "unrealized_pnl": -4775.140213000001,
+          "borrow_fees": -102.08,
+          "short_credit_interest": 41.52208487513034,
+          "total_pnl": -308.5674261048689
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -301.85229642,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -18.0,
+          "short_credit_interest": 0.0,
+          "total_pnl": -319.85229642
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -312.1460522539628,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -7.93,
+          "short_credit_interest": 0.0,
+          "total_pnl": -320.0760522539628
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -57.69019441999998,
+          "unrealized_pnl": -227.47941800000035,
+          "borrow_fees": -71.37,
+          "short_credit_interest": 16.295178926802148,
+          "total_pnl": -340.2444334931979
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -69.63869365000001,
+          "unrealized_pnl": -288.849338,
+          "borrow_fees": -6.31,
+          "short_credit_interest": 4.20415846331313,
+          "total_pnl": -360.5938731866869
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -163.39545322549012,
+          "unrealized_pnl": -203.6113530828858,
+          "borrow_fees": -6.16,
+          "short_credit_interest": 9.597605640938497,
+          "total_pnl": -363.5692006674374
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 1781.03567141,
+          "unrealized_pnl": -2184.986419,
+          "borrow_fees": -80.41,
+          "short_credit_interest": 19.94777862003933,
+          "total_pnl": -464.41296896996073
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 1659.663240337945,
+          "unrealized_pnl": -2060.031882430928,
+          "borrow_fees": -145.17000000000002,
+          "short_credit_interest": 28.509058725355263,
+          "total_pnl": -509.77376238914985
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 73.47769100000005,
+          "unrealized_pnl": -601.0942579999996,
+          "borrow_fees": -17.57,
+          "short_credit_interest": 22.903648285831345,
+          "total_pnl": -522.2829187141683
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -976.9566443662472,
+          "unrealized_pnl": 419.9490915691025,
+          "borrow_fees": -16.25,
+          "short_credit_interest": 3.661139178964777,
+          "total_pnl": -569.5964136181799
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -72.08607367824968,
+          "unrealized_pnl": -549.534362669668,
+          "borrow_fees": -1.1696000160678863,
+          "short_credit_interest": 5.675020186818601,
+          "total_pnl": -617.1150161771668
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -75.8691684800001,
+          "unrealized_pnl": -500.44710099999975,
+          "borrow_fees": -77.5,
+          "short_credit_interest": 35.71920242221532,
+          "total_pnl": -618.0970670577844
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -2641.4133982068743,
+          "unrealized_pnl": 1905.991695851718,
+          "borrow_fees": -173.93,
+          "short_credit_interest": 41.78327237799069,
+          "total_pnl": -833.0835632081355
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 72.25969307684316,
+          "unrealized_pnl": -899.5779189906178,
+          "borrow_fees": -26.27,
+          "short_credit_interest": 5.893395251132152,
+          "total_pnl": -847.6948306626424
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 224.8712975651968,
+          "unrealized_pnl": -1028.7614457031152,
+          "borrow_fees": -112.84,
+          "short_credit_interest": 29.48477403904589,
+          "total_pnl": -866.831711792524
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -754.269530470001,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -139.81,
+          "short_credit_interest": 0.0,
+          "total_pnl": -894.0795304700005
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 3.33739533,
+          "unrealized_pnl": -795.1533039999995,
+          "borrow_fees": -194.66,
+          "short_credit_interest": 63.79274737546295,
+          "total_pnl": -941.7131612945376
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -397.5936610769033,
+          "unrealized_pnl": -969.4454336597676,
+          "borrow_fees": -114.54,
+          "short_credit_interest": 35.16361830533174,
+          "total_pnl": -1460.955476431339
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -2900.759066742213,
+          "unrealized_pnl": 1623.7486327501992,
+          "borrow_fees": -316.01,
+          "short_credit_interest": 59.22627894698656,
+          "total_pnl": -1577.834236691819
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 9719.4006876,
+          "unrealized_pnl": -11582.171462,
+          "borrow_fees": -81.28,
+          "short_credit_interest": 62.06509727810833,
+          "total_pnl": -1893.195677121892
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 3324.7685013162272,
+          "unrealized_pnl": -5267.130865849747,
+          "borrow_fees": -120.97,
+          "short_credit_interest": 42.24796991445358,
+          "total_pnl": -2040.3198865754484
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 8276.472917809999,
+          "unrealized_pnl": -10761.20404,
+          "borrow_fees": -115.87,
+          "short_credit_interest": 49.06725243629343,
+          "total_pnl": -2551.533869753708
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -286.2494496169297,
+          "unrealized_pnl": -2902.3077480840707,
+          "borrow_fees": -135.07,
+          "short_credit_interest": 38.932694283695206,
+          "total_pnl": -3310.604503417305
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 12174.743508904485,
+          "unrealized_pnl": -19442.929634030188,
+          "borrow_fees": -229.89,
+          "short_credit_interest": 153.25300365982565,
+          "total_pnl": -7366.673121465872
+        }
+      ],
+      "exposure_rows": [
+        {
+          "underlying": "NVTS",
+          "symbols": "NVTS, NVTX",
+          "net_notional_usd": -1502.1789083399926,
+          "gross_notional_usd": 170419.93890834,
+          "n_legs": 2
+        },
+        {
+          "underlying": "AMD",
+          "symbols": "AMD, AMDG, AMDL, AMUU",
+          "net_notional_usd": -67601.5290836933,
+          "gross_notional_usd": 144417.7169367067,
+          "n_legs": 4
+        },
+        {
+          "underlying": "NBIS",
+          "symbols": "NBIG, NBIL, NBIS, NEBX",
+          "net_notional_usd": -44779.54945207,
+          "gross_notional_usd": 110682.24945207,
+          "n_legs": 4
+        },
+        {
+          "underlying": "NVDA",
+          "symbols": "NVDA, NVDB, NVDL, NVDU",
+          "net_notional_usd": 7948.634216159999,
+          "gross_notional_usd": 90119.20578384,
+          "n_legs": 4
+        },
+        {
+          "underlying": "IREN",
+          "symbols": "IRE, IREG, IREN, IREX",
+          "net_notional_usd": -19640.525253760003,
+          "gross_notional_usd": 79909.32525376,
+          "n_legs": 4
+        },
+        {
+          "underlying": "PANW",
+          "symbols": "PALU, PANG, PANW",
+          "net_notional_usd": -10327.300008001605,
+          "gross_notional_usd": 78455.3600080016,
+          "n_legs": 3
+        },
+        {
+          "underlying": "CRWV",
+          "symbols": "CRWG, CRWU, CRWV, CWVX",
+          "net_notional_usd": -9876.88696484,
+          "gross_notional_usd": 74522.57696484,
+          "n_legs": 4
+        },
+        {
+          "underlying": "TSLA",
+          "symbols": "TSLA, TSLI, TSLL, TSLR, TSLT",
+          "net_notional_usd": -4705.3264602,
+          "gross_notional_usd": 71200.3264602,
+          "n_legs": 5
+        },
+        {
+          "underlying": "IBIT",
+          "symbols": "BITU, BITX, BTCL, IBIT",
+          "net_notional_usd": -2838.743947605897,
+          "gross_notional_usd": 68936.1630959941,
+          "n_legs": 4
+        },
+        {
+          "underlying": "QUBT",
+          "symbols": "QUBT, QUBX",
+          "net_notional_usd": -3077.740019190001,
+          "gross_notional_usd": 68812.66001918999,
+          "n_legs": 2
+        },
+        {
+          "underlying": "CRCL",
+          "symbols": "CCUP, CRCA, CRCG, CRCL",
+          "net_notional_usd": -15699.44508224,
+          "gross_notional_usd": 67481.28508223999,
+          "n_legs": 4
+        },
+        {
+          "underlying": "IONQ",
+          "symbols": "IONL, IONQ, IONX, QPUX",
+          "net_notional_usd": -2686.715384583971,
+          "gross_notional_usd": 63454.75493846004,
+          "n_legs": 4
+        },
+        {
+          "underlying": "CRML",
+          "symbols": "CRML, CRMU",
+          "net_notional_usd": 627.7382326840016,
+          "gross_notional_usd": 57905.861767316,
+          "n_legs": 2
+        },
+        {
+          "underlying": "XRPZ",
+          "symbols": "UXRP, XRPT, XRPZ, XXRP",
+          "net_notional_usd": -468.8024567999964,
+          "gross_notional_usd": 57329.2424568,
+          "n_legs": 4
+        },
+        {
+          "underlying": "PLTR",
+          "symbols": "PLTA, PLTR, PLTU, PTIR",
+          "net_notional_usd": 4126.6371326499975,
+          "gross_notional_usd": 56854.24286735,
+          "n_legs": 4
+        },
+        {
+          "underlying": "NFLX",
+          "symbols": "NFLU, NFLX",
+          "net_notional_usd": 2509.4376011799977,
+          "gross_notional_usd": 53306.04239882,
+          "n_legs": 2
+        },
+        {
+          "underlying": "SMR",
+          "symbols": "SMR, SMU, SMUP",
+          "net_notional_usd": 3455.895448000003,
+          "gross_notional_usd": 53153.744552,
+          "n_legs": 3
+        },
+        {
+          "underlying": "KEEL",
+          "symbols": "KEEL, KEEX",
+          "net_notional_usd": -9475.934094399996,
+          "gross_notional_usd": 51224.0940944,
+          "n_legs": 2
+        },
+        {
+          "underlying": "BE",
+          "symbols": "BE, BEG, BEX",
+          "net_notional_usd": -17441.9667088,
+          "gross_notional_usd": 49603.4267088,
+          "n_legs": 3
+        },
+        {
+          "underlying": "MU",
+          "symbols": "MU, MULL, MUU",
+          "net_notional_usd": -37487.968756,
+          "gross_notional_usd": 48352.108756,
+          "n_legs": 3
+        },
+        {
+          "underlying": "OPEN",
+          "symbols": "OPEG, OPEN, OPEX",
+          "net_notional_usd": 4140.310693799996,
+          "gross_notional_usd": 48265.9693062,
+          "n_legs": 3
+        },
+        {
+          "underlying": "PLUG",
+          "symbols": "PLUG, PLUL",
+          "net_notional_usd": -3169.0314472000027,
+          "gross_notional_usd": 47095.1314472,
+          "n_legs": 2
+        },
+        {
+          "underlying": "ETHA",
+          "symbols": "ETHA, ETHT, ETHU, ETU",
+          "net_notional_usd": -19703.34896087,
+          "gross_notional_usd": 46854.38896087,
+          "n_legs": 4
+        },
+        {
+          "underlying": "ALAB",
+          "symbols": "ALAB, LABX",
+          "net_notional_usd": -17898.735323180008,
+          "gross_notional_usd": 45792.81532318,
+          "n_legs": 2
+        },
+        {
+          "underlying": "SNDK",
+          "symbols": "SNDK, SNXX",
+          "net_notional_usd": -6753.938338,
+          "gross_notional_usd": 42704.658338,
+          "n_legs": 2
+        },
+        {
+          "underlying": "EOSE",
+          "symbols": "EOSE, EOSU",
+          "net_notional_usd": -15649.25083288,
+          "gross_notional_usd": 41809.59083288,
+          "n_legs": 2
+        },
+        {
+          "underlying": "BMNR",
+          "symbols": "BMNG, BMNR, BMNU",
+          "net_notional_usd": 296.4257027400017,
+          "gross_notional_usd": 41415.57429726,
+          "n_legs": 3
+        },
+        {
+          "underlying": "HUT",
+          "symbols": "HUT, HUTG",
+          "net_notional_usd": -9355.224364880003,
+          "gross_notional_usd": 41291.26436488,
+          "n_legs": 2
+        },
+        {
+          "underlying": "SOXX",
+          "symbols": "SOXL, SOXX",
+          "net_notional_usd": -8030.654987630003,
+          "gross_notional_usd": 39832.45498763,
+          "n_legs": 2
+        },
+        {
+          "underlying": "TSM",
+          "symbols": "TSM, TSMG, TSMU",
+          "net_notional_usd": -1704.10855972,
+          "gross_notional_usd": 39298.90855972,
+          "n_legs": 3
+        },
+        {
+          "underlying": "QBTS",
+          "symbols": "QBTS, QBTX",
+          "net_notional_usd": 1198.2541445506686,
+          "gross_notional_usd": 38720.04631735067,
+          "n_legs": 2
+        },
+        {
+          "underlying": "WULF",
+          "symbols": "WULF, WULX",
+          "net_notional_usd": -2566.1740226,
+          "gross_notional_usd": 38386.1140226,
+          "n_legs": 2
+        },
+        {
+          "underlying": "INTC",
+          "symbols": "INTC, INTW",
+          "net_notional_usd": -29334.2821634,
+          "gross_notional_usd": 38376.82216339999,
+          "n_legs": 2
+        },
+        {
+          "underlying": "LUNR",
+          "symbols": "LUNL, LUNR",
+          "net_notional_usd": -11.33621729999868,
+          "gross_notional_usd": 37480.8562173,
+          "n_legs": 2
+        },
+        {
+          "underlying": "FIGR",
+          "symbols": "FGRU, FIGR",
+          "net_notional_usd": -2471.058149550001,
+          "gross_notional_usd": 35664.01814955,
+          "n_legs": 2
+        },
+        {
+          "underlying": "CORZ",
+          "symbols": "CORZ, COZX",
+          "net_notional_usd": -1639.3657811000012,
+          "gross_notional_usd": 35082.0057811,
+          "n_legs": 2
+        },
+        {
+          "underlying": "AVGO",
+          "symbols": "AVGG, AVGO, AVL",
+          "net_notional_usd": -28663.302854200003,
+          "gross_notional_usd": 34820.36285420001,
+          "n_legs": 3
+        },
+        {
+          "underlying": "FLY",
+          "symbols": "FLY, FLYT",
+          "net_notional_usd": -7007.714297200004,
+          "gross_notional_usd": 34554.7142972,
+          "n_legs": 2
+        },
+        {
+          "underlying": "COIN",
+          "symbols": "COIA, COIG, COIN, CONL, CONX",
+          "net_notional_usd": -15133.74954177731,
+          "gross_notional_usd": 33738.93870680869,
+          "n_legs": 5
+        },
+        {
+          "underlying": "USAR",
+          "symbols": "USAR, USGG",
+          "net_notional_usd": 1260.5496984019992,
+          "gross_notional_usd": 32160.630301598,
+          "n_legs": 2
+        },
+        {
+          "underlying": "GLXY",
+          "symbols": "GLGG, GLXU, GLXY",
+          "net_notional_usd": -6778.913465571798,
+          "gross_notional_usd": 32154.5934655718,
+          "n_legs": 3
+        },
+        {
+          "underlying": "ONDS",
+          "symbols": "ONDG, ONDS",
+          "net_notional_usd": 1255.7773628800023,
+          "gross_notional_usd": 31208.38263712,
+          "n_legs": 2
+        },
+        {
+          "underlying": "CIFR",
+          "symbols": "CIFG, CIFR, CIFU",
+          "net_notional_usd": -6759.032727708002,
+          "gross_notional_usd": 31055.132727708,
+          "n_legs": 3
+        },
+        {
+          "underlying": "VRT",
+          "symbols": "VRT, VRTL",
+          "net_notional_usd": -2860.2418023599985,
+          "gross_notional_usd": 30701.26180236,
+          "n_legs": 2
+        },
+        {
+          "underlying": "UNH",
+          "symbols": "UNH, UNHG",
+          "net_notional_usd": -1743.1486226400011,
+          "gross_notional_usd": 30477.62862264,
+          "n_legs": 2
+        },
+        {
+          "underlying": "CRDO",
+          "symbols": "CRDO, CRDU",
+          "net_notional_usd": -4950.770871999999,
+          "gross_notional_usd": 30048.210872,
+          "n_legs": 2
+        },
+        {
+          "underlying": "GOOGL",
+          "symbols": "GGLL, GOOGL, GOOX",
+          "net_notional_usd": -28387.36788472,
+          "gross_notional_usd": 29991.64788472,
+          "n_legs": 3
+        },
+        {
+          "underlying": "MSFT",
+          "symbols": "MSFT, MSFU, MSFX",
+          "net_notional_usd": -28323.055622000003,
+          "gross_notional_usd": 29960.775622,
+          "n_legs": 3
+        },
+        {
+          "underlying": "HOOD",
+          "symbols": "HODU, HOOD, HOOG, HOOX, ROBN",
+          "net_notional_usd": -4765.122950778856,
+          "gross_notional_usd": 29381.783373652943,
+          "n_legs": 5
+        },
+        {
+          "underlying": "QCOM",
+          "symbols": "QCMU, QCOM",
+          "net_notional_usd": -4402.714601,
+          "gross_notional_usd": 28812.474601,
+          "n_legs": 2
+        },
+        {
+          "underlying": "ASTS",
+          "symbols": "ASTS, ASTX",
+          "net_notional_usd": -9616.148648879996,
+          "gross_notional_usd": 28210.38864888,
+          "n_legs": 2
+        },
+        {
+          "underlying": "AMZN",
+          "symbols": "AMZN, AMZZ",
+          "net_notional_usd": -26249.644574745,
+          "gross_notional_usd": 27852.964574745,
+          "n_legs": 2
+        },
+        {
+          "underlying": "LITE",
+          "symbols": "LITE, LITX",
+          "net_notional_usd": -7641.624354140004,
+          "gross_notional_usd": 27677.82435414,
+          "n_legs": 2
+        },
+        {
+          "underlying": "MSTR",
+          "symbols": "MSTR, MSTU, MSTX",
+          "net_notional_usd": 646.2318536464745,
+          "gross_notional_usd": 27424.89330980648,
+          "n_legs": 3
+        },
+        {
+          "underlying": "CNC",
+          "symbols": "CNC, CNCG",
+          "net_notional_usd": -4782.415218104199,
+          "gross_notional_usd": 27088.4152181042,
+          "n_legs": 2
+        },
+        {
+          "underlying": "PL",
+          "symbols": "PL, PLU",
+          "net_notional_usd": -236.054583000001,
+          "gross_notional_usd": 26576.534583,
+          "n_legs": 2
+        },
+        {
+          "underlying": "SRPT",
+          "symbols": "SRPT, SRPU",
+          "net_notional_usd": 1710.6779650000008,
+          "gross_notional_usd": 26309.322035,
+          "n_legs": 2
+        },
+        {
+          "underlying": "U",
+          "symbols": "U, UNX",
+          "net_notional_usd": -856.4174069397995,
+          "gross_notional_usd": 26008.5774069398,
+          "n_legs": 2
+        },
+        {
+          "underlying": "RKLB",
+          "symbols": "RKLB, RKLX",
+          "net_notional_usd": -3290.018839999999,
+          "gross_notional_usd": 25823.518840000004,
+          "n_legs": 2
+        },
+        {
+          "underlying": "TER",
+          "symbols": "TER, TERG",
+          "net_notional_usd": 1645.8327800700008,
+          "gross_notional_usd": 24738.86721993,
+          "n_legs": 2
+        },
+        {
+          "underlying": "RCAT",
+          "symbols": "RCAT, RCAX",
+          "net_notional_usd": 4191.981810500001,
+          "gross_notional_usd": 23528.0581895,
+          "n_legs": 2
+        },
+        {
+          "underlying": "SOFI",
+          "symbols": "SOFA, SOFI, SOFX",
+          "net_notional_usd": 2352.3910742952,
+          "gross_notional_usd": 23311.6489257048,
+          "n_legs": 3
+        },
+        {
+          "underlying": "XOP",
+          "symbols": "GUSH, XOP",
+          "net_notional_usd": 156.5767792000006,
+          "gross_notional_usd": 22857.3432208,
+          "n_legs": 2
+        },
+        {
+          "underlying": "BBAI",
+          "symbols": "BAIG, BBAI",
+          "net_notional_usd": -7723.699208040001,
+          "gross_notional_usd": 22440.49920804,
+          "n_legs": 2
+        },
+        {
+          "underlying": "GDX",
+          "symbols": "GDX, GDXU, NUGT",
+          "net_notional_usd": -14085.40056274,
+          "gross_notional_usd": 20661.90056274,
+          "n_legs": 3
+        },
+        {
+          "underlying": "AAPL",
+          "symbols": "AAPB, AAPL",
+          "net_notional_usd": -19209.77902554,
+          "gross_notional_usd": 20402.61902554,
+          "n_legs": 2
+        },
+        {
+          "underlying": "RGTI",
+          "symbols": "RGTI, RGTX",
+          "net_notional_usd": 447.7882294400006,
+          "gross_notional_usd": 20402.35177056,
+          "n_legs": 2
+        },
+        {
+          "underlying": "TSUI",
+          "symbols": "TSUI, TXXS",
+          "net_notional_usd": -141.48441414720037,
+          "gross_notional_usd": 20261.0672141472,
+          "n_legs": 2
+        },
+        {
+          "underlying": "BA",
+          "symbols": "BA, BOEG, BOEU",
+          "net_notional_usd": -18583.50777945,
+          "gross_notional_usd": 19958.76777945,
+          "n_legs": 3
+        },
+        {
+          "underlying": "OSCR",
+          "symbols": "OSCR, OSCX",
+          "net_notional_usd": -2830.681650228,
+          "gross_notional_usd": 19776.481650228,
+          "n_legs": 2
+        },
+        {
+          "underlying": "SOEZ",
+          "symbols": "SOEZ, SOLT",
+          "net_notional_usd": -461.8629009399992,
+          "gross_notional_usd": 19348.42290094,
+          "n_legs": 2
+        },
+        {
+          "underlying": "SBET",
+          "symbols": "SBET, SBTU",
+          "net_notional_usd": 611.2112064800003,
+          "gross_notional_usd": 18554.78879352,
+          "n_legs": 2
+        },
+        {
+          "underlying": "RDW",
+          "symbols": "RDW, RDWU",
+          "net_notional_usd": -185.4434223499993,
+          "gross_notional_usd": 18092.64342235,
+          "n_legs": 2
+        },
+        {
+          "underlying": "UEC",
+          "symbols": "UEC, UECG",
+          "net_notional_usd": 448.7476412360011,
+          "gross_notional_usd": 17500.972358764,
+          "n_legs": 2
+        },
+        {
+          "underlying": "UBER",
+          "symbols": "UBER, UBRL",
+          "net_notional_usd": 346.80879139600074,
+          "gross_notional_usd": 17429.411208604,
+          "n_legs": 2
+        },
+        {
+          "underlying": "GEV",
+          "symbols": "GEV, GEVG, GEVX",
+          "net_notional_usd": -10575.769122184,
+          "gross_notional_usd": 17118.949122184,
+          "n_legs": 3
+        },
+        {
+          "underlying": "ORCL",
+          "symbols": "ORCL, ORCU, ORCX",
+          "net_notional_usd": -792.8779975999996,
+          "gross_notional_usd": 16832.8979976,
+          "n_legs": 3
+        },
+        {
+          "underlying": "URA",
+          "symbols": "URA, URAA",
+          "net_notional_usd": 744.8158912500003,
+          "gross_notional_usd": 16580.18410875,
+          "n_legs": 2
+        },
+        {
+          "underlying": "UUUU",
+          "symbols": "UUUG, UUUU",
+          "net_notional_usd": 1099.3440666000006,
+          "gross_notional_usd": 16450.655933399998,
+          "n_legs": 2
+        },
+        {
+          "underlying": "SNOW",
+          "symbols": "SNOU, SNOW",
+          "net_notional_usd": 375.77063391999855,
+          "gross_notional_usd": 16207.82936608,
+          "n_legs": 2
+        },
+        {
+          "underlying": "OKLO",
+          "symbols": "OKLL, OKLO",
+          "net_notional_usd": 974.8726579199993,
+          "gross_notional_usd": 15962.04734208,
+          "n_legs": 2
+        },
+        {
+          "underlying": "APP",
+          "symbols": "APP, APPX",
+          "net_notional_usd": -4190.02777606,
+          "gross_notional_usd": 15833.86777606,
+          "n_legs": 2
+        },
+        {
+          "underlying": "CLSK",
+          "symbols": "CLSK, CLSX",
+          "net_notional_usd": -12038.6248944,
+          "gross_notional_usd": 15673.4248944,
+          "n_legs": 2
+        },
+        {
+          "underlying": "KLAC",
+          "symbols": "KLAC, KLAG",
+          "net_notional_usd": -11621.6971276,
+          "gross_notional_usd": 15407.5771276,
+          "n_legs": 2
+        },
+        {
+          "underlying": "RDDT",
+          "symbols": "RDDT, RDTL",
+          "net_notional_usd": 224.89701994999905,
+          "gross_notional_usd": 15406.10298005,
+          "n_legs": 2
+        },
+        {
+          "underlying": "BABA",
+          "symbols": "BABA, BABX",
+          "net_notional_usd": -1796.4420165237298,
+          "gross_notional_usd": 15229.40657631627,
+          "n_legs": 2
+        },
+        {
+          "underlying": "META",
+          "symbols": "FBL, META",
+          "net_notional_usd": 199.3491922056064,
+          "gross_notional_usd": 14860.605492945608,
+          "n_legs": 2
+        },
+        {
+          "underlying": "NVO",
+          "symbols": "NVO, NVOX",
+          "net_notional_usd": -1025.784984512,
+          "gross_notional_usd": 14124.584984512,
+          "n_legs": 2
+        },
+        {
+          "underlying": "TEM",
+          "symbols": "TEM, TEMT",
+          "net_notional_usd": 1638.733158,
+          "gross_notional_usd": 13915.426841999995,
+          "n_legs": 2
+        },
+        {
+          "underlying": "GEMI",
+          "symbols": "GEMG, GEMI",
+          "net_notional_usd": -76.93222523520126,
+          "gross_notional_usd": 13868.6522252352,
+          "n_legs": 2
+        },
+        {
+          "underlying": "HIMS",
+          "symbols": "HIMS, HIMZ",
+          "net_notional_usd": -2114.3317848120305,
+          "gross_notional_usd": 13645.366538387969,
+          "n_legs": 2
+        },
+        {
+          "underlying": "RKT",
+          "symbols": "RKT, RKTL",
+          "net_notional_usd": 846.9397675199989,
+          "gross_notional_usd": 13604.42023248,
+          "n_legs": 2
+        },
+        {
+          "underlying": "NU",
+          "symbols": "NU, NUG",
+          "net_notional_usd": 1119.1204908809996,
+          "gross_notional_usd": 13388.339509119,
+          "n_legs": 2
+        },
+        {
+          "underlying": "XYZ",
+          "symbols": "XYZ, XYZG",
+          "net_notional_usd": -80.17108844020004,
+          "gross_notional_usd": 13241.6910884402,
+          "n_legs": 2
+        },
+        {
+          "underlying": "CLS",
+          "symbols": "CLS, CSEX",
+          "net_notional_usd": -997.2724168000004,
+          "gross_notional_usd": 13208.1524168,
+          "n_legs": 2
+        },
+        {
+          "underlying": "BLSH",
+          "symbols": "BLSG, BLSH",
+          "net_notional_usd": -2999.8046472,
+          "gross_notional_usd": 13180.4846472,
+          "n_legs": 2
+        },
+        {
+          "underlying": "CMG",
+          "symbols": "CMG, CMGG",
+          "net_notional_usd": 557.5611146048013,
+          "gross_notional_usd": 12984.4188853952,
+          "n_legs": 2
+        },
+        {
+          "underlying": "DUOL",
+          "symbols": "DUOG, DUOL",
+          "net_notional_usd": -4694.925029083199,
+          "gross_notional_usd": 12554.0850290832,
+          "n_legs": 2
+        },
+        {
+          "underlying": "PONY",
+          "symbols": "PONX, PONY",
+          "net_notional_usd": 1552.1052280079994,
+          "gross_notional_usd": 12511.894771992,
+          "n_legs": 2
+        },
+        {
+          "underlying": "ASML",
+          "symbols": "ASML, ASMU",
+          "net_notional_usd": -9160.38946728,
+          "gross_notional_usd": 12329.40946728,
+          "n_legs": 2
+        },
+        {
+          "underlying": "ACHR",
+          "symbols": "ACHR, ARCX",
+          "net_notional_usd": -2711.1080281600007,
+          "gross_notional_usd": 12223.54802816,
+          "n_legs": 2
+        },
+        {
+          "underlying": "FXI",
+          "symbols": "FXI, YINN",
+          "net_notional_usd": -8922.752107999999,
+          "gross_notional_usd": 11380.592108,
+          "n_legs": 2
+        },
+        {
+          "underlying": "LAC",
+          "symbols": "LAC, LACG",
+          "net_notional_usd": -4700.50258248,
+          "gross_notional_usd": 11331.102582479998,
+          "n_legs": 2
+        },
+        {
+          "underlying": "CEG",
+          "symbols": "CEG, CEGX",
+          "net_notional_usd": -7282.216217599998,
+          "gross_notional_usd": 11135.856217599998,
+          "n_legs": 2
+        },
+        {
+          "underlying": "COPX",
+          "symbols": "COPX, COPZ",
+          "net_notional_usd": -6721.26037252,
+          "gross_notional_usd": 11011.50037252,
+          "n_legs": 2
+        },
+        {
+          "underlying": "WDC",
+          "symbols": "WDC, WDCX",
+          "net_notional_usd": -1184.9005763999994,
+          "gross_notional_usd": 10967.9005764,
+          "n_legs": 2
+        },
+        {
+          "underlying": "QQQ",
+          "symbols": "QQQ, TQQQ",
+          "net_notional_usd": -864.492418750001,
+          "gross_notional_usd": 10941.55241875,
+          "n_legs": 2
+        },
+        {
+          "underlying": "FIG",
+          "symbols": "FIG, FIGG",
+          "net_notional_usd": -899.8145532400004,
+          "gross_notional_usd": 10898.37455324,
+          "n_legs": 2
+        },
+        {
+          "underlying": "UPST",
+          "symbols": "UPST, UPSX",
+          "net_notional_usd": 976.5223618799992,
+          "gross_notional_usd": 10610.37763812,
+          "n_legs": 2
+        },
+        {
+          "underlying": "LEU",
+          "symbols": "LEU, LEUX",
+          "net_notional_usd": -7118.591258400001,
+          "gross_notional_usd": 10580.3512584,
+          "n_legs": 2
+        },
+        {
+          "underlying": "QS",
+          "symbols": "QS, QSU",
+          "net_notional_usd": -620.7166296000005,
+          "gross_notional_usd": 10373.1166296,
+          "n_legs": 2
+        },
+        {
+          "underlying": "MRNA",
+          "symbols": "MRNA, MRNX",
+          "net_notional_usd": -3662.4280811999993,
+          "gross_notional_usd": 10266.3880812,
+          "n_legs": 2
+        },
+        {
+          "underlying": "SMCI",
+          "symbols": "SMCI, SMCL",
+          "net_notional_usd": -590.7109501066006,
+          "gross_notional_usd": 9839.1109501066,
+          "n_legs": 2
+        },
+        {
+          "underlying": "SATS",
+          "symbols": "SATG, SATS",
+          "net_notional_usd": -315.55297899999914,
+          "gross_notional_usd": 9773.252979,
+          "n_legs": 2
+        },
+        {
+          "underlying": "RBLX",
+          "symbols": "RBLU, RBLX",
+          "net_notional_usd": 1959.6816679599992,
+          "gross_notional_usd": 9582.39833204,
+          "n_legs": 2
+        },
+        {
+          "underlying": "TDOG",
+          "symbols": "TDOG, TXXD",
+          "net_notional_usd": 19.16658976320105,
+          "gross_notional_usd": 9523.8718102368,
+          "n_legs": 2
+        },
+        {
+          "underlying": "EWY",
+          "symbols": "EWY, KORU",
+          "net_notional_usd": -1670.03162784,
+          "gross_notional_usd": 9290.83162784,
+          "n_legs": 2
+        },
+        {
+          "underlying": "CRM",
+          "symbols": "CRM, CRMG",
+          "net_notional_usd": -6642.730658219998,
+          "gross_notional_usd": 8988.850658219999,
+          "n_legs": 2
+        },
+        {
+          "underlying": "DELL",
+          "symbols": "DELL, DLLL",
+          "net_notional_usd": -3673.927302600001,
+          "gross_notional_usd": 8631.7273026,
+          "n_legs": 2
+        },
+        {
+          "underlying": "KWEB",
+          "symbols": "CWEB, KWEB",
+          "net_notional_usd": -7178.999488990001,
+          "gross_notional_usd": 8580.599488990001,
+          "n_legs": 2
+        },
+        {
+          "underlying": "MP",
+          "symbols": "MP, MPG, MPL",
+          "net_notional_usd": -732.2333739839996,
+          "gross_notional_usd": 7969.433373984,
+          "n_legs": 3
+        },
+        {
+          "underlying": "AFRM",
+          "symbols": "AFRM, AFRU",
+          "net_notional_usd": -3082.47437616,
+          "gross_notional_usd": 7542.094376159999,
+          "n_legs": 2
+        },
+        {
+          "underlying": "ARM",
+          "symbols": "ARM, ARMG",
+          "net_notional_usd": -652.7967959999996,
+          "gross_notional_usd": 7507.796796,
+          "n_legs": 2
+        },
+        {
+          "underlying": "CRWD",
+          "symbols": "CRWD, CRWL",
+          "net_notional_usd": -1212.0712290272004,
+          "gross_notional_usd": 7011.5712290272,
+          "n_legs": 2
+        },
+        {
+          "underlying": "RIOT",
+          "symbols": "RIOT, RIOX",
+          "net_notional_usd": 5.053708405274392,
+          "gross_notional_usd": 6678.7512764052735,
+          "n_legs": 2
+        },
+        {
+          "underlying": "ETOR",
+          "symbols": "ETOR, ETRL",
+          "net_notional_usd": -3927.3942108618,
+          "gross_notional_usd": 6006.394210861799,
+          "n_legs": 2
+        },
+        {
+          "underlying": "SOUN",
+          "symbols": "SOUN, SOUX",
+          "net_notional_usd": 60.87944561999984,
+          "gross_notional_usd": 5988.32055438,
+          "n_legs": 2
+        },
+        {
+          "underlying": "LRCX",
+          "symbols": "LRCU, LRCX",
+          "net_notional_usd": -1119.3957746,
+          "gross_notional_usd": 5905.795774599999,
+          "n_legs": 2
+        },
+        {
+          "underlying": "MRVL",
+          "symbols": "MRVL, MVLL",
+          "net_notional_usd": -2602.25930092,
+          "gross_notional_usd": 5888.6993009200005,
+          "n_legs": 2
+        },
+        {
+          "underlying": "OKTA",
+          "symbols": "OKTA, OKTG",
+          "net_notional_usd": -157.04465267119986,
+          "gross_notional_usd": 5830.5446526712,
+          "n_legs": 2
+        },
+        {
+          "underlying": "PAAS",
+          "symbols": "PAAS, PAAU",
+          "net_notional_usd": -40.865287183599776,
+          "gross_notional_usd": 5783.325287183599,
+          "n_legs": 2
+        },
+        {
+          "underlying": "LMND",
+          "symbols": "LMND, LMNX",
+          "net_notional_usd": 248.0129898368,
+          "gross_notional_usd": 5667.7870101632,
+          "n_legs": 2
+        },
+        {
+          "underlying": "AVAV",
+          "symbols": "AVAV, AVXX",
+          "net_notional_usd": -894.87496504,
+          "gross_notional_usd": 5522.43496504,
+          "n_legs": 2
+        },
+        {
+          "underlying": "NIO",
+          "symbols": "NIO, NIOG",
+          "net_notional_usd": 178.93985812480014,
+          "gross_notional_usd": 5458.560141875199,
+          "n_legs": 2
+        },
+        {
+          "underlying": "BULL",
+          "symbols": "BULG, BULL",
+          "net_notional_usd": -1944.1105055680007,
+          "gross_notional_usd": 5170.710505568,
+          "n_legs": 2
+        },
+        {
+          "underlying": "SNAP",
+          "symbols": "SNAG, SNAP",
+          "net_notional_usd": 272.1568940416,
+          "gross_notional_usd": 5055.6831059584,
+          "n_legs": 2
+        },
+        {
+          "underlying": "FCX",
+          "symbols": "FCX, FCXG",
+          "net_notional_usd": -694.9954199088997,
+          "gross_notional_usd": 4795.6754199089,
+          "n_legs": 2
+        },
+        {
+          "underlying": "SPY",
+          "symbols": "SPXL, SPY",
+          "net_notional_usd": -239.89190310000004,
+          "gross_notional_usd": 4728.911903099999,
+          "n_legs": 2
+        },
+        {
+          "underlying": "GRAB",
+          "symbols": "GRAB",
+          "net_notional_usd": 4508.91,
+          "gross_notional_usd": 4508.91,
+          "n_legs": 1
+        },
+        {
+          "underlying": "ZETA",
+          "symbols": "ZETA, ZETX",
+          "net_notional_usd": 318.2295695599996,
+          "gross_notional_usd": 4456.810430439999,
+          "n_legs": 2
+        },
+        {
+          "underlying": "NOK",
+          "symbols": "NOK",
+          "net_notional_usd": 4352.46,
+          "gross_notional_usd": 4352.46,
+          "n_legs": 1
+        },
+        {
+          "underlying": "PYPL",
+          "symbols": "PYPG, PYPL",
+          "net_notional_usd": 206.8944248130997,
+          "gross_notional_usd": 4297.105575186901,
+          "n_legs": 2
+        },
+        {
+          "underlying": "GDXJ",
+          "symbols": "GDXJ, JNUG",
+          "net_notional_usd": 27.00955499999964,
+          "gross_notional_usd": 4245.770445,
+          "n_legs": 2
+        },
+        {
+          "underlying": "ANET",
+          "symbols": "ANEL, ANET",
+          "net_notional_usd": -137.75854559999993,
+          "gross_notional_usd": 3980.8185456,
+          "n_legs": 2
+        },
+        {
+          "underlying": "NEM",
+          "symbols": "NEM, NEMG",
+          "net_notional_usd": -5.3217608045001725,
+          "gross_notional_usd": 3960.5417608045,
+          "n_legs": 2
+        },
+        {
+          "underlying": "CVNA",
+          "symbols": "CVNA, CVNX",
+          "net_notional_usd": -1150.8698791799002,
+          "gross_notional_usd": 3932.0698791799,
+          "n_legs": 2
+        },
+        {
+          "underlying": "DNN",
+          "symbols": "DNN, DNNG",
+          "net_notional_usd": -290.1982005823997,
+          "gross_notional_usd": 3919.7982005824,
+          "n_legs": 2
+        },
+        {
+          "underlying": "ARKK",
+          "symbols": "ARKK, TARK",
+          "net_notional_usd": -1828.211419075,
+          "gross_notional_usd": 3856.211419075,
+          "n_legs": 2
+        },
+        {
+          "underlying": "COHR",
+          "symbols": "COHR, COHX",
+          "net_notional_usd": -1336.7625990000004,
+          "gross_notional_usd": 3766.402599,
+          "n_legs": 2
+        },
+        {
+          "underlying": "EWW",
+          "symbols": "EWW, MEXX",
+          "net_notional_usd": -2337.8628978599995,
+          "gross_notional_usd": 3759.86289786,
+          "n_legs": 2
+        },
+        {
+          "underlying": "XPEV",
+          "symbols": "XPEG, XPEV",
+          "net_notional_usd": 209.8001800999998,
+          "gross_notional_usd": 3626.7598199,
+          "n_legs": 2
+        },
+        {
+          "underlying": "TTD",
+          "symbols": "TTD, TTDU",
+          "net_notional_usd": 258.5658054000003,
+          "gross_notional_usd": 3537.6941946,
+          "n_legs": 2
+        },
+        {
+          "underlying": "GLW",
+          "symbols": "GLW, GLWG",
+          "net_notional_usd": -119.94535185999985,
+          "gross_notional_usd": 3452.42535186,
+          "n_legs": 2
+        },
+        {
+          "underlying": "SPOT",
+          "symbols": "SPOG, SPOT",
+          "net_notional_usd": 102.63842016000012,
+          "gross_notional_usd": 3357.6815798400003,
+          "n_legs": 2
+        },
+        {
+          "underlying": "NOW",
+          "symbols": "NOW, NOWL",
+          "net_notional_usd": 353.6898760000004,
+          "gross_notional_usd": 3266.310124,
+          "n_legs": 2
+        },
+        {
+          "underlying": "SHOP",
+          "symbols": "SHOP, SHPU",
+          "net_notional_usd": 507.6828916000002,
+          "gross_notional_usd": 3194.2771084,
+          "n_legs": 2
+        },
+        {
+          "underlying": "JOBY",
+          "symbols": "JOBX, JOBY",
+          "net_notional_usd": -141.41971548000015,
+          "gross_notional_usd": 3141.89971548,
+          "n_legs": 2
+        },
+        {
+          "underlying": "ALB",
+          "symbols": "ALB, ALBG",
+          "net_notional_usd": -23.8345623109999,
+          "gross_notional_usd": 3081.434562311,
+          "n_legs": 2
+        },
+        {
+          "underlying": "VST",
+          "symbols": "VST, VSTL",
+          "net_notional_usd": 9.13630739999985,
+          "gross_notional_usd": 2828.8636926,
+          "n_legs": 2
+        },
+        {
+          "underlying": "NET",
+          "symbols": "NET, NETG",
+          "net_notional_usd": -23.03199678499982,
+          "gross_notional_usd": 2820.371996785,
+          "n_legs": 2
+        },
+        {
+          "underlying": "AAL",
+          "symbols": "AAL",
+          "net_notional_usd": 2679.7,
+          "gross_notional_usd": 2679.7,
+          "n_legs": 1
+        },
+        {
+          "underlying": "ADBE",
+          "symbols": "ADBE, ADBG",
+          "net_notional_usd": -1097.3407398399995,
+          "gross_notional_usd": 2519.4007398399995,
+          "n_legs": 2
+        },
+        {
+          "underlying": "KTOS",
+          "symbols": "KTOS, KTUP",
+          "net_notional_usd": 449.03806598000006,
+          "gross_notional_usd": 2512.8619340200003,
+          "n_legs": 2
+        },
+        {
+          "underlying": "DKNG",
+          "symbols": "DKNG, DKNX",
+          "net_notional_usd": -2.4541514420000112,
+          "gross_notional_usd": 2467.154151442,
+          "n_legs": 2
+        },
+        {
+          "underlying": "APH",
+          "symbols": "APH, APHU",
+          "net_notional_usd": -1678.8238809000002,
+          "gross_notional_usd": 2453.9638809000003,
+          "n_legs": 2
+        },
+        {
+          "underlying": "B",
+          "symbols": "B, BU",
+          "net_notional_usd": 13.802139156000068,
+          "gross_notional_usd": 2316.837860844,
+          "n_legs": 2
+        },
+        {
+          "underlying": "IWM",
+          "symbols": "IWM, URTY",
+          "net_notional_usd": -513.3824655600001,
+          "gross_notional_usd": 2220.08246556,
+          "n_legs": 2
+        },
+        {
+          "underlying": "GME",
+          "symbols": "GME, GMEU",
+          "net_notional_usd": 73.76161480000007,
+          "gross_notional_usd": 1438.9383852,
+          "n_legs": 2
+        },
+        {
+          "underlying": "LLY",
+          "symbols": "LLY",
+          "net_notional_usd": 1006.7,
+          "gross_notional_usd": 1006.7,
+          "n_legs": 1
+        },
+        {
+          "underlying": "DJT",
+          "symbols": "DJT",
+          "net_notional_usd": 805.4999999999999,
+          "gross_notional_usd": 805.4999999999999,
+          "n_legs": 1
+        },
+        {
+          "underlying": "LCID",
+          "symbols": "LCID",
+          "net_notional_usd": 645.81,
+          "gross_notional_usd": 645.81,
+          "n_legs": 1
+        },
+        {
+          "underlying": "UPS",
+          "symbols": "UPSG",
+          "net_notional_usd": -83.01983587019998,
+          "gross_notional_usd": 83.01983587019998,
+          "n_legs": 1
+        }
+      ],
+      "n_pnl_rows": 201,
+      "n_exposure_rows": 172,
+      "winners": [
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 4755.992244000005,
+          "borrow_fees": -596.87,
+          "short_credit_interest": 124.69840101058988,
+          "total_pnl": 4283.820645010594
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 3757.123436,
+          "borrow_fees": -323.57,
+          "short_credit_interest": 41.441894216227055,
+          "total_pnl": 3474.995330216227
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -275.6916023,
+          "unrealized_pnl": 3598.160914,
+          "borrow_fees": -42.08,
+          "short_credit_interest": 24.36088133514529,
+          "total_pnl": 3293.910193035145
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 2147.9873981593064,
+          "borrow_fees": -29.42,
+          "short_credit_interest": 11.308694311427471,
+          "total_pnl": 2129.876092470734
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 1762.8205719,
+          "unrealized_pnl": 322.66112300000003,
+          "borrow_fees": -60.55,
+          "short_credit_interest": 11.635236194957296,
+          "total_pnl": 2036.5669310949572
+        }
+      ],
+      "losers": [
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 12174.743508904485,
+          "unrealized_pnl": -19442.929634030188,
+          "borrow_fees": -229.89,
+          "short_credit_interest": 153.25300365982565,
+          "total_pnl": -7366.673121465872
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -286.2494496169297,
+          "unrealized_pnl": -2902.3077480840707,
+          "borrow_fees": -135.07,
+          "short_credit_interest": 38.932694283695206,
+          "total_pnl": -3310.604503417305
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 8276.472917809999,
+          "unrealized_pnl": -10761.20404,
+          "borrow_fees": -115.87,
+          "short_credit_interest": 49.06725243629343,
+          "total_pnl": -2551.533869753708
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 3324.7685013162272,
+          "unrealized_pnl": -5267.130865849747,
+          "borrow_fees": -120.97,
+          "short_credit_interest": 42.24796991445358,
+          "total_pnl": -2040.3198865754484
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 9719.4006876,
+          "unrealized_pnl": -11582.171462,
+          "borrow_fees": -81.28,
+          "short_credit_interest": 62.06509727810833,
+          "total_pnl": -1893.195677121892
+        }
+      ]
+    },
+    "bucket_2": {
+      "bucket": "bucket_2",
+      "pnl_rows": [
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 2209.0896824130355,
+          "unrealized_pnl": 15664.189283383046,
+          "borrow_fees": -1169.14,
+          "short_credit_interest": 130.27517398282524,
+          "total_pnl": 6194.134139778908
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 4702.7011076,
+          "unrealized_pnl": 8686.275183999998,
+          "borrow_fees": -767.97,
+          "short_credit_interest": 159.8599778900406,
+          "total_pnl": 4593.716269490038
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 2244.591664525516,
+          "unrealized_pnl": 1669.2554760301862,
+          "borrow_fees": -6.84,
+          "short_credit_interest": 34.01418052441497,
+          "total_pnl": 3814.251321080117
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 2966.3197265069302,
+          "unrealized_pnl": 83.00218408407066,
+          "borrow_fees": -18.11,
+          "short_credit_interest": 0.0,
+          "total_pnl": 2834.681910591001
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 2138.8294523969034,
+          "unrealized_pnl": 317.74972665976765,
+          "borrow_fees": -17.740000000000002,
+          "short_credit_interest": 272.6053415752113,
+          "total_pnl": 2546.1145206318824
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 2014.2570448337724,
+          "unrealized_pnl": 78.20971884974706,
+          "borrow_fees": -13.03,
+          "short_credit_interest": 0.0,
+          "total_pnl": 1964.402255639901
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 131.73750778221282,
+          "unrealized_pnl": 1706.5308412498025,
+          "borrow_fees": -11.57,
+          "short_credit_interest": 0.0,
+          "total_pnl": 1704.8384306788066
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -142.04840394519675,
+          "unrealized_pnl": 1462.3222767031152,
+          "borrow_fees": -10.64,
+          "short_credit_interest": 0.0,
+          "total_pnl": 1180.2502104515695
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 1265.4934475368746,
+          "unrealized_pnl": 5.675921148281786,
+          "borrow_fees": -35.21,
+          "short_credit_interest": 0.0,
+          "total_pnl": 982.8445019161264
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 133.91866665315686,
+          "unrealized_pnl": 901.8082559906176,
+          "borrow_fees": -15.81,
+          "short_credit_interest": 0.0,
+          "total_pnl": 879.5769226437744
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 970.2190851458186,
+          "unrealized_pnl": 43.88053753583222,
+          "borrow_fees": -45.71,
+          "short_credit_interest": 0.0,
+          "total_pnl": 620.7196226816508
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 690.5191368520557,
+          "unrealized_pnl": 28.436264430927917,
+          "borrow_fees": -25.32,
+          "short_credit_interest": 0.0,
+          "total_pnl": 585.8795803045052
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 757.8436405362477,
+          "unrealized_pnl": -133.38465956910255,
+          "borrow_fees": -23.33,
+          "short_credit_interest": 0.0,
+          "total_pnl": 460.428980967145
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 589.4133285761974,
+          "unrealized_pnl": 1628.9065227271983,
+          "borrow_fees": -139.77,
+          "short_credit_interest": 60.543343669963626,
+          "total_pnl": 447.39568138560776
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 508.7975923639629,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -11.59,
+          "short_credit_interest": 0.0,
+          "total_pnl": 397.96759236396286
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 2536.9883482854875,
+          "borrow_fees": -229.99,
+          "short_credit_interest": 136.12868954808474,
+          "total_pnl": 351.48703783357223
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 3705.1848841252754,
+          "unrealized_pnl": -2727.493369453653,
+          "borrow_fees": -21.19,
+          "short_credit_interest": 59.8088328874812,
+          "total_pnl": 347.22034755910363
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 837.50934808549,
+          "unrealized_pnl": -342.2411349171142,
+          "borrow_fees": -9.73,
+          "short_credit_interest": 0.0,
+          "total_pnl": 340.03821316837593
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 806.401198260252,
+          "unrealized_pnl": -354.4471318974767,
+          "borrow_fees": -10.62,
+          "short_credit_interest": 0.0,
+          "total_pnl": 335.63406636277523
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 7.721959014929238,
+          "unrealized_pnl": 3037.0133691590263,
+          "borrow_fees": -160.54,
+          "short_credit_interest": 58.90174973686054,
+          "total_pnl": 178.49707791081613
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -327.28040899175033,
+          "unrealized_pnl": 526.257259669668,
+          "borrow_fees": -18.380399983932115,
+          "short_credit_interest": 0.0,
+          "total_pnl": 120.60645069398552
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 43.31257115220212,
+          "unrealized_pnl": 36.92594033254353,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 0.0,
+          "total_pnl": 80.23851148474566
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 293.8624888223503,
+          "borrow_fees": -28.57,
+          "short_credit_interest": 10.686404447446144,
+          "total_pnl": 75.47889326979643
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -78.9478827890362,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 112.6953343748474,
+          "total_pnl": 33.747451585811206
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 4.128318864064395,
+          "unrealized_pnl": 118.7209004786042,
+          "borrow_fees": -26.71,
+          "short_credit_interest": 0.0,
+          "total_pnl": 31.419219342668583
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -6.303478446227934e-09,
+          "unrealized_pnl": 26.020391619386977,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 0.0,
+          "total_pnl": 26.0203916130835
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 14.485992050079687,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 0.0,
+          "total_pnl": 14.485992050079687
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 13.452687527441768,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 0.0,
+          "total_pnl": 13.60873785126478
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 234.22860625,
+          "unrealized_pnl": -20.279257,
+          "borrow_fees": -29.61,
+          "short_credit_interest": 0.0,
+          "total_pnl": -36.89065075000008
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -40.01172500511464,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -23.08,
+          "short_credit_interest": 0.0,
+          "total_pnl": -209.4718367909237
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 900.2662167999999,
+          "unrealized_pnl": -1013.453791,
+          "borrow_fees": -11.91,
+          "short_credit_interest": 0.0,
+          "total_pnl": -216.12757420000003
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 259.9188733000001,
+          "unrealized_pnl": -460.2766135690304,
+          "borrow_fees": -39.06433892551515,
+          "short_credit_interest": 0.0,
+          "total_pnl": -327.7920791945453
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 31.270892534858667,
+          "unrealized_pnl": 76.78767805640003,
+          "borrow_fees": -34.870000000000005,
+          "short_credit_interest": 0.0,
+          "total_pnl": -388.04142940874135
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 306.0343233645252,
+          "unrealized_pnl": -633.3921497677798,
+          "borrow_fees": -10.63,
+          "short_credit_interest": 10.820908535775148,
+          "total_pnl": -478.9305583320124
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 1164.827157099308,
+          "unrealized_pnl": -1377.8024669117772,
+          "borrow_fees": -10.21,
+          "short_credit_interest": 0.0,
+          "total_pnl": -605.1553098124691
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 751.0320814851568,
+          "unrealized_pnl": -1300.4424537624686,
+          "borrow_fees": -8.18,
+          "short_credit_interest": 0.0,
+          "total_pnl": -724.9103722773117
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -564.0408436178419,
+          "unrealized_pnl": -82.75660924224223,
+          "borrow_fees": -27.25,
+          "short_credit_interest": 20.51118341072057,
+          "total_pnl": -1003.6862694493636
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 734.35125347,
+          "unrealized_pnl": -2390.402322159306,
+          "borrow_fees": -12.7,
+          "short_credit_interest": 0.0,
+          "total_pnl": -1783.501068689306
+        }
+      ],
+      "exposure_rows": [
+        {
+          "underlying": "COIN",
+          "symbols": "COIN, COYY",
+          "net_notional_usd": -23495.55937803569,
+          "gross_notional_usd": 52380.61021300432,
+          "n_legs": 2
+        },
+        {
+          "underlying": "MSTR",
+          "symbols": "MSTR, MTYY",
+          "net_notional_usd": 825.8317486735286,
+          "gross_notional_usd": 35046.783087873526,
+          "n_legs": 2
+        },
+        {
+          "underlying": "IONQ",
+          "symbols": "IONQ, IOYY",
+          "net_notional_usd": -1124.638145428833,
+          "gross_notional_usd": 26561.59859155277,
+          "n_legs": 2
+        },
+        {
+          "underlying": "RIOT",
+          "symbols": "RIOT, RTYY",
+          "net_notional_usd": 17.806112594727892,
+          "gross_notional_usd": 23531.748902594725,
+          "n_legs": 2
+        },
+        {
+          "underlying": "META",
+          "symbols": "FBYY, META",
+          "net_notional_usd": 308.19405462439136,
+          "gross_notional_usd": 22974.51126022439,
+          "n_legs": 2
+        },
+        {
+          "underlying": "IBIT",
+          "symbols": "IBIT, XBTY",
+          "net_notional_usd": -857.3882973940963,
+          "gross_notional_usd": 20820.849149005902,
+          "n_legs": 2
+        },
+        {
+          "underlying": "MARA",
+          "symbols": "MAAY, MARA",
+          "net_notional_usd": -15947.297705874,
+          "gross_notional_usd": 17728.157705874,
+          "n_legs": 2
+        },
+        {
+          "underlying": "HOOD",
+          "symbols": "HOOD, HOYY",
+          "net_notional_usd": -2483.1782013088423,
+          "gross_notional_usd": 15311.31777843476,
+          "n_legs": 2
+        },
+        {
+          "underlying": "AMD",
+          "symbols": "AMD, AMYY",
+          "net_notional_usd": -2051.3903365067063,
+          "gross_notional_usd": 4382.4024834932925,
+          "n_legs": 2
+        },
+        {
+          "underlying": "BABA",
+          "symbols": "BABA, BBYY",
+          "net_notional_usd": -430.51538790627046,
+          "gross_notional_usd": 3649.710828113729,
+          "n_legs": 2
+        },
+        {
+          "underlying": "HIMS",
+          "symbols": "HIMS, HMYY",
+          "net_notional_usd": -508.0111444979693,
+          "gross_notional_usd": 3278.576390922031,
+          "n_legs": 2
+        },
+        {
+          "underlying": "QBTS",
+          "symbols": "QBTS, QBY",
+          "net_notional_usd": 63.89993411933244,
+          "gross_notional_usd": 2064.799603979332,
+          "n_legs": 2
+        },
+        {
+          "underlying": "AI",
+          "symbols": "AI",
+          "net_notional_usd": 821.7299999999999,
+          "gross_notional_usd": 821.7299999999999,
+          "n_legs": 1
+        }
+      ],
+      "n_pnl_rows": 38,
+      "n_exposure_rows": 13,
+      "winners": [
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 2209.0896824130355,
+          "unrealized_pnl": 15664.189283383046,
+          "borrow_fees": -1169.14,
+          "short_credit_interest": 130.27517398282524,
+          "total_pnl": 6194.134139778908
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 4702.7011076,
+          "unrealized_pnl": 8686.275183999998,
+          "borrow_fees": -767.97,
+          "short_credit_interest": 159.8599778900406,
+          "total_pnl": 4593.716269490038
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 2244.591664525516,
+          "unrealized_pnl": 1669.2554760301862,
+          "borrow_fees": -6.84,
+          "short_credit_interest": 34.01418052441497,
+          "total_pnl": 3814.251321080117
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 2966.3197265069302,
+          "unrealized_pnl": 83.00218408407066,
+          "borrow_fees": -18.11,
+          "short_credit_interest": 0.0,
+          "total_pnl": 2834.681910591001
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 2138.8294523969034,
+          "unrealized_pnl": 317.74972665976765,
+          "borrow_fees": -17.740000000000002,
+          "short_credit_interest": 272.6053415752113,
+          "total_pnl": 2546.1145206318824
+        }
+      ],
+      "losers": [
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 734.35125347,
+          "unrealized_pnl": -2390.402322159306,
+          "borrow_fees": -12.7,
+          "short_credit_interest": 0.0,
+          "total_pnl": -1783.501068689306
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": -564.0408436178419,
+          "unrealized_pnl": -82.75660924224223,
+          "borrow_fees": -27.25,
+          "short_credit_interest": 20.51118341072057,
+          "total_pnl": -1003.6862694493636
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 751.0320814851568,
+          "unrealized_pnl": -1300.4424537624686,
+          "borrow_fees": -8.18,
+          "short_credit_interest": 0.0,
+          "total_pnl": -724.9103722773117
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 1164.827157099308,
+          "unrealized_pnl": -1377.8024669117772,
+          "borrow_fees": -10.21,
+          "short_credit_interest": 0.0,
+          "total_pnl": -605.1553098124691
+        },
+        {
+          "symbol": "",
+          "description": "",
+          "realized_pnl": 306.0343233645252,
+          "unrealized_pnl": -633.3921497677798,
+          "borrow_fees": -10.63,
+          "short_credit_interest": 10.820908535775148,
+          "total_pnl": -478.9305583320124
+        }
+      ]
+    },
+    "bucket_3": {
+      "bucket": "bucket_3",
+      "pnl_rows": [
+        {
+          "symbol": "AMZO",
+          "description": "TRADR 2X SHORT AMZN DAILY ET",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 4672.736183,
+          "borrow_fees": -183.24,
+          "short_credit_interest": 21.69454911473016,
+          "total_pnl": 4511.19073211473
+        },
+        {
+          "symbol": "SOXS",
+          "description": "DIREX DAI SEMI BE 3X ETF-USD",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 2537.807821,
+          "borrow_fees": -55.3,
+          "short_credit_interest": 2.306494968290824,
+          "total_pnl": 2459.2843159682902
+        },
+        {
+          "symbol": "NVDQ",
+          "description": "T-REX 2X INVERSE NVIDIA DLY",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 1991.263862,
+          "borrow_fees": -133.36,
+          "short_credit_interest": 6.937857737801552,
+          "total_pnl": 1864.8417197378017
+        },
+        {
+          "symbol": "SQQQ",
+          "description": "PROSHARES ULTRAPRO SHORT QQQ",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 1603.848082,
+          "borrow_fees": -24.64,
+          "short_credit_interest": 6.612839735563186,
+          "total_pnl": 1556.4509217355633
+        },
+        {
+          "symbol": "TSLQ",
+          "description": "TRADR 2X SHORT TSLA DAILY ET",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 1141.900642,
+          "borrow_fees": -55.19,
+          "short_credit_interest": 10.023286065844635,
+          "total_pnl": 1096.7339280658446
+        },
+        {
+          "symbol": "SDS",
+          "description": "PROSHARES ULTRASHORT S&P500",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 887.809892,
+          "borrow_fees": -53.91,
+          "short_credit_interest": 12.994940841617977,
+          "total_pnl": 819.904832841618
+        },
+        {
+          "symbol": "LABD",
+          "description": "DIRE DLY SP BT BE 3X ETF-USD",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 832.762916,
+          "borrow_fees": -87.36,
+          "short_credit_interest": 8.028927990007785,
+          "total_pnl": 737.8918439900078
+        },
+        {
+          "symbol": "AZYY",
+          "description": "GRANITE YIELDBOOST AMZN ETF",
+          "realized_pnl": 149.34178575,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -6.33,
+          "short_credit_interest": 0.0,
+          "total_pnl": 99.42178575
+        },
+        {
+          "symbol": "TSYY",
+          "description": "GRANITE YIELDBOOST TSLA ETF",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 9.641186,
+          "borrow_fees": -0.89,
+          "short_credit_interest": 0.354000499253252,
+          "total_pnl": -2.864813500746749
+        },
+        {
+          "symbol": "TQQY",
+          "description": "GRANITE YIELDBOOST QQQ",
+          "realized_pnl": 159.88451495,
+          "unrealized_pnl": -21.431611,
+          "borrow_fees": -24.95,
+          "short_credit_interest": 1.434633602236863,
+          "total_pnl": -12.492462447763137
+        },
+        {
+          "symbol": "NVYY",
+          "description": "GRANITE YIELDBOOST NVDA",
+          "realized_pnl": 104.42386226,
+          "unrealized_pnl": 3.595803,
+          "borrow_fees": -7.5,
+          "short_credit_interest": 0.4123105230093919,
+          "total_pnl": -57.58802421699061
+        },
+        {
+          "symbol": "FAZ",
+          "description": "DIREX DLY FIN BEA 3X ETF-USD",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 21.695122,
+          "borrow_fees": -66.0,
+          "short_credit_interest": 9.938236238295,
+          "total_pnl": -60.49664176170499
+        },
+        {
+          "symbol": "EWV",
+          "description": "PROSHARES ULTSHRT MSCI JAPAN",
+          "realized_pnl": -379.67922922,
+          "unrealized_pnl": 100.277871,
+          "borrow_fees": -10.54,
+          "short_credit_interest": 2.8113022104439547,
+          "total_pnl": -288.59005600955606
+        },
+        {
+          "symbol": "ZSL",
+          "description": "PROSHARES ULTRASHORT SILVER",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -262.617632,
+          "borrow_fees": -408.19,
+          "short_credit_interest": 11.356998473118953,
+          "total_pnl": -659.450633526881
+        },
+        {
+          "symbol": "DUST",
+          "description": "DIR DLY GOL MN IDX BR 2X ETF",
+          "realized_pnl": -3.4059583,
+          "unrealized_pnl": -1199.295048,
+          "borrow_fees": -177.21,
+          "short_credit_interest": 16.81536874425584,
+          "total_pnl": -1453.7456375557442
+        }
+      ],
+      "exposure_rows": [
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 15150.558946723198,
+          "gross_notional_usd": 15150.558946723198,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 11669.22892416,
+          "gross_notional_usd": 11669.22892416,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 10345.00614288,
+          "gross_notional_usd": 10345.00614288,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 9004.650332399999,
+          "gross_notional_usd": 9004.650332399999,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 8370.11066247,
+          "gross_notional_usd": 8370.11066247,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 8020.308610079999,
+          "gross_notional_usd": 8020.308610079999,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 6984.85109112,
+          "gross_notional_usd": 6984.85109112,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 6898.32714984,
+          "gross_notional_usd": 6898.32714984,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 4828.721446560001,
+          "gross_notional_usd": 4828.721446560001,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 2408.10860042,
+          "gross_notional_usd": 2408.10860042,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 1961.951501016,
+          "gross_notional_usd": 1961.951501016,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": -443.3893279199999,
+          "gross_notional_usd": 443.3893279199999,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": -87.15178019999999,
+          "gross_notional_usd": 87.15178019999999,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": -63.9965448,
+          "gross_notional_usd": 63.9965448,
+          "n_legs": 1
+        }
+      ],
+      "n_pnl_rows": 15,
+      "n_exposure_rows": 14,
+      "winners": [
+        {
+          "symbol": "AMZO",
+          "description": "TRADR 2X SHORT AMZN DAILY ET",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 4672.736183,
+          "borrow_fees": -183.24,
+          "short_credit_interest": 21.69454911473016,
+          "total_pnl": 4511.19073211473
+        },
+        {
+          "symbol": "SOXS",
+          "description": "DIREX DAI SEMI BE 3X ETF-USD",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 2537.807821,
+          "borrow_fees": -55.3,
+          "short_credit_interest": 2.306494968290824,
+          "total_pnl": 2459.2843159682902
+        },
+        {
+          "symbol": "NVDQ",
+          "description": "T-REX 2X INVERSE NVIDIA DLY",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 1991.263862,
+          "borrow_fees": -133.36,
+          "short_credit_interest": 6.937857737801552,
+          "total_pnl": 1864.8417197378017
+        },
+        {
+          "symbol": "SQQQ",
+          "description": "PROSHARES ULTRAPRO SHORT QQQ",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 1603.848082,
+          "borrow_fees": -24.64,
+          "short_credit_interest": 6.612839735563186,
+          "total_pnl": 1556.4509217355633
+        },
+        {
+          "symbol": "TSLQ",
+          "description": "TRADR 2X SHORT TSLA DAILY ET",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 1141.900642,
+          "borrow_fees": -55.19,
+          "short_credit_interest": 10.023286065844635,
+          "total_pnl": 1096.7339280658446
+        }
+      ],
+      "losers": [
+        {
+          "symbol": "DUST",
+          "description": "DIR DLY GOL MN IDX BR 2X ETF",
+          "realized_pnl": -3.4059583,
+          "unrealized_pnl": -1199.295048,
+          "borrow_fees": -177.21,
+          "short_credit_interest": 16.81536874425584,
+          "total_pnl": -1453.7456375557442
+        },
+        {
+          "symbol": "ZSL",
+          "description": "PROSHARES ULTRASHORT SILVER",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -262.617632,
+          "borrow_fees": -408.19,
+          "short_credit_interest": 11.356998473118953,
+          "total_pnl": -659.450633526881
+        },
+        {
+          "symbol": "EWV",
+          "description": "PROSHARES ULTSHRT MSCI JAPAN",
+          "realized_pnl": -379.67922922,
+          "unrealized_pnl": 100.277871,
+          "borrow_fees": -10.54,
+          "short_credit_interest": 2.8113022104439547,
+          "total_pnl": -288.59005600955606
+        },
+        {
+          "symbol": "FAZ",
+          "description": "DIREX DLY FIN BEA 3X ETF-USD",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 21.695122,
+          "borrow_fees": -66.0,
+          "short_credit_interest": 9.938236238295,
+          "total_pnl": -60.49664176170499
+        },
+        {
+          "symbol": "NVYY",
+          "description": "GRANITE YIELDBOOST NVDA",
+          "realized_pnl": 104.42386226,
+          "unrealized_pnl": 3.595803,
+          "borrow_fees": -7.5,
+          "short_credit_interest": 0.4123105230093919,
+          "total_pnl": -57.58802421699061
+        }
+      ]
+    },
+    "bucket_4": {
+      "bucket": "bucket_4",
+      "pnl_rows": [
+        {
+          "symbol": "SMZ",
+          "description": "TRADR 2X SHORT SMR DAILY ETF",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 1417.781426,
+          "borrow_fees": -4.61,
+          "short_credit_interest": 137.90657022310307,
+          "total_pnl": 1551.0779962231031
+        },
+        {
+          "symbol": "CLSZ",
+          "description": "TRADR 2X SHRT CLSK DAILY ETF",
+          "realized_pnl": 342.45757941,
+          "unrealized_pnl": 21.112774,
+          "borrow_fees": -1.02,
+          "short_credit_interest": 22.53343138943881,
+          "total_pnl": 385.0837847994388
+        },
+        {
+          "symbol": "WEBS",
+          "description": "DIREXION DAILY DOW JONES INT",
+          "realized_pnl": 313.26477971,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -1.06,
+          "short_credit_interest": 0.0,
+          "total_pnl": 312.20477971
+        },
+        {
+          "symbol": "QID",
+          "description": "PROSHARES ULTRASHORT QQQ",
+          "realized_pnl": 72.44317078,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -0.79,
+          "short_credit_interest": 0.0,
+          "total_pnl": 71.65317078
+        },
+        {
+          "symbol": "MSDD",
+          "description": "GRANITE 2X SHORT MSTR ETF",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 2.312928,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 4.184204244138198,
+          "total_pnl": 6.497132244138198
+        },
+        {
+          "symbol": "MSTZ",
+          "description": "T-REX 2X INVERSE MSTR DT ETF",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -3.5322,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 3.712088568558407,
+          "total_pnl": 0.1798885685584066
+        },
+        {
+          "symbol": "CRCD",
+          "description": "T-REX 2X INV CRCL DA TAR ETF",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -12.363394,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 7.080182499928225,
+          "total_pnl": -5.283211500071775
+        },
+        {
+          "symbol": "DXD",
+          "description": "PROSHARES ULTRASHORT DOW30",
+          "realized_pnl": -24.50723037,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -1.6,
+          "short_credit_interest": 0.0,
+          "total_pnl": -26.10723037
+        },
+        {
+          "symbol": "SDOW",
+          "description": "PROSHARES ULTPRO SHRT DOW30",
+          "realized_pnl": -26.86841554,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -0.93,
+          "short_credit_interest": 0.0,
+          "total_pnl": -27.79841554
+        },
+        {
+          "symbol": "CORD",
+          "description": "T-REX 2X INV CRWV DA TAR ETF",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -84.437608,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 20.46250546682553,
+          "total_pnl": -63.97510253317447
+        },
+        {
+          "symbol": "IREZ",
+          "description": "TRDR 2X SH IREN DLY ETF",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -122.118826,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 22.73193849200902,
+          "total_pnl": -99.38688750799098
+        },
+        {
+          "symbol": "ASTN",
+          "description": "DFNCE DT 2X SHORT ASTS",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -203.95978,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 19.949676283534345,
+          "total_pnl": -184.0101037164657
+        }
+      ],
+      "exposure_rows": [
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 270837.24624,
+          "gross_notional_usd": 270837.24624,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 95946.59683518,
+          "gross_notional_usd": 95946.59683518,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 15888.754103040004,
+          "gross_notional_usd": 15888.754103040004,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 15809.1121992,
+          "gross_notional_usd": 15809.1121992,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 14313.3391038,
+          "gross_notional_usd": 14313.3391038,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 13830.48441598,
+          "gross_notional_usd": 13830.48441598,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 4971.39154512,
+          "gross_notional_usd": 4971.39154512,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 2900.241386294,
+          "gross_notional_usd": 2900.241386294,
+          "n_legs": 1
+        },
+        {
+          "underlying": "",
+          "symbols": "",
+          "net_notional_usd": 2587.51079055,
+          "gross_notional_usd": 2587.51079055,
+          "n_legs": 1
+        }
+      ],
+      "n_pnl_rows": 12,
+      "n_exposure_rows": 9,
+      "winners": [
+        {
+          "symbol": "SMZ",
+          "description": "TRADR 2X SHORT SMR DAILY ETF",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 1417.781426,
+          "borrow_fees": -4.61,
+          "short_credit_interest": 137.90657022310307,
+          "total_pnl": 1551.0779962231031
+        },
+        {
+          "symbol": "CLSZ",
+          "description": "TRADR 2X SHRT CLSK DAILY ETF",
+          "realized_pnl": 342.45757941,
+          "unrealized_pnl": 21.112774,
+          "borrow_fees": -1.02,
+          "short_credit_interest": 22.53343138943881,
+          "total_pnl": 385.0837847994388
+        },
+        {
+          "symbol": "WEBS",
+          "description": "DIREXION DAILY DOW JONES INT",
+          "realized_pnl": 313.26477971,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -1.06,
+          "short_credit_interest": 0.0,
+          "total_pnl": 312.20477971
+        },
+        {
+          "symbol": "QID",
+          "description": "PROSHARES ULTRASHORT QQQ",
+          "realized_pnl": 72.44317078,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -0.79,
+          "short_credit_interest": 0.0,
+          "total_pnl": 71.65317078
+        },
+        {
+          "symbol": "MSDD",
+          "description": "GRANITE 2X SHORT MSTR ETF",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 2.312928,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 4.184204244138198,
+          "total_pnl": 6.497132244138198
+        }
+      ],
+      "losers": [
+        {
+          "symbol": "ASTN",
+          "description": "DFNCE DT 2X SHORT ASTS",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -203.95978,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 19.949676283534345,
+          "total_pnl": -184.0101037164657
+        },
+        {
+          "symbol": "IREZ",
+          "description": "TRDR 2X SH IREN DLY ETF",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -122.118826,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 22.73193849200902,
+          "total_pnl": -99.38688750799098
+        },
+        {
+          "symbol": "CORD",
+          "description": "T-REX 2X INV CRWV DA TAR ETF",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -84.437608,
+          "borrow_fees": 0.0,
+          "short_credit_interest": 20.46250546682553,
+          "total_pnl": -63.97510253317447
+        },
+        {
+          "symbol": "SDOW",
+          "description": "PROSHARES ULTPRO SHRT DOW30",
+          "realized_pnl": -26.86841554,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -0.93,
+          "short_credit_interest": 0.0,
+          "total_pnl": -27.79841554
+        },
+        {
+          "symbol": "DXD",
+          "description": "PROSHARES ULTRASHORT DOW30",
+          "realized_pnl": -24.50723037,
+          "unrealized_pnl": 0.0,
+          "borrow_fees": -1.6,
+          "short_credit_interest": 0.0,
+          "total_pnl": -26.10723037
+        }
+      ]
+    }
+  },
+  "borrow_panel": {
+    "borrow": {
+      "n_rows": 0,
+      "total_interest_usd": 0.0,
+      "max_fee_rate_pct": 0.0,
+      "names_over_30pct": [],
+      "names_over_90pct": []
+    },
+    "positions": {
+      "n_positions": 483,
+      "long_notional_usd": 21558111.12,
+      "short_notional_usd": -1869518.52,
+      "gross_notional_usd": 23427629.64,
+      "net_notional_usd": 19688592.6
+    },
+    "breaches": []
+  },
+  "universe_counts": {
+    "kept_symbols": 549,
+    "kept_underlyings": 203,
+    "universe_allowed_etfs": 482,
+    "universe_allowed_underlyings": 234
+  },
+  "raw_totals": {
+    "run_date": "2026-05-15",
+    "fifo_summary_present": true,
+    "total_realized_pnl": 92950.99029928,
+    "total_unrealized_pnl": 1412.82452200001,
+    "total_dividends": 664.99,
+    "total_withholding_tax": -15.699999999999998,
+    "total_pil_dividends": -32065.72,
+    "total_borrow_fees": -19079.91,
+    "total_short_credit_interest": 4760.93,
+    "total_other_fees": -1.82,
+    "total_bond_interest": 0.0,
+    "total_pnl": 48626.584821279976,
+    "excluded_cash_interest_base": -9846.517540700002,
+    "borrow_mode": "borrow_fee_details_cumulative_by_symbol",
+    "borrow_total_account_source": -19079.91,
+    "borrow_details_file_present": true,
+    "borrow_details_rows_cumulative": 333,
+    "universe_source": "/home/runner/work/ls-algo/ls-algo/data/etf_screened_today.csv",
+    "universe_allowed_etfs": 482,
+    "universe_allowed_underlyings": 234,
+    "kept_symbols": 549,
+    "kept_underlyings": 203,
+    "net_exposure_total": -752462.2285642165,
+    "gross_exposure_total": 4195127.279764216,
+    "net_exposure_bucket_1": -707601.7118172762,
+    "gross_exposure_bucket_1": 3966574.483769143,
+    "net_exposure_bucket_2": -44860.516746940426,
+    "gross_exposure_bucket_2": 228552.79599507278,
+    "net_exposure_bucket_3": 85047.28575474919,
+    "gross_exposure_bucket_3": 86236.36106058919,
+    "net_exposure_bucket_4": 437084.676619164,
+    "gross_exposure_bucket_4": 437084.676619164,
+    "yfinance_override": false,
+    "yfinance_symbols_overridden": 0,
+    "bucket_split_method": "held_exposure",
+    "bucket_component_split_method": "lot_timed",
+    "bucket3_flow_low_beta_symbols": [
+      "AZYY",
+      "NVYY",
+      "PLYY",
+      "TQQY",
+      "TSYY"
+    ],
+    "bucket_state_path": "/home/runner/work/ls-algo/ls-algo/data/accounting/underlying_bucket_state.csv",
+    "bucket_realized_underlyings_from_trade_timing": 170,
+    "bucket_pnl": {
+      "bucket_2": 25381.1771824264,
+      "bucket_1": 10714.780026511591,
+      "bucket_3": 10610.491811184469,
+      "bucket_4": 1920.1358011575358
+    }
+  },
+  "limits": {
+    "gross_exposure_pct_nav": {
+      "warn": 4.4,
+      "hard": 5.0
+    },
+    "abs_net_beta": {
+      "warn": 0.15,
+      "hard": 0.2
+    },
+    "sleeve_drift_pp": {
+      "warn": 10.0,
+      "hard": 20.0
+    },
+    "es99_1d_pct_nav": {
+      "warn": 0.012,
+      "hard": 0.02
+    },
+    "borrow_apr_pct_b4": {
+      "warn": 60.0,
+      "hard": 90.0
+    },
+    "borrow_apr_pct_default": {
+      "warn": 20.0,
+      "hard": 30.0
+    },
+    "shares_outstanding_pct": {
+      "warn": 15.0,
+      "hard": 20.0
+    },
+    "aum_to_adv": {
+      "warn": 0.3,
+      "hard": 1.0
+    },
+    "premium_discount_zscore": {
+      "warn": 3.0,
+      "hard": 5.0
+    }
+  },
+  "sleeve_target_weights": {
+    "bucket_1": 0.55,
+    "bucket_2": 0.2,
+    "bucket_3": null,
+    "bucket_4": 0.25
+  }
+}
