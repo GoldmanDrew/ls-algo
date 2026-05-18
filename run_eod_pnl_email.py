@@ -42,6 +42,15 @@ ATTRIBUTION_HISTORY_CSV = LEDGER_DIR / "pnl_attribution_history.csv"
 PLOT_ATTRIBUTION_PNG = LEDGER_DIR / "pnl_attribution_timeseries.png"
 START_DATE = "2026-02-27"
 PAIR_EXPOSURE_MIN_ABS_NET_USD = 500.0
+BUCKET_KEYS: tuple[str, ...] = ("bucket_1", "bucket_2", "bucket_3", "bucket_4")
+BUCKET_LABELS: dict[str, str] = {
+    "bucket_1": "Bucket 1",
+    "bucket_2": "Bucket 2",
+    "bucket_3": "Bucket 3",
+    "bucket_4": "Bucket 4",
+}
+DEFAULT_MAINT_MARGIN_LONG = 0.25
+DEFAULT_MAINT_MARGIN_SHORT = 0.30
 
 # Columns persisted in pnl_attribution_history.csv (YTD snapshot per run_date, same convention as pnl_history).
 ATTRIBUTION_HISTORY_COLS: tuple[str, ...] = (
@@ -320,7 +329,233 @@ def ensure_ledger_dir() -> None:
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
 
 
-PNL_HISTORY_BUCKET_COLS = ("pnl_bucket_1", "pnl_bucket_2", "pnl_bucket_3", "pnl_bucket_4")
+PNL_HISTORY_BUCKET_COLS = tuple(f"pnl_{b}" for b in BUCKET_KEYS)
+PNL_HISTORY_CAPITAL_COLS = tuple(
+    f"{metric}_{bucket}"
+    for metric in ("net_capital", "gross_capital", "margin_req")
+    for bucket in BUCKET_KEYS
+)
+PNL_HISTORY_RETURN_BASE_COLS = PNL_HISTORY_BUCKET_COLS + PNL_HISTORY_CAPITAL_COLS
+
+
+def _empty_bucket_capital_snapshot() -> dict[str, float]:
+    return {c: 0.0 for c in PNL_HISTORY_CAPITAL_COLS}
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    try:
+        out = pd.to_numeric(value, errors="coerce")
+        if pd.isna(out):
+            return default
+        return float(out)
+    except Exception:
+        return default
+
+
+def _load_screened_for_run(run_date: str) -> pd.DataFrame:
+    dated = RUNS_ROOT / run_date / "etf_screened_today.csv"
+    latest = PROJECT_ROOT / "data" / "etf_screened_today.csv"
+    p = dated if dated.exists() else latest
+    if not p.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(p)
+    except Exception:
+        return pd.DataFrame()
+
+
+def _normalise_bucket_key(value: object) -> str | None:
+    s = str(value or "").strip()
+    return s if s in BUCKET_KEYS else None
+
+
+def _pnl_symbol_bucket_map(pnl_symbol: pd.DataFrame) -> dict[str, set[str]]:
+    if pnl_symbol is None or pnl_symbol.empty or "symbol" not in pnl_symbol.columns or "bucket" not in pnl_symbol.columns:
+        return {}
+    out: dict[str, set[str]] = {}
+    for _, row in pnl_symbol.iterrows():
+        sym = canonical_symbol(str(row.get("symbol", "") or ""))
+        bucket = _normalise_bucket_key(row.get("bucket"))
+        if sym and bucket:
+            out.setdefault(sym, set()).add(bucket)
+    return out
+
+
+def _screened_margin_and_bucket_maps(screened: pd.DataFrame) -> tuple[set[str], dict[str, str], dict[str, tuple[float, float]]]:
+    etf_symbols: set[str] = set()
+    bucket_by_symbol: dict[str, str] = {}
+    margin_by_symbol: dict[str, tuple[float, float]] = {}
+    if screened is None or screened.empty or "ETF" not in screened.columns:
+        return etf_symbols, bucket_by_symbol, margin_by_symbol
+
+    for _, row in screened.iterrows():
+        sym = canonical_symbol(str(row.get("ETF", "") or ""))
+        if not sym:
+            continue
+        etf_symbols.add(sym)
+        bucket = _normalise_bucket_key(row.get("bucket"))
+        if bucket:
+            bucket_by_symbol[sym] = bucket
+        margin_by_symbol[sym] = (
+            _safe_float(row.get("maint_pct_long"), DEFAULT_MAINT_MARGIN_LONG),
+            _safe_float(row.get("maint_pct_short"), DEFAULT_MAINT_MARGIN_SHORT),
+        )
+    return etf_symbols, bucket_by_symbol, margin_by_symbol
+
+
+def _lot_qty_map(lot_state: pd.DataFrame | None) -> dict[str, dict[str, float]]:
+    if lot_state is None or lot_state.empty or "underlying" not in lot_state.columns:
+        return {}
+    out: dict[str, dict[str, float]] = {}
+    for _, row in lot_state.iterrows():
+        under = canonical_symbol(str(row.get("underlying", "") or ""))
+        if not under:
+            continue
+        out[under] = {
+            "bucket_1": _safe_float(row.get("qty_b1"), 0.0),
+            "bucket_2": _safe_float(row.get("qty_b2"), 0.0),
+            "bucket_4": _safe_float(row.get("qty_b4"), 0.0),
+        }
+    return out
+
+
+def compute_bucket_capital_snapshot(
+    positions: pd.DataFrame,
+    pnl_symbol: pd.DataFrame,
+    screened: pd.DataFrame,
+    lot_state: pd.DataFrame | None = None,
+) -> dict[str, float]:
+    """
+    Compute current per-bucket capital bases from open positions.
+
+    Net capital is signed long MV less absolute short MV. Gross capital is abs(MV).
+    Maintenance margin requirement uses screened ETF margin percentages when
+    available and conservative stock defaults for spot underlyings.
+    """
+    snap = _empty_bucket_capital_snapshot()
+    if positions is None or positions.empty or "symbol" not in positions.columns:
+        return snap
+
+    etf_symbols, screened_bucket_by_symbol, margin_by_symbol = _screened_margin_and_bucket_maps(screened)
+    bucket_sets_by_symbol = _pnl_symbol_bucket_map(pnl_symbol)
+    lot_qty_by_under = _lot_qty_map(lot_state)
+
+    def _add(bucket: str | None, signed_mv: float, margin_key: str | None) -> None:
+        if bucket not in BUCKET_KEYS or abs(signed_mv) <= 1e-12:
+            return
+        long_pct, short_pct = margin_by_symbol.get(
+            margin_key or "",
+            (DEFAULT_MAINT_MARGIN_LONG, DEFAULT_MAINT_MARGIN_SHORT),
+        )
+        margin_pct = long_pct if signed_mv >= 0 else short_pct
+        snap[f"net_capital_{bucket}"] += signed_mv
+        snap[f"gross_capital_{bucket}"] += abs(signed_mv)
+        snap[f"margin_req_{bucket}"] += abs(signed_mv) * margin_pct
+
+    pos = positions.copy()
+    pos["symbol"] = pos["symbol"].map(lambda s: canonical_symbol(str(s)))
+    pos = pos[(pos["symbol"].astype(bool)) & (~pos["symbol"].isin(EXCLUDE_SYMBOLS))].copy()
+    if pos.empty:
+        return snap
+
+    for _, row in pos.iterrows():
+        sym = str(row.get("symbol", "") or "")
+        position = _safe_float(row.get("position"), 0.0)
+        mark = _safe_float(row.get("markPrice"), 0.0)
+        fx = _safe_float(row.get("fxRateToBase"), 1.0)
+        signed_mv = _safe_float(row.get("positionValue_base"), position * mark * fx)
+        px_base = mark * fx
+        if abs(signed_mv) <= 1e-12 and abs(position) > 1e-12 and px_base > 0:
+            signed_mv = position * px_base
+
+        bucket_set = bucket_sets_by_symbol.get(sym, set())
+        unique_bucket = next(iter(bucket_set)) if len(bucket_set) == 1 else None
+
+        if sym in etf_symbols:
+            _add(unique_bucket or screened_bucket_by_symbol.get(sym), signed_mv, sym)
+            continue
+
+        lot_qty = lot_qty_by_under.get(sym)
+        if lot_qty:
+            any_lot = False
+            for bucket, qty in lot_qty.items():
+                if abs(qty) <= 1e-12:
+                    continue
+                any_lot = True
+                _add(bucket, qty * px_base, None)
+            if any_lot:
+                continue
+
+        _add(unique_bucket, signed_mv, None)
+
+    return snap
+
+
+def build_bucket_capital_snapshot_from_run(run_date: str) -> dict[str, float]:
+    outdir = RUNS_ROOT / run_date / "accounting"
+    flex_positions_xml = RUNS_ROOT / run_date / "ibkr_flex" / "flex_positions.xml"
+    pnl_symbol_csv = outdir / "pnl_by_symbol.csv"
+    lot_state_csv = outdir / "bucket_lot_cost_state.csv"
+    if not flex_positions_xml.exists() or not pnl_symbol_csv.exists():
+        return _empty_bucket_capital_snapshot()
+
+    try:
+        positions = parse_open_positions(flex_positions_xml)
+        pnl_symbol = pd.read_csv(pnl_symbol_csv)
+        screened = _load_screened_for_run(run_date)
+        lot_state = pd.read_csv(lot_state_csv) if lot_state_csv.exists() else pd.DataFrame()
+    except Exception:
+        return _empty_bucket_capital_snapshot()
+    return compute_bucket_capital_snapshot(positions, pnl_symbol, screened, lot_state)
+
+
+def _safe_return(numerator: float, denominator: float) -> float | None:
+    if abs(denominator) <= 1e-12:
+        return None
+    return numerator / denominator
+
+
+def _fmt_pct(value: float | None) -> str:
+    return "n/a" if value is None or pd.isna(value) else f"{100.0 * float(value):,.2f}%"
+
+
+def format_bucket_return_table(
+    bucket_pnl: dict[str, float],
+    capital_snapshot: dict[str, float],
+) -> str:
+    headers = ["BUCKET", "PNL", "NET_CAP", "GROSS_CAP", "MAINT_MARGIN", "ROC", "ROG", "ROM"]
+    rows: list[list[str]] = []
+    for bucket in BUCKET_KEYS:
+        pnl = float(bucket_pnl.get(bucket, 0.0) or 0.0)
+        net_cap = float(capital_snapshot.get(f"net_capital_{bucket}", 0.0) or 0.0)
+        gross_cap = float(capital_snapshot.get(f"gross_capital_{bucket}", 0.0) or 0.0)
+        margin_req = float(capital_snapshot.get(f"margin_req_{bucket}", 0.0) or 0.0)
+        rows.append(
+            [
+                BUCKET_LABELS[bucket],
+                f"{pnl:,.2f}",
+                f"{net_cap:,.2f}",
+                f"{gross_cap:,.2f}",
+                f"{margin_req:,.2f}",
+                _fmt_pct(_safe_return(pnl, net_cap)),
+                _fmt_pct(_safe_return(pnl, gross_cap)),
+                _fmt_pct(_safe_return(pnl, margin_req)),
+            ]
+        )
+
+    widths = [
+        max(len(headers[i]), *(len(r[i]) for r in rows))
+        for i in range(len(headers))
+    ]
+    lines = [
+        "  ".join(headers[i].ljust(widths[i]) if i == 0 else headers[i].rjust(widths[i]) for i in range(len(headers))),
+        "-" * (sum(widths) + 2 * (len(headers) - 1)),
+    ]
+    for r in rows:
+        lines.append(
+            "  ".join(r[i].ljust(widths[i]) if i == 0 else r[i].rjust(widths[i]) for i in range(len(r)))
+        )
+    return "\n".join(lines)
 
 
 def format_pair_exposure_flags(
@@ -701,14 +936,16 @@ def _omit_from_pnl_history_calendar_date(dt: pd.Timestamp) -> bool:
 
 def enrich_history_bucket_cols_from_runs(hist: pd.DataFrame) -> pd.DataFrame:
     """
-    Fill pnl_bucket_* (and total_pnl) from data/runs/<date>/accounting for every
-    run date on or after START_DATE that has bucket outputs.
+    Fill pnl_bucket_*, total_pnl, and bucket capital bases from
+    data/runs/<date>/accounting for every run date on or after START_DATE that
+    has bucket outputs.
     """
     if not RUNS_ROOT.is_dir():
         return hist
 
     start_dt = pd.to_datetime(START_DATE)
     updates: dict[str, tuple[float, float, float, float]] = {}
+    capital_updates: dict[str, dict[str, float]] = {}
     for child in RUNS_ROOT.iterdir():
         if not child.is_dir():
             continue
@@ -725,6 +962,7 @@ def enrich_history_bucket_cols_from_runs(hist: pd.DataFrame) -> pd.DataFrame:
         if triple is None:
             continue
         updates[ds] = triple
+        capital_updates[ds] = build_bucket_capital_snapshot_from_run(ds)
 
     if not updates:
         return hist
@@ -737,11 +975,15 @@ def enrich_history_bucket_cols_from_runs(hist: pd.DataFrame) -> pd.DataFrame:
             hist[c] = np.nan
     if "total_pnl" not in hist.columns:
         hist["total_pnl"] = np.nan
+    for c in PNL_HISTORY_CAPITAL_COLS:
+        if c not in hist.columns:
+            hist[c] = np.nan
 
     date_key = hist["date"].dt.strftime("%Y-%m-%d")
     new_rows: list[dict] = []
     for ds, (b1, b2, b3, b4) in updates.items():
         tot = b1 + b2 + b3 + b4
+        cap = capital_updates.get(ds, {})
         m = date_key == ds
         if m.any():
             hist.loc[m, "pnl_bucket_1"] = b1
@@ -749,17 +991,20 @@ def enrich_history_bucket_cols_from_runs(hist: pd.DataFrame) -> pd.DataFrame:
             hist.loc[m, "pnl_bucket_3"] = b3
             hist.loc[m, "pnl_bucket_4"] = b4
             hist.loc[m, "total_pnl"] = tot
+            for c in PNL_HISTORY_CAPITAL_COLS:
+                hist.loc[m, c] = float(cap.get(c, np.nan))
         else:
-            new_rows.append(
-                {
-                    "date": pd.to_datetime(ds),
-                    "pnl_bucket_1": b1,
-                    "pnl_bucket_2": b2,
-                    "pnl_bucket_3": b3,
-                    "pnl_bucket_4": b4,
-                    "total_pnl": tot,
-                }
-            )
+            row = {
+                "date": pd.to_datetime(ds),
+                "pnl_bucket_1": b1,
+                "pnl_bucket_2": b2,
+                "pnl_bucket_3": b3,
+                "pnl_bucket_4": b4,
+                "total_pnl": tot,
+            }
+            for c in PNL_HISTORY_CAPITAL_COLS:
+                row[c] = float(cap.get(c, np.nan))
+            new_rows.append(row)
 
     if new_rows:
         hist = pd.concat([hist, pd.DataFrame(new_rows)], ignore_index=True)
@@ -776,25 +1021,31 @@ def update_pnl_history(
     b2: float,
     b3: float,
     b4: float,
+    bucket_capital: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """
     Appends (or overwrites) a row in pnl_history.csv for the given run_date.
-    Stores per-bucket YTD PnL columns plus total_pnl (= sum of buckets).
+    Stores per-bucket YTD PnL columns, bucket capital bases, plus total_pnl
+    (= sum of buckets).
     Returns the full history DF filtered from START_DATE onward.
     """
     ensure_ledger_dir()
 
     total_pnl = float(b1) + float(b2) + float(b3) + float(b4)
+    bucket_capital = bucket_capital or _empty_bucket_capital_snapshot()
+    row_obj = {
+        "date": run_date,
+        "pnl_bucket_1": float(b1),
+        "pnl_bucket_2": float(b2),
+        "pnl_bucket_3": float(b3),
+        "pnl_bucket_4": float(b4),
+        "total_pnl": total_pnl,
+    }
+    for c in PNL_HISTORY_CAPITAL_COLS:
+        row_obj[c] = float(bucket_capital.get(c, 0.0) or 0.0)
     row = pd.DataFrame(
         [
-            {
-                "date": run_date,
-                "pnl_bucket_1": float(b1),
-                "pnl_bucket_2": float(b2),
-                "pnl_bucket_3": float(b3),
-                "pnl_bucket_4": float(b4),
-                "total_pnl": total_pnl,
-            }
+            row_obj
         ]
     )
 
@@ -810,6 +1061,9 @@ def update_pnl_history(
             for c in PNL_HISTORY_BUCKET_COLS:
                 if c not in hist.columns:
                     hist[c] = np.nan
+            for c in PNL_HISTORY_CAPITAL_COLS:
+                if c not in hist.columns:
+                    hist[c] = np.nan
             if "total_pnl" not in hist.columns:
                 hist["total_pnl"] = np.nan
             hist = hist[hist["date"] != run_date]
@@ -821,6 +1075,8 @@ def update_pnl_history(
     hist["date"] = pd.to_datetime(hist["date"], errors="coerce")
     hist = hist.dropna(subset=["date"]).sort_values("date")
     for c in PNL_HISTORY_BUCKET_COLS:
+        hist[c] = pd.to_numeric(hist.get(c, np.nan), errors="coerce")
+    for c in PNL_HISTORY_CAPITAL_COLS:
         hist[c] = pd.to_numeric(hist.get(c, np.nan), errors="coerce")
     hist["total_pnl"] = pd.to_numeric(hist["total_pnl"], errors="coerce")
 
@@ -1501,8 +1757,21 @@ def main() -> int:
 
     # 5) Update history + plot since START_DATE
     grand_total = b1_pnl_total + b2_pnl_total + b3_pnl_total + b4_pnl_total
+    bucket_pnl_map = {
+        "bucket_1": b1_pnl_total,
+        "bucket_2": b2_pnl_total,
+        "bucket_3": b3_pnl_total,
+        "bucket_4": b4_pnl_total,
+    }
+    bucket_capital_snapshot = build_bucket_capital_snapshot_from_run(run_date)
+    bucket_return_table = format_bucket_return_table(bucket_pnl_map, bucket_capital_snapshot)
     hist = update_pnl_history(
-        run_date, b1=b1_pnl_total, b2=b2_pnl_total, b3=b3_pnl_total, b4=b4_pnl_total
+        run_date,
+        b1=b1_pnl_total,
+        b2=b2_pnl_total,
+        b3=b3_pnl_total,
+        b4=b4_pnl_total,
+        bucket_capital=bucket_capital_snapshot,
     )
     period_pnl_summary = format_period_pnl_summary(hist, run_date)
     plot_path = make_pnl_plot(hist)
@@ -1575,6 +1844,12 @@ def main() -> int:
         f"  Bucket 2 (Standard, 0 < β ≤ 1.5): {b2_pnl_total:,.2f}\n"
         f"  Bucket 3 (Inverse, β < 0):       {b3_pnl_total:,.2f}\n\n"
         f"  Bucket 4 (Inverse decay, β < 0): {b4_pnl_total:,.2f}\n\n"
+        "BUCKET RETURNS ON CAPITAL:\n"
+        "----------------------------------------\n"
+        f"{bucket_return_table}\n"
+        "----------------------------------------\n"
+        "ROC = PnL / net capital deployed (long MV - abs(short MV)); "
+        "ROG = PnL / gross capital; ROM = PnL / maintenance margin requirement.\n\n"
         f"{period_pnl_summary}\n\n"
         "════════════════════════════════════════\n"
         "PnL Bucket 1 — Levered (β > 1.5) by underlying:\n"
@@ -1650,6 +1925,7 @@ def main() -> int:
         "- pnl_by_symbol.csv\n"
         "- pnl_by_bucket.csv\n"
         "- totals.json\n"
+        "- pnl_history.csv  (bucket PnL and capital history)\n"
         "- pnl_attribution_history.csv\n"
         f"- {plot_path.name}\n"
         f"- {att_plot_path.name}\n"
@@ -1668,6 +1944,7 @@ def main() -> int:
         totals_json_path,
         plot_path,
         att_plot_path,
+        PNL_HISTORY_CSV,
         ATTRIBUTION_HISTORY_CSV,
         discrepancy_plot_path,
         discrepancy_csv_path,
