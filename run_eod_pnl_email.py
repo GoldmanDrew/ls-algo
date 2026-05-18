@@ -49,6 +49,8 @@ BUCKET_LABELS: dict[str, str] = {
     "bucket_3": "Bucket 3",
     "bucket_4": "Bucket 4",
 }
+# ROC = PnL / net capital is only meaningful when net exposure is positive (B1).
+BUCKETS_WITHOUT_ROC: frozenset[str] = frozenset({"bucket_2", "bucket_3", "bucket_4"})
 DEFAULT_MAINT_MARGIN_LONG = 0.25
 DEFAULT_MAINT_MARGIN_SHORT = 0.30
 
@@ -573,6 +575,11 @@ def format_bucket_return_table(
         net_cap = float(capital_snapshot.get(f"net_capital_{bucket}", 0.0) or 0.0)
         gross_cap = float(capital_snapshot.get(f"gross_capital_{bucket}", 0.0) or 0.0)
         margin_req = float(capital_snapshot.get(f"margin_req_{bucket}", 0.0) or 0.0)
+        roc = (
+            "n/a"
+            if bucket in BUCKETS_WITHOUT_ROC
+            else _fmt_pct(_safe_return(pnl, net_cap))
+        )
         rows.append(
             [
                 BUCKET_LABELS[bucket],
@@ -580,7 +587,7 @@ def format_bucket_return_table(
                 f"{net_cap:,.2f}",
                 f"{gross_cap:,.2f}",
                 f"{margin_req:,.2f}",
-                _fmt_pct(_safe_return(pnl, net_cap)),
+                roc,
                 _fmt_pct(_safe_return(pnl, gross_cap)),
                 _fmt_pct(_safe_return(pnl, margin_req)),
             ]
@@ -1895,7 +1902,8 @@ def main() -> int:
         "AVG_NET_CAP = average daily net capital deployed (long MV - abs(short MV)); "
         "AVG_GROSS_CAP = average daily gross MV; "
         "AVG_MAINT_MARGIN = average daily maintenance margin requirement. "
-        "ROC / ROG / ROM = YTD PnL divided by the matching averaged denominator.\n\n"
+        "ROC = YTD PnL / avg net capital (Bucket 1 only; n/a for Buckets 2–4 where net exposure is negative). "
+        "ROG / ROM = YTD PnL divided by the matching averaged denominator.\n\n"
         f"{period_pnl_summary}\n\n"
         "════════════════════════════════════════\n"
         "PnL Bucket 1 — Levered (β > 1.5) by underlying:\n"

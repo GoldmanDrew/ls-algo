@@ -203,6 +203,9 @@ def test_format_bucket_return_table_includes_return_metrics():
             "net_capital_bucket_1": 100.0,
             "gross_capital_bucket_1": 200.0,
             "margin_req_bucket_1": 50.0,
+            "net_capital_bucket_2": -50.0,
+            "gross_capital_bucket_2": 200.0,
+            "margin_req_bucket_2": 50.0,
         },
     )
 
@@ -213,6 +216,16 @@ def test_format_bucket_return_table_includes_return_metrics():
     assert "10.00%" in table
     assert "5.00%" in table
     assert "20.00%" in table
+    # Buckets 2–4 use negative net exposure; ROC is not meaningful.
+    lines = table.splitlines()
+    b2_row = next(line for line in lines if line.startswith("Bucket 2"))
+    b3_row = next(line for line in lines if line.startswith("Bucket 3"))
+    b4_row = next(line for line in lines if line.startswith("Bucket 4"))
+    assert "n/a" in b2_row
+    assert "n/a" in b3_row
+    assert "n/a" in b4_row
+    b1_row = next(line for line in lines if line.startswith("Bucket 1"))
+    assert "n/a" not in b1_row
 
 
 def test_compute_average_bucket_capital_means_daily_history():
