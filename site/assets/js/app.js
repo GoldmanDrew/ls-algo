@@ -35,6 +35,12 @@
     concentrationSectors: document.getElementById("concentration-sectors"),
     squeezeContent: document.getElementById("squeeze-content"),
     actionQueue: document.getElementById("action-queue"),
+    slideRiskContent: document.getElementById("slide-risk-content"),
+    slideRiskMeta: document.getElementById("slide-risk-meta"),
+    borrowShockContent: document.getElementById("borrow-shock-content"),
+    borrowShockMeta: document.getElementById("borrow-shock-meta"),
+    volShockContent: document.getElementById("vol-shock-content"),
+    volShockMeta: document.getElementById("vol-shock-meta"),
     strip: document.getElementById("strip"),
     breaches: document.getElementById("breaches"),
     sleeveBody: document.querySelector("#sleeve-table tbody"),
@@ -735,6 +741,249 @@
     els.factorShort.innerHTML = rowTbl(panel.top_beta_short);
   }
 
+  /* ---------------- Slide risk strips (Phase 1) ---------------- */
+  function renderSlideRisk(panel) {
+    if (!els.slideRiskContent) return;
+    if (!panel || panel.available === false) {
+      els.slideRiskContent.innerHTML = `<div class="callout warn">${safeText(
+        panel?.reason,
+        "Slide risk panel unavailable: factor or NAV missing."
+      )}</div>`;
+      if (els.slideRiskMeta) els.slideRiskMeta.innerHTML = "";
+      return;
+    }
+    if (els.slideRiskMeta) {
+      const horizons = (panel.horizons_days || []).join(" / ");
+      const letf = panel.n_letf_names || 0;
+      const total = panel.n_names_total || 0;
+      els.slideRiskMeta.innerHTML = `<span class="dim small">T+${horizons} days &middot; ${letf}/${total} LETF names &middot; ${panel.n_names_with_vol || 0} with realized vol</span>`;
+    }
+    const worst = panel.worst_shock || null;
+    const worstBanner = worst
+      ? `<div class="callout warn" role="status"><strong>Worst slide:</strong> ${safeText(
+          worst.label
+        )} &rarr; ${fmtPct(worst.total_pnl_pct_nav, 2)} of NAV at T+${worst.horizon_days}.</div>`
+      : "";
+    const indices = panel.indices || [];
+    const stripsHtml = indices
+      .map((idx) => {
+        const rows = idx.shock_rows || [];
+        const horizons = panel.horizons_days || [0];
+        const headerCells = rows
+          .map((r) => `<th class="slide-shock">${r.shock_pct >= 0 ? "+" : ""}${(r.shock_pct * 100).toFixed(0)}%</th>`)
+          .join("");
+        const t0Row = rows
+          .map(
+            (r) =>
+              `<td class="num ${signedClass(r.pnl_pct_nav)} ${scenarioHeatClass(
+                r.pnl_pct_nav
+              )}" title="${safeText(r.label)}: ${fmtUsdSigned(r.pnl_usd)}">${fmtPct(
+                r.pnl_pct_nav,
+                1
+              )}</td>`
+          )
+          .join("");
+        const horizonRows = horizons
+          .filter((d) => d > 0)
+          .map((d) => {
+            const cells = rows
+              .map((r) => {
+                const h = (r.horizons || []).find((hh) => hh.horizon_days === d);
+                if (!h) return `<td class="dim">-</td>`;
+                return `<td class="num ${signedClass(
+                  h.total_pnl_pct_nav
+                )} ${scenarioHeatClass(h.total_pnl_pct_nav)}" title="decay ${fmtUsdSigned(
+                  h.decay_usd
+                )}">${fmtPct(h.total_pnl_pct_nav, 1)}</td>`;
+              })
+              .join("");
+            return `<tr><th class="row-label">T+${d}d</th>${cells}</tr>`;
+          })
+          .join("");
+        const worstNamesRow = rows
+          .map((r) => {
+            const tip = r.shock_pct < 0 ? r.top_loss : r.top_gain;
+            if (!tip) return `<td class="dim">-</td>`;
+            return `<td class="dim small">${safeText(tip.underlying)}<br>${fmtUsdSigned(
+              tip.pnl_t0_usd
+            )}</td>`;
+          })
+          .join("");
+        return `<div class="slide-strip">
+          <div class="slide-strip-head">
+            <h3>${safeText(idx.index)} <span class="dim small">(${Math.round(
+          (idx.coverage_pct || 0) * 100
+        )}% coverage, ${idx.n_names_covered}/${idx.n_names_total} names)</span></h3>
+          </div>
+          <div class="slide-strip-scroll">
+            <table class="tight slide-table">
+              <thead><tr><th class="row-label">Shock</th>${headerCells}</tr></thead>
+              <tbody>
+                <tr><th class="row-label">T+0</th>${t0Row}</tr>
+                ${horizonRows}
+                <tr class="dim"><th class="row-label">Top name</th>${worstNamesRow}</tr>
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+      })
+      .join("");
+    els.slideRiskContent.innerHTML = `${worstBanner}${stripsHtml || `<p class="dim">No index strips available.</p>`}`;
+  }
+
+  /* ---------------- Borrow shock strip (Phase 3) ---------------- */
+  function renderBorrowShock(panel) {
+    if (!els.borrowShockContent) return;
+    if (!panel || panel.available === false) {
+      els.borrowShockContent.innerHTML = `<div class="callout warn">${safeText(
+        panel?.reason,
+        "Borrow shock panel unavailable: positions or borrow data missing."
+      )}</div>`;
+      if (els.borrowShockMeta) els.borrowShockMeta.innerHTML = "";
+      return;
+    }
+    if (els.borrowShockMeta) {
+      els.borrowShockMeta.innerHTML = `<span class="dim small">${panel.n_short_symbols} short symbols &middot; current cost ${fmtUsd(
+        panel.current_annual_cost_usd
+      )} / yr (${fmtPct(panel.current_annual_cost_pct_nav, 2)} of NAV) &middot; ${panel.persistence_days}-day persistence column</span>`;
+    }
+    const renderLadder = (ladder, headerLabel) => {
+      if (!ladder || !ladder.length) return "";
+      const header = `<th>${headerLabel}</th><th>Ann. &Delta;</th><th>% NAV / yr</th><th>${panel.persistence_days}-day persist</th><th>Worst victim</th><th>Other top victims</th>`;
+      const body = ladder
+        .map((r) => {
+          const victims = r.worst_victims || [];
+          const v0 = victims[0];
+          const others = victims.slice(1, 4);
+          const v0Cell = v0
+            ? `<strong>${safeText(v0.symbol)}</strong> <span class="dim small">${fmtUsdSigned(
+                v0.annual_delta_usd
+              )}<br>APR ${(v0.current_apr_pct).toFixed(1)}&rarr;${(v0.new_apr_pct).toFixed(1)}%</span>`
+            : "-";
+          const othersCell = others
+            .map(
+              (v) =>
+                `${safeText(v.symbol)} <span class="dim small">${fmtUsdSigned(v.annual_delta_usd)}</span>`
+            )
+            .join(", ");
+          const heat = scenarioHeatClass(r.annual_delta_pct_nav);
+          return `<tr>
+            <td><strong>${safeText(r.label)}</strong></td>
+            <td class="num ${signedClass(r.annual_delta_usd)} ${heat}">${fmtUsdSigned(
+            r.annual_delta_usd
+          )}</td>
+            <td class="num ${signedClass(r.annual_delta_pct_nav)} ${heat}">${fmtPct(
+            r.annual_delta_pct_nav,
+            2
+          )}</td>
+            <td class="num ${signedClass(r.persistence_delta_usd)}">${fmtUsdSigned(
+            r.persistence_delta_usd
+          )}</td>
+            <td>${v0Cell}</td>
+            <td class="dim small">${othersCell || "-"}</td>
+          </tr>`;
+        })
+        .join("");
+      return `<table class="tight"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`;
+    };
+    const namesTable = (panel.names || []).length
+      ? `<h3>Top 25 shorts by annualized borrow cost</h3>
+         <table class="tight sortable"><thead><tr>
+           <th>Symbol</th><th>Short notional</th><th>APR</th><th>Current ann. cost</th>
+         </tr></thead><tbody>${(panel.names || [])
+           .map(
+             (n) => `<tr>
+             <td><strong>${safeText(n.symbol)}</strong></td>
+             <td class="num">${fmtUsd(n.short_notional_usd)}</td>
+             <td class="num">${(n.current_apr_pct || 0).toFixed(2)}%</td>
+             <td class="num">${fmtUsd(n.current_annual_cost_usd)}</td>
+           </tr>`
+           )
+           .join("")}</tbody></table>`
+      : "";
+    els.borrowShockContent.innerHTML = `
+      <h3>Absolute rate shocks (basis points)</h3>
+      ${renderLadder(panel.abs_ladder, "Shock")}
+      <h3>Multiplicative rate shocks (x current APR)</h3>
+      ${renderLadder(panel.mult_ladder, "Multiplier")}
+      ${namesTable}
+    `;
+  }
+
+  /* ---------------- Vol shock strip (Phase 4) ---------------- */
+  function renderVolShock(panel) {
+    if (!els.volShockContent) return;
+    if (!panel || panel.available === false) {
+      els.volShockContent.innerHTML = `<div class="callout warn">${safeText(
+        panel?.reason,
+        "Vol shock panel unavailable."
+      )}</div>`;
+      if (els.volShockMeta) els.volShockMeta.innerHTML = "";
+      return;
+    }
+    if (els.volShockMeta) {
+      els.volShockMeta.innerHTML = `<span class="dim small">${panel.n_vega_contributors} vega-bearing names &middot; ${panel.n_letf_decay_contributors} LETF decay names &middot; T+${panel.decay_horizon_days}d horizon</span>`;
+    }
+    const vix = panel.vix_ladder || [];
+    const vol = panel.vol_ladder || [];
+    const vixTable = vix.length
+      ? `<table class="tight"><thead><tr>
+          <th>VIX shock</th><th>Vega P&amp;L</th><th>% NAV</th><th>Worst victim</th><th>Best gainer</th>
+        </tr></thead><tbody>${vix
+          .map((r) => {
+            const w = (r.worst_victims || [])[0];
+            const g = (r.top_gains || [])[0];
+            const heat = scenarioHeatClass(r.pnl_pct_nav);
+            return `<tr>
+              <td><strong>${safeText(r.label)}</strong></td>
+              <td class="num ${signedClass(r.pnl_usd)} ${heat}">${fmtUsdSigned(r.pnl_usd)}</td>
+              <td class="num ${signedClass(r.pnl_pct_nav)} ${heat}">${fmtPct(r.pnl_pct_nav, 2)}</td>
+              <td class="dim small">${
+                w ? `${safeText(w.underlying)} <em>${fmtUsdSigned(w.pnl_usd)}</em><br>${safeText(w.vega_product_class, "")}` : "-"
+              }</td>
+              <td class="dim small">${
+                g ? `${safeText(g.underlying)} <em>${fmtUsdSigned(g.pnl_usd)}</em>` : "-"
+              }</td>
+            </tr>`;
+          })
+          .join("")}</tbody></table>`
+      : `<p class="dim">No vega-bearing names in book.</p>`;
+    const volTable = vol.length
+      ? `<table class="tight"><thead><tr>
+          <th>Vol regime</th><th>Total decay</th><th>% NAV</th><th>Worst LETF</th><th>Other LETF victims</th>
+        </tr></thead><tbody>${vol
+          .map((r) => {
+            const victims = r.worst_victims || [];
+            const v0 = victims[0];
+            const others = victims.slice(1, 4);
+            const heat = scenarioHeatClass(r.pnl_pct_nav);
+            return `<tr>
+              <td><strong>${safeText(r.label)}</strong> <span class="dim small">T+${r.horizon_days}d</span></td>
+              <td class="num ${signedClass(r.pnl_usd)} ${heat}">${fmtUsdSigned(r.pnl_usd)}</td>
+              <td class="num ${signedClass(r.pnl_pct_nav)} ${heat}">${fmtPct(r.pnl_pct_nav, 2)}</td>
+              <td>${
+                v0
+                  ? `<strong>${safeText(v0.underlying)}</strong> <span class="dim small">${fmtUsdSigned(
+                      v0.pnl_usd
+                    )}<br>k=${v0.leverage.toFixed(1)}, &sigma; ${(v0.current_sigma_pct).toFixed(0)}&rarr;${(v0.stressed_sigma_pct).toFixed(0)}%</span>`
+                  : "-"
+              }</td>
+              <td class="dim small">${others
+                .map((v) => `${safeText(v.underlying)} <em>${fmtUsdSigned(v.pnl_usd)}</em>`)
+                .join(", ") || "-"}</td>
+            </tr>`;
+          })
+          .join("")}</tbody></table>`
+      : `<p class="dim">No LETF positions in book.</p>`;
+    els.volShockContent.innerHTML = `
+      <h3>VIX absolute shocks (vega P&amp;L on short-vol income / yieldboost positions)</h3>
+      ${vixTable}
+      <h3>Realized-vol regime multipliers (LETF decay over T+${panel.decay_horizon_days}d)</h3>
+      <p class="dim small">Positive decay means the book benefits from higher vol (net short LETF decay).</p>
+      ${volTable}
+    `;
+  }
+
   function renderActionQueue(actions) {
     if (!els.actionQueue) return;
     if (!actions || !actions.length) {
@@ -1188,6 +1437,9 @@
     renderCockpit(snap);
     renderAlerts(snap.alert_rows || []);
     renderActionQueue(snap.action_queue || []);
+    renderSlideRisk(snap.slide_risk_panel || {});
+    renderBorrowShock(snap.borrow_shock_panel || {});
+    renderVolShock(snap.vol_shock_panel || {});
     renderStrip(snap.book || {});
     renderBreaches(snap.book?.breaches || []);
     renderScenarios(snap.scenario_panel || {});

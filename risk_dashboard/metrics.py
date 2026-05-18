@@ -25,6 +25,14 @@ from .flex_parser import (
     summarize_positions,
 )
 
+try:
+    from .beta_loader import compute_betas  # noqa: F401
+except Exception:  # pragma: no cover - optional dep / fallback
+    compute_betas = None  # type: ignore[assignment]
+
+
+TRADING_DAYS_PER_YEAR_DAYS: int = 252
+
 
 # Limits live in code (not YAML) so a kill switch firing is auditable in
 # the git history. Override at call-site only via an explicit kwarg.
@@ -847,15 +855,53 @@ def compute_scenario_panel(
     }
 
 
+def _load_screener_vol_map(screener_csv: Path | None) -> dict[str, float]:
+    """Underlying -> annualized realized vol (%). Falls back across
+    ``vol_underlying_annual`` and ``vol_underlying_annual_legacy``."""
+    if screener_csv is None or not screener_csv.is_file():
+        return {}
+    try:
+        df = pd.read_csv(
+            screener_csv,
+            usecols=["Underlying", "vol_underlying_annual", "vol_underlying_annual_legacy"],
+        )
+    except Exception:
+        return {}
+    out: dict[str, float] = {}
+    for _, r in df.iterrows():
+        u = _clean_str(r.get("Underlying")).upper()
+        if not u:
+            continue
+        v = r.get("vol_underlying_annual")
+        if v is None or pd.isna(v):
+            v = r.get("vol_underlying_annual_legacy")
+        if v is None or pd.isna(v):
+            continue
+        try:
+            out[u] = float(v) * 100.0
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def compute_factor_panel(
     underlying_exposure_csv: Path,
     nav_usd: float,
+    *,
+    beta_results: dict[str, Any] | None = None,
+    screener_vol_map: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Compute beta-weighted net exposure, sector groupings and top names.
 
     Inputs are book-level (sleeve-agnostic) so this works even when
     bucket reconciliation is broken. Beta source flags propagate so the
     UI can show coverage honestly.
+
+    ``beta_results`` (Phase I): dict of ``{underlying_upper: BetaResult
+    dict}`` from ``risk_dashboard.beta_loader.compute_betas``. When
+    supplied, computed betas override the curated map and the panel
+    also carries per-name ``beta_to_ndx`` / ``beta_to_rut`` /
+    ``regime_vol_pct`` needed by the slide-risk and vol-shock panels.
     """
     df = _read_csv_or_empty(underlying_exposure_csv)
     if df.empty:
@@ -867,6 +913,7 @@ def compute_factor_panel(
             "top_beta_long": [],
             "top_beta_short": [],
             "totals": {},
+            "beta_provenance_counts": {},
         }
 
     rows: list[dict[str, Any]] = []
@@ -877,8 +924,36 @@ def compute_factor_panel(
         gross = float(raw.get("gross_notional_usd", 0.0) or 0.0)
         legs = int(raw.get("n_legs", 0) or 0)
         meta = lookup_underlying(underlying)
-        beta_net = net * meta["beta_to_spy"]
-        beta_gross = gross * abs(meta["beta_to_spy"])
+        sector = meta["sector"]
+        sector_source = meta["sector_source"]
+        beta_to_spy = meta["beta_to_spy"]
+        beta_source = meta["beta_source"]
+        beta_to_ndx: float | None = None
+        beta_to_rut: float | None = None
+        beta_se: float | None = None
+        beta_n_obs: int | None = None
+        beta_r2: float | None = None
+        regime_vol_pct: float | None = None
+        shrinkage_applied: bool | None = None
+        if beta_results:
+            br = beta_results.get((underlying or "").strip().upper())
+            if br:
+                provenance = br.get("provenance", "")
+                if provenance in ("computed", "curated_fallback", "default_fallback"):
+                    beta_source = provenance
+                if br.get("beta_to_spy") is not None:
+                    beta_to_spy = float(br["beta_to_spy"])
+                beta_to_ndx = br.get("beta_to_ndx")
+                beta_to_rut = br.get("beta_to_rut")
+                beta_se = br.get("beta_se")
+                beta_n_obs = br.get("n_obs")
+                beta_r2 = br.get("r2")
+                regime_vol_pct = br.get("regime_vol_pct")
+                shrinkage_applied = bool(br.get("shrinkage_applied"))
+        if regime_vol_pct is None and screener_vol_map:
+            regime_vol_pct = screener_vol_map.get((underlying or "").strip().upper())
+        beta_net = net * beta_to_spy
+        beta_gross = gross * abs(beta_to_spy)
         rows.append(
             {
                 "underlying": underlying,
@@ -886,10 +961,17 @@ def compute_factor_panel(
                 "net_notional_usd": net,
                 "gross_notional_usd": gross,
                 "n_legs": legs,
-                "sector": meta["sector"],
-                "sector_source": meta["sector_source"],
-                "beta_to_spy": meta["beta_to_spy"],
-                "beta_source": meta["beta_source"],
+                "sector": sector,
+                "sector_source": sector_source,
+                "beta_to_spy": beta_to_spy,
+                "beta_to_ndx": beta_to_ndx,
+                "beta_to_rut": beta_to_rut,
+                "beta_se": beta_se,
+                "beta_n_obs": beta_n_obs,
+                "beta_r2": beta_r2,
+                "regime_vol_pct": regime_vol_pct,
+                "beta_source": beta_source,
+                "shrinkage_applied": shrinkage_applied,
                 "beta_weighted_net_usd": beta_net,
                 "beta_weighted_gross_usd": beta_gross,
             }
@@ -899,10 +981,15 @@ def compute_factor_panel(
     total_gross = sum(r["gross_notional_usd"] for r in rows)
     total_beta_net = sum(r["beta_weighted_net_usd"] for r in rows)
     total_beta_gross = sum(r["beta_weighted_gross_usd"] for r in rows)
+    trusted_sources = {"curated", "computed", "curated_fallback"}
     known_beta_gross = sum(
-        r["gross_notional_usd"] for r in rows if r["beta_source"] == "curated"
+        r["gross_notional_usd"] for r in rows if r["beta_source"] in trusted_sources
     )
     coverage = (known_beta_gross / total_gross) if total_gross > 0 else 0.0
+    provenance_counts: dict[str, int] = {}
+    for r in rows:
+        key = r["beta_source"] or "unknown"
+        provenance_counts[key] = provenance_counts.get(key, 0) + 1
 
     sector_map: dict[str, dict[str, Any]] = {}
     for r in rows:
@@ -957,6 +1044,7 @@ def compute_factor_panel(
         "top_beta_long": longs,
         "top_beta_short": shorts,
         "totals": totals,
+        "beta_provenance_counts": provenance_counts,
     }
 
 
@@ -1284,6 +1372,661 @@ def compute_alert_rows(
 
 
 # ---------------------------------------------------------------------------
+# Slide risk: SPX / NDX / RUT shock strips (Phase 1)
+
+
+SLIDE_SHOCK_PCTS: tuple[float, ...] = (
+    -0.20, -0.15, -0.10, -0.05, -0.03, -0.02, -0.01,
+    0.01, 0.02, 0.03, 0.05, 0.10, 0.15, 0.20,
+)
+SLIDE_HORIZONS_DAYS: tuple[int, ...] = (0, 5, 20)
+LETF_LEVERAGE_BY_PRODUCT_CLASS: dict[str, float] = {
+    "letf_long": 2.0,
+    "letf_inverse": -1.0,
+    "covered_call_1x": 1.0,
+    "scraped_income": 1.0,
+    "income_yieldboost": 1.0,
+    "volatility_etp": 1.0,
+}
+
+
+def _slide_index_label(idx_key: str) -> str:
+    return {"spy": "SPX", "ndx": "NDX", "rut": "RUT"}.get(idx_key, idx_key.upper())
+
+
+def _slide_status(pnl_pct: float | None, limits: dict[str, dict[str, Any]]) -> str:
+    if pnl_pct is None:
+        return "unknown"
+    return _classify(pnl_pct, limits["scenario_loss_pct_nav"], higher_is_worse=False)
+
+
+def _load_screener_etf_meta(screener_csv: Path | None) -> dict[str, dict[str, Any]]:
+    """Per-ETF lookup: product class, leverage hint via Beta, vol_etf_annual,
+    borrow_fee_annual. Keys are uppercase ETF symbols."""
+    if screener_csv is None or not screener_csv.is_file():
+        return {}
+    try:
+        df = pd.read_csv(
+            screener_csv,
+            usecols=[
+                "ETF",
+                "Underlying",
+                "Beta",
+                "Beta_product_class",
+                "vol_etf_annual",
+                "vol_underlying_annual",
+                "borrow_fee_annual",
+            ],
+        )
+    except Exception:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for _, r in df.iterrows():
+        etf = _clean_str(r.get("ETF")).upper()
+        if not etf:
+            continue
+        out[etf] = {
+            "underlying": _clean_str(r.get("Underlying")).upper(),
+            "beta_to_underlying": (
+                float(r.get("Beta")) if pd.notna(r.get("Beta")) else None
+            ),
+            "product_class": _clean_str(r.get("Beta_product_class")),
+            "vol_etf_annual": (
+                float(r.get("vol_etf_annual"))
+                if pd.notna(r.get("vol_etf_annual"))
+                else None
+            ),
+            "vol_underlying_annual": (
+                float(r.get("vol_underlying_annual"))
+                if pd.notna(r.get("vol_underlying_annual"))
+                else None
+            ),
+            "borrow_fee_annual": (
+                float(r.get("borrow_fee_annual"))
+                if pd.notna(r.get("borrow_fee_annual"))
+                else None
+            ),
+        }
+    return out
+
+
+def _leverage_from_product_class(product_class: str, beta: float | None = None) -> float:
+    """Map screener Beta_product_class -> LETF leverage factor ``k``."""
+    if beta is not None and abs(beta) > 0.25:
+        if abs(beta - 2.0) < 0.25:
+            return 2.0
+        if abs(beta - 3.0) < 0.4:
+            return 3.0
+        if abs(beta + 1.0) < 0.25:
+            return -1.0
+        if abs(beta + 2.0) < 0.4:
+            return -2.0
+        if abs(beta + 3.0) < 0.5:
+            return -3.0
+    return LETF_LEVERAGE_BY_PRODUCT_CLASS.get(product_class, 1.0)
+
+
+def _build_position_leg_map(
+    flex_positions_xml: Path,
+    etf_meta: dict[str, dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Return ``{underlying_upper: [leg_dict, ...]}`` from flex positions.
+
+    Each leg: symbol, underlying, signed notional, product_class,
+    leverage_k, vol_etf_annual (fraction), is_letf. Underlying
+    resolution prefers screener ``Underlying`` (APLX -> APLD); falls
+    back to flex ``underlyingSymbol`` then the symbol itself.
+    """
+    out: dict[str, list[dict[str, Any]]] = {}
+    if not flex_positions_xml.is_file():
+        return out
+    positions = parse_positions(flex_positions_xml)
+    for p in positions:
+        sym = (p.symbol or "").upper()
+        if not sym:
+            continue
+        screener_row = etf_meta.get(sym) or {}
+        underlying = screener_row.get("underlying") or (p.underlying or "").upper() or sym
+        product_class = screener_row.get("product_class") or ""
+        beta_und = screener_row.get("beta_to_underlying")
+        k = _leverage_from_product_class(product_class, beta_und)
+        vol = screener_row.get("vol_etf_annual")
+        is_letf = abs(k) > 1.0001 or product_class == "letf_inverse"
+        leg = {
+            "symbol": sym,
+            "underlying": underlying,
+            "net_notional_usd": float(getattr(p, "position_value", 0.0) or 0.0),
+            "product_class": product_class,
+            "leverage_k": float(k),
+            "vol_etf_annual": float(vol) if vol is not None else None,
+            "is_letf": is_letf,
+        }
+        out.setdefault(underlying, []).append(leg)
+    return out
+
+
+def compute_slide_risk_panel(
+    *,
+    factor_panel: dict[str, Any],
+    nav_usd: float,
+    screener_csv: Path | None = None,
+    flex_positions_xml: Path | None = None,
+    shocks: tuple[float, ...] = SLIDE_SHOCK_PCTS,
+    horizons_days: tuple[int, ...] = SLIDE_HORIZONS_DAYS,
+    limits: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Maven-style slide risk: beta-adjusted SPX / NDX / RUT shock strips.
+
+    For each (index, shock_pct):
+        * instantaneous P&L = sum_i (net_notional_i * beta_to_index_i * shock)
+        * top contributor: largest |pnl|
+    Plus a horizon overlay (T+5 / T+20) adding closed-form LETF vol drag:
+        decay_pct(T) = -0.5 * k * (k - 1) * sigma^2 * T_years
+    Decay is computed at the LEG level (not aggregated underlying) so a
+    spot APLD leg doesn't get charged as a 2x LETF just because APLX is
+    in the leg set.
+    """
+    limits = limits or DEFAULT_LIMITS
+    rows = (factor_panel or {}).get("rows") or []
+    if not rows or nav_usd <= 0:
+        return {
+            "available": False,
+            "reason": "factor panel unavailable or NAV missing",
+            "shocks_pct": list(shocks),
+            "horizons_days": list(horizons_days),
+            "indices": [],
+        }
+
+    etf_meta = _load_screener_etf_meta(screener_csv)
+    leg_map: dict[str, list[dict[str, Any]]] = {}
+    if flex_positions_xml is not None:
+        leg_map = _build_position_leg_map(flex_positions_xml, etf_meta)
+
+    enriched: list[dict[str, Any]] = []
+    for r in rows:
+        underlying = (r.get("underlying") or "").upper()
+        symbols = r.get("symbols") or ""
+        legs = leg_map.get(underlying, [])
+        sigma_pct = r.get("regime_vol_pct")
+        sigma = (float(sigma_pct) / 100.0) if sigma_pct is not None else None
+        enriched.append(
+            {
+                "underlying": underlying,
+                "symbols": symbols,
+                "net_notional_usd": float(r.get("net_notional_usd", 0.0) or 0.0),
+                "gross_notional_usd": float(r.get("gross_notional_usd", 0.0) or 0.0),
+                "beta_to_spy": r.get("beta_to_spy"),
+                "beta_to_ndx": r.get("beta_to_ndx"),
+                "beta_to_rut": r.get("beta_to_rut"),
+                "legs": legs,
+                "is_letf": any(leg.get("is_letf") for leg in legs),
+                "sigma": sigma,
+            }
+        )
+
+    indices_out: list[dict[str, Any]] = []
+    worst_shock: dict[str, Any] | None = None
+    for idx_key in ("spy", "ndx", "rut"):
+        beta_field = f"beta_to_{idx_key}"
+        coverage_gross = 0.0
+        total_gross = 0.0
+        for e in enriched:
+            total_gross += abs(e["net_notional_usd"])
+            if e.get(beta_field) is not None:
+                coverage_gross += abs(e["net_notional_usd"])
+
+        shock_rows: list[dict[str, Any]] = []
+        for shock_pct in shocks:
+            per_name_pnl_t0: list[dict[str, Any]] = []
+            for e in enriched:
+                beta = e.get(beta_field)
+                if beta is None:
+                    continue
+                expected_return = beta * shock_pct
+                pnl_t0 = e["net_notional_usd"] * expected_return
+                per_name_pnl_t0.append(
+                    {
+                        "underlying": e["underlying"],
+                        "symbols": e["symbols"],
+                        "net_notional_usd": e["net_notional_usd"],
+                        "beta": beta,
+                        "expected_return": expected_return,
+                        "pnl_t0_usd": pnl_t0,
+                    }
+                )
+            total_pnl_t0 = sum(p["pnl_t0_usd"] for p in per_name_pnl_t0)
+            pnl_pct_t0 = total_pnl_t0 / nav_usd if nav_usd > 0 else None
+
+            horizon_rows: list[dict[str, Any]] = []
+            for t_days in horizons_days:
+                if t_days <= 0:
+                    horizon_rows.append(
+                        {
+                            "horizon_days": 0,
+                            "total_pnl_usd": total_pnl_t0,
+                            "total_pnl_pct_nav": pnl_pct_t0,
+                            "decay_usd": 0.0,
+                        }
+                    )
+                    continue
+                t_years = t_days / TRADING_DAYS_PER_YEAR_DAYS
+                decay_sum = 0.0
+                for e in enriched:
+                    for leg in e["legs"]:
+                        if not leg.get("is_letf"):
+                            continue
+                        k = float(leg.get("leverage_k", 1.0))
+                        if abs(k) <= 1.0001:
+                            continue
+                        sigma_etf = leg.get("vol_etf_annual")
+                        if sigma_etf is None and e["sigma"] is not None:
+                            sigma_etf = abs(k) * e["sigma"]
+                        if sigma_etf is None or sigma_etf <= 0:
+                            continue
+                        decay_frac = -0.5 * k * (k - 1.0) * (sigma_etf ** 2) * t_years
+                        decay_sum += leg["net_notional_usd"] * decay_frac
+                total = total_pnl_t0 + decay_sum
+                horizon_rows.append(
+                    {
+                        "horizon_days": t_days,
+                        "total_pnl_usd": total,
+                        "total_pnl_pct_nav": (total / nav_usd) if nav_usd > 0 else None,
+                        "decay_usd": decay_sum,
+                    }
+                )
+
+            sorted_by_pnl = sorted(per_name_pnl_t0, key=lambda p: p["pnl_t0_usd"])
+            top_loss = sorted_by_pnl[0] if sorted_by_pnl else None
+            top_gain = sorted_by_pnl[-1] if sorted_by_pnl else None
+            row = {
+                "shock_pct": shock_pct,
+                "label": f"{_slide_index_label(idx_key)} {shock_pct:+.0%}",
+                "pnl_usd": total_pnl_t0,
+                "pnl_pct_nav": pnl_pct_t0,
+                "net_delta_usd": total_pnl_t0,
+                "net_delta_pct_nav": (total_pnl_t0 / nav_usd) if nav_usd > 0 else None,
+                "status": _slide_status(pnl_pct_t0, limits),
+                "horizons": horizon_rows,
+                "top_loss": top_loss,
+                "top_gain": top_gain,
+                "n_contributors": len(per_name_pnl_t0),
+            }
+            shock_rows.append(row)
+            if shock_pct < 0:
+                cand_pnl = (
+                    row.get("horizons", [{}])[-1].get("total_pnl_pct_nav") or pnl_pct_t0
+                )
+                if cand_pnl is not None and (
+                    worst_shock is None
+                    or (cand_pnl < (worst_shock.get("total_pnl_pct_nav") or 0.0))
+                ):
+                    worst_shock = {
+                        "index": _slide_index_label(idx_key),
+                        "label": row["label"],
+                        "shock_pct": shock_pct,
+                        "total_pnl_pct_nav": cand_pnl,
+                        "horizon_days": horizons_days[-1],
+                    }
+
+        coverage_pct = (coverage_gross / total_gross) if total_gross > 0 else 0.0
+        indices_out.append(
+            {
+                "index": _slide_index_label(idx_key),
+                "key": idx_key,
+                "shock_rows": shock_rows,
+                "coverage_pct": coverage_pct,
+                "n_names_covered": sum(1 for e in enriched if e.get(beta_field) is not None),
+                "n_names_total": len(enriched),
+            }
+        )
+
+    n_letf = sum(1 for e in enriched if e["is_letf"])
+    has_vol = sum(1 for e in enriched if e["sigma"] is not None)
+    return {
+        "available": True,
+        "shocks_pct": list(shocks),
+        "horizons_days": list(horizons_days),
+        "indices": indices_out,
+        "worst_shock": worst_shock,
+        "n_letf_names": n_letf,
+        "n_names_with_vol": has_vol,
+        "n_names_total": len(enriched),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Borrow shock sensitivity (Phase 3)
+
+
+BORROW_ABS_SHOCKS_BP: tuple[int, ...] = (25, 50, 100, 200, 500)
+BORROW_MULT_SHOCKS: tuple[float, ...] = (1.5, 2.0, 3.0, 5.0)
+
+
+def compute_borrow_shock_panel(
+    *,
+    borrow_panel: dict[str, Any],
+    flex_positions_xml: Path,
+    nav_usd: float,
+    screener_csv: Path | None = None,
+    abs_shocks_bp: tuple[int, ...] = BORROW_ABS_SHOCKS_BP,
+    mult_shocks: tuple[float, ...] = BORROW_MULT_SHOCKS,
+    persistence_days: int = 30,
+) -> dict[str, Any]:
+    """Per-symbol borrow cost sensitivity to rate shocks.
+
+    Inputs:
+        * ``borrow_panel`` -- output of ``compute_borrow_panel``; supplies
+          per-name current ``fee_rate_pct`` from flex SLBFee rows.
+        * ``flex_positions_xml`` -- short notional per symbol.
+        * ``screener_csv`` -- ``borrow_fee_annual`` baseline for synthetic
+          / inverse-ETF shorts where flex reports 0.
+
+    Output: absolute (bp) and multiplicative ladders showing aggregate
+    annualized cost delta + per-name worst victims. The 30-day
+    persistence column converts daily delta to a stressed MTD impact.
+    """
+    positions = parse_positions(flex_positions_xml)
+    if not positions:
+        return {
+            "available": False,
+            "reason": f"missing or empty {flex_positions_xml.name}",
+            "abs_shocks_bp": list(abs_shocks_bp),
+            "mult_shocks": list(mult_shocks),
+            "abs_ladder": [],
+            "mult_ladder": [],
+            "names": [],
+        }
+
+    short_notional: dict[str, float] = {}
+    for p in positions:
+        if getattr(p, "position_value", 0.0) < 0:
+            sym = (p.symbol or "").upper()
+            short_notional[sym] = short_notional.get(sym, 0.0) + abs(p.position_value)
+
+    fee_rate_map: dict[str, float] = {}
+    borrow_summary = borrow_panel.get("borrow") or {}
+    for sym, rate in (borrow_summary.get("fee_rate_by_symbol") or {}).items():
+        if float(rate) > 0:
+            fee_rate_map[sym.upper()] = float(rate)
+    if screener_csv is not None and screener_csv.is_file():
+        try:
+            sdf = pd.read_csv(screener_csv, usecols=["ETF", "borrow_fee_annual"])
+        except Exception:
+            sdf = pd.DataFrame()
+        for _, r in sdf.iterrows():
+            sym = _clean_str(r.get("ETF")).upper()
+            val = r.get("borrow_fee_annual")
+            if not sym or val is None or pd.isna(val):
+                continue
+            try:
+                rate_pct = float(val) * 100.0
+            except (TypeError, ValueError):
+                continue
+            fee_rate_map.setdefault(sym, rate_pct)
+    for row in borrow_panel.get("squeeze_rows") or []:
+        sym = (row.get("symbol") or "").upper()
+        if sym in fee_rate_map:
+            continue
+        ann = row.get("borrow_fee_annual")
+        if ann is not None:
+            fee_rate_map[sym] = float(ann) * 100.0
+
+    name_rows: list[dict[str, Any]] = []
+    for sym, short_n in short_notional.items():
+        current_apr = fee_rate_map.get(sym, 0.0)
+        current_annual_cost = short_n * (current_apr / 100.0)
+        name_rows.append(
+            {
+                "symbol": sym,
+                "short_notional_usd": short_n,
+                "current_apr_pct": current_apr,
+                "current_annual_cost_usd": current_annual_cost,
+            }
+        )
+    name_rows.sort(key=lambda r: r["current_annual_cost_usd"], reverse=True)
+    total_current_annual = sum(r["current_annual_cost_usd"] for r in name_rows)
+
+    def _shock_ladder(shocks: Iterable[Any], *, kind: str) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for shock in shocks:
+            if kind == "abs_bp":
+                shifted_aprs = {
+                    r["symbol"]: r["current_apr_pct"] + (shock / 100.0) for r in name_rows
+                }
+                label = f"+{int(shock)}bp"
+            else:
+                shifted_aprs = {
+                    r["symbol"]: r["current_apr_pct"] * float(shock) for r in name_rows
+                }
+                label = f"{shock:g}x"
+            per_name_delta = []
+            for r in name_rows:
+                new_apr = shifted_aprs[r["symbol"]]
+                new_cost = r["short_notional_usd"] * (new_apr / 100.0)
+                delta = -(new_cost - r["current_annual_cost_usd"])
+                per_name_delta.append(
+                    {
+                        "symbol": r["symbol"],
+                        "short_notional_usd": r["short_notional_usd"],
+                        "current_apr_pct": r["current_apr_pct"],
+                        "new_apr_pct": new_apr,
+                        "annual_delta_usd": delta,
+                        "daily_delta_usd": delta / TRADING_DAYS_PER_YEAR_DAYS,
+                        "persistence_usd": (delta / TRADING_DAYS_PER_YEAR_DAYS)
+                        * persistence_days,
+                    }
+                )
+            per_name_delta.sort(key=lambda d: d["annual_delta_usd"])
+            total_delta = sum(d["annual_delta_usd"] for d in per_name_delta)
+            out.append(
+                {
+                    "shock": shock,
+                    "kind": kind,
+                    "label": label,
+                    "annual_delta_usd": total_delta,
+                    "annual_delta_pct_nav": (total_delta / nav_usd)
+                    if nav_usd > 0
+                    else None,
+                    "persistence_delta_usd": (total_delta / TRADING_DAYS_PER_YEAR_DAYS)
+                    * persistence_days,
+                    "worst_victims": per_name_delta[:5],
+                }
+            )
+        return out
+
+    return {
+        "available": True,
+        "abs_shocks_bp": list(abs_shocks_bp),
+        "mult_shocks": list(mult_shocks),
+        "abs_ladder": _shock_ladder(abs_shocks_bp, kind="abs_bp"),
+        "mult_ladder": _shock_ladder(mult_shocks, kind="mult"),
+        "names": name_rows[:25],
+        "n_short_symbols": len(name_rows),
+        "current_annual_cost_usd": total_current_annual,
+        "current_annual_cost_pct_nav": (total_current_annual / nav_usd)
+        if nav_usd > 0
+        else None,
+        "persistence_days": persistence_days,
+    }
+
+
+# ---------------------------------------------------------------------------
+# VIX / vol shock sensitivity (Phase 4)
+
+
+VIX_ABS_SHOCKS_POINTS: tuple[int, ...] = (5, 10, 15, 20, 30)
+VOL_REGIME_MULTIPLIERS: tuple[float, ...] = (1.25, 1.5, 2.0, 3.0)
+
+VEGA_FRAC_PER_VOLPOINT_BY_PRODUCT_CLASS: dict[str, float] = {
+    "income_yieldboost": -0.0025,
+    "covered_call_1x": -0.0015,
+    "scraped_income": -0.0020,
+    "volatility_etp": +0.0150,
+}
+
+
+def compute_vol_shock_panel(
+    *,
+    factor_panel: dict[str, Any],
+    nav_usd: float,
+    screener_csv: Path | None = None,
+    flex_positions_xml: Path | None = None,
+    vix_shocks: tuple[int, ...] = VIX_ABS_SHOCKS_POINTS,
+    vol_multipliers: tuple[float, ...] = VOL_REGIME_MULTIPLIERS,
+    decay_horizon_days: int = 20,
+) -> dict[str, Any]:
+    """Two strips: VIX absolute moves (vega P&L) + realized-vol multipliers
+    (LETF decay over T+``decay_horizon_days``).
+
+    Vega: per-leg by Beta_product_class, signed by net_notional direction.
+    Vol regime: per-leg LETF decay; sums signed leg decay so a short LETF
+    position registers as a vol-spike *beneficiary*.
+    """
+    rows = (factor_panel or {}).get("rows") or []
+    if not rows or nav_usd <= 0:
+        return {
+            "available": False,
+            "reason": "factor panel unavailable or NAV missing",
+            "vix_shocks_pts": list(vix_shocks),
+            "vol_multipliers": list(vol_multipliers),
+            "vix_ladder": [],
+            "vol_ladder": [],
+        }
+
+    etf_meta = _load_screener_etf_meta(screener_csv)
+    leg_map: dict[str, list[dict[str, Any]]] = {}
+    if flex_positions_xml is not None:
+        leg_map = _build_position_leg_map(flex_positions_xml, etf_meta)
+
+    enriched: list[dict[str, Any]] = []
+    for r in rows:
+        underlying = (r.get("underlying") or "").upper()
+        symbols = r.get("symbols") or ""
+        legs = leg_map.get(underlying, [])
+        vega_frac = 0.0
+        chosen_class = ""
+        for leg in legs:
+            cls = leg.get("product_class") or ""
+            v = VEGA_FRAC_PER_VOLPOINT_BY_PRODUCT_CLASS.get(cls, 0.0)
+            if abs(v) > abs(vega_frac):
+                vega_frac = v
+                chosen_class = cls
+        sigma_pct = r.get("regime_vol_pct")
+        sigma = (float(sigma_pct) / 100.0) if sigma_pct is not None else None
+        enriched.append(
+            {
+                "underlying": underlying,
+                "symbols": symbols,
+                "net_notional_usd": float(r.get("net_notional_usd", 0.0) or 0.0),
+                "gross_notional_usd": float(r.get("gross_notional_usd", 0.0) or 0.0),
+                "legs": legs,
+                "is_letf": any(leg.get("is_letf") for leg in legs),
+                "sigma": sigma,
+                "vega_frac": vega_frac,
+                "vega_product_class": chosen_class,
+            }
+        )
+
+    vix_ladder: list[dict[str, Any]] = []
+    for vix_shock in vix_shocks:
+        per_name = []
+        for e in enriched:
+            if abs(e["vega_frac"]) < 1e-12:
+                continue
+            net = e["net_notional_usd"]
+            sign = 1.0 if net >= 0 else -1.0
+            pnl = sign * e["gross_notional_usd"] * e["vega_frac"] * vix_shock
+            per_name.append(
+                {
+                    "underlying": e["underlying"],
+                    "symbols": e["symbols"],
+                    "net_notional_usd": net,
+                    "gross_notional_usd": e["gross_notional_usd"],
+                    "vega_product_class": e["vega_product_class"],
+                    "vega_frac_per_volpoint": e["vega_frac"],
+                    "pnl_usd": pnl,
+                }
+            )
+        per_name.sort(key=lambda r: r["pnl_usd"])
+        total = sum(r["pnl_usd"] for r in per_name)
+        vix_ladder.append(
+            {
+                "vix_shock_pts": vix_shock,
+                "label": f"VIX +{vix_shock}",
+                "pnl_usd": total,
+                "pnl_pct_nav": (total / nav_usd) if nav_usd > 0 else None,
+                "n_contributors": len(per_name),
+                "worst_victims": per_name[:5],
+                "top_gains": list(reversed(per_name[-5:])),
+            }
+        )
+
+    t_years = decay_horizon_days / TRADING_DAYS_PER_YEAR_DAYS
+    vol_ladder: list[dict[str, Any]] = []
+    for mult in vol_multipliers:
+        per_name = []
+        for e in enriched:
+            decay_usd = 0.0
+            worst_leg_k = 0.0
+            sigma_used = None
+            for leg in e["legs"]:
+                if not leg.get("is_letf"):
+                    continue
+                k = float(leg.get("leverage_k", 1.0))
+                if abs(k) <= 1.0001:
+                    continue
+                sigma_etf = leg.get("vol_etf_annual")
+                if sigma_etf is None and e["sigma"] is not None:
+                    sigma_etf = abs(k) * e["sigma"]
+                if sigma_etf is None or sigma_etf <= 0:
+                    continue
+                new_sigma = sigma_etf * mult
+                decay_frac = -0.5 * k * (k - 1.0) * (new_sigma ** 2) * t_years
+                decay_usd += leg["net_notional_usd"] * decay_frac
+                if abs(k) > abs(worst_leg_k):
+                    worst_leg_k = k
+                    sigma_used = sigma_etf
+            if abs(decay_usd) < 1e-6:
+                continue
+            per_name.append(
+                {
+                    "underlying": e["underlying"],
+                    "symbols": e["symbols"],
+                    "leverage": worst_leg_k,
+                    "current_sigma_pct": (sigma_used or 0.0) * 100.0,
+                    "stressed_sigma_pct": (sigma_used or 0.0) * mult * 100.0,
+                    "pnl_usd": decay_usd,
+                }
+            )
+        per_name.sort(key=lambda r: r["pnl_usd"])
+        total = sum(r["pnl_usd"] for r in per_name)
+        vol_ladder.append(
+            {
+                "multiplier": mult,
+                "label": f"{mult:g}x vol",
+                "horizon_days": decay_horizon_days,
+                "pnl_usd": total,
+                "pnl_pct_nav": (total / nav_usd) if nav_usd > 0 else None,
+                "n_contributors": len(per_name),
+                "worst_victims": per_name[:5],
+            }
+        )
+
+    return {
+        "available": True,
+        "vix_shocks_pts": list(vix_shocks),
+        "vol_multipliers": list(vol_multipliers),
+        "decay_horizon_days": decay_horizon_days,
+        "vix_ladder": vix_ladder,
+        "vol_ladder": vol_ladder,
+        "n_vega_contributors": sum(1 for e in enriched if abs(e["vega_frac"]) > 0),
+        "n_letf_decay_contributors": sum(
+            1 for e in enriched if e["is_letf"] and e["sigma"] is not None
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Top-level snapshot assembler
 
 
@@ -1299,6 +2042,9 @@ class RiskSnapshot:
     scenario_panel: dict[str, Any] = field(default_factory=dict)
     factor_panel: dict[str, Any] = field(default_factory=dict)
     concentration_panel: dict[str, Any] = field(default_factory=dict)
+    slide_risk_panel: dict[str, Any] = field(default_factory=dict)
+    borrow_shock_panel: dict[str, Any] = field(default_factory=dict)
+    vol_shock_panel: dict[str, Any] = field(default_factory=dict)
     action_queue: list[dict[str, Any]] = field(default_factory=list)
     alert_rows: list[dict[str, Any]] = field(default_factory=list)
     universe_counts: dict[str, Any] = field(default_factory=dict)
@@ -1330,6 +2076,9 @@ class RiskSnapshot:
             "scenario_panel": self.scenario_panel,
             "factor_panel": self.factor_panel,
             "concentration_panel": self.concentration_panel,
+            "slide_risk_panel": self.slide_risk_panel,
+            "borrow_shock_panel": self.borrow_shock_panel,
+            "vol_shock_panel": self.vol_shock_panel,
             "action_queue": self.action_queue,
             "worst_shock": self.scenario_panel.get("worst_shock"),
             "top_risk_contributors": (
@@ -1351,6 +2100,8 @@ def build_snapshot(
     generated_at_utc: str,
     limits: dict[str, dict[str, Any]] | None = None,
     screener_csv: Path | None = None,
+    enable_computed_betas: bool = True,
+    beta_cache_dir: Path | None = None,
 ) -> RiskSnapshot:
     """Build a full snapshot from a ``data/runs/<run_date>`` folder."""
     run_dir = runs_root / run_date
@@ -1393,9 +2144,31 @@ def build_snapshot(
                 net_exposure_csv=accounting / "net_exposure_by_underlying.csv",
             )
         }
+    beta_results_dicts: dict[str, dict[str, Any]] = {}
+    if enable_computed_betas and compute_betas is not None:
+        exposure_csv = accounting / "net_exposure_by_underlying.csv"
+        underlyings: list[str] = []
+        if exposure_csv.is_file():
+            try:
+                _df = pd.read_csv(exposure_csv, usecols=["underlying"])
+                underlyings = [
+                    str(u).strip().upper() for u in _df["underlying"].dropna().tolist()
+                ]
+            except Exception:
+                underlyings = []
+        if underlyings:
+            try:
+                _br = compute_betas(underlyings, cache_dir=beta_cache_dir)
+                beta_results_dicts = {k: v.to_dict() for k, v in _br.items()}
+            except Exception:
+                beta_results_dicts = {}
+
+    screener_vol_map = _load_screener_vol_map(screener_csv)
     factor_panel = compute_factor_panel(
         underlying_exposure_csv=accounting / "net_exposure_by_underlying.csv",
         nav_usd=nav_usd,
+        beta_results=beta_results_dicts or None,
+        screener_vol_map=screener_vol_map or None,
     )
     scenario_panel = compute_scenario_panel(
         buckets=scenario_buckets,
@@ -1409,6 +2182,25 @@ def build_snapshot(
         factor_panel=factor_panel,
         nav_usd=nav_usd,
         limits=limits,
+    )
+    slide_risk_panel = compute_slide_risk_panel(
+        factor_panel=factor_panel,
+        nav_usd=nav_usd,
+        screener_csv=screener_csv,
+        flex_positions_xml=flex / "flex_positions.xml",
+        limits=limits,
+    )
+    borrow_shock_panel = compute_borrow_shock_panel(
+        borrow_panel=borrow_panel,
+        flex_positions_xml=flex / "flex_positions.xml",
+        nav_usd=nav_usd,
+        screener_csv=screener_csv,
+    )
+    vol_shock_panel = compute_vol_shock_panel(
+        factor_panel=factor_panel,
+        nav_usd=nav_usd,
+        screener_csv=screener_csv,
+        flex_positions_xml=flex / "flex_positions.xml",
     )
     alert_rows = compute_alert_rows(
         book=book,
@@ -1444,6 +2236,9 @@ def build_snapshot(
         scenario_panel=scenario_panel,
         factor_panel=factor_panel,
         concentration_panel=concentration_panel,
+        slide_risk_panel=slide_risk_panel,
+        borrow_shock_panel=borrow_shock_panel,
+        vol_shock_panel=vol_shock_panel,
         action_queue=action_queue,
         alert_rows=alert_rows,
         universe_counts=universe_counts,

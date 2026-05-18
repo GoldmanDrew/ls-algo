@@ -307,6 +307,32 @@ td.heat-pos-3 { background: rgba(39,174,96,0.35) !important; color: #103a18 !imp
 body[data-theme="dark"] td.heat-neg-3 { color: #ffd0c8 !important; }
 body[data-theme="dark"] td.heat-pos-3 { color: #c8f1d4 !important; }
 .scenario-table td:first-child { max-width: 300px; }
+
+/* ============================================================ */
+/* Slide-risk strips (Phase 1)                                    */
+/* ============================================================ */
+.slide-strip { margin: 14px 0 18px; }
+.slide-strip-head h3 {
+  margin: 0 0 6px; font-size: 13px; color: var(--text-primary);
+}
+.slide-strip-scroll { overflow-x: auto; }
+table.slide-table {
+  border-collapse: collapse; width: 100%; min-width: 760px;
+  font-size: 12px;
+}
+table.slide-table th, table.slide-table td {
+  border: 1px solid var(--border); padding: 5px 7px; white-space: nowrap;
+  background: var(--bg-row);
+}
+table.slide-table th.slide-shock {
+  text-align: center; font-weight: 600; background: var(--bg-row-alt);
+}
+table.slide-table th.row-label {
+  text-align: left; font-weight: 600;
+  background: var(--bg-row-alt); width: 70px;
+}
+table.slide-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.slide-table tr.dim td { color: var(--text-muted); }
 .contributor-table td:nth-child(3) { max-width: 420px; }
 .alert-table td:nth-child(5) { max-width: 420px; }
 .action-table td:nth-child(3) { max-width: 380px; }

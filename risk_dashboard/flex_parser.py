@@ -161,6 +161,9 @@ def summarize_borrow(borrow_rows: list[FlexBorrowFee]) -> dict[str, Any]:
         key=lambda d: -d["fee_rate_pct"],
     )
     over_90 = [d for d in over_30 if d["fee_rate_pct"] >= 90.0]
+    fee_rate_by_symbol = {
+        k: float(v["fee_rate_pct"]) for k, v in by_symbol.items()
+    }
     return {
         "n_rows": len(borrow_rows),
         "n_symbols": len(by_symbol),
@@ -168,4 +171,5 @@ def summarize_borrow(borrow_rows: list[FlexBorrowFee]) -> dict[str, Any]:
         "max_fee_rate_pct": max_rate,
         "names_over_30pct": over_30,
         "names_over_90pct": over_90,
+        "fee_rate_by_symbol": fee_rate_by_symbol,
     }

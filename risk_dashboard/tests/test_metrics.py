@@ -14,11 +14,14 @@ from risk_dashboard.metrics import (
     SLEEVE_TARGET_WEIGHTS,
     compute_action_queue,
     compute_book_summary,
+    compute_borrow_shock_panel,
     compute_bucket_detail,
     compute_concentration_panel,
     compute_data_quality,
     compute_factor_panel,
     compute_scenario_panel,
+    compute_slide_risk_panel,
+    compute_vol_shock_panel,
 )
 
 
@@ -484,3 +487,275 @@ def test_default_limits_are_sane():
         v for k, v in SLEEVE_TARGET_WEIGHTS.items() if v is not None and k != "bucket_3"
     )
     assert 0.95 <= fixed <= 1.05
+
+
+# ---------------------------------------------------------------------------
+# Phase 1: slide-risk strips
+# ---------------------------------------------------------------------------
+
+
+def _slide_factor_panel_fixture() -> dict:
+    """Minimal factor_panel payload for slide / vol tests."""
+    return {
+        "available": True,
+        "rows": [
+            {
+                "underlying": "NVDA",
+                "symbols": "NVDA, NVDU",
+                "net_notional_usd": 50_000.0,
+                "gross_notional_usd": 50_000.0,
+                "n_legs": 2,
+                "sector": "semis",
+                "beta_to_spy": 1.70,
+                "beta_to_ndx": 1.50,
+                "beta_to_rut": 1.40,
+                "regime_vol_pct": 40.0,
+                "beta_source": "computed",
+            },
+            {
+                "underlying": "LLY",
+                "symbols": "LLY",
+                "net_notional_usd": -10_000.0,
+                "gross_notional_usd": 10_000.0,
+                "n_legs": 1,
+                "sector": "healthcare",
+                "beta_to_spy": 0.50,
+                "beta_to_ndx": 0.30,
+                "beta_to_rut": 0.20,
+                "regime_vol_pct": 25.0,
+                "beta_source": "computed",
+            },
+        ],
+        "totals": {},
+    }
+
+
+def test_compute_slide_risk_panel_produces_strips_with_three_indices():
+    panel = compute_slide_risk_panel(
+        factor_panel=_slide_factor_panel_fixture(),
+        nav_usd=100_000.0,
+        screener_csv=None,
+        flex_positions_xml=None,
+    )
+    assert panel["available"] is True
+    indices = {idx["index"]: idx for idx in panel["indices"]}
+    assert set(indices) == {"SPX", "NDX", "RUT"}
+    spx = indices["SPX"]
+    # SPX -3%: NVDA loses 50k*1.7*0.03 = 2550, LLY gains 10k*0.5*0.03 = 150
+    # net = -2400 (note LLY is SHORT so -1*0.5*-0.03 = +0.015 * 10k = +150)
+    m3 = next(r for r in spx["shock_rows"] if abs(r["shock_pct"] + 0.03) < 1e-9)
+    assert m3["pnl_usd"] == pytest.approx(-2400.0, abs=1.0)
+    assert m3["pnl_pct_nav"] == pytest.approx(-0.024, abs=1e-6)
+    assert any(h["horizon_days"] == 0 for h in m3["horizons"])
+    assert m3["status"] in ("ok", "warn", "hard")
+
+
+def test_compute_slide_risk_panel_letf_decay_uses_per_leg(tmp_path: Path):
+    """Vol decay should be applied only to LETF legs, not spot legs."""
+    screener = tmp_path / "screener.csv"
+    pd.DataFrame(
+        [
+            {
+                "ETF": "APLX",
+                "Underlying": "APLD",
+                "Beta": 1.99,
+                "Beta_product_class": "letf_long",
+                "vol_etf_annual": 1.4,
+                "vol_underlying_annual": 0.7,
+                "borrow_fee_annual": 0.0,
+            },
+            {
+                "ETF": "APLD",
+                "Underlying": "APLD",
+                "Beta": 1.0,
+                "Beta_product_class": "passive_low_beta",
+                "vol_etf_annual": 0.7,
+                "vol_underlying_annual": 0.7,
+                "borrow_fee_annual": 0.0,
+            },
+        ]
+    ).to_csv(screener, index=False)
+    flex = tmp_path / "flex_positions.xml"
+    flex.write_text(
+        '<FlexQueryResponse>'
+        '<OpenPosition symbol="APLD" position="20000" markPrice="50" '
+        'positionValue="1000000" underlyingSymbol="APLD" fxRateToBase="1" multiplier="1" />'
+        '<OpenPosition symbol="APLX" position="32000" markPrice="31.25" '
+        'positionValue="1000000" underlyingSymbol="APLX" fxRateToBase="1" multiplier="1" />'
+        '</FlexQueryResponse>',
+        encoding="utf-8",
+    )
+    panel = compute_slide_risk_panel(
+        factor_panel={
+            "available": True,
+            "rows": [
+                {
+                    "underlying": "APLD",
+                    "symbols": "APLD, APLX",
+                    "net_notional_usd": 2_000_000.0,
+                    "gross_notional_usd": 2_000_000.0,
+                    "beta_to_spy": 1.5,
+                    "beta_to_ndx": 1.3,
+                    "beta_to_rut": 1.2,
+                    "regime_vol_pct": 70.0,
+                    "beta_source": "computed",
+                }
+            ],
+        },
+        nav_usd=1_000_000.0,
+        screener_csv=screener,
+        flex_positions_xml=flex,
+    )
+    assert panel["available"] is True
+    spx = next(idx for idx in panel["indices"] if idx["index"] == "SPX")
+    # T+20 decay applied only to APLX (k=2, vol=1.4); APLD spot leg contributes 0.
+    # Expected: $1M * -0.5*2*1*1.96*(20/252) ~= -$155.5k
+    h20 = next(h for h in spx["shock_rows"][0]["horizons"] if h["horizon_days"] == 20)
+    assert -200_000 < h20["decay_usd"] < -100_000, h20["decay_usd"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: borrow shock sensitivity
+# ---------------------------------------------------------------------------
+
+
+def test_compute_borrow_shock_panel_applies_abs_and_mult_shocks(tmp_path: Path):
+    flex = tmp_path / "flex_positions.xml"
+    flex.write_text(
+        '<FlexQueryResponse>'
+        '<OpenPosition symbol="TSLZ" position="-5000" markPrice="20" '
+        'positionValue="-100000" underlyingSymbol="TSLA" fxRateToBase="1" multiplier="1" />'
+        '<OpenPosition symbol="MSTZ" position="-2000" markPrice="50" '
+        'positionValue="-100000" underlyingSymbol="MSTR" fxRateToBase="1" multiplier="1" />'
+        '</FlexQueryResponse>',
+        encoding="utf-8",
+    )
+    screener = tmp_path / "screener.csv"
+    pd.DataFrame(
+        [
+            {"ETF": "TSLZ", "borrow_fee_annual": 0.10},
+            {"ETF": "MSTZ", "borrow_fee_annual": 0.05},
+        ]
+    ).to_csv(screener, index=False)
+
+    borrow_panel = {
+        "borrow": {"fee_rate_by_symbol": {}},
+        "squeeze_rows": [],
+    }
+    panel = compute_borrow_shock_panel(
+        borrow_panel=borrow_panel,
+        flex_positions_xml=flex,
+        nav_usd=1_000_000.0,
+        screener_csv=screener,
+        abs_shocks_bp=(100, 500),
+        mult_shocks=(2.0,),
+    )
+    assert panel["available"] is True
+    assert panel["current_annual_cost_usd"] == pytest.approx(15_000.0)
+    abs_100 = next(r for r in panel["abs_ladder"] if r["shock"] == 100)
+    assert abs_100["annual_delta_usd"] == pytest.approx(-2000.0, abs=1.0)
+    assert abs_100["persistence_delta_usd"] == pytest.approx(
+        abs_100["annual_delta_usd"] / 252.0 * 30.0, rel=1e-9
+    )
+    mult_2 = next(r for r in panel["mult_ladder"] if r["shock"] == 2.0)
+    assert mult_2["annual_delta_usd"] == pytest.approx(-15_000.0, abs=1.0)
+    assert mult_2["worst_victims"][0]["symbol"] == "TSLZ"
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: VIX / vol shock sensitivity
+# ---------------------------------------------------------------------------
+
+
+def test_compute_vol_shock_panel_letf_decay_signed_by_net_notional(tmp_path: Path):
+    """Long-LETF positions LOSE on vol spike."""
+    screener = tmp_path / "screener.csv"
+    pd.DataFrame(
+        [
+            {
+                "ETF": "AAPU",
+                "Underlying": "AAPL",
+                "Beta": 2.0,
+                "Beta_product_class": "letf_long",
+                "vol_etf_annual": 0.5,
+                "vol_underlying_annual": 0.25,
+                "borrow_fee_annual": 0.0,
+            }
+        ]
+    ).to_csv(screener, index=False)
+    flex = tmp_path / "flex_positions.xml"
+    flex.write_text(
+        '<FlexQueryResponse>'
+        '<OpenPosition symbol="AAPU" position="1000" markPrice="100" '
+        'positionValue="100000" underlyingSymbol="AAPL" fxRateToBase="1" multiplier="1" />'
+        '</FlexQueryResponse>',
+        encoding="utf-8",
+    )
+    factor_panel = {
+        "available": True,
+        "rows": [
+            {
+                "underlying": "AAPL",
+                "symbols": "AAPU",
+                "net_notional_usd": 100_000.0,
+                "gross_notional_usd": 100_000.0,
+                "beta_to_spy": 2.0,
+                "regime_vol_pct": 25.0,
+            }
+        ],
+    }
+    panel = compute_vol_shock_panel(
+        factor_panel=factor_panel,
+        nav_usd=1_000_000.0,
+        screener_csv=screener,
+        flex_positions_xml=flex,
+        vix_shocks=(5,),
+        vol_multipliers=(2.0,),
+        decay_horizon_days=20,
+    )
+    assert panel["available"] is True
+    vol2 = panel["vol_ladder"][0]
+    assert vol2["pnl_usd"] < 0
+    assert vol2["worst_victims"][0]["underlying"] == "AAPL"
+
+
+# ---------------------------------------------------------------------------
+# Phase I: beta loader integration
+# ---------------------------------------------------------------------------
+
+
+def test_compute_factor_panel_uses_computed_betas_when_provided(tmp_path: Path):
+    csv = tmp_path / "net_exposure_by_underlying.csv"
+    csv.write_text(
+        "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n"
+        "NVDA,NVDA,50000,50000,1\n",
+        encoding="utf-8",
+    )
+    panel = compute_factor_panel(
+        csv,
+        nav_usd=100_000.0,
+        beta_results={
+            "NVDA": {
+                "provenance": "computed",
+                "beta_to_spy": 1.95,
+                "beta_to_ndx": 1.70,
+                "beta_to_rut": 1.55,
+                "beta_se": 0.05,
+                "n_obs": 60,
+                "r2": 0.72,
+                "regime_vol_pct": 38.5,
+                "shrinkage_applied": False,
+            }
+        },
+    )
+    assert panel["available"] is True
+    nvda = next(r for r in panel["rows"] if r["underlying"] == "NVDA")
+    assert nvda["beta_to_spy"] == pytest.approx(1.95)
+    assert nvda["beta_to_ndx"] == pytest.approx(1.70)
+    assert nvda["beta_to_rut"] == pytest.approx(1.55)
+    assert nvda["beta_source"] == "computed"
+    assert nvda["regime_vol_pct"] == pytest.approx(38.5)
+    assert nvda["beta_n_obs"] == 60
+    counts = panel["beta_provenance_counts"]
+    assert counts.get("computed") == 1
+

@@ -26,6 +26,9 @@
 <nav id="subnav" class="subnav" hidden>
   <a href="#cockpit-section">Cockpit</a>
   <a href="#actions-section">Actions</a>
+  <a href="#slide-risk-section">Slide risk</a>
+  <a href="#borrow-shock-section">Borrow shocks</a>
+  <a href="#vol-shock-section">Vol shocks</a>
   <a href="#scenarios-section">Scenarios</a>
   <a href="#concentration-section">Concentration</a>
   <a href="#factor-section">Factor</a>
@@ -88,6 +91,33 @@
     <section id="actions-section" class="panel">
       <h2>Action queue</h2>
       <div id="action-queue"></div>
+    </section>
+
+    <!-- Slide risk strips: SPX / NDX / RUT -->
+    <section id="slide-risk-section" class="panel">
+      <div class="panel-head">
+        <h2>Slide risk &mdash; beta-adjusted index shocks</h2>
+        <div id="slide-risk-meta" class="quality-line"></div>
+      </div>
+      <div id="slide-risk-content"></div>
+    </section>
+
+    <!-- Borrow rate shock sensitivity -->
+    <section id="borrow-shock-section" class="panel">
+      <div class="panel-head">
+        <h2>Borrow shock sensitivity</h2>
+        <div id="borrow-shock-meta" class="quality-line"></div>
+      </div>
+      <div id="borrow-shock-content"></div>
+    </section>
+
+    <!-- VIX / realized vol shock sensitivity -->
+    <section id="vol-shock-section" class="panel">
+      <div class="panel-head">
+        <h2>Vol shock sensitivity (VIX + realized vol)</h2>
+        <div id="vol-shock-meta" class="quality-line"></div>
+      </div>
+      <div id="vol-shock-content"></div>
     </section>
 
     <!-- Top-line strip -->
