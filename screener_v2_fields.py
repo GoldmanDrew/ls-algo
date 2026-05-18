@@ -45,6 +45,130 @@ def _extract_daily_drag(
     return daily_drag
 
 
+_VOL_SHAPE_COLUMNS = (
+    "und_rv_20d_daily_annual",
+    "und_rv_20d_weekly_annual",
+    "und_trend_ratio_20d",
+    "und_vcr_20d",
+    "und_return_20d",
+    "und_abs_return_20d_pctile",
+    "und_rv_20d_pctile",
+    "und_trend_ratio_20d_pctile",
+    "und_vcr_20d_pctile",
+    "und_vol_shape_20d",
+)
+
+
+def _percentile_of_latest(values: list[float]) -> float | None:
+    a = np.asarray([v for v in values if np.isfinite(v)], dtype=float)
+    if a.size < 2:
+        return None
+    latest = float(a[-1])
+    return float(np.mean(a <= latest))
+
+
+def _vol_shape_label(
+    *,
+    trend_ratio: float | None,
+    vcr: float | None,
+    abs_return_pctile: float | None,
+    rv_pctile: float | None,
+    vcr_pctile: float | None,
+) -> str | None:
+    if trend_ratio is None or vcr is None:
+        return None
+    notable = (
+        (abs_return_pctile is not None and abs_return_pctile >= 0.80)
+        or (rv_pctile is not None and rv_pctile >= 0.80)
+    )
+    trending = trend_ratio >= 1.05
+    mean_reverting = trend_ratio <= 0.95
+    jumpy = vcr >= 0.40 or (vcr_pctile is not None and vcr_pctile >= 0.80)
+
+    if notable and trending and jumpy:
+        return "jumpy_trend"
+    if notable and trending:
+        return "boiling_trend"
+    if notable and mean_reverting:
+        return "choppy_volatile"
+    if notable:
+        return "volatile_mixed"
+    if trending:
+        return "quiet_trend"
+    if mean_reverting:
+        return "quiet_chop"
+    return "quiet_mixed"
+
+
+def _underlying_vol_shape_20d(tr_series: pd.Series, window: int = 20) -> dict[str, Any]:
+    """Volatility-shape diagnostics from the latest 20 underlying log returns."""
+    empty = {col: np.nan for col in _VOL_SHAPE_COLUMNS if col != "und_vol_shape_20d"}
+    empty["und_vol_shape_20d"] = ""
+    if tr_series is None:
+        return empty
+    s = pd.to_numeric(tr_series, errors="coerce").dropna()
+    s = s[~s.index.duplicated(keep="last")].sort_index()
+    if len(s) < window + 1:
+        return empty
+
+    r = np.log(s / s.shift(1)).replace([np.inf, -np.inf], np.nan).dropna()
+    r = r[np.isfinite(r)]
+    if len(r) < window:
+        return empty
+
+    rv_daily_hist: list[float] = []
+    rv_weekly_hist: list[float] = []
+    tr_hist: list[float] = []
+    vcr_hist: list[float] = []
+    ret_hist: list[float] = []
+
+    vals = r.to_numpy(dtype=float)
+    for end in range(window, vals.size + 1):
+        tail = vals[end - window:end]
+        sq = tail ** 2
+        sum_sq = float(np.sum(sq))
+        if not np.isfinite(sum_sq) or sum_sq <= 0:
+            continue
+        rv_daily = float(np.sqrt(np.mean(sq) * TRADING_DAYS))
+        weekly = tail.reshape(4, 5).sum(axis=1)
+        rv_weekly = float(np.sqrt(np.mean(weekly ** 2) * (TRADING_DAYS / window)))
+        trend_ratio = rv_weekly / rv_daily if rv_daily > 0 else np.nan
+        vcr = float(np.max(sq) / sum_sq)
+        rv_daily_hist.append(rv_daily)
+        rv_weekly_hist.append(rv_weekly)
+        tr_hist.append(float(trend_ratio))
+        vcr_hist.append(vcr)
+        ret_hist.append(float(np.sum(tail)))
+
+    if not rv_daily_hist:
+        return empty
+
+    rv_pctile = _percentile_of_latest(rv_daily_hist)
+    abs_ret_pctile = _percentile_of_latest([abs(x) for x in ret_hist])
+    trend_pctile = _percentile_of_latest(tr_hist)
+    vcr_pctile = _percentile_of_latest(vcr_hist)
+    label = _vol_shape_label(
+        trend_ratio=tr_hist[-1],
+        vcr=vcr_hist[-1],
+        abs_return_pctile=abs_ret_pctile,
+        rv_pctile=rv_pctile,
+        vcr_pctile=vcr_pctile,
+    )
+
+    return {
+        "und_rv_20d_daily_annual": round(float(rv_daily_hist[-1]), 6),
+        "und_rv_20d_weekly_annual": round(float(rv_weekly_hist[-1]), 6),
+        "und_trend_ratio_20d": round(float(tr_hist[-1]), 6),
+        "und_vcr_20d": round(float(vcr_hist[-1]), 6),
+        "und_return_20d": round(float(ret_hist[-1]), 6),
+        "und_abs_return_20d_pctile": round(float(abs_ret_pctile), 6) if abs_ret_pctile is not None else np.nan,
+        "und_rv_20d_pctile": round(float(rv_pctile), 6) if rv_pctile is not None else np.nan,
+        "und_trend_ratio_20d_pctile": round(float(trend_pctile), 6) if trend_pctile is not None else np.nan,
+        "und_vcr_20d_pctile": round(float(vcr_pctile), 6) if vcr_pctile is not None else np.nan,
+        "und_vol_shape_20d": label or "",
+    }
+
+
 def _block_bootstrap_annual_gross_draws(
     daily_drag: np.ndarray,
     *,
@@ -741,6 +865,19 @@ def enrich_screener_v2_fields(
     out["gross_anchor_shift_annual"] = anchor_shift_arr
     out["gross_anchor_target_annual"] = anchor_target_arr
     out["gross_anchor_source"] = anchor_source_arr
+    vol_shape_cache: dict[str, dict[str, Any]] = {}
+    vol_shape_rows: list[dict[str, Any]] = []
+    for _, row in out.iterrows():
+        und = str(row.get("Underlying", "")).strip().upper() if pd.notna(row.get("Underlying")) else ""
+        if und and und not in vol_shape_cache:
+            vol_shape_cache[und] = (
+                _underlying_vol_shape_20d(tr_map[und])
+                if und in tr_map
+                else _underlying_vol_shape_20d(None)
+            )
+        vol_shape_rows.append(vol_shape_cache.get(und, _underlying_vol_shape_20d(None)))
+    for col in _VOL_SHAPE_COLUMNS:
+        out[col] = [row.get(col, "" if col == "und_vol_shape_20d" else np.nan) for row in vol_shape_rows]
     out["schema_v"] = 2
     out["edge_sign_convention"] = "short_favorable_positive"
     return out
