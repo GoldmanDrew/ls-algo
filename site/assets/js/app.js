@@ -20,6 +20,11 @@
     logoutBtn: document.getElementById("logout-btn"),
     runDateLabel: document.getElementById("run-date-label"),
     generatedAtLabel: document.getElementById("generated-at-label"),
+    cockpitStrip: document.getElementById("cockpit-strip"),
+    dataQuality: document.getElementById("data-quality"),
+    alertRows: document.getElementById("alert-rows"),
+    scenarioContent: document.getElementById("scenario-content"),
+    contributorContent: document.getElementById("contributor-content"),
     strip: document.getElementById("strip"),
     breaches: document.getElementById("breaches"),
     sleeveBody: document.querySelector("#sleeve-table tbody"),
@@ -61,6 +66,10 @@
         }) +
         " pp";
   const signedClass = (n) => (n == null ? "" : n >= 0 ? "pos" : "neg");
+  const rowStatusClass = (status) =>
+    status === "hard" ? "row-hard" : status === "warn" ? "row-warn" : "";
+  const safeText = (s, fallback) =>
+    s == null || String(s).trim() === "" ? fallback || "not available" : String(s);
 
   /* --------------------- Render helpers ----------------------- */
   function statusPill(status, label) {
@@ -112,6 +121,157 @@
       .join("");
   }
 
+  function renderDataQuality(dq) {
+    if (!dq) {
+      els.dataQuality.innerHTML = statusPill("unknown", "data quality unknown");
+      return;
+    }
+    const label =
+      dq.status === "ok"
+        ? "data quality ok"
+        : `${dq.status}: ${dq.missing_source_count || 0} missing sources, ${
+            dq.missing_required_column_count || 0
+          } missing columns, ${dq.blank_render_field_count || 0} blanks, ${
+            (dq.reconciliations || []).filter((r) => r.status === "hard").length
+          } reconciliation breaks`;
+    els.dataQuality.innerHTML = statusPill(dq.status, label);
+  }
+
+  function renderCockpit(snap) {
+    const book = snap.book || {};
+    const worst = snap.worst_shock || {};
+    const top = worst.top_contributor || {};
+    const alertRows = snap.alert_rows || [];
+    const items = [
+      { label: "NAV", value: fmtUsd(book.nav_usd) },
+      {
+        label: "Gross / NAV",
+        value: fmtPct(book.gross_exposure_pct_nav, 0),
+        sub: fmtUsd(book.gross_notional_usd),
+      },
+      {
+        label: "Net / NAV",
+        value: fmtPct(book.net_exposure_pct_nav, 1),
+        sub: fmtUsd(book.net_notional_usd),
+        cls: signedClass(book.net_notional_usd),
+      },
+      {
+        label: "Worst shock",
+        value: fmtUsdSigned(worst.pnl_usd),
+        sub: `${safeText(worst.label, "no scenario")} / ${fmtPct(worst.pnl_pct_nav, 2)}`,
+        cls: signedClass(worst.pnl_usd),
+      },
+      {
+        label: "Top offender",
+        value: safeText(top.underlying, "none"),
+        sub: `${safeText(top.bucket, "-")} ${fmtUsdSigned(top.pnl_usd)}`,
+        cls: signedClass(top.pnl_usd),
+      },
+      {
+        label: "Alerts",
+        value: String(alertRows.length),
+        sub: `${alertRows.filter((r) => r.status === "hard").length} hard`,
+        cls: alertRows.some((r) => r.status === "hard") ? "neg" : "",
+      },
+    ];
+    els.cockpitStrip.innerHTML = items
+      .map(
+        (it) => `
+        <div class="stat stat-${it.cls || "neutral"}">
+          <div class="label">${it.label}</div>
+          <div class="value ${it.cls || ""}">${it.value}</div>
+          ${it.sub ? `<div class="sub">${it.sub}</div>` : ""}
+        </div>`
+      )
+      .join("");
+  }
+
+  function renderAlerts(rows) {
+    if (!rows || !rows.length) {
+      els.alertRows.innerHTML = `<span class="pill pill-ok">No risk alerts</span>`;
+      return;
+    }
+    els.alertRows.innerHTML = `
+      <table class="tight alert-table"><thead><tr>
+        <th>Status</th><th>Metric</th><th>Value</th><th>Limit</th><th>Action</th>
+      </tr></thead><tbody>${rows
+        .slice(0, 12)
+        .map((r) => {
+          const limit =
+            r.limit && typeof r.limit === "object"
+              ? `warn ${r.limit.warn}, hard ${r.limit.hard}`
+              : "-";
+          const value = typeof r.value === "number" ? r.value.toFixed(3) : safeText(r.value, "-");
+          return `<tr class="${rowStatusClass(r.status)}">
+            <td>${statusPill(r.status)}</td>
+            <td><strong>${safeText(r.label || r.metric)}</strong><div class="dim small">${safeText(
+              r.source,
+              "source unavailable"
+            )}</div></td>
+            <td class="num">${value}</td>
+            <td>${limit}</td>
+            <td>${safeText(r.action, "review")}</td>
+          </tr>`;
+        })
+        .join("")}</tbody></table>`;
+  }
+
+  function renderScenarios(panel) {
+    const scenarios = panel?.scenarios || [];
+    if (!scenarios.length) {
+      els.scenarioContent.innerHTML = `<p class="dim">No scenario data available.</p>`;
+      els.contributorContent.innerHTML = `<p class="dim">No contributor data available.</p>`;
+      return;
+    }
+    els.scenarioContent.innerHTML = `
+      <table class="tight scenario-table"><thead><tr>
+        <th>Scenario</th><th>Total P&amp;L</th><th>% NAV</th>
+        <th>Book/Other</th><th>B1</th><th>B2</th><th>B3</th><th>B4</th><th>Top offender</th><th>Status</th>
+      </tr></thead><tbody>${scenarios
+        .map((s) => {
+          const b = s.bucket_pnl || {};
+          const top = s.top_contributor || {};
+          return `<tr class="${rowStatusClass(s.status)}">
+            <td><strong>${safeText(s.label)}</strong><div class="dim small">${safeText(
+              s.description,
+              ""
+            )}</div></td>
+            <td class="num ${signedClass(s.pnl_usd)}">${fmtUsdSigned(s.pnl_usd)}</td>
+            <td class="num ${signedClass(s.pnl_pct_nav)}">${fmtPct(s.pnl_pct_nav, 2)}</td>
+            <td class="num ${signedClass(b.book)}">${fmtUsdSigned(b.book || 0)}</td>
+            <td class="num ${signedClass(b.bucket_1)}">${fmtUsdSigned(b.bucket_1 || 0)}</td>
+            <td class="num ${signedClass(b.bucket_2)}">${fmtUsdSigned(b.bucket_2 || 0)}</td>
+            <td class="num ${signedClass(b.bucket_3)}">${fmtUsdSigned(b.bucket_3 || 0)}</td>
+            <td class="num ${signedClass(b.bucket_4)}">${fmtUsdSigned(b.bucket_4 || 0)}</td>
+            <td>${safeText(top.underlying, "none")} <span class="dim small">${fmtUsdSigned(
+            top.pnl_usd
+          )}</span></td>
+            <td>${statusPill(s.status)}</td>
+          </tr>`;
+        })
+        .join("")}</tbody></table>`;
+
+    const worst = panel.worst_shock || scenarios[0];
+    const rows = worst.contributors || [];
+    els.contributorContent.innerHTML = `
+      <p class="dim small">Showing top contributors for <strong>${safeText(worst.label)}</strong>.</p>
+      <table class="tight contributor-table"><thead><tr>
+        <th>Bucket</th><th>Underlying</th><th>Symbols</th><th>Driver</th><th>Shock P&amp;L</th><th>Gross $</th>
+      </tr></thead><tbody>${rows
+        .slice(0, 15)
+        .map(
+          (r) => `<tr>
+            <td>${safeText(r.bucket, "-")}</td>
+            <td><strong>${safeText(r.underlying)}</strong></td>
+            <td class="dim">${safeText(r.symbols, "-")}</td>
+            <td>${safeText(r.driver, "-")}</td>
+            <td class="num ${signedClass(r.pnl_usd)}">${fmtUsdSigned(r.pnl_usd)}</td>
+            <td class="num">${r.gross_notional_usd == null ? "-" : fmtUsd(r.gross_notional_usd)}</td>
+          </tr>`
+        )
+        .join("")}</tbody></table>`;
+  }
+
   function renderBreaches(breaches) {
     if (!breaches || !breaches.length) {
       els.breaches.innerHTML = `<span class="pill pill-ok">No top-level breaches</span>`;
@@ -122,7 +282,9 @@
         (b) =>
           `<span class="pill pill-${b.status}">${b.metric}: ${
             typeof b.value === "number" ? b.value.toFixed(2) : b.value
-          } (limit warn ${b.limit.warn}, hard ${b.limit.hard})</span>`
+          }${
+            b.limit ? ` (limit warn ${b.limit.warn}, hard ${b.limit.hard})` : ""
+          }</span>`
       )
       .join("");
   }
@@ -161,8 +323,8 @@
     const winnersTbl = (bucket.winners || [])
       .map(
         (r) => `<tr>
-          <td><strong>${r.symbol}</strong></td>
-          <td class="dim">${r.description || ""}</td>
+          <td><strong>${safeText(r.display_name || r.symbol)}</strong></td>
+          <td class="dim">${safeText(r.description || r.symbols, "not in source")}</td>
           <td class="num pos">${fmtUsdSigned(r.total_pnl)}</td>
         </tr>`
       )
@@ -170,8 +332,8 @@
     const losersTbl = (bucket.losers || [])
       .map(
         (r) => `<tr>
-          <td><strong>${r.symbol}</strong></td>
-          <td class="dim">${r.description || ""}</td>
+          <td><strong>${safeText(r.display_name || r.symbol)}</strong></td>
+          <td class="dim">${safeText(r.description || r.symbols, "not in source")}</td>
           <td class="num neg">${fmtUsdSigned(r.total_pnl)}</td>
         </tr>`
       )
@@ -180,8 +342,8 @@
       .slice(0, 25)
       .map(
         (r) => `<tr>
-          <td><strong>${r.underlying}</strong></td>
-          <td class="dim">${r.symbols}</td>
+          <td><strong>${safeText(r.underlying)}</strong></td>
+          <td class="dim">${safeText(r.symbols, "not in source")}</td>
           <td class="num">${r.n_legs}</td>
           <td class="num ${signedClass(r.net_notional_usd)}">${fmtUsd(
           r.net_notional_usd
@@ -292,8 +454,12 @@
     els.generatedAtLabel.textContent =
       "Generated " + new Date(snap.generated_at_utc).toLocaleString();
 
+    renderDataQuality(snap.data_quality || {});
+    renderCockpit(snap);
+    renderAlerts(snap.alert_rows || []);
     renderStrip(snap.book || {});
     renderBreaches(snap.book?.breaches || []);
+    renderScenarios(snap.scenario_panel || {});
     renderSleeveTable(snap.book?.sleeve_table || []);
     bindTabs(snap);
     renderBorrow(snap.borrow_panel || {});

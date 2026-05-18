@@ -61,11 +61,29 @@
   <!-- ============================================================== -->
   <section id="dashboard" class="dashboard" hidden>
 
+    <!-- Risk cockpit -->
+    <section class="panel panel-hero">
+      <div class="panel-head">
+        <h2>Risk cockpit</h2>
+        <div id="data-quality" class="quality-line"></div>
+      </div>
+      <div id="cockpit-strip" class="strip cockpit-strip"></div>
+      <div id="alert-rows" class="alert-rows"></div>
+    </section>
+
     <!-- Top-line strip -->
     <section class="panel">
       <h2>Book summary</h2>
       <div id="strip" class="strip"></div>
       <div id="breaches" class="breaches"></div>
+    </section>
+
+    <!-- Scenario shocks -->
+    <section class="panel">
+      <h2>Shock scenarios</h2>
+      <div id="scenario-content"></div>
+      <h3>Worst-case contributors</h3>
+      <div id="contributor-content"></div>
     </section>
 
     <!-- Sleeve allocation -->

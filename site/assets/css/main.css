@@ -86,6 +86,18 @@ main {
 .panel h3 {
   font-size: 12.5px; color: #16537e; margin: 10px 0 4px; font-weight: 600;
 }
+.panel-hero {
+  border-color: #c8d3e3;
+  box-shadow: 0 4px 16px rgba(15, 52, 96, 0.08);
+}
+.panel-head {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  border-bottom: 1px solid #0f3460; margin-bottom: 10px;
+}
+.panel-head h2 {
+  border-bottom: none; margin-bottom: 0;
+}
+.quality-line { display: flex; justify-content: flex-end; margin-bottom: 4px; }
 
 .footer {
   text-align: center; padding: 16px 24px; font-size: 11px; color: #999;
@@ -129,6 +141,15 @@ main {
   background: #f8f9fb; border: 1px solid #e0e3ea; border-radius: 4px;
   padding: 8px 10px;
 }
+.cockpit-strip .stat {
+  min-height: 76px;
+}
+.strip .stat.stat-neg {
+  background: #fff7f6; border-color: #efc3bd;
+}
+.strip .stat.stat-pos {
+  background: #f4fbf4; border-color: #cce8cc;
+}
 .strip .stat .label {
   font-size: 10.5px; color: #666; text-transform: uppercase; letter-spacing: 0.04em;
 }
@@ -147,6 +168,7 @@ main {
 /* Breach pills                                                   */
 /* ============================================================ */
 .breaches { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.alert-rows { margin-top: 8px; }
 .pill {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;
@@ -174,6 +196,9 @@ table.tight tr:nth-child(even) td { background: #fafbfc; }
 table.tight tr.row-hard td  { background: #fde4e1; }
 table.tight tr.row-warn td  { background: #fef3e0; }
 table.tight td.num { text-align: right; }
+.scenario-table td:first-child { max-width: 300px; }
+.contributor-table td:nth-child(3) { max-width: 420px; }
+.alert-table td:nth-child(5) { max-width: 420px; }
 
 /* ============================================================ */
 /* Tabs                                                           */

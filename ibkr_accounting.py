@@ -410,6 +410,64 @@ def build_bucket4_pair_registry(
     return out[cols].reset_index(drop=True)
 
 
+def load_plan_sleeve_bucket_usd(
+    plan_csv: Path,
+    etf_to_beta: dict[str, float],
+) -> dict[str, dict[str, float]]:
+    """For each underlying, signed ``long_usd`` per accounting bucket from the latest plan.
+
+    Aggregates ``data/proposed_trades.csv`` (or a per-run override) rows by the
+    ETF's beta sign:
+
+      * ``beta < 0`` → ``b4`` (inverse-decay sleeve — short underlying target).
+      * ``beta > 1.5`` → ``b1`` (high-leverage long).
+      * ``0 < beta <= 1.5`` → ``b2`` (low-leverage / yieldboost long).
+
+    The returned values are the SIGNED ``long_usd`` contributions per bucket
+    (B4 is typically negative because ``inverse_decay_bucket4`` rows carry a
+    negative ``long_usd`` for the short underlying leg — see
+    ``scripts/gtp_sizing_mirror.py``). Returns an empty dict if the plan file
+    is missing, unreadable, empty, or missing required columns.
+
+    This captures the strategy's intent as of the most recent
+    ``generate_trade_plan`` run. Accounting uses these per-sleeve targets to
+    attribute the bucket-4 short underlying slice even though the rebalancer
+    nets B1 / yieldboost long + B4 short underlying orders into ONE signed
+    IBKR stock position (see ``rebalance_strategy.build_establish_trades`` /
+    ``phase2b_resize.build_resize_trades``). Without this overlay the FIFO
+    share ledger tracks only the net IBKR line, so the B4 sleeve's structural
+    short underlying shows as ``$0`` exposure and PnL.
+    """
+    if plan_csv is None or not Path(plan_csv).exists():
+        return {}
+    try:
+        df = pd.read_csv(plan_csv)
+    except Exception:
+        return {}
+    if df.empty or "Underlying" not in df.columns or "long_usd" not in df.columns:
+        return {}
+    df = df.copy()
+    df["Underlying"] = df["Underlying"].astype(str).map(canonical_symbol)
+    if "ETF" in df.columns:
+        df["ETF"] = df["ETF"].astype(str).map(canonical_symbol)
+    else:
+        df["ETF"] = ""
+    df["long_usd"] = pd.to_numeric(df["long_usd"], errors="coerce").fillna(0.0)
+    df["_beta"] = df["ETF"].map(lambda s: float(etf_to_beta.get(s, 0.0)))
+    out: dict[str, dict[str, float]] = {}
+    for u, grp in df.groupby("Underlying"):
+        u_str = str(u or "")
+        if not u_str:
+            continue
+        b1 = float(grp.loc[grp["_beta"] > 1.5, "long_usd"].sum())
+        b2 = float(grp.loc[(grp["_beta"] > 0) & (grp["_beta"] <= 1.5), "long_usd"].sum())
+        b4 = float(grp.loc[grp["_beta"] < 0, "long_usd"].sum())
+        if abs(b1) + abs(b2) + abs(b4) <= 1e-9:
+            continue
+        out[u_str] = {"b1": b1, "b2": b2, "b4": b4}
+    return out
+
+
 def held_exposure_bucket124_weights(
     underlying: str,
     pos: pd.DataFrame,
@@ -489,6 +547,15 @@ def compute_bucket4_pair_exposure(
     pos["symbol"] = pos["symbol"].astype(str).map(canonical_symbol)
 
     detail_rows: list[dict] = []
+    # Track which underlyings have already had their underlying leg emitted.
+    # The registry can carry multiple inverse ETFs for the same underlying
+    # (e.g. MSTR ↔ MSDD / MSTZ / SMST); emitting the underlying once per ETF
+    # row would multiply its notional by N and break the by-underlying
+    # aggregation (silently fine when ``qty_b4 == 0``, materially wrong as
+    # soon as plan-aware B4 attribution surfaces a non-zero structural
+    # short slice). The B4 pair view treats the underlying as ONE shared
+    # short leg hedged by N inverse ETFs.
+    _under_emitted: set[str] = set()
     for _, pr in reg.iterrows():
         etf = str(pr["etf"])
         under = str(pr["underlying"])
@@ -496,8 +563,37 @@ def compute_bucket4_pair_exposure(
 
         u_ratio = float((underlying_b4_ratio or {}).get(under, 1.0))
         u_qty = (underlying_b4_qty or {}).get(under)
-        for sym, leg_type, mult_beta in ((under, "underlying", 1.0), (etf, "etf", beta)):
+        legs: list[tuple[str, str, float]] = []
+        if under not in _under_emitted:
+            legs.append((under, "underlying", 1.0))
+            _under_emitted.add(under)
+        legs.append((etf, "etf", beta))
+        for sym, leg_type, mult_beta in legs:
             rows = pos[pos["symbol"] == sym]
+            if leg_type == "underlying" and u_qty is not None and rows.empty:
+                # Plan-aware B4 may want the underlying leg even when we
+                # hold no IBKR stock line for ``under`` (purely a notional
+                # structural short). Synthesize a single row at the
+                # plan-derived qty using a best-effort mark price.
+                pseudo_mark = None
+                _u_etf_rows = pos[pos["symbol"] == etf]
+                if not _u_etf_rows.empty:
+                    pseudo_mark = float(_u_etf_rows.iloc[0]["markPrice"]) * float(
+                        _u_etf_rows.iloc[0]["fxRateToBase"]
+                    )
+                if pseudo_mark is None or pseudo_mark <= 0:
+                    continue
+                mv = float(u_qty) * mult_beta * pseudo_mark
+                detail_rows.append(
+                    {
+                        "underlying": under,
+                        "symbol": sym,
+                        "leg_type": leg_type,
+                        "net_notional_usd": mv,
+                        "gross_notional_usd": abs(mv),
+                    }
+                )
+                continue
             if rows.empty:
                 continue
             for _, r in rows.iterrows():
@@ -1774,6 +1870,50 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     else:
         _held_ratio_map = {}
 
+    # ── Plan-aware B4 underlying attribution ─────────────────────────────
+    # ``rebalance_strategy.py`` runs an explicit short underlying leg for
+    # every ``inverse_decay_bucket4`` row (negative ``long_usd``) and nets
+    # it against B1/yieldboost long underlying orders into a SINGLE signed
+    # IBKR stock trade per underlying (see ``build_establish_trades`` /
+    # ``build_resize_trades``). The FIFO share ledger therefore cannot
+    # recover the B4 structural slice on shared names like MSTR — the
+    # ledger only sees the net broker line.
+    #
+    # We surface that slice here by reading the latest plan and computing
+    # per-underlying sleeve magnitudes. The resulting ratios override the
+    # held-exposure map for B4 underlyings so that:
+    #   * net_exposure_bucket_4_detail.csv shows the structural short
+    #     underlying leg next to the inverse ETFs;
+    #   * spot PnL on shared names is split into B1/B2/B4 in proportion
+    #     to the sleeve targets that produced the net stock position.
+    #
+    # Disable via ``accounting.plan_aware_b4_attribution: false`` to fall
+    # back to pure FIFO/held-exposure attribution.
+    _plan_aware_b4 = bool(
+        (cfg.get("accounting", {}) or {}).get("plan_aware_b4_attribution", True)
+    )
+    _plan_sleeve_usd: dict[str, dict[str, float]] = {}
+    _plan_ratio_b4: dict[str, dict[str, float]] = {}
+    if _plan_aware_b4:
+        _plan_sleeve_usd = load_plan_sleeve_bucket_usd(
+            proposed_trades_path, etf_to_beta_map
+        )
+        for _u_p, _w_p in _plan_sleeve_usd.items():
+            if _u_p not in b4_underlyings:
+                continue
+            _a1, _a2, _a4 = abs(_w_p["b1"]), abs(_w_p["b2"]), abs(_w_p["b4"])
+            if _a4 <= 1e-9:
+                continue
+            _pr1, _pr2, _pr4 = _normalize_bucket_triple(_a1, _a2, _a4)
+            _plan_ratio_b4[_u_p] = {"b1": _pr1, "b2": _pr2, "b4": _pr4}
+            _held_ratio_map[_u_p] = {"b1": _pr1, "b2": _pr2, "b4": _pr4}
+        if _plan_ratio_b4:
+            print(
+                f"[ACCOUNTING] plan-aware B4 attribution active for "
+                f"{len(_plan_ratio_b4)} underlying(s) "
+                f"(e.g. {', '.join(sorted(_plan_ratio_b4)[:6])})"
+            )
+
     # Base split map used for non-ETF rows (spot/fallback attribution).
     # - universe_beta: use ETF beta mix from screened universe
     # - held_exposure: held ETF exposure overrides universe fallback (default)
@@ -2325,6 +2465,19 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         _ratio_unrealized_map[_u] = {"b1": _ru1, "b2": _ru2, "b4": _ru4}
         _ratio_carry_map[_u] = {"b1": _rc1, "b2": _rc2, "b4": _rc4}
 
+        # Plan-aware B4 override: when the latest plan carries an explicit
+        # ``inverse_decay_bucket4`` short underlying target for ``_u`` we
+        # discard the FIFO/held-derived ratios above and use the sleeve
+        # magnitude mix instead. This is the only way to attribute the B4
+        # structural short on names whose B1/yieldboost long overwhelms it
+        # at the broker (e.g. MSTR: net IBKR long stock + plan B4 short).
+        # See ``load_plan_sleeve_bucket_usd`` for the source of truth.
+        if _u in _plan_ratio_b4:
+            _pr = _plan_ratio_b4[_u]
+            _ratio_realized_map[_u] = dict(_pr)
+            _ratio_unrealized_map[_u] = dict(_pr)
+            _ratio_carry_map[_u] = dict(_pr)
+
         _rz_real = float(_realized_amt[_u]["bucket_1"])
         _rz_real2 = float(_realized_amt[_u]["bucket_2"])
         _rz_real4 = float(_realized_amt[_u]["bucket_4"])
@@ -2339,6 +2492,38 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 _lot_components[_u][_bk][_cc] = float(
                     _carry_by_col.get(_u, {}).get(_cc, {}).get(_bk, 0.0)
                 )
+
+        # Plan-aware B4 override for lot-timed components: when plan signal
+        # is present, redistribute the IBKR-reported stock PnL across the
+        # three buckets by ``_plan_ratio_b4`` magnitudes. Without this the
+        # lot-timed split (``bucket_component_split_method: lot_timed``)
+        # would leave realized/unrealized/carry on the spot row in
+        # whatever bucket FIFO recorded (usually 100% B1/B2 for shared
+        # names) and the B4 sleeve attribution above would be silently
+        # ignored for PnL — only exposure would shift.
+        if _u in _plan_ratio_b4:
+            _u_rows_df = df[
+                (df["underlying"] == _u)
+                & (~df["symbol"].isin(etf_to_beta_map))
+            ]
+            if not _u_rows_df.empty:
+                _override_cols = ({"realized_pnl", "unrealized_pnl"}
+                                  | set(_spot_carry_cols))
+                for _col in _override_cols:
+                    if _col not in _u_rows_df.columns:
+                        continue
+                    _u_total = float(_u_rows_df[_col].sum())
+                    if abs(_u_total) <= 1e-9:
+                        for _bk in _BUCKET_KEYS:
+                            _lot_components[_u][_bk][_col] = 0.0
+                        continue
+                    _bk_to_r = {
+                        "bucket_1": _plan_ratio_b4[_u]["b1"],
+                        "bucket_2": _plan_ratio_b4[_u]["b2"],
+                        "bucket_4": _plan_ratio_b4[_u]["b4"],
+                    }
+                    for _bk, _r_bk in _bk_to_r.items():
+                        _lot_components[_u][_bk][_col] = _u_total * _r_bk
 
         _ibkr_qty = float(_spot_qty.get(_u, 0.0))
         _orphan_qty = _ibkr_qty - _qty_total
@@ -2791,14 +2976,24 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     )
     _pair_rows: list[dict] = []
     if not b4_registry.empty:
+        # Multiple inverse ETFs can share one underlying (MSTR ↔ MSDD /
+        # MSTZ / SMST). Spread the underlying's B4-attributed PnL evenly
+        # across its pairs so the sum across pair rows ties back to the
+        # underlying-level total instead of being multiplied by N.
+        _under_etf_count = (
+            b4_registry.groupby("underlying")["etf"].nunique().to_dict()
+        )
         for _, pr in b4_registry.iterrows():
             etf = str(pr["etf"])
             under = str(pr["underlying"])
             etf_pnl = df[(df["symbol"] == etf) & (df["bucket"] == "bucket_4")]
             und_pnl = df[(df["symbol"] == under) & (df["bucket"] == "bucket_4")]
+            n_etfs = max(int(_under_etf_count.get(under, 1) or 1), 1)
             row = {"underlying": under, "etf": etf, "beta": float(pr["beta"])}
             for c in base_cols:
-                row[c] = float(etf_pnl[c].sum()) + float(und_pnl[c].sum())
+                row[c] = float(etf_pnl[c].sum()) + (
+                    float(und_pnl[c].sum()) / n_etfs
+                )
             _pair_rows.append(row)
     pnl_bucket_4_by_pair = (
         pd.DataFrame(_pair_rows).sort_values("total_pnl", ascending=False)
@@ -2937,10 +3132,29 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             columns=["underlying", "symbols", "net_notional_usd", "gross_notional_usd", "n_legs"]
         )
 
-    _b4_under_qty = {
-        str(u): float(_ledger_qty_map.get(str(u), {}).get("bucket_4", 0.0))
-        for u in b4_underlyings
-    }
+    # ── Pair-exposure underlying qty ─────────────────────────────────────
+    # Defaults to the FIFO ledger's ``qty_b4`` slice. When plan-aware B4
+    # attribution is active and the plan has a non-zero ``inverse_decay_bucket4``
+    # ``long_usd`` target for this underlying, prefer
+    # ``plan_b4_long_usd / mark_price`` (signed; short = negative shares) so
+    # ``net_exposure_bucket_4_detail.csv`` shows the structural short
+    # underlying leg even when the net IBKR line is long.
+    _b4_under_qty: dict[str, float] = {}
+    for _u_b4 in b4_underlyings:
+        _u_str = str(_u_b4)
+        _plan_b4_usd = float(_plan_sleeve_usd.get(_u_str, {}).get("b4", 0.0))
+        if _plan_aware_b4 and abs(_plan_b4_usd) > 1e-9:
+            _px_rows = pos[pos["symbol"] == _u_str]
+            if not _px_rows.empty:
+                _mark = float(_px_rows.iloc[0]["markPrice"]) * float(
+                    _px_rows.iloc[0]["fxRateToBase"]
+                )
+                if _mark > 1e-9:
+                    _b4_under_qty[_u_str] = _plan_b4_usd / _mark
+                    continue
+        _b4_under_qty[_u_str] = float(
+            _ledger_qty_map.get(_u_str, {}).get("bucket_4", 0.0)
+        )
     exposure_b4_df, exposure_b4_detail_df = compute_bucket4_pair_exposure(
         pos, b4_registry, underlying_b4_qty=_b4_under_qty
     )
