@@ -247,6 +247,71 @@ def load_blacklist(config_yml: Path) -> set[str]:
     return bl
 
 
+def expand_blacklist(
+    blacklist: set[str],
+    etf_to_under: dict[str, str],
+) -> tuple[set[str], set[str]]:
+    """Expand strategy blacklist to all blocked symbols and underlyings.
+
+    When an underlying is blacklisted (e.g. APLD), every ETF mapped to that
+    underlying (APLX, APLZ, …) is excluded from exposure / capital metrics.
+    When an ETF is blacklisted directly, its underlying is blocked too.
+    """
+    blocked_symbols: set[str] = set()
+    blocked_underlyings: set[str] = set()
+    bl = {canonical_symbol(str(s)) for s in blacklist if str(s).strip()}
+    for sym in bl:
+        blocked_symbols.add(sym)
+        blocked_underlyings.add(sym)
+    for etf, under in etf_to_under.items():
+        e = canonical_symbol(str(etf))
+        u = canonical_symbol(str(under))
+        if not e or not u:
+            continue
+        if e in bl or u in bl:
+            blocked_symbols.add(e)
+            blocked_symbols.add(u)
+            blocked_underlyings.add(u)
+    return blocked_symbols, blocked_underlyings
+
+
+def _filter_exposure_df(
+    exposure_df: pd.DataFrame,
+    blocked_underlyings: set[str],
+    *,
+    underlying_col: str = "underlying",
+) -> pd.DataFrame:
+    """Drop blacklisted underlyings from an exposure aggregate table."""
+    if exposure_df.empty or not blocked_underlyings:
+        return exposure_df
+    if underlying_col not in exposure_df.columns:
+        return exposure_df
+    return exposure_df[
+        ~exposure_df[underlying_col].astype(str).isin(blocked_underlyings)
+    ].copy()
+
+
+def _filter_positions_blacklist(
+    pos: pd.DataFrame,
+    blocked_symbols: set[str],
+    blocked_underlyings: set[str],
+    etf_to_under: dict[str, str],
+) -> pd.DataFrame:
+    """Remove blacklisted symbols / underlyings from a positions frame."""
+    if pos.empty or (not blocked_symbols and not blocked_underlyings):
+        return pos
+    out = pos.copy()
+    if "underlying" not in out.columns:
+        under_sym = out.get("underlyingSymbol")
+        if under_sym is not None:
+            out["underlying"] = out["symbol"].map(etf_to_under).fillna(under_sym)
+        else:
+            out["underlying"] = out["symbol"].map(etf_to_under).fillna(out["symbol"])
+    out = out[~out["symbol"].astype(str).isin(blocked_symbols)].copy()
+    out = out[~out["underlying"].astype(str).isin(blocked_underlyings)].copy()
+    return out
+
+
 def _find_col(cols_lc: dict[str, str], candidates: list[str]) -> str | None:
     for cand in candidates:
         if cand in cols_lc:
@@ -1606,6 +1671,23 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     blacklist = load_blacklist(config_yml_path)
     df = df[~df["symbol"].isin(blacklist)].copy()
     df = df[~df["underlying"].isin(blacklist)].copy()
+
+    blocked_symbols, blocked_underlyings = expand_blacklist(blacklist, etf_to_under)
+    if blocked_underlyings:
+        print(
+            f"[ACCOUNTING] Blacklist exposure exclusion: "
+            f"{sorted(blocked_underlyings)} ({len(blocked_symbols)} symbols)"
+        )
+    if not b4_registry.empty:
+        b4_registry = b4_registry[
+            ~b4_registry["underlying"].astype(str).isin(blocked_underlyings)
+            & ~b4_registry["etf"].astype(str).isin(blocked_symbols)
+        ].copy()
+        b4_registry.to_csv(outdir / "bucket4_pairs.csv", index=False)
+    b4_etf_syms = set(b4_registry["etf"].astype(str).tolist()) if not b4_registry.empty else set()
+    b4_underlyings = (
+        set(b4_registry["underlying"].astype(str).tolist()) if not b4_registry.empty else set()
+    )
 
     # Universe filter — whitelist approach.  A symbol can only appear
     # in PnL if it is a KNOWN part of our strategy universe:
@@ -3034,6 +3116,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     # ── Net exposure (beta-normalized) ──
     bucket3_only_syms = set(flow_short_set) | set(flow_low_beta_bucket3_syms)
     pos_b124 = pos[(~pos["symbol"].isin(bucket3_only_syms))].copy()
+    pos_b124 = _filter_positions_blacklist(
+        pos_b124, blocked_symbols, blocked_underlyings, etf_to_under
+    )
     b124_underlyings = (
         set(pnl_by_underlying["underlying"].dropna().astype(str)) if not pnl_by_underlying.empty else set()
     )
@@ -3045,6 +3130,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     # breaking bucket↔book reconciliation by the orphan's notional.
     if b4_underlyings:
         b124_underlyings = b124_underlyings | {str(u) for u in b4_underlyings}
+    b124_underlyings = {u for u in b124_underlyings if u not in blocked_underlyings}
     if not pos_b124.empty and b124_underlyings:
         exposure_df, exposure_detail_df = compute_net_exposure(
             flex_positions_path,
@@ -3162,7 +3248,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             _ledger_qty_map.get(_u_str, {}).get("bucket_4", 0.0)
         )
     exposure_b4_df, exposure_b4_detail_df = compute_bucket4_pair_exposure(
-        pos, b4_registry, underlying_b4_qty=_b4_under_qty
+        _filter_positions_blacklist(pos, blocked_symbols, blocked_underlyings, etf_to_under),
+        b4_registry,
+        underlying_b4_qty=_b4_under_qty,
     )
     _ = exposure_b4_from_b124_df  # ratio-split cross-check; pair exposure is canonical for B4
 
@@ -3179,6 +3267,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     pos_b3_pos_beta_flow = pos[pos["symbol"].isin(flow_low_beta_bucket3_syms)].copy()
     if not pos_b3_pos_beta_flow.empty:
         pos_b3 = pd.concat([pos_b3, pos_b3_pos_beta_flow], ignore_index=True)
+    pos_b3 = _filter_positions_blacklist(
+        pos_b3, blocked_symbols, blocked_underlyings, etf_to_under
+    )
     if not pos_b3.empty:
         pos_b3["beta"] = pos_b3["symbol"].map(etf_to_beta_map).fillna(1.0)
         pos_b3["mv_base"] = pos_b3["position"] * pos_b3["beta"] * pos_b3["markPrice"] * pos_b3["fxRateToBase"]

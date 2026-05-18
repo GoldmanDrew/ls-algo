@@ -30,8 +30,43 @@ try:
 except Exception:  # pragma: no cover - optional dep / fallback
     compute_betas = None  # type: ignore[assignment]
 
+try:
+    from ibkr_accounting import (
+        SUPPLEMENTAL_ETF_MAP,
+        expand_blacklist,
+        load_blacklist,
+        load_etf_to_under_map,
+        _filter_exposure_df,
+    )
+except ImportError:  # pragma: no cover
+    SUPPLEMENTAL_ETF_MAP = {}
+    expand_blacklist = None  # type: ignore[assignment]
+    load_blacklist = None  # type: ignore[assignment]
+    load_etf_to_under_map = None  # type: ignore[assignment]
+    _filter_exposure_df = None  # type: ignore[assignment]
+
 
 TRADING_DAYS_PER_YEAR_DAYS: int = 252
+
+
+def _load_blocked_exposure_keys(
+    runs_root: Path,
+    screener_csv: Path | None = None,
+) -> set[str]:
+    """Symbols and underlyings excluded from gross/net exposure metrics."""
+    if expand_blacklist is None or load_blacklist is None or load_etf_to_under_map is None:
+        return set()
+    project_root = runs_root.parent.parent
+    config_yml = project_root / "config" / "strategy_config.yml"
+    if not config_yml.exists():
+        return set()
+    screener_path = screener_csv or (project_root / "data" / "etf_screened_today.csv")
+    etf_to_under = load_etf_to_under_map(screener_path) if screener_path.is_file() else {}
+    for e_sym, u_sym in SUPPLEMENTAL_ETF_MAP.items():
+        etf_to_under.setdefault(e_sym, u_sym)
+    blacklist = load_blacklist(config_yml)
+    blocked_symbols, blocked_underlyings = expand_blacklist(blacklist, etf_to_under)
+    return blocked_symbols | blocked_underlyings
 
 
 # Limits live in code (not YAML) so a kill switch firing is auditable in
@@ -301,9 +336,14 @@ def compute_bucket_detail(
     bucket: str,
     pnl_csv: Path,
     net_exposure_csv: Path,
+    *,
+    blocked_exposure_keys: set[str] | None = None,
 ) -> dict[str, Any]:
     pnl = _read_csv_or_empty(pnl_csv)
     expo = _read_csv_or_empty(net_exposure_csv)
+    if blocked_exposure_keys and not expo.empty and _filter_exposure_df is not None:
+        underlying_col = "underlying" if "underlying" in expo.columns else "symbol"
+        expo = _filter_exposure_df(expo, blocked_exposure_keys, underlying_col=underlying_col)
 
     rows: list[dict[str, Any]] = []
     if not pnl.empty:
@@ -890,6 +930,7 @@ def compute_factor_panel(
     *,
     beta_results: dict[str, Any] | None = None,
     screener_vol_map: dict[str, float] | None = None,
+    blocked_exposure_keys: set[str] | None = None,
 ) -> dict[str, Any]:
     """Compute beta-weighted net exposure, sector groupings and top names.
 
@@ -904,6 +945,8 @@ def compute_factor_panel(
     ``regime_vol_pct`` needed by the slide-risk and vol-shock panels.
     """
     df = _read_csv_or_empty(underlying_exposure_csv)
+    if blocked_exposure_keys and not df.empty and _filter_exposure_df is not None:
+        df = _filter_exposure_df(df, blocked_exposure_keys)
     if df.empty:
         return {
             "available": False,
@@ -2110,6 +2153,7 @@ def build_snapshot(
 
     totals = _read_json_or_empty(accounting / "totals.json")
     pnl_by_bucket = _read_csv_or_empty(accounting / "pnl_by_bucket.csv")
+    blocked_exposure_keys = _load_blocked_exposure_keys(runs_root, screener_csv)
 
     book = compute_book_summary(totals, pnl_by_bucket, nav_usd=nav_usd, limits=limits)
 
@@ -2119,6 +2163,7 @@ def build_snapshot(
             bucket=bucket,
             pnl_csv=accounting / f"pnl_{bucket}.csv",
             net_exposure_csv=accounting / f"net_exposure_{bucket}.csv",
+            blocked_exposure_keys=blocked_exposure_keys,
         )
 
     borrow_panel = compute_borrow_panel(
@@ -2142,6 +2187,7 @@ def build_snapshot(
                 bucket="book",
                 pnl_csv=accounting / "pnl_by_underlying.csv",
                 net_exposure_csv=accounting / "net_exposure_by_underlying.csv",
+                blocked_exposure_keys=blocked_exposure_keys,
             )
         }
     beta_results_dicts: dict[str, dict[str, Any]] = {}
@@ -2151,6 +2197,8 @@ def build_snapshot(
         if exposure_csv.is_file():
             try:
                 _df = pd.read_csv(exposure_csv, usecols=["underlying"])
+                if blocked_exposure_keys:
+                    _df = _df[~_df["underlying"].astype(str).isin(blocked_exposure_keys)]
                 underlyings = [
                     str(u).strip().upper() for u in _df["underlying"].dropna().tolist()
                 ]
@@ -2169,6 +2217,7 @@ def build_snapshot(
         nav_usd=nav_usd,
         beta_results=beta_results_dicts or None,
         screener_vol_map=screener_vol_map or None,
+        blocked_exposure_keys=blocked_exposure_keys,
     )
     scenario_panel = compute_scenario_panel(
         buckets=scenario_buckets,

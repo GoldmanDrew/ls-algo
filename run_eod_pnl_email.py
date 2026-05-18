@@ -19,11 +19,15 @@ from ibkr_accounting import (
     SUPPLEMENTAL_ETF_MAP,
     canonical_symbol,
     compute_net_exposure,
+    expand_blacklist,
     format_exposure_table,
+    load_blacklist,
     load_etf_to_under_map,
     load_universe_from_screened,
     normalize_plan_etf_ticker,
     parse_open_positions,
+    _filter_exposure_df,
+    _filter_positions_blacklist,
 )
 from strategy_config import load_config
 
@@ -366,6 +370,19 @@ def _load_screened_for_run(run_date: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def _blocked_exposure_sets(run_date: str) -> tuple[set[str], set[str]]:
+    """Return (blocked_symbols, blocked_underlyings) for exposure metrics."""
+    config_yml = PROJECT_ROOT / "config" / "strategy_config.yml"
+    screened_path = RUNS_ROOT / run_date / "etf_screened_today.csv"
+    if not screened_path.exists():
+        screened_path = PROJECT_ROOT / "data" / "etf_screened_today.csv"
+    etf_to_under = load_etf_to_under_map(screened_path)
+    for e_sym, u_sym in SUPPLEMENTAL_ETF_MAP.items():
+        etf_to_under.setdefault(e_sym, u_sym)
+    blacklist = load_blacklist(config_yml) if config_yml.exists() else set()
+    return expand_blacklist(blacklist, etf_to_under)
+
+
 def _normalise_bucket_key(value: object) -> str | None:
     s = str(value or "").strip()
     return s if s in BUCKET_KEYS else None
@@ -426,6 +443,9 @@ def compute_bucket_capital_snapshot(
     pnl_symbol: pd.DataFrame,
     screened: pd.DataFrame,
     lot_state: pd.DataFrame | None = None,
+    *,
+    blocked_symbols: set[str] | None = None,
+    blocked_underlyings: set[str] | None = None,
 ) -> dict[str, float]:
     """
     Compute current per-bucket capital bases from open positions.
@@ -457,6 +477,36 @@ def compute_bucket_capital_snapshot(
     pos = positions.copy()
     pos["symbol"] = pos["symbol"].map(lambda s: canonical_symbol(str(s)))
     pos = pos[(pos["symbol"].astype(bool)) & (~pos["symbol"].isin(EXCLUDE_SYMBOLS))].copy()
+    if blocked_symbols or blocked_underlyings:
+        etf_to_under: dict[str, str] = {}
+        if screened is not None and not screened.empty:
+            cols = {c.lower(): c for c in screened.columns}
+            etf_col = next(
+                (cols[k] for k in ("etf", "symbol", "ticker", "etf_symbol", "etf_ticker") if k in cols),
+                None,
+            )
+            under_col = next(
+                (
+                    cols[k]
+                    for k in ("underlying", "underlyingsymbol", "underlying_symbol", "root", "underlyingticker")
+                    if k in cols
+                ),
+                None,
+            )
+            if etf_col and under_col:
+                for _, r in screened[[etf_col, under_col]].dropna().iterrows():
+                    e = canonical_symbol(str(r[etf_col]))
+                    u = canonical_symbol(str(r[under_col]))
+                    if e and u:
+                        etf_to_under[e] = u
+        for e_sym, u_sym in SUPPLEMENTAL_ETF_MAP.items():
+            etf_to_under.setdefault(e_sym, u_sym)
+        pos = _filter_positions_blacklist(
+            pos,
+            blocked_symbols or set(),
+            blocked_underlyings or set(),
+            etf_to_under,
+        )
     if pos.empty:
         return snap
 
@@ -517,9 +567,17 @@ def build_bucket_capital_snapshot_from_run(run_date: str) -> dict[str, float]:
         pnl_symbol = pd.read_csv(pnl_symbol_csv)
         screened = _load_screened_for_run(run_date)
         lot_state = pd.read_csv(lot_state_csv) if lot_state_csv.exists() else pd.DataFrame()
+        blocked_symbols, blocked_underlyings = _blocked_exposure_sets(run_date)
     except Exception:
         return _empty_bucket_capital_snapshot()
-    return compute_bucket_capital_snapshot(positions, pnl_symbol, screened, lot_state)
+    return compute_bucket_capital_snapshot(
+        positions,
+        pnl_symbol,
+        screened,
+        lot_state,
+        blocked_symbols=blocked_symbols,
+        blocked_underlyings=blocked_underlyings,
+    )
 
 
 def _safe_return(numerator: float, denominator: float) -> float | None:
@@ -1736,6 +1794,8 @@ def main() -> int:
     exposure_b2_csv_path = outdir / "net_exposure_bucket_2.csv"
     exposure_b3_csv_path = outdir / "net_exposure_bucket_3.csv"
     exposure_b4_csv_path = outdir / "net_exposure_bucket_4.csv"
+    blocked_symbols, blocked_underlyings = _blocked_exposure_sets(run_date)
+    blocked_exposure_keys = blocked_symbols | blocked_underlyings
 
     # Combined bucket 1+2+4 exposure
     exposure_table_str = "(exposure data unavailable)"
@@ -1744,7 +1804,7 @@ def main() -> int:
     pair_exposure_line = "Pair exposure: (exposure file missing)."
     if exposure_csv_path.exists():
         try:
-            exposure_df = pd.read_csv(exposure_csv_path)
+            exposure_df = _filter_exposure_df(pd.read_csv(exposure_csv_path), blocked_exposure_keys)
             exposure_table_str, total_net, total_gross = format_exposure_table(exposure_df)
             pair_exposure_line = format_pair_exposure_flags(exposure_df)
         except Exception as e:
@@ -1757,7 +1817,7 @@ def main() -> int:
     b1_gross = 0.0
     if exposure_b1_csv_path.exists():
         try:
-            exposure_b1_df = pd.read_csv(exposure_b1_csv_path)
+            exposure_b1_df = _filter_exposure_df(pd.read_csv(exposure_b1_csv_path), blocked_exposure_keys)
             b1_exposure_table_str, b1_net, b1_gross = format_exposure_table(exposure_b1_df)
         except Exception as e:
             b1_exposure_table_str = f"(bucket 1 exposure error: {e})"
@@ -1768,7 +1828,7 @@ def main() -> int:
     b2_gross = 0.0
     if exposure_b2_csv_path.exists():
         try:
-            exposure_b2_df = pd.read_csv(exposure_b2_csv_path)
+            exposure_b2_df = _filter_exposure_df(pd.read_csv(exposure_b2_csv_path), blocked_exposure_keys)
             b2_exposure_table_str, b2_net, b2_gross = format_exposure_table(exposure_b2_df)
         except Exception as e:
             b2_exposure_table_str = f"(bucket 2 exposure error: {e})"
@@ -1781,13 +1841,14 @@ def main() -> int:
             exposure_b3_df = pd.read_csv(exposure_b3_csv_path)
             if "underlying" not in exposure_b3_df.columns and "symbol" in exposure_b3_df.columns:
                 exposure_b3_df = exposure_b3_df.rename(columns={"symbol": "underlying"})
+            exposure_b3_df = _filter_exposure_df(exposure_b3_df, blocked_exposure_keys)
             b3_exposure_table_str, b3_net_tbl, b3_gross_tbl = format_exposure_table(
                 exposure_b3_df
             )
         except Exception as e:
             b3_exposure_table_str = f"(bucket 3 exposure error: {e})"
-    b3_net = float(totals.get("net_exposure_bucket_3", b3_net_tbl))
-    b3_gross = float(totals.get("gross_exposure_bucket_3", b3_gross_tbl))
+    b3_net = b3_net_tbl
+    b3_gross = b3_gross_tbl
 
     # Bucket 4 exposure
     b4_exposure_table_str = "(no bucket 4 exposure data)"
@@ -1797,13 +1858,14 @@ def main() -> int:
             exposure_b4_df = pd.read_csv(exposure_b4_csv_path)
             if "underlying" not in exposure_b4_df.columns and "symbol" in exposure_b4_df.columns:
                 exposure_b4_df = exposure_b4_df.rename(columns={"symbol": "underlying"})
+            exposure_b4_df = _filter_exposure_df(exposure_b4_df, blocked_exposure_keys)
             b4_exposure_table_str, b4_net_tbl, b4_gross_tbl = format_exposure_table(
                 exposure_b4_df
             )
         except Exception as e:
             b4_exposure_table_str = f"(bucket 4 exposure error: {e})"
-    b4_net = float(totals.get("net_exposure_bucket_4", b4_net_tbl))
-    b4_gross = float(totals.get("gross_exposure_bucket_4", b4_gross_tbl))
+    b4_net = b4_net_tbl
+    b4_gross = b4_gross_tbl
 
     # 5) Update history + plot since START_DATE
     grand_total = b1_pnl_total + b2_pnl_total + b3_pnl_total + b4_pnl_total
