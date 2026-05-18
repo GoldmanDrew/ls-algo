@@ -81,17 +81,18 @@ def test_compute_bucket4_pair_exposure_net_near_hedged() -> None:
     assert len(detail) == 2
 
 
-def test_pair_exposure_scales_underlying_by_b4_ratio() -> None:
+def test_pair_exposure_uses_exact_b4_share_count() -> None:
     registry = pd.DataFrame([{"etf": "APLZ", "underlying": "APLD", "beta": -2.0, "partial_hedge_ratio": 1.0}])
     pos = pd.DataFrame(
         [
             {"symbol": "APLZ", "position": -100, "markPrice": 10.0, "fxRateToBase": 1.0},
-            {"symbol": "APLD", "position": -100, "markPrice": 10.0, "fxRateToBase": 1.0},
+            {"symbol": "APLD", "position": -400, "markPrice": 10.0, "fxRateToBase": 1.0},
         ]
     )
     full, _ = compute_bucket4_pair_exposure(pos, registry)
-    scaled, _ = compute_bucket4_pair_exposure(pos, registry, underlying_b4_ratio={"APLD": 0.25})
-    assert float(scaled["net_notional_usd"].iloc[0]) != float(full["net_notional_usd"].iloc[0])
+    exact, _ = compute_bucket4_pair_exposure(pos, registry, underlying_b4_qty={"APLD": -100.0})
+    assert float(exact["net_notional_usd"].iloc[0]) != float(full["net_notional_usd"].iloc[0])
+    assert abs(float(exact["net_notional_usd"].iloc[0])) < abs(float(full["net_notional_usd"].iloc[0]))
 
 
 def test_realized_ratio_map_includes_bucket_4() -> None:
