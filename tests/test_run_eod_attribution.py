@@ -6,6 +6,7 @@ import pytest
 import pandas as pd
 
 from run_eod_pnl_email import (
+    _bucket_pnl_from_totals,
     apply_bucket_pnl_continuity,
     compute_average_bucket_capital,
     compute_bucket_capital_snapshot,
@@ -346,6 +347,36 @@ def test_apply_bucket_pnl_continuity_spreads_account_daily(tmp_path, monkeypatch
     assert bp["bucket_4"] == pytest.approx(-1964.68, abs=1.0)
     assert bp["bucket_4"] - (-2410.09) == pytest.approx(445.41, abs=1.0)
     assert sum(bp.values()) == pytest.approx(52613.11, abs=0.1)
+
+
+def test_headline_bucket_pnl_uses_totals_not_misattributed_detail_csv(tmp_path, monkeypatch):
+    """EOD subject/history must use post-continuity totals, not pnl_bucket_*.csv sums."""
+    runs = tmp_path / "data" / "runs"
+    for d, bp, total in (
+        (
+            "2026-05-18",
+            {"bucket_1": 25426.75, "bucket_2": 28552.10, "bucket_3": 7809.71, "bucket_4": -2410.09},
+            59378.47,
+        ),
+        (
+            "2026-05-19",
+            {"bucket_1": 227261.17, "bucket_2": -180028.37, "bucket_3": 7344.99, "bucket_4": -1964.68},
+            52613.11,
+        ),
+    ):
+        acct = runs / d / "accounting"
+        acct.mkdir(parents=True)
+        (acct / "totals.json").write_text(
+            json.dumps({"total_pnl": total, "bucket_pnl": bp}),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr("run_eod_pnl_email.RUNS_ROOT", runs)
+    totals = json.loads((runs / "2026-05-19" / "accounting" / "totals.json").read_text())
+    fixed = apply_bucket_pnl_continuity("2026-05-19", totals)
+    headline = _bucket_pnl_from_totals(fixed)
+    assert headline["bucket_1"] == pytest.approx(22252.0, abs=50.0)
+    assert headline["bucket_1"] != pytest.approx(227261.17, abs=1.0)
+    assert sum(headline.values()) == pytest.approx(52613.11, abs=0.1)
 
 
 def test_read_bucket_pnl_from_run_uses_pnl_by_bucket_csv(tmp_path, monkeypatch):

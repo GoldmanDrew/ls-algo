@@ -2079,21 +2079,25 @@ def get_previous_day(run_date: str | None = None) -> str:
 def main() -> int:
     run_date = os.environ.get("RUN_DATE") or get_previous_day()
 
-    # 1) Pull Flex files for RUN_DATE
     env = os.environ.copy()
     env["RUN_DATE"] = run_date
-    run_cmd(["python", str(IBKR_FLEX_SCRIPT), "--run-date", run_date], env=env)
+    skip_pipeline = os.environ.get("EOD_SKIP_PIPELINE", "").strip().lower() in ("1", "true", "yes")
 
-    # 2) Build accounting PnL outputs
-    run_cmd(["python", str(IBKR_ACCT_SCRIPT), run_date], env=env)
+    if not skip_pipeline:
+        # 1) Pull Flex files for RUN_DATE
+        run_cmd(["python", str(IBKR_FLEX_SCRIPT), "--run-date", run_date], env=env)
+        # 2) Build accounting PnL outputs
+        run_cmd(["python", str(IBKR_ACCT_SCRIPT), run_date], env=env)
 
     # 3) Load outputs (fix implausible bucket re-attribution vs prior run)
     pnl_under_csv, pnl_symbol_csv, pnl_bucket_csv, totals_json_path, totals = load_outputs(run_date)
     totals = apply_bucket_pnl_continuity(run_date, totals)
     total_pnl = float(totals.get("total_pnl", 0.0))
+    headline_bucket_pnl = _bucket_pnl_from_totals(totals)
 
     # 4) Create underlying breakdown table (bucket 1&2 combined) + bucket table
     underlying_table, underlying_total = format_underlying_table(pnl_under_csv, pnl_symbol_csv)
+    pnl_bucket_csv = RUNS_ROOT / run_date / "accounting" / "pnl_by_bucket.csv"
     bucket_table = format_bucket_table(pnl_bucket_csv)
 
     # 4a) Per-bucket PnL
@@ -2155,15 +2159,16 @@ def main() -> int:
         "bucket_3": b3_pnl_total,
         "bucket_4": b4_pnl_total,
     }
-    totals_bucket_pnl = _bucket_pnl_from_totals(totals)
     _bucket_tol = 0.01
+    bucket_detail_mismatch: list[str] = []
     for bucket in BUCKET_KEYS:
         csv_v = float(_bucket_pnl_from_csv[bucket])
-        tot_v = float(totals_bucket_pnl[bucket])
+        tot_v = float(headline_bucket_pnl[bucket])
         if abs(csv_v - tot_v) > _bucket_tol:
+            bucket_detail_mismatch.append(bucket)
             print(
-                f"[EOD] WARNING: {bucket} PnL CSV sum {csv_v:,.2f} != "
-                f"totals.json {tot_v:,.2f}"
+                f"[EOD] WARNING: {bucket} detail CSV sum {csv_v:,.2f} != "
+                f"headline (totals.json) {tot_v:,.2f}"
             )
 
     # 4b) Load pre-computed exposure tables from accounting outputs
@@ -2245,9 +2250,15 @@ def main() -> int:
     b4_net = b4_net_tbl
     b4_gross = b4_gross_tbl
 
+    # Headline / history / returns use continuity-adjusted totals, not pnl_bucket_*.csv sums.
+    b1_pnl_total = headline_bucket_pnl["bucket_1"]
+    b2_pnl_total = headline_bucket_pnl["bucket_2"]
+    b3_pnl_total = headline_bucket_pnl["bucket_3"]
+    b4_pnl_total = headline_bucket_pnl["bucket_4"]
+
     # 5) Update history + plot since START_DATE
-    grand_total = b1_pnl_total + b2_pnl_total + b3_pnl_total + b4_pnl_total
-    bucket_pnl_map = _bucket_pnl_from_csv
+    grand_total = float(total_pnl)
+    bucket_pnl_map = dict(headline_bucket_pnl)
     bucket_capital_snapshot = build_bucket_capital_snapshot_from_run(run_date)
     hist = update_pnl_history(
         run_date,
@@ -2327,10 +2338,19 @@ def main() -> int:
     else:
         hist_summary = f"Since {START_DATE}: no history rows yet.\n"
 
+    detail_note = ""
+    if bucket_detail_mismatch:
+        detail_note = (
+            "Note: per-bucket detail tables below may not sum to headline bucket totals "
+            f"({', '.join(bucket_detail_mismatch)}); headline uses continuity-adjusted "
+            "totals.json / pnl_by_bucket.csv.\n\n"
+        )
+
     body = (
         f"As of: {asof}\n"
         f"Run date: {run_date} — Previous day mark-to-market\n"
         f"{pair_exposure_line}\n\n"
+        f"{detail_note}"
         f"Position discrepancy rows: {len(discrepancy_df)} "
         f"(under-exposed: {under_exposed_count})\n\n"
         f"TOTAL PnL (base): {total_pnl:,.2f}\n"

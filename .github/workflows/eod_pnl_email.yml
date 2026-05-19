@@ -166,8 +166,8 @@ jobs:
           # 2) Build accounting
           python scripts/ibkr_accounting_pnl.py "$RUN_DATE"
 
-          # 3) Email
-          python run_eod_pnl_email.py
+          # 3) Email (flex + accounting already ran above)
+          EOD_SKIP_PIPELINE=1 python run_eod_pnl_email.py
 
       - name: Commit PnL outputs
         run: |
