@@ -1,5 +1,7 @@
 """Tests for PnL attribution long/short split and row builder in run_eod_pnl_email."""
 
+import json
+
 import pytest
 import pandas as pd
 
@@ -8,7 +10,7 @@ from run_eod_pnl_email import (
     compute_bucket_capital_snapshot,
     compute_period_pnl_deltas,
     format_bucket_return_table,
-    format_eod_pnl_subject,
+    read_bucket_pnl_from_run,
     build_attribution_row,
     split_long_short_realized_unrealized,
 )
@@ -307,18 +309,22 @@ def test_compute_period_pnl_deltas_daily_vs_ytd():
     assert daily["bucket_1"] != history.iloc[-1]["pnl_bucket_1"]
 
 
-def test_format_eod_pnl_subject_uses_daily_not_ytd_buckets():
-    subject = format_eod_pnl_subject(
-        "2026-05-19",
-        daily={
-            "bucket_1": 40603.30,
-            "bucket_2": -41725.87,
-            "bucket_3": -464.72,
-            "bucket_4": -5178.08,
-            "total": -6765.36,
-        },
-        ytd_total=52613.11,
+def test_read_bucket_pnl_from_run_uses_pnl_by_bucket_csv(tmp_path, monkeypatch):
+    run_dir = tmp_path / "data" / "runs" / "2026-05-18" / "accounting"
+    run_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {"bucket": "bucket_1", "total_pnl": 25426.75},
+            {"bucket": "bucket_2", "total_pnl": 28552.10},
+            {"bucket": "bucket_3", "total_pnl": 7809.71},
+            {"bucket": "bucket_4", "total_pnl": -2410.09},
+        ]
+    ).to_csv(run_dir / "pnl_by_bucket.csv", index=False)
+    (run_dir / "totals.json").write_text(
+        json.dumps({"bucket_pnl": {"bucket_1": -999.0, "bucket_2": 0, "bucket_3": 0, "bucket_4": 0}}),
+        encoding="utf-8",
     )
-    assert "Daily B1: 40,603.30" in subject
-    assert "YTD Total: 52,613.11" in subject
-    assert "Daily B1: -183" not in subject
+    monkeypatch.setattr("run_eod_pnl_email.RUNS_ROOT", tmp_path / "data" / "runs")
+    b1, b2, b3, b4 = read_bucket_pnl_from_run("2026-05-18")
+    assert b1 == pytest.approx(25426.75)
+    assert b2 == pytest.approx(28552.10)
