@@ -165,6 +165,107 @@ def _alert_dedupe_key(row: dict[str, Any]) -> str:
     )
 
 
+def _load_screener_etf_symbols(screener_csv: Path | None) -> set[str]:
+    symbols: set[str] = set()
+    if screener_csv is None or not screener_csv.is_file():
+        return symbols
+    try:
+        df = pd.read_csv(screener_csv, usecols=["ETF"])
+        for val in df["ETF"].dropna().tolist():
+            sym = _clean_str(val).upper()
+            if sym:
+                symbols.add(sym)
+    except Exception:
+        pass
+    return symbols
+
+
+def _load_short_position_symbols(flex_positions_xml: Path | None) -> set[str]:
+    if flex_positions_xml is None or not flex_positions_xml.is_file():
+        return set()
+    shorts: set[str] = set()
+    for p in parse_positions(flex_positions_xml):
+        if float(getattr(p, "position_value", 0) or 0) < 0:
+            sym = (getattr(p, "symbol", "") or "").strip().upper()
+            if sym:
+                shorts.add(sym)
+    return shorts
+
+
+def _borrow_watchlist_symbols(
+    *,
+    screener_csv: Path | None,
+    flex_positions_xml: Path | None,
+) -> set[str]:
+    """Universe for borrow panels: held shorts ∪ ETFs in ``etf_screened_today``."""
+    return _load_screener_etf_symbols(screener_csv) | _load_short_position_symbols(
+        flex_positions_xml
+    )
+
+
+def _load_screener_borrow_meta(screener_csv: Path | None) -> dict[str, dict[str, Any]]:
+    meta: dict[str, dict[str, Any]] = {}
+    if screener_csv is None or not screener_csv.is_file():
+        return meta
+    try:
+        screener = pd.read_csv(screener_csv)
+    except Exception:
+        return meta
+    if "ETF" not in screener.columns:
+        return meta
+    for _, r in screener.iterrows():
+        key = _clean_str(r.get("ETF")).upper()
+        if not key:
+            continue
+        meta[key] = {
+            "shares_available": (
+                float(r.get("shares_available")) if pd.notna(r.get("shares_available")) else None
+            ),
+            "borrow_fee_annual": (
+                float(r.get("borrow_fee_annual")) if pd.notna(r.get("borrow_fee_annual")) else None
+            ),
+        }
+    return meta
+
+
+def _resolve_borrow_apr(
+    symbol: str,
+    *,
+    flex_fee_by_symbol: dict[str, float],
+    screener_meta: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Align APR fields across borrow panels.
+
+    * ``flex_peak_apr_pct`` — max ``borrowFeeRate`` from IBKR HardToBorrowDetail (EOD window).
+    * ``screener_model_apr_pct`` — ``borrow_fee_annual`` from the daily screener (decimal → %).
+    * ``effective_apr_pct`` — flex peak when present, else screener model (used for $ cost math).
+    """
+    sym = symbol.upper()
+    flex_peak = float(flex_fee_by_symbol.get(sym, 0.0) or 0.0)
+    screener_dec = (screener_meta.get(sym) or {}).get("borrow_fee_annual")
+    screener_pct: float | None = None
+    if screener_dec is not None:
+        screener_pct = float(screener_dec) * 100.0
+    if flex_peak > 0:
+        effective = flex_peak
+        source = "ibkr_peak"
+    elif screener_pct is not None:
+        effective = screener_pct
+        source = "screener_model"
+    else:
+        effective = 0.0
+        source = "unknown"
+    return {
+        "flex_peak_apr_pct": flex_peak if flex_peak > 0 else None,
+        "screener_model_apr_pct": screener_pct,
+        "effective_apr_pct": effective,
+        "apr_source": source,
+        # Back-compat keys consumed by the SPA today.
+        "current_apr_pct": effective,
+        "fee_rate_pct": flex_peak if flex_peak > 0 else effective,
+    }
+
+
 def _load_bucket4_symbols(
     net_exposure_bucket4_csv: Path | None,
     screener_csv: Path | None = None,
@@ -523,79 +624,100 @@ def compute_borrow_panel(
     borrow_rows: list[FlexBorrowFee] = parse_borrow_fee_details(flex_borrow_xml, run_date=run_date)
     positions: list[FlexPosition] = parse_positions(flex_positions_xml)
 
+    watchlist = _borrow_watchlist_symbols(
+        screener_csv=screener_csv,
+        flex_positions_xml=flex_positions_xml,
+    )
+    screener_meta = _load_screener_borrow_meta(screener_csv)
+
     summary = summarize_borrow(borrow_rows)
+    flex_fee_by_symbol: dict[str, float] = dict(summary.get("fee_rate_by_symbol") or {})
+
     pos_summary = summarize_positions(positions)
 
     breaches: list[dict[str, Any]] = []
-    for row in summary["names_over_30pct"]:
-        status = _classify(row["fee_rate_pct"], limits["borrow_apr_pct_default"])
+    for row in summary.get("names_over_30pct", []):
+        sym = (row.get("symbol") or "").upper()
+        if watchlist and sym not in watchlist:
+            continue
+        apr = _resolve_borrow_apr(
+            sym, flex_fee_by_symbol=flex_fee_by_symbol, screener_meta=screener_meta
+        )
+        effective = apr["effective_apr_pct"]
+        status = _classify(effective, limits["borrow_apr_pct_default"])
         if status != "ok":
             breaches.append(
                 _normalize_breach(
                     {
-                        "metric": f"borrow_apr:{row.get('symbol', '')}",
-                        "label": row.get("symbol", "borrow"),
-                        **row,
+                        "metric": f"borrow_apr:{sym}",
+                        "label": sym,
+                        "value": effective,
+                        **apr,
                         "status": status,
                         "limit": limits["borrow_apr_pct_default"],
-                        "source": "borrow APR (short ETF sleeve)",
+                        "source": "effective borrow APR (IBKR peak, else screener model)",
                         "action": "Review borrow economics; reduce or drop names above hard cap.",
-                        "sleeve": "bucket_4",
+                        "sleeve": "short_etf",
                     }
                 )
             )
 
-    # Borrow squeeze proxy: short position qty vs screener `shares_available`.
-    squeeze_rows: list[dict[str, Any]] = []
-    if screener_csv is not None and screener_csv.is_file():
-        try:
-            screener = pd.read_csv(
-                screener_csv, usecols=["ETF", "shares_available", "borrow_fee_annual"]
-            )
-        except Exception:
-            screener = pd.DataFrame()
-        avail_map: dict[str, dict[str, Any]] = {}
-        if not screener.empty:
-            for _, r in screener.iterrows():
-                key = _clean_str(r.get("ETF")).upper()
-                if not key:
-                    continue
-                avail_map[key] = {
-                    "shares_available": (
-                        float(r.get("shares_available")) if pd.notna(r.get("shares_available")) else None
-                    ),
-                    "borrow_fee_annual": (
-                        float(r.get("borrow_fee_annual")) if pd.notna(r.get("borrow_fee_annual")) else None
-                    ),
-                }
-        for p in positions:
-            qty = float(getattr(p, "quantity", 0) or 0)
-            if qty >= 0:
+    short_notional: dict[str, float] = {}
+    for p in positions:
+        if float(getattr(p, "position_value", 0) or 0) < 0:
+            sym = (getattr(p, "symbol", "") or "").upper()
+            if watchlist and sym not in watchlist:
                 continue
-            symbol = (getattr(p, "symbol", "") or "").upper()
-            meta = avail_map.get(symbol, {})
-            shares_avail = meta.get("shares_available")
-            short_qty = abs(qty)
-            ratio = None
-            status = "unknown"
-            if shares_avail and shares_avail > 0:
-                ratio = short_qty / shares_avail
-                if ratio >= 0.5:
-                    status = "hard"
-                elif ratio >= 0.25:
-                    status = "warn"
-                else:
-                    status = "ok"
-            squeeze_rows.append(
-                {
-                    "symbol": symbol,
-                    "short_qty": short_qty,
-                    "shares_available": shares_avail,
-                    "utilization": ratio,
-                    "borrow_fee_annual": meta.get("borrow_fee_annual"),
-                    "status": status,
-                }
-            )
+            short_notional[sym] = short_notional.get(sym, 0.0) + abs(p.position_value)
+
+    short_etf_rows: list[dict[str, Any]] = []
+    for sym, notional in short_notional.items():
+        apr = _resolve_borrow_apr(
+            sym, flex_fee_by_symbol=flex_fee_by_symbol, screener_meta=screener_meta
+        )
+        meta = screener_meta.get(sym, {})
+        eff = float(apr["effective_apr_pct"])
+        short_etf_rows.append(
+            {
+                "symbol": sym,
+                "short_notional_usd": notional,
+                **apr,
+                "implied_annual_cost_usd": notional * (eff / 100.0),
+                "shares_available": meta.get("shares_available"),
+            }
+        )
+    short_etf_rows.sort(key=lambda r: r["implied_annual_cost_usd"], reverse=True)
+
+    squeeze_rows: list[dict[str, Any]] = []
+    for row in short_etf_rows:
+        sym = row["symbol"]
+        shares_avail = row.get("shares_available")
+        short_qty = None
+        for p in positions:
+            if (getattr(p, "symbol", "") or "").upper() != sym:
+                continue
+            if float(getattr(p, "quantity", 0) or 0) < 0:
+                short_qty = abs(float(getattr(p, "quantity", 0) or 0))
+        ratio = None
+        status = "unknown"
+        if shares_avail and shares_avail > 0 and short_qty is not None:
+            ratio = short_qty / shares_avail
+            if ratio >= 0.5:
+                status = "hard"
+            elif ratio >= 0.25:
+                status = "warn"
+            else:
+                status = "ok"
+        squeeze_rows.append(
+            {
+                "symbol": sym,
+                "short_qty": short_qty,
+                "shares_available": shares_avail,
+                "utilization": ratio,
+                "status": status,
+                **row,
+            }
+        )
         squeeze_rows.sort(
             key=lambda r: (-1.0 if r["utilization"] is None else r["utilization"]),
             reverse=True,
@@ -632,11 +754,28 @@ def compute_borrow_panel(
                     )
                 )
 
+    names_over_30_watchlist = []
+    for row in summary.get("names_over_30pct", []):
+        sym = (row.get("symbol") or "").upper()
+        if watchlist and sym not in watchlist:
+            continue
+        apr = _resolve_borrow_apr(
+            sym, flex_fee_by_symbol=flex_fee_by_symbol, screener_meta=screener_meta
+        )
+        names_over_30_watchlist.append({"symbol": sym, **apr})
+
     return {
-        "borrow": summary,
+        "borrow": {
+            **summary,
+            "names_over_30pct": names_over_30_watchlist,
+            "names_over_30pct_flex": summary.get("names_over_30pct", []),
+        },
         "positions": pos_summary,
         "breaches": breaches,
         "squeeze_rows": squeeze_rows,
+        "short_etf_rows": short_etf_rows,
+        "watchlist_n_symbols": len(watchlist),
+        "n_short_etfs": len(short_etf_rows),
     }
 
 
@@ -1513,8 +1652,8 @@ def compute_action_queue(
                 "priority": 0,
                 "status": "hard",
                 "category": f"borrow_squeeze:{sq['symbol']}",
-                "sleeve": "bucket_4",
-                "title": f"Reduce short on {sq['symbol']}",
+                        "sleeve": "short_etf",
+                        "title": f"Reduce short on {sq['symbol']}",
                 "detail": (
                     f"Utilization {sq['utilization']:.0%} of available borrow ("
                     f"{sq['short_qty']:,.0f} short vs {sq['shares_available']:,.0f} avail). "
@@ -2082,7 +2221,7 @@ def compute_borrow_shock_panel(
     flex_positions_xml: Path,
     nav_usd: float,
     screener_csv: Path | None = None,
-    bucket4_symbols: set[str] | None = None,
+    watchlist_symbols: set[str] | None = None,
     abs_shocks_bp: tuple[int, ...] = BORROW_ABS_SHOCKS_BP,
     mult_shocks: tuple[float, ...] = BORROW_MULT_SHOCKS,
     persistence_days: int = 30,
@@ -2118,47 +2257,28 @@ def compute_borrow_shock_panel(
             sym = (p.symbol or "").upper()
             short_notional[sym] = short_notional.get(sym, 0.0) + abs(p.position_value)
 
-    fee_rate_map: dict[str, float] = {}
     borrow_summary = borrow_panel.get("borrow") or {}
-    for sym, rate in (borrow_summary.get("fee_rate_by_symbol") or {}).items():
-        if float(rate) > 0:
-            fee_rate_map[sym.upper()] = float(rate)
-    if screener_csv is not None and screener_csv.is_file():
-        try:
-            sdf = pd.read_csv(screener_csv, usecols=["ETF", "borrow_fee_annual"])
-        except Exception:
-            sdf = pd.DataFrame()
-        for _, r in sdf.iterrows():
-            sym = _clean_str(r.get("ETF")).upper()
-            val = r.get("borrow_fee_annual")
-            if not sym or val is None or pd.isna(val):
-                continue
-            try:
-                rate_pct = float(val) * 100.0
-            except (TypeError, ValueError):
-                continue
-            fee_rate_map.setdefault(sym, rate_pct)
-    for row in borrow_panel.get("squeeze_rows") or []:
-        sym = (row.get("symbol") or "").upper()
-        if sym in fee_rate_map:
-            continue
-        ann = row.get("borrow_fee_annual")
-        if ann is not None:
-            fee_rate_map[sym] = float(ann) * 100.0
+    flex_fee_by_symbol: dict[str, float] = dict(
+        borrow_summary.get("fee_rate_by_symbol") or {}
+    )
+    screener_meta = _load_screener_borrow_meta(screener_csv)
+    watch = {s.upper() for s in (watchlist_symbols or set())}
 
-    b4 = {s.upper() for s in (bucket4_symbols or set())}
     name_rows: list[dict[str, Any]] = []
     for sym, short_n in short_notional.items():
-        if b4 and sym not in b4:
+        if watch and sym not in watch:
             continue
-        current_apr = fee_rate_map.get(sym, 0.0)
-        current_annual_cost = short_n * (current_apr / 100.0)
+        apr = _resolve_borrow_apr(
+            sym, flex_fee_by_symbol=flex_fee_by_symbol, screener_meta=screener_meta
+        )
+        eff = float(apr["effective_apr_pct"])
+        current_annual_cost = short_n * (eff / 100.0)
         name_rows.append(
             {
                 "symbol": sym,
                 "short_notional_usd": short_n,
-                "current_apr_pct": current_apr,
                 "current_annual_cost_usd": current_annual_cost,
+                **apr,
             }
         )
     name_rows.sort(key=lambda r: r["current_annual_cost_usd"], reverse=True)
@@ -2169,33 +2289,42 @@ def compute_borrow_shock_panel(
         for shock in shocks:
             if kind == "abs_bp":
                 shifted_aprs = {
-                    r["symbol"]: r["current_apr_pct"] + (shock / 100.0) for r in name_rows
+                    r["symbol"]: float(r["effective_apr_pct"]) + (shock / 100.0)
+                    for r in name_rows
                 }
                 label = f"+{int(shock)}bp"
             else:
                 shifted_aprs = {
-                    r["symbol"]: r["current_apr_pct"] * float(shock) for r in name_rows
+                    r["symbol"]: float(r["effective_apr_pct"]) * float(shock)
+                    for r in name_rows
                 }
                 label = f"{shock:g}x"
             per_name_delta = []
             for r in name_rows:
                 new_apr = shifted_aprs[r["symbol"]]
                 new_cost = r["short_notional_usd"] * (new_apr / 100.0)
-                delta = -(new_cost - r["current_annual_cost_usd"])
+                cost_delta_usd = new_cost - r["current_annual_cost_usd"]
                 per_name_delta.append(
                     {
                         "symbol": r["symbol"],
                         "short_notional_usd": r["short_notional_usd"],
-                        "current_apr_pct": r["current_apr_pct"],
+                        "effective_apr_pct": r["effective_apr_pct"],
+                        "flex_peak_apr_pct": r.get("flex_peak_apr_pct"),
+                        "screener_model_apr_pct": r.get("screener_model_apr_pct"),
+                        "apr_source": r.get("apr_source"),
+                        "stressed_apr_pct": new_apr,
+                        "current_apr_pct": r["effective_apr_pct"],
                         "new_apr_pct": new_apr,
-                        "annual_delta_usd": delta,
-                        "daily_delta_usd": delta / TRADING_DAYS_PER_YEAR_DAYS,
-                        "persistence_usd": (delta / TRADING_DAYS_PER_YEAR_DAYS)
+                        "annual_cost_delta_usd": cost_delta_usd,
+                        "annual_delta_usd": cost_delta_usd,
+                        "daily_cost_delta_usd": cost_delta_usd / TRADING_DAYS_PER_YEAR_DAYS,
+                        "daily_delta_usd": cost_delta_usd / TRADING_DAYS_PER_YEAR_DAYS,
+                        "persistence_usd": (cost_delta_usd / TRADING_DAYS_PER_YEAR_DAYS)
                         * persistence_days,
                     }
                 )
-            per_name_delta.sort(key=lambda d: d["annual_delta_usd"])
-            total_delta = sum(d["annual_delta_usd"] for d in per_name_delta)
+            per_name_delta.sort(key=lambda d: d["annual_cost_delta_usd"], reverse=True)
+            total_delta = sum(d["annual_cost_delta_usd"] for d in per_name_delta)
             out.append(
                 {
                     "shock": shock,
@@ -2216,7 +2345,8 @@ def compute_borrow_shock_panel(
     focus_mult = [s for s in mult_shocks if s in BORROW_SHOCK_FOCUS_MULT] or list(BORROW_SHOCK_FOCUS_MULT)
     return {
         "available": True,
-        "sleeve": "bucket_4",
+        "sleeve": "short_etf",
+        "watchlist_n_symbols": len(watch),
         "abs_shocks_bp": list(abs_shocks_bp),
         "mult_shocks": list(mult_shocks),
         "abs_ladder": _shock_ladder(abs_shocks_bp, kind="abs_bp"),
@@ -2502,16 +2632,10 @@ def build_snapshot(
         screener_csv=screener_csv,
         run_date=run_date,
     )
-    bucket4_symbols = _load_bucket4_symbols(
-        accounting / "net_exposure_bucket_4.csv",
+    borrow_watchlist = _borrow_watchlist_symbols(
         screener_csv=screener_csv,
+        flex_positions_xml=flex / "flex_positions.xml",
     )
-    if bucket4_symbols:
-        borrow_panel["squeeze_rows"] = [
-            r
-            for r in borrow_panel.get("squeeze_rows", [])
-            if (r.get("symbol") or "").upper() in bucket4_symbols
-        ]
     data_quality = compute_data_quality(
         accounting_dir=accounting,
         flex_dir=flex,
@@ -2565,7 +2689,7 @@ def build_snapshot(
         flex_positions_xml=flex / "flex_positions.xml",
         nav_usd=nav_usd,
         screener_csv=screener_csv,
-        bucket4_symbols=bucket4_symbols,
+        watchlist_symbols=borrow_watchlist,
     )
     action_queue = compute_action_queue(
         book=book,

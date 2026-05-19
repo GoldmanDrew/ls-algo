@@ -871,36 +871,34 @@
     }
     const renderLadder = (ladder, headerLabel) => {
       if (!ladder || !ladder.length) return "";
-      const header = `<th>${headerLabel}</th><th>Ann. &Delta;</th><th>% NAV / yr</th><th>${panel.persistence_days}-day persist</th><th>Worst victim</th><th>Other top victims</th>`;
+      const header = `<th>${headerLabel}</th><th>Add'l ann. cost</th><th>% NAV / yr</th><th>${panel.persistence_days}-day persist</th><th>Largest add'l cost</th><th>Other names</th>`;
       const body = ladder
         .map((r) => {
           const victims = r.worst_victims || [];
           const v0 = victims[0];
           const others = victims.slice(1, 4);
+          const cost0 = v0?.annual_cost_delta_usd ?? v0?.annual_delta_usd;
           const v0Cell = v0
-            ? `<strong>${safeText(v0.symbol)}</strong> <span class="dim small">${fmtUsdSigned(
-                v0.annual_delta_usd
-              )}<br>APR ${(v0.current_apr_pct).toFixed(1)}&rarr;${(v0.new_apr_pct).toFixed(1)}%</span>`
+            ? `<strong>${safeText(v0.symbol)}</strong> <span class="dim small">${fmtUsd(
+                cost0
+              )}<br>Eff. ${(v0.effective_apr_pct ?? v0.current_apr_pct).toFixed(2)}% &rarr; ${(v0.stressed_apr_pct ?? v0.new_apr_pct).toFixed(2)}%</span>`
             : "-";
           const othersCell = others
-            .map(
-              (v) =>
-                `${safeText(v.symbol)} <span class="dim small">${fmtUsdSigned(v.annual_delta_usd)}</span>`
-            )
+            .map((v) => {
+              const c = v.annual_cost_delta_usd ?? v.annual_delta_usd;
+              return `${safeText(v.symbol)} <span class="dim small">${fmtUsd(c)}</span>`;
+            })
             .join(", ");
           const heat = scenarioHeatClass(r.annual_delta_pct_nav);
+          const totalCost = r.annual_delta_usd;
           return `<tr>
             <td><strong>${safeText(r.label)}</strong></td>
-            <td class="num ${signedClass(r.annual_delta_usd)} ${heat}">${fmtUsdSigned(
-            r.annual_delta_usd
-          )}</td>
-            <td class="num ${signedClass(r.annual_delta_pct_nav)} ${heat}">${fmtPct(
+            <td class="num ${heat}">${fmtUsd(totalCost)}</td>
+            <td class="num ${heat}">${fmtPct(
             r.annual_delta_pct_nav,
             2
           )}</td>
-            <td class="num ${signedClass(r.persistence_delta_usd)}">${fmtUsdSigned(
-            r.persistence_delta_usd
-          )}</td>
+            <td class="num">${fmtUsd(r.persistence_delta_usd)}</td>
             <td>${v0Cell}</td>
             <td class="dim small">${othersCell || "-"}</td>
           </tr>`;
@@ -909,29 +907,29 @@
       return `<table class="tight"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`;
     };
     const namesTable = (panel.names || []).length
-      ? `<h3>Top 25 shorts by annualized borrow cost</h3>
+      ? `<h3>Top shorts by implied annual borrow cost</h3>
          <table class="tight sortable"><thead><tr>
-           <th>Symbol</th><th>Short notional</th><th>APR</th><th>Current ann. cost</th>
+           <th>Symbol</th><th>Short notional</th><th>Effective APR</th><th>IBKR peak</th><th>Screener model</th><th>Implied ann. cost</th>
          </tr></thead><tbody>${(panel.names || [])
            .map(
              (n) => `<tr>
              <td><strong>${safeText(n.symbol)}</strong></td>
              <td class="num">${fmtUsd(n.short_notional_usd)}</td>
-             <td class="num">${(n.current_apr_pct || 0).toFixed(2)}%</td>
+             <td class="num">${(n.effective_apr_pct ?? n.current_apr_pct || 0).toFixed(2)}%</td>
+             <td class="num dim">${n.flex_peak_apr_pct == null ? "-" : n.flex_peak_apr_pct.toFixed(2) + "%"}</td>
+             <td class="num dim">${n.screener_model_apr_pct == null ? "-" : n.screener_model_apr_pct.toFixed(2) + "%"}</td>
              <td class="num">${fmtUsd(n.current_annual_cost_usd)}</td>
            </tr>`
            )
            .join("")}</tbody></table>`
       : "";
     els.borrowShockContent.innerHTML = `
-      <h3>Focus: +50bp absolute shock (short ETF sleeve)</h3>
-      ${renderLadder(panel.focus_abs_ladder || panel.abs_ladder, "Shock")}
-      <h3>Focus: 2x current APR</h3>
-      ${renderLadder(panel.focus_mult_ladder || panel.mult_ladder, "Multiplier")}
-      <details><summary class="dim small">All absolute shocks</summary>${renderLadder(panel.abs_ladder, "Shock")}</details>
-      <details><summary class="dim small">All multiplicative shocks</summary>${renderLadder(panel.mult_ladder, "Multiplier")}</details>
-      <h3>Multiplicative rate shocks (x current APR)</h3>
-      ${renderLadder(panel.mult_ladder, "Multiplier")}
+      <h3>Focus: +50bp on effective APR</h3>
+      ${renderLadder(panel.focus_abs_ladder || [], "Shock")}
+      <h3>Focus: 2&times; effective APR</h3>
+      ${renderLadder(panel.focus_mult_ladder || [], "Multiplier")}
+      <details><summary class="dim small">All absolute shocks (+bp)</summary>${renderLadder(panel.abs_ladder, "Shock")}</details>
+      <details><summary class="dim small">All multiplicative shocks (&times; APR)</summary>${renderLadder(panel.mult_ladder, "Multiplier")}</details>
       ${namesTable}
     `;
   }
@@ -1152,11 +1150,11 @@
       els.squeezeContent.innerHTML = `<p class="dim small">No short positions found, or screener unavailable.</p>`;
       return;
     }
-    const top = rows.slice(0, 20);
+    const top = rows.slice(0, 100);
     els.squeezeContent.innerHTML = `
       <table class="tight"><thead><tr>
         <th>Symbol</th><th>Short qty</th><th>Shares available</th>
-        <th>Utilization</th><th>Borrow APR</th><th>Status</th>
+        <th>Utilization</th><th>Effective APR</th><th>IBKR peak</th><th>Screener model</th><th>Status</th>
       </tr></thead><tbody>${top
         .map(
           (r) => `<tr class="${rowStatusClass(r.status)}">
@@ -1170,11 +1168,9 @@
             <td class="num">${
               r.utilization == null ? "-" : fmtPct(r.utilization, 0)
             }</td>
-            <td class="num">${
-              r.borrow_fee_annual == null
-                ? "-"
-                : (r.borrow_fee_annual * 100).toFixed(1) + "%"
-            }</td>
+            <td class="num">${(r.effective_apr_pct ?? (r.borrow_fee_annual == null ? null : r.borrow_fee_annual * 100)) == null ? "-" : (r.effective_apr_pct ?? r.borrow_fee_annual * 100).toFixed(2) + "%"}</td>
+            <td class="num dim">${r.flex_peak_apr_pct == null ? "-" : r.flex_peak_apr_pct.toFixed(2) + "%"}</td>
+            <td class="num dim">${r.screener_model_apr_pct == null ? "-" : r.screener_model_apr_pct.toFixed(2) + "%"}</td>
             <td>${statusPill(r.status)}</td>
           </tr>`
         )
@@ -1334,9 +1330,28 @@
     const expensiveRows = (b.names_over_30pct || [])
       .slice(0, 30)
       .map(
-        (r) => `<tr class="${r.fee_rate_pct >= 90 ? "row-hard" : r.fee_rate_pct >= 60 ? "row-warn" : ""}">
+        (r) => {
+          const eff = r.effective_apr_pct ?? r.fee_rate_pct ?? 0;
+          return `<tr class="${eff >= 90 ? "row-hard" : eff >= 60 ? "row-warn" : ""}">
           <td><strong>${r.symbol}</strong></td>
-          <td class="num">${r.fee_rate_pct.toFixed(1)}%</td>
+          <td class="num">${eff.toFixed(2)}%</td>
+          <td class="num dim">${r.flex_peak_apr_pct == null ? "-" : r.flex_peak_apr_pct.toFixed(2) + "%"}</td>
+          <td class="num dim">${r.screener_model_apr_pct == null ? "-" : r.screener_model_apr_pct.toFixed(2) + "%"}</td>
+          <td class="dim small">${safeText(r.apr_source, "")}</td>
+        </tr>`;
+        }
+      )
+      .join("");
+    const shortEtfRows = (borrowPanel.short_etf_rows || [])
+      .slice(0, 50)
+      .map(
+        (r) => `<tr>
+          <td><strong>${safeText(r.symbol)}</strong></td>
+          <td class="num">${fmtUsd(r.short_notional_usd)}</td>
+          <td class="num">${(r.effective_apr_pct || 0).toFixed(2)}%</td>
+          <td class="num dim">${r.flex_peak_apr_pct == null ? "-" : r.flex_peak_apr_pct.toFixed(2) + "%"}</td>
+          <td class="num dim">${r.screener_model_apr_pct == null ? "-" : r.screener_model_apr_pct.toFixed(2) + "%"}</td>
+          <td class="num">${fmtUsd(r.implied_annual_cost_usd)}</td>
         </tr>`
       )
       .join("");
@@ -1355,11 +1370,15 @@
           (b.max_fee_rate_pct ?? 0).toFixed(1)
         }%</div></div>
       </div>
-      <h3>Names with borrow APR &ge; 30%</h3>
+      <h3>High effective borrow rate (&ge; 30%)</h3>
       <table class="tight"><thead><tr>
-        <th>Symbol</th><th>APR (max in window)</th>
-      </tr></thead><tbody>${expensiveRows || "<tr><td colspan=2 class=dim>(none)</td></tr>"}</tbody></table>
-      <p class="dim small">Threshold colours: amber &ge; 60%, red &ge; 90% (Bucket 4 universe entry filter).</p>
+        <th>Symbol</th><th>Effective APR</th><th>IBKR peak</th><th>Screener model</th><th>Source</th>
+      </tr></thead><tbody>${expensiveRows || "<tr><td colspan=5 class=dim>(none)</td></tr>"}</tbody></table>
+      <h3>Short ETFs held (${borrowPanel.n_short_etfs ?? 0} of ${borrowPanel.watchlist_n_symbols ?? 0} watchlist)</h3>
+      <table class="tight sortable"><thead><tr>
+        <th>Symbol</th><th>Short notional</th><th>Effective APR</th><th>IBKR peak</th><th>Screener model</th><th>Implied ann. cost</th>
+      </tr></thead><tbody>${shortEtfRows || "<tr><td colspan=6 class=dim>(none)</td></tr>"}</tbody></table>
+      <p class="dim small">Effective APR = IBKR peak HardToBorrow rate when reported, else screener <code>borrow_fee_annual</code>. Screener model can differ from realized IBKR (e.g. APLZ).</p>
     `;
   }
 
