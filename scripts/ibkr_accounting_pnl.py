@@ -321,7 +321,7 @@ def load_etf_beta_map(screened_csv: Path) -> tuple[dict[str, str], dict[str, flo
 
     etf_col = _find_col(cols_lc, ["etf", "symbol", "ticker", "etf_symbol"])
     under_col = _find_col(cols_lc, ["underlying", "underlyingsymbol", "underlying_symbol", "root"])
-    beta_col = _find_col(cols_lc, ["beta", "leverage", "lev"])
+    beta_col = _find_col(cols_lc, ["delta", "beta", "leverage", "lev"])
 
     if etf_col is None or under_col is None:
         return {}, {}
