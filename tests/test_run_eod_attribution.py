@@ -6,7 +6,9 @@ import pandas as pd
 from run_eod_pnl_email import (
     compute_average_bucket_capital,
     compute_bucket_capital_snapshot,
+    compute_period_pnl_deltas,
     format_bucket_return_table,
+    format_eod_pnl_subject,
     build_attribution_row,
     split_long_short_realized_unrealized,
 )
@@ -275,3 +277,48 @@ def test_compute_average_bucket_capital_handles_empty_history():
     assert avg["net_capital_bucket_1"] == 0.0
     assert avg["gross_capital_bucket_4"] == 0.0
     assert avg["margin_req_bucket_3"] == 0.0
+
+
+def test_compute_period_pnl_deltas_daily_vs_ytd():
+    history = pd.DataFrame(
+        [
+            {
+                "date": "2026-05-18",
+                "pnl_bucket_1": -223695.94,
+                "pnl_bucket_2": 283557.36,
+                "pnl_bucket_3": 7809.71,
+                "pnl_bucket_4": -8292.66,
+                "total_pnl": 59378.47,
+            },
+            {
+                "date": "2026-05-19",
+                "pnl_bucket_1": -183092.64,
+                "pnl_bucket_2": 241831.50,
+                "pnl_bucket_3": 7344.99,
+                "pnl_bucket_4": -13470.74,
+                "total_pnl": 52613.11,
+            },
+        ]
+    )
+    daily = compute_period_pnl_deltas(history, "2026-05-19", period="daily")
+    assert daily is not None
+    assert daily["bucket_1"] == pytest.approx(40603.30, rel=0, abs=0.1)
+    assert daily["total"] == pytest.approx(-6765.36, rel=0, abs=0.1)
+    assert daily["bucket_1"] != history.iloc[-1]["pnl_bucket_1"]
+
+
+def test_format_eod_pnl_subject_uses_daily_not_ytd_buckets():
+    subject = format_eod_pnl_subject(
+        "2026-05-19",
+        daily={
+            "bucket_1": 40603.30,
+            "bucket_2": -41725.87,
+            "bucket_3": -464.72,
+            "bucket_4": -5178.08,
+            "total": -6765.36,
+        },
+        ytd_total=52613.11,
+    )
+    assert "Daily B1: 40,603.30" in subject
+    assert "YTD Total: 52,613.11" in subject
+    assert "Daily B1: -183" not in subject
