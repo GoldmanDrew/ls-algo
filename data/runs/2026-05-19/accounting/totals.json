@@ -16,7 +16,7 @@
   "borrow_total_account_source": -21394.23,
   "borrow_details_file_present": true,
   "borrow_details_rows_cumulative": 354,
-  "universe_source": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\etf_screened_today.csv",
+  "universe_source": "/home/runner/work/ls-algo/ls-algo/data/etf_screened_today.csv",
   "universe_allowed_etfs": 484,
   "universe_allowed_underlyings": 235,
   "kept_symbols": 549,
@@ -55,7 +55,7 @@
     "TSYY",
     "ZSL"
   ],
-  "bucket_state_path": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\accounting\\underlying_bucket_state.csv",
+  "bucket_state_path": "/home/runner/work/ls-algo/ls-algo/data/accounting/underlying_bucket_state.csv",
   "bucket_realized_underlyings_from_trade_timing": 194,
   "pnl_underlying_scope": "bucket_1_2_4",
   "bucket4_pairs": 28,
