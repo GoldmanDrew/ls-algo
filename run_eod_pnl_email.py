@@ -59,7 +59,8 @@ def _spot_capital_bucket_ratios(
 PROJECT_ROOT = Path(__file__).resolve().parent  # adjust if needed
 
 IBKR_FLEX_SCRIPT = PROJECT_ROOT / "ibkr_flex.py"
-# Bucket PnL attribution matches the 2026-05-18 CI baseline; exposure-only fixes stay in ibkr_accounting.py.
+# EOD accounting: PnL attribution + exposure totals share this script; exposure
+# uses ratio-split bucket fields in totals.json (pair view in net_exposure_bucket_4.csv).
 IBKR_ACCT_SCRIPT = PROJECT_ROOT / "scripts" / "ibkr_accounting_pnl.py"
 
 # History / plot outputs

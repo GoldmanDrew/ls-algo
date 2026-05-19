@@ -315,6 +315,8 @@ def _etf_dashboard_data_paths(repo_root: Path, cfg: dict[str, Any]) -> list[Path
         [
             repo_root.parent / "etf-dashboard" / "data" / "etf_metrics_daily.csv",
             repo_root.parent / "etf-dashboard" / "data" / "etf_metrics_latest.json",
+            repo_root / "etf-dashboard" / "data" / "etf_metrics_daily.csv",
+            repo_root / "etf-dashboard" / "data" / "etf_metrics_latest.json",
             repo_root / "data" / "etf_metrics_daily.csv",
             repo_root / "data" / "etf_metrics_latest.json",
         ]
