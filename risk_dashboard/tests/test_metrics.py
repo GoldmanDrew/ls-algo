@@ -295,11 +295,11 @@ def test_factor_panel_computes_delta_weighted_exposure(tmp_path: Path):
     assert panel["available"] is True
     rows = {r["underlying"]: r for r in panel["rows"]}
     assert rows["NVDA"]["beta_to_spy"] == pytest.approx(1.70)
-    assert rows["NVDA"]["delta_source"] == "curated"
-    assert rows["NVDA"]["delta_weighted_net_usd"] == pytest.approx(10000 * 1.70)
-    assert rows["MSTR"]["delta_weighted_net_usd"] == pytest.approx(-5000 * 2.80)
+    assert rows["NVDA"]["beta_source"] == "curated"
+    assert rows["NVDA"]["beta_weighted_net_usd"] == pytest.approx(10000 * 1.70)
+    assert rows["MSTR"]["beta_weighted_net_usd"] == pytest.approx(-5000 * 2.80)
     # Unknown ticker -> default beta + default source.
-    assert rows["ZZUNK"]["delta_source"] == "default"
+    assert rows["ZZUNK"]["beta_source"] == "default"
     assert rows["ZZUNK"]["sector"] == "other"
     totals = panel["totals"]
     assert totals["net_beta_to_spy"] == pytest.approx(
@@ -312,7 +312,7 @@ def test_factor_map_lookup_defaults_safe():
     out = lookup_underlying("DEFINITELY_NOT_A_TICKER_42")
     assert out["sector"] == "other"
     assert out["beta_to_spy"] > 0
-    assert out["delta_source"] == "default"
+    assert out["beta_source"] == "default"
 
 
 def test_scenario_panel_appends_beta_scenarios(tmp_path: Path):
@@ -382,22 +382,21 @@ def test_action_queue_emits_quantitative_trim(tmp_path: Path):
         pnl_by_bucket=pd.DataFrame(),
         nav_usd=100_000.0,
     )
-    scenario = compute_scenario_panel(
-        buckets={"book": {"exposure_rows": [], "pnl_rows": []}},
-        nav_usd=100_000.0,
-        book_only_mode=True,
+    slide = compute_slide_risk_panel(
         factor_panel=factor,
+        nav_usd=100_000.0,
     )
     queue = compute_action_queue(
         book=book,
         factor_panel=factor,
         concentration_panel=conc,
-        scenario_panel=scenario,
+        slide_risk_panel=slide,
         borrow_panel={"squeeze_rows": []},
         nav_usd=100_000.0,
     )
-    nvda_actions = [a for a in queue if "NVDA" in a.get("title", "")]
-    assert nvda_actions, queue
+    items = queue["items"]
+    nvda_actions = [a for a in items if "NVDA" in a.get("title", "")]
+    assert nvda_actions, items
     a = nvda_actions[0]
     assert a["status"] == "hard"
     assert "$25,000" in a["detail"]
@@ -510,7 +509,7 @@ def _slide_factor_panel_fixture() -> dict:
                 "beta_to_ndx": 1.50,
                 "beta_to_rut": 1.40,
                 "regime_vol_pct": 40.0,
-                "delta_source": "computed",
+                "beta_source": "computed",
             },
             {
                 "underlying": "LLY",
@@ -523,14 +522,14 @@ def _slide_factor_panel_fixture() -> dict:
                 "beta_to_ndx": 0.30,
                 "beta_to_rut": 0.20,
                 "regime_vol_pct": 25.0,
-                "delta_source": "computed",
+                "beta_source": "computed",
             },
         ],
         "totals": {},
     }
 
 
-def test_compute_slide_risk_panel_produces_strips_with_three_indices():
+def test_compute_slide_risk_panel_produces_spx_and_vix_strips():
     panel = compute_slide_risk_panel(
         factor_panel=_slide_factor_panel_fixture(),
         nav_usd=100_000.0,
@@ -539,7 +538,8 @@ def test_compute_slide_risk_panel_produces_strips_with_three_indices():
     )
     assert panel["available"] is True
     indices = {idx["index"]: idx for idx in panel["indices"]}
-    assert set(indices) == {"SPX", "NDX", "RUT"}
+    assert set(indices) == {"SPX", "VIX"}
+    assert indices["VIX"]["strip_type"] == "vix_pts"
     spx = indices["SPX"]
     # SPX -3%: NVDA loses 50k*1.7*0.03 = 2550, LLY gains 10k*0.5*0.03 = 150
     # net = -2400 (note LLY is SHORT so -1*0.5*-0.03 = +0.015 * 10k = +150)
@@ -598,7 +598,7 @@ def test_compute_slide_risk_panel_letf_decay_uses_per_leg(tmp_path: Path):
                     "beta_to_ndx": 1.3,
                     "beta_to_rut": 1.2,
                     "regime_vol_pct": 70.0,
-                    "delta_source": "computed",
+                    "beta_source": "computed",
                 }
             ],
         },
@@ -751,11 +751,11 @@ def test_compute_factor_panel_uses_computed_betas_when_provided(tmp_path: Path):
     assert panel["available"] is True
     nvda = next(r for r in panel["rows"] if r["underlying"] == "NVDA")
     assert nvda["beta_to_spy"] == pytest.approx(1.95)
-    assert nvda["beta_to_ndx"] == pytest.approx(1.70)
-    assert nvda["beta_to_rut"] == pytest.approx(1.55)
-    assert nvda["delta_source"] == "computed"
+    assert nvda["beta_to_qqq"] == pytest.approx(1.70)
+    assert nvda["beta_to_iwm"] == pytest.approx(1.55)
+    assert nvda["beta_source"] == "computed"
     assert nvda["regime_vol_pct"] == pytest.approx(38.5)
-    assert nvda["delta_n_obs"] == 60
+    assert nvda["beta_n_obs"] == 60
     counts = panel["beta_provenance_counts"]
     assert counts.get("computed") == 1
 
