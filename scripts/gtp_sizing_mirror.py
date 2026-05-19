@@ -251,6 +251,8 @@ def mirror_generate_trade_plan_sizing(
         core_decay_state_path = real_decay_path
 
     keep = screened.copy()
+    if "Delta" not in keep.columns and "Beta" in keep.columns:
+        keep["Delta"] = keep["Beta"]
     blist = load_blacklist(cfg)
     keep = keep[(~keep["Underlying"].isin(blist)) & (~keep["ETF"].isin(blist))].copy()
     keep["ETF"] = keep["ETF"].astype(str).map(_norm_sym)

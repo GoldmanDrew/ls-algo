@@ -1898,6 +1898,8 @@ def main() -> None:
         raise FileNotFoundError(f"Screened CSV not found: {screened_csv}")
 
     screened = pd.read_csv(screened_csv)
+    if "Delta" not in screened.columns and "Beta" in screened.columns:
+        screened["Delta"] = screened["Beta"]
     if screened.empty:
         print("[WARN] Screened universe is empty.")
         proposed_latest_csv.parent.mkdir(parents=True, exist_ok=True)
