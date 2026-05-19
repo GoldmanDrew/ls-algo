@@ -235,7 +235,7 @@ Full operator playbook, edge-case table, and verification checklist live in [`SP
 
 Use **workflow_dispatch** to run screener-only, EOD-only, or both.
 
-**`.github/workflows/risk_dashboard.yml`** — runs after the EOD job and rebuilds the risk dashboard (`risk_dashboard/data/latest.json`), then redeploys the static SPA under `site/` to GitHub Pages. The deployed URL is gated by GitHub PAT login: only collaborators on this private repo can view the dashboard. See [`risk_dashboard/README.md`](risk_dashboard/README.md) for the one-time Pages setup.
+**`.github/workflows/risk_dashboard.yml`** — runs after the EOD job and rebuilds the risk dashboard (`risk_dashboard/data/latest.json`), then redeploys the static SPA under `site/` to GitHub Pages (snapshot bundled as `site/data/latest.json`). Optional **login id + password** via `site/data/investors.json` (same pattern as etf-dashboard). See [`risk_dashboard/README.md`](risk_dashboard/README.md) for setup.
 
 ---
 
@@ -253,7 +253,7 @@ Use **workflow_dispatch** to run screener-only, EOD-only, or both.
 | **`data/core_leveraged_decay_state.json`** | Sticky core net-decay state (created/updated when hysteresis is enabled). |
 | **`risk_dashboard/data/latest.json`** | JSON snapshot consumed by the static SPA in `site/` (deployed to GitHub Pages by the risk dashboard workflow). |
 | **`risk_dashboard/data/<YYYY-MM-DD>.json`** | Historical per-day snapshots. |
-| **`site/`** | Static SPA shell (HTML/CSS/JS); deployed to Pages, fetches the snapshot at runtime via the GitHub Contents API (PAT login). |
+| **`site/`** | Static SPA shell (HTML/CSS/JS); deployed to Pages with bundled `site/data/latest.json` and optional investor login. |
 
 **`data/borrow_history.json` (optional):** If present before `daily_screener.py` runs, it is **auto-loaded** (no CLI flag required) from, in order: `BORROW_HISTORY_PATH` / `--borrow-history-path`, `ETF_DASHBOARD_ROOT/data/borrow_history.json`, sibling `../etf-dashboard/data/borrow_history.json`, or this repo’s `data/borrow_history.json`. The scheduled **GitHub Action** downloads it from `GoldmanDrew/etf-dashboard` raw when the curl succeeds. That enables **weighted borrow resampling** for `net_edge_*` plus `net_edge_hist_json` / p25 / p75 on the CSV.
 

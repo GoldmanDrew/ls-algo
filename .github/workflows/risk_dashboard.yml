@@ -5,10 +5,8 @@ name: Risk Dashboard
 #               snapshot under risk_dashboard/data/ and commit it back
 #               to main. This is the data plane.
 #   2) deploy : redeploy the static site under site/ to GitHub Pages.
-#               The site is just an HTML/CSS/JS shell - it fetches the
-#               snapshot at runtime via the GitHub Contents API, gated
-#               by the user's PAT. So the static site itself is harmless
-#               and can be public.
+#               Bundles risk_dashboard/data/latest.json into site/data/
+#               and gates the UI with login id + password (investors.json).
 
 on:
   # Run after the existing EOD pipeline (eod_pnl_email.yml) succeeds.
@@ -157,6 +155,19 @@ jobs:
 
       - name: Configure Pages
         uses: actions/configure-pages@v4
+
+      - name: Bundle snapshot + auth data for Pages
+        run: |
+          mkdir -p site/data
+          cp risk_dashboard/data/latest.json site/data/latest.json
+          if [ -f risk_dashboard/data/index.json ]; then
+            cp risk_dashboard/data/index.json site/data/index.json
+          fi
+          if [ -f site/data/investors.json ]; then
+            echo "Using committed site/data/investors.json"
+          else
+            echo "No site/data/investors.json — dashboard will load without login"
+          fi
 
       - name: Inject build metadata into site
         run: |

@@ -5,46 +5,19 @@ output (already pulled by `ibkr_flex.py` + parsed by
 `ibkr_accounting.py`) into a PM-grade risk dashboard.
 
 The dashboard is a single-page app deployed to **GitHub Pages by
-GitHub Actions**. Login is by GitHub Personal Access Token (PAT) -- no
-OAuth app, no proxy, no secret in the JS. The static page is
-intentionally harmless: every sensitive number lives in the private
-`ls-algo` repo and is fetched at runtime via the GitHub Contents API
-using the user's PAT. The repo's collaborator list IS the
-authorization layer.
+GitHub Actions**. Sign-in uses a **login id + password** (same static-site
+pattern as **etf-dashboard**): PBKDF2 hashes in `site/data/investors.json`,
+verified in the browser. The EOD snapshot is **bundled into the Pages
+deploy** as `site/data/latest.json` (no GitHub API at runtime).
 
 ```
-                                      ???????????????????????
-            EOD pipeline               ? data/runs/<date>/   ?
-            (existing)        ???????  ?   ibkr_flex/*.xml   ?
-                                      ?   accounting/*.csv  ?
-                                      ???????????????????????
-                                                 ? (workflow_run)
-                                                 ?
-                                      ???????????????????????
-                                      ? risk_dashboard.yml  ?
-                                      ?   build job         ?
-                                      ?   - pytest          ?
-                                      ?   - build_site.py   ?
-                                      ?   - commit JSON     ?
-                                      ???????????????????????
-                                                 ?
-                  ????????????????????????????????
-                  ?
-   ????????????????????????????         ????????????????????????
-   ? risk_dashboard/data/     ?         ? site/  (static SPA)  ?
-   ?   latest.json            ?         ?   index.html         ?
-   ?   <YYYY-MM-DD>.json      ?         ?   assets/css/main.css?
-   ?   index.json             ?         ?   assets/js/{auth,   ?
-   ????????????????????????????         ?      app, config}.js ?
-            ?                            ????????????????????????
-            ? fetched via GitHub                     ? deployed by
-            ? Contents API (PAT-gated)               ? actions/deploy-pages
-            ?                                        ?
-            ?                                        ?
-                ??????????????????????????????????????????
-                ?       GitHub Pages site                ?
-                ?   https://<user>.github.io/ls-algo/    ?
-                ??????????????????????????????????????????
+EOD pipeline → data/runs/<date>/accounting/
+       ↓ workflow_run
+risk_dashboard.yml (build) → risk_dashboard/data/latest.json → commit
+       ↓
+risk_dashboard.yml (deploy) → copy latest.json + investors.json into site/data/
+       ↓
+GitHub Pages → SPA + login gate → fetch ./data/latest.json
 ```
 
 ---
@@ -72,9 +45,13 @@ site/
 ??? assets/
     ??? css/main.css       (matches Bucket4_Plan_Summary.html style)
     ??? js/
-        ??? config.js      (repo owner/name; edit if forked)
-        ??? auth.js        (PAT validation + Contents API helper)
+        ??? config.js      (snapshot / investors URLs)
+        ??? auth.js        (PBKDF2 investor login + session)
         ??? app.js         (SPA renderer)
+??? data/
+    ??? latest.json        (copied from risk_dashboard/data on deploy)
+    ??? investors.json     (optional; hashed credentials)
+    ??? investors.example.json
 ```
 
 ```
@@ -202,17 +179,12 @@ python -m risk_dashboard.build_site \
     --nav-usd 800000 \
     --out-dir risk_dashboard/data
 
-# 2. Serve site/ + the data folder side-by-side. The simplest static
-#    server keeps the SPA in one origin so the same PAT-protected
-#    fetch-via-API path works.
+mkdir -p site/data
+cp risk_dashboard/data/latest.json site/data/latest.json
+# optional: site/data/investors.json from hash_investor_password.py
 cd site && python -m http.server 8765
 # open http://localhost:8765/
 ```
-
-For local-only viewing without GitHub Contents API round-trips, you
-can also point `app.js` at a local file by changing
-`fetchRepoFile` to `fetch('/data/latest.json')`. We don't ship that
-toggle by default because it would weaken the auth model.
 
 ---
 
@@ -233,32 +205,16 @@ toggle by default because it would weaken the auth model.
 
 ## FAQ
 
-**Why not GitHub OAuth Apps?** OAuth Apps need a `client_secret`
-that cannot be embedded in static JS, and GitHub's
-`/login/oauth/access_token` endpoint historically does not expose
-CORS for that flow. PAT login skips that whole problem and matches
-the user-count we have (1-2).
+**Why username/password instead of GitHub PAT?** Matches etf-dashboard:
+no token management for viewers, works on public Pages, same PBKDF2
+client-side gate.
 
-**Why not GitHub App user-to-server flow?** Cleaner long-term, but
-needs an installed App, a client ID configured in JS, and CORS-
-enabled token endpoint behavior that works only for some GitHub
-plans. Out of scope for v1.
-
-**Could the data leak via the deployed site?** No. The deployed
-artifact (the `site/` folder) contains only the SPA shell. The
-snapshot lives under `risk_dashboard/data/` in the *repo* and is
-fetched at runtime via the GitHub Contents API. Anyone without
-read access to the private repo gets a 404 from GitHub when the SPA
-calls `GET /repos/.../contents/risk_dashboard/data/latest.json`.
-
-**What if my Pages plan only allows public sites?** That is exactly
-the design assumption. The shell is public; the data is not.
+**Could the data leak via the deployed site?** Yes — `site/data/latest.json`
+is part of the public Pages artifact. Login only hides the UI. Restrict
+who receives the URL; use `investors.json` to keep casual visitors out.
 
 **What about CSP / mixed content?** The site loads only same-origin
-assets (no CDN scripts) and calls only `https://api.github.com`.
-Adding a strict CSP header is straightforward via Pages' `_headers`
-file (Cloudflare-style); we ship without it for v1 to keep moving
-parts low.
+assets (no CDN scripts) and does not call `api.github.com` after login.
 
 ---
 
@@ -268,9 +224,5 @@ parts low.
   source toggle, and (optionally) the `risk_dashboard/data/`
   snapshots. The Python package can stay around -- nothing else
   depends on it.
-* **Rotate access:** revoke the PAT on GitHub. Every user whose PAT
-  is revoked is signed out at next API call.
-* **Remove a user:** remove them as a collaborator on `ls-algo`.
-  Their PAT keeps working for any *other* repo they have access to,
-  but `GET /repos/<owner>/ls-algo` will 404 and the dashboard rejects
-  them at login.
+* **Rotate access:** re-run `hash_investor_password.py` for the user and redeploy.
+* **Remove a user:** delete their row from `site/data/investors.json` and redeploy.

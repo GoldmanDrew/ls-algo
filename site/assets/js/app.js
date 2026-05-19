@@ -2,10 +2,8 @@
  * SPA entry-point for the ls-algo risk dashboard.
  *
  * Flow:
- *   1) On load, look for a PAT in sessionStorage.
- *   2) If none, show login. On submit, validate the PAT.
- *   3) On success, fetch latest.json from the private repo via the
- *      GitHub Contents API and render every panel.
+ *   1) Load investors.json; if users exist, require login id + password.
+ *   2) On success, fetch ./data/latest.json and render every panel.
  */
 
 (function () {
@@ -15,9 +13,11 @@
     loginPanel: document.getElementById("login-panel"),
     dashboard: document.getElementById("dashboard"),
     loginForm: document.getElementById("login-form"),
-    patInput: document.getElementById("pat-input"),
+    loginIdInput: document.getElementById("login-id-input"),
+    loginPassInput: document.getElementById("login-pass-input"),
     loginError: document.getElementById("login-error"),
     logoutBtn: document.getElementById("logout-btn"),
+    authUserLabel: document.getElementById("auth-user-label"),
     runDateLabel: document.getElementById("run-date-label"),
     generatedAtLabel: document.getElementById("generated-at-label"),
     cockpitStrip: document.getElementById("cockpit-strip"),
@@ -1341,10 +1341,22 @@
 
   /* ----------------------- Auth wiring ------------------------ */
   const subnav = document.getElementById("subnav");
-  function showDashboard() {
+  let authEnabled = false;
+  let investorUsers = [];
+
+  function showDashboard(sessionUid) {
     els.loginPanel.hidden = true;
     els.dashboard.hidden = false;
-    els.logoutBtn.hidden = false;
+    if (authEnabled) {
+      els.logoutBtn.hidden = false;
+      if (els.authUserLabel) {
+        els.authUserLabel.hidden = false;
+        els.authUserLabel.textContent = sessionUid || "";
+      }
+    } else {
+      els.logoutBtn.hidden = true;
+      if (els.authUserLabel) els.authUserLabel.hidden = true;
+    }
     if (subnav) subnav.hidden = false;
     enableSortableTables();
   }
@@ -1352,6 +1364,7 @@
     els.loginPanel.hidden = false;
     els.dashboard.hidden = true;
     els.logoutBtn.hidden = true;
+    if (els.authUserLabel) els.authUserLabel.hidden = true;
     if (subnav) subnav.hidden = true;
     els.runDateLabel.textContent = "No data loaded";
     els.generatedAtLabel.textContent = "";
@@ -1420,8 +1433,13 @@
     });
   }
 
-  async function loadSnapshot(pat) {
-    const snap = await window.LSAuth.fetchRepoFile(pat, cfg.snapshotPath);
+  async function loadSnapshot() {
+    const url = `${cfg.snapshotUrl}?t=${Date.now()}`;
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) {
+      throw new Error(`Could not load snapshot: ${res.status} ${res.statusText}`);
+    }
+    const snap = await res.json();
     if (typeof snap !== "object" || snap == null) {
       throw new Error("Snapshot is not valid JSON.");
     }
@@ -1453,20 +1471,10 @@
     enableSortableTables();
   }
 
-  async function tryAutoLogin() {
-    const pat = window.LSAuth.getStoredPat();
-    if (!pat) return false;
-    try {
-      await window.LSAuth.validatePat(pat);
-      const snap = await loadSnapshot(pat);
-      renderAll(snap);
-      showDashboard();
-      return true;
-    } catch (e) {
-      console.warn("auto-login failed:", e);
-      window.LSAuth.clearPat();
-      return false;
-    }
+  async function openDashboard(sessionUid) {
+    const snap = await loadSnapshot();
+    renderAll(snap);
+    showDashboard(sessionUid);
   }
 
   function bindLogin() {
@@ -1475,14 +1483,19 @@
       els.loginError.hidden = true;
       const submitBtn = els.loginForm.querySelector("button[type=submit]");
       submitBtn.disabled = true;
-      const pat = els.patInput.value.trim();
+      const userId = els.loginIdInput.value.trim();
+      const password = els.loginPassInput.value;
       try {
-        await window.LSAuth.validatePat(pat);
-        window.LSAuth.storePat(pat);
-        const snap = await loadSnapshot(pat);
-        renderAll(snap);
-        showDashboard();
-        els.patInput.value = "";
+        const ok = await window.LSAuth.verifyLogin(userId, password, investorUsers);
+        if (!ok) {
+          els.loginError.textContent = "Invalid login id or password.";
+          els.loginError.hidden = false;
+          return;
+        }
+        const uid = userId.toLowerCase();
+        window.LSAuth.writeAuthSession(uid);
+        els.loginPassInput.value = "";
+        await openDashboard(uid);
       } catch (e) {
         console.error(e);
         els.loginError.textContent = e.message || String(e);
@@ -1493,12 +1506,43 @@
     });
 
     els.logoutBtn.addEventListener("click", () => {
-      window.LSAuth.clearPat();
+      window.LSAuth.clearAuthSession();
       showLogin();
     });
   }
 
+  async function boot() {
+    bindLogin();
+    const { users, authEnabled: enabled } = await window.LSAuth.loadInvestors();
+    investorUsers = users;
+    authEnabled = enabled;
+
+    if (!authEnabled) {
+      try {
+        await openDashboard(null);
+      } catch (e) {
+        console.error(e);
+        els.loginError.textContent = e.message || String(e);
+        els.loginError.hidden = false;
+        showLogin();
+      }
+      return;
+    }
+
+    const ids = new Set(users.map((u) => String(u.id).toLowerCase()));
+    const existing = window.LSAuth.getStoredSession(ids);
+    if (existing) {
+      try {
+        await openDashboard(existing);
+        return;
+      } catch (e) {
+        console.warn("session restore failed:", e);
+        window.LSAuth.clearAuthSession();
+      }
+    }
+    showLogin();
+  }
+
   /* ----------------------- Boot ------------------------------- */
-  bindLogin();
-  tryAutoLogin();
+  boot();
 })();
