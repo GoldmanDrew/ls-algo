@@ -47,7 +47,7 @@ def backup_and_reset_state() -> Path | None:
 
 
 def run_accounting(run_date: str) -> None:
-    cmd = [sys.executable, str(PROJECT_ROOT / "ibkr_accounting.py"), run_date]
+    cmd = [sys.executable, str(PROJECT_ROOT / "scripts" / "ibkr_accounting_pnl.py"), run_date]
     subprocess.run(cmd, cwd=PROJECT_ROOT, check=True)
 
 
