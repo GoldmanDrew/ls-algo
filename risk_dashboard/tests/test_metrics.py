@@ -653,12 +653,12 @@ def test_compute_borrow_shock_panel_applies_abs_and_mult_shocks(tmp_path: Path):
     assert panel["available"] is True
     assert panel["current_annual_cost_usd"] == pytest.approx(15_000.0)
     abs_100 = next(r for r in panel["abs_ladder"] if r["shock"] == 100)
-    assert abs_100["annual_delta_usd"] == pytest.approx(-2000.0, abs=1.0)
+    assert abs_100["annual_delta_usd"] == pytest.approx(2000.0, abs=1.0)
     assert abs_100["persistence_delta_usd"] == pytest.approx(
         abs_100["annual_delta_usd"] / 252.0 * 30.0, rel=1e-9
     )
     mult_2 = next(r for r in panel["mult_ladder"] if r["shock"] == 2.0)
-    assert mult_2["annual_delta_usd"] == pytest.approx(-15_000.0, abs=1.0)
+    assert mult_2["annual_delta_usd"] == pytest.approx(15_000.0, abs=1.0)
     assert mult_2["worst_victims"][0]["symbol"] == "TSLZ"
 
 
