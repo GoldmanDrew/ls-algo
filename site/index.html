@@ -53,8 +53,8 @@
       <input id="login-id-input" type="text" autocomplete="username" spellcheck="false" required>
       <label for="login-pass-input">Password</label>
       <input id="login-pass-input" type="password" autocomplete="current-password" required>
-      <button type="submit" class="btn btn-primary">Sign in</button>
-      <div id="login-error" class="error" hidden></div>
+      <button type="submit" class="btn btn-primary" id="login-submit-btn">Sign in</button>
+      <div id="login-error" class="error" role="alert" aria-live="polite" hidden></div>
     </form>
     <p class="dim small">
       This is UI gating on a static site. Anyone who knows the snapshot URL can

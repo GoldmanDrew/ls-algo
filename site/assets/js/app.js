@@ -8,6 +8,9 @@
 
 (function () {
   const cfg = window.LS_ALGO_CONFIG;
+  if (!cfg || !cfg.snapshotUrl) {
+    console.error("LS_ALGO_CONFIG missing; check that config.js loaded.");
+  }
 
   const els = {
     loginPanel: document.getElementById("login-panel"),
@@ -760,13 +763,26 @@
       const horizons = (panel.horizons_days || []).join(" / ");
       const letf = panel.n_letf_names || 0;
       const total = panel.n_names_total || 0;
-      els.slideRiskMeta.innerHTML = `<span class="dim small">T+${horizons} days &middot; ${letf}/${total} LETF names &middot; ${panel.n_names_with_vol || 0} with realized vol</span>`;
+      const betaCov =
+        panel.beta_coverage_gross_pct == null
+          ? ""
+          : ` &middot; ${fmtPct(panel.beta_coverage_gross_pct, 0)} beta coverage (gross)`;
+      els.slideRiskMeta.innerHTML = `<span class="dim small">Instantaneous shocks use T+0 beta only; T+${horizons} rows add LETF vol drag${betaCov} &middot; ${letf}/${total} LETF &middot; ${panel.n_names_with_vol || 0} with vol</span>`;
     }
     const worst = panel.worst_shock || null;
+    const worstContrib = worst?.top_contributor;
+    const worstContribPct =
+      worstContrib?.pct_of_scenario_pnl == null
+        ? ""
+        : ` (${fmtPct(worstContrib.pct_of_scenario_pnl, 0)} of scenario)`;
     const worstBanner = worst
-      ? `<div class="callout warn" role="status"><strong>Worst slide:</strong> ${safeText(
+      ? `<div class="callout warn" role="status"><strong>Worst instantaneous slide (T+0):</strong> ${safeText(
           worst.label
-        )} &rarr; ${fmtPct(worst.total_pnl_pct_nav, 2)} of NAV at T+${worst.horizon_days}.</div>`
+        )} &rarr; ${fmtPct(worst.pnl_pct_nav ?? worst.total_pnl_pct_nav, 2)} of NAV${
+          worstContrib?.underlying
+            ? ` &middot; largest contributor <strong>${safeText(worstContrib.underlying)}</strong> ${fmtUsdSigned(worstContrib.pnl_usd)}${worstContribPct}`
+            : ""
+        }.</div>`
       : "";
     const indices = panel.indices || [];
     const stripsHtml = indices
@@ -793,12 +809,12 @@
             )
             .join("");
           return `<div class="slide-strip">
-            <div class="slide-strip-head"><h3>VIX vega shocks</h3></div>
+            <div class="slide-strip-head"><h3>VIX vega shocks (T+0)</h3><span class="dim small">Instantaneous vega P&amp;L</span></div>
             <div class="slide-strip-scroll">
               <table class="tight slide-table"><thead><tr><th class="row-label">Shock</th>${vixHeader}</tr></thead>
               <tbody><tr><th class="row-label">T+0</th>${vixCells}</tr></tbody></table>
             </div>
-            <h4 class="dim small">Realized-vol regime (LETF decay)</h4>
+            <h4 class="dim small">Realized-vol regime (LETF decay overlay)</h4>
             <table class="tight"><thead><tr><th>Regime</th><th>% NAV</th><th>Worst name</th></tr></thead><tbody>${volBody || "<tr><td colspan=3 class=dim>(none)</td></tr>"}</tbody></table>
           </div>`;
         }
@@ -823,14 +839,18 @@
                 return `<td class="num ${signedClass(h.total_pnl_pct_nav)} ${scenarioHeatClass(h.total_pnl_pct_nav)}" title="decay ${fmtUsdSigned(h.decay_usd)}">${fmtPct(h.total_pnl_pct_nav, 1)}</td>`;
               })
               .join("");
-            return `<tr><th class="row-label">T+${d}d</th>${cells}</tr>`;
+            return `<tr><th class="row-label">T+${d}d <span class="dim small">beta + decay</span></th>${cells}</tr>`;
           })
           .join("");
         const worstNamesRow = rows
           .map((r) => {
             const tip = r.shock_pct < 0 ? r.top_loss : r.top_gain;
             if (!tip) return `<td class="dim">-</td>`;
-            return `<td class="dim small">${safeText(tip.underlying)}<br>${fmtUsdSigned(tip.pnl_t0_usd)}</td>`;
+            const pct =
+              tip.pct_of_scenario_pnl == null
+                ? ""
+                : `<br>${fmtPct(tip.pct_of_scenario_pnl, 0)} of scenario`;
+            return `<td class="dim small">${safeText(tip.underlying)}<br>${fmtUsdSigned(tip.pnl_t0_usd)}${pct}</td>`;
           })
           .join("");
         return `<div class="slide-strip">
@@ -841,9 +861,9 @@
             <table class="tight slide-table">
               <thead><tr><th class="row-label">Shock</th>${headerCells}</tr></thead>
               <tbody>
-                <tr><th class="row-label">T+0</th>${t0Row}</tr>
+                <tr><th class="row-label">T+0 <span class="dim small">beta only</span></th>${t0Row}</tr>
                 ${horizonRows}
-                <tr class="dim"><th class="row-label">Top name</th>${worstNamesRow}</tr>
+                <tr class="dim"><th class="row-label">Largest contributor (T+0)</th>${worstNamesRow}</tr>
               </tbody>
             </table>
           </div>
@@ -881,7 +901,7 @@
           const v0Cell = v0
             ? `<strong>${safeText(v0.symbol)}</strong> <span class="dim small">${fmtUsd(
                 cost0
-              )}<br>Eff. ${(v0.effective_apr_pct ?? v0.current_apr_pct).toFixed(2)}% &rarr; ${(v0.stressed_apr_pct ?? v0.new_apr_pct).toFixed(2)}%</span>`
+              )}<br>Borrow ${(v0.borrow_rate_pct ?? v0.current_apr_pct ?? 0).toFixed(2)}% &rarr; ${(v0.stressed_borrow_rate_pct ?? v0.new_apr_pct ?? 0).toFixed(2)}%</span>`
             : "-";
           const othersCell = others
             .map((v) => {
@@ -909,24 +929,22 @@
     const namesTable = (panel.names || []).length
       ? `<h3>Top shorts by implied annual borrow cost</h3>
          <table class="tight sortable"><thead><tr>
-           <th>Symbol</th><th>Short notional</th><th>Effective APR</th><th>IBKR peak</th><th>Screener model</th><th>Implied ann. cost</th>
+           <th>Symbol</th><th>Short notional</th><th>Borrow Rate</th><th>Implied ann. cost</th>
          </tr></thead><tbody>${(panel.names || [])
            .map(
              (n) => `<tr>
              <td><strong>${safeText(n.symbol)}</strong></td>
              <td class="num">${fmtUsd(n.short_notional_usd)}</td>
-             <td class="num">${(n.effective_apr_pct ?? n.current_apr_pct || 0).toFixed(2)}%</td>
-             <td class="num dim">${n.flex_peak_apr_pct == null ? "-" : n.flex_peak_apr_pct.toFixed(2) + "%"}</td>
-             <td class="num dim">${n.screener_model_apr_pct == null ? "-" : n.screener_model_apr_pct.toFixed(2) + "%"}</td>
+             <td class="num">${(n.borrow_rate_pct ?? n.current_apr_pct ?? 0).toFixed(2)}%</td>
              <td class="num">${fmtUsd(n.current_annual_cost_usd)}</td>
            </tr>`
            )
            .join("")}</tbody></table>`
       : "";
     els.borrowShockContent.innerHTML = `
-      <h3>Focus: +50bp on effective APR</h3>
+      <h3>Focus: +50bp on borrow rate</h3>
       ${renderLadder(panel.focus_abs_ladder || [], "Shock")}
-      <h3>Focus: 2&times; effective APR</h3>
+      <h3>Focus: 2&times; borrow rate</h3>
       ${renderLadder(panel.focus_mult_ladder || [], "Multiplier")}
       <details><summary class="dim small">All absolute shocks (+bp)</summary>${renderLadder(panel.abs_ladder, "Shock")}</details>
       <details><summary class="dim small">All multiplicative shocks (&times; APR)</summary>${renderLadder(panel.mult_ladder, "Multiplier")}</details>
@@ -1154,7 +1172,7 @@
     els.squeezeContent.innerHTML = `
       <table class="tight"><thead><tr>
         <th>Symbol</th><th>Short qty</th><th>Shares available</th>
-        <th>Utilization</th><th>Effective APR</th><th>IBKR peak</th><th>Screener model</th><th>Status</th>
+        <th>Utilization</th><th>Borrow Rate</th><th>Status</th>
       </tr></thead><tbody>${top
         .map(
           (r) => `<tr class="${rowStatusClass(r.status)}">
@@ -1168,9 +1186,7 @@
             <td class="num">${
               r.utilization == null ? "-" : fmtPct(r.utilization, 0)
             }</td>
-            <td class="num">${(r.effective_apr_pct ?? (r.borrow_fee_annual == null ? null : r.borrow_fee_annual * 100)) == null ? "-" : (r.effective_apr_pct ?? r.borrow_fee_annual * 100).toFixed(2) + "%"}</td>
-            <td class="num dim">${r.flex_peak_apr_pct == null ? "-" : r.flex_peak_apr_pct.toFixed(2) + "%"}</td>
-            <td class="num dim">${r.screener_model_apr_pct == null ? "-" : r.screener_model_apr_pct.toFixed(2) + "%"}</td>
+            <td class="num">${r.borrow_rate_pct == null ? "-" : r.borrow_rate_pct.toFixed(2) + "%"}</td>
             <td>${statusPill(r.status)}</td>
           </tr>`
         )
@@ -1197,6 +1213,7 @@
   }
 
   function renderSleeveTable(book) {
+    if (!els.sleeveBody) return;
     const rows = book?.sleeve_table || [];
     const available = book?.sleeve_attribution_available !== false;
     const unavailableCell = `<td class="num dim" title="${safeText(
@@ -1327,20 +1344,20 @@
     }
     const b = borrowPanel.borrow || {};
     const p = borrowPanel.positions || {};
+    const shortRows = borrowPanel.short_etf_rows || [];
+    const maxBorrowRate = shortRows.reduce(
+      (m, r) => Math.max(m, Number(r.borrow_rate_pct) || 0),
+      0
+    );
     const expensiveRows = (b.names_over_30pct || [])
       .slice(0, 30)
-      .map(
-        (r) => {
-          const eff = r.effective_apr_pct ?? r.fee_rate_pct ?? 0;
-          return `<tr class="${eff >= 90 ? "row-hard" : eff >= 60 ? "row-warn" : ""}">
+      .map((r) => {
+        const br = r.borrow_rate_pct ?? r.fee_rate_pct ?? 0;
+        return `<tr class="${br >= 90 ? "row-hard" : br >= 60 ? "row-warn" : ""}">
           <td><strong>${r.symbol}</strong></td>
-          <td class="num">${eff.toFixed(2)}%</td>
-          <td class="num dim">${r.flex_peak_apr_pct == null ? "-" : r.flex_peak_apr_pct.toFixed(2) + "%"}</td>
-          <td class="num dim">${r.screener_model_apr_pct == null ? "-" : r.screener_model_apr_pct.toFixed(2) + "%"}</td>
-          <td class="dim small">${safeText(r.apr_source, "")}</td>
+          <td class="num">${br.toFixed(2)}%</td>
         </tr>`;
-        }
-      )
+      })
       .join("");
     const shortEtfRows = (borrowPanel.short_etf_rows || [])
       .slice(0, 50)
@@ -1348,9 +1365,7 @@
         (r) => `<tr>
           <td><strong>${safeText(r.symbol)}</strong></td>
           <td class="num">${fmtUsd(r.short_notional_usd)}</td>
-          <td class="num">${(r.effective_apr_pct || 0).toFixed(2)}%</td>
-          <td class="num dim">${r.flex_peak_apr_pct == null ? "-" : r.flex_peak_apr_pct.toFixed(2) + "%"}</td>
-          <td class="num dim">${r.screener_model_apr_pct == null ? "-" : r.screener_model_apr_pct.toFixed(2) + "%"}</td>
+          <td class="num">${(r.borrow_rate_pct ?? 0).toFixed(2)}%</td>
           <td class="num">${fmtUsd(r.implied_annual_cost_usd)}</td>
         </tr>`
       )
@@ -1366,24 +1381,23 @@
         <div class="stat"><div class="label">Total borrow interest</div><div class="value neg">${fmtUsdSigned(
           b.total_interest_usd
         )}</div></div>
-        <div class="stat"><div class="label">Max APR</div><div class="value">${
-          (b.max_fee_rate_pct ?? 0).toFixed(1)
-        }%</div></div>
+        <div class="stat"><div class="label">Max borrow rate</div><div class="value">${maxBorrowRate.toFixed(1)}%</div></div>
       </div>
-      <h3>High effective borrow rate (&ge; 30%)</h3>
+      <h3>High borrow rate (&ge; 30%)</h3>
       <table class="tight"><thead><tr>
-        <th>Symbol</th><th>Effective APR</th><th>IBKR peak</th><th>Screener model</th><th>Source</th>
-      </tr></thead><tbody>${expensiveRows || "<tr><td colspan=5 class=dim>(none)</td></tr>"}</tbody></table>
+        <th>Symbol</th><th>Borrow Rate</th>
+      </tr></thead><tbody>${expensiveRows || "<tr><td colspan=2 class=dim>(none)</td></tr>"}</tbody></table>
       <h3>Short ETFs held (${borrowPanel.n_short_etfs ?? 0} of ${borrowPanel.watchlist_n_symbols ?? 0} watchlist)</h3>
       <table class="tight sortable"><thead><tr>
-        <th>Symbol</th><th>Short notional</th><th>Effective APR</th><th>IBKR peak</th><th>Screener model</th><th>Implied ann. cost</th>
-      </tr></thead><tbody>${shortEtfRows || "<tr><td colspan=6 class=dim>(none)</td></tr>"}</tbody></table>
-      <p class="dim small">Effective APR = IBKR peak HardToBorrow rate when reported, else screener <code>borrow_fee_annual</code>. Screener model can differ from realized IBKR (e.g. APLZ).</p>
+        <th>Symbol</th><th>Short notional</th><th>Borrow Rate</th><th>Implied ann. cost</th>
+      </tr></thead><tbody>${shortEtfRows || "<tr><td colspan=4 class=dim>(none)</td></tr>"}</tbody></table>
+      <p class="dim small">Borrow Rate = screener <code>borrow_fee_annual</code> &times; 100.</p>
     `;
   }
 
   /* ----------------------- Tabs ------------------------------- */
   function bindTabs(snapshot) {
+    if (!els.bucketTabs) return;
     els.bucketTabs.querySelectorAll("button.tab").forEach((btn) => {
       btn.onclick = () => {
         els.bucketTabs
@@ -1400,6 +1414,20 @@
   const subnav = document.getElementById("subnav");
   let authEnabled = false;
   let investorUsers = [];
+  let investorsReady = false;
+
+  function showLoginError(message) {
+    if (!els.loginError) return;
+    els.loginError.textContent = message;
+    els.loginError.hidden = false;
+    els.loginError.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+
+  function clearLoginError() {
+    if (!els.loginError) return;
+    els.loginError.hidden = true;
+    els.loginError.textContent = "";
+  }
 
   function showDashboard(sessionUid) {
     els.loginPanel.hidden = true;
@@ -1508,53 +1536,96 @@
     els.generatedAtLabel.textContent =
       "Generated " + new Date(snap.generated_at_utc).toLocaleString();
 
-    renderDataQuality(snap.data_quality || {});
-    renderCockpit(snap);
-    renderAlerts(snap.alert_rows || []);
-    renderActionQueue(snap.action_queue || []);
-    renderSlideRisk(snap.slide_risk_panel || {});
-    renderBorrowShock(snap.borrow_shock_panel || {});
-    renderConcentration(snap.concentration_panel || {});
-    renderFactor(snap.factor_panel || {});
-    renderSleeveTable(snap.book || {});
-    bindTabs(snap);
-    renderBorrow(snap.borrow_panel || {});
-    renderSqueeze((snap.borrow_panel || {}).squeeze_rows || []);
-    els.rawTotals.textContent = JSON.stringify(snap.raw_totals || {}, null, 2);
+    const steps = [
+      () => renderDataQuality(snap.data_quality || {}),
+      () => renderCockpit(snap),
+      () => renderAlerts(snap.alert_rows || []),
+      () => renderActionQueue(snap.action_queue || []),
+      () => renderSlideRisk(snap.slide_risk_panel || {}),
+      () => renderBorrowShock(snap.borrow_shock_panel || {}),
+      () => renderConcentration(snap.concentration_panel || {}),
+      () => renderFactor(snap.factor_panel || {}),
+      () => renderSleeveTable(snap.book || {}),
+      () => bindTabs(snap),
+      () => renderBorrow(snap.borrow_panel || {}),
+      () => renderSqueeze((snap.borrow_panel || {}).squeeze_rows || []),
+    ];
+    for (const step of steps) {
+      try {
+        step();
+      } catch (e) {
+        console.error("render step failed:", e);
+        throw new Error(`Dashboard render failed: ${e.message || e}`);
+      }
+    }
+    if (els.rawTotals) {
+      els.rawTotals.textContent = JSON.stringify(snap.raw_totals || {}, null, 2);
+    }
     enableSortableTables();
   }
 
+  function showDashboardLoading(sessionUid) {
+    showDashboard(sessionUid);
+    if (els.cockpitStrip) {
+      els.cockpitStrip.innerHTML =
+        '<div class="callout dim">Loading risk snapshot (~2&nbsp;MB). This can take 10–30 seconds on a slow connection.</div>';
+    }
+  }
+
   async function openDashboard(sessionUid) {
+    showDashboardLoading(sessionUid);
     const snap = await loadSnapshot();
     renderAll(snap);
-    showDashboard(sessionUid);
   }
 
   function bindLogin() {
+    if (!els.loginForm) {
+      console.error("login-form element not found");
+      return;
+    }
     els.loginForm.addEventListener("submit", async (ev) => {
       ev.preventDefault();
-      els.loginError.hidden = true;
-      const submitBtn = els.loginForm.querySelector("button[type=submit]");
-      submitBtn.disabled = true;
+      clearLoginError();
+      const submitBtn =
+        document.getElementById("login-submit-btn") ||
+        els.loginForm.querySelector("button[type=submit]");
+      const submitLabel = submitBtn ? submitBtn.textContent : "Sign in";
+      if (!investorsReady) {
+        showLoginError("Still loading login configuration. Wait a moment and try again.");
+        return;
+      }
+      if (!window.crypto || !window.crypto.subtle) {
+        showLoginError(
+          "This browser cannot verify passwords (crypto.subtle unavailable). Use HTTPS or a modern browser."
+        );
+        return;
+      }
+      if (submitBtn) submitBtn.disabled = true;
       const userId = els.loginIdInput.value.trim();
       const password = els.loginPassInput.value;
       try {
+        if (submitBtn) submitBtn.textContent = "Checking password…";
         const ok = await window.LSAuth.verifyLogin(userId, password, investorUsers);
         if (!ok) {
-          els.loginError.textContent = "Invalid login id or password.";
-          els.loginError.hidden = false;
+          showLoginError(
+            "Invalid login id or password. Use the same id and password as etf-dashboard (e.g. dgoldman)."
+          );
           return;
         }
         const uid = userId.toLowerCase();
         window.LSAuth.writeAuthSession(uid);
         els.loginPassInput.value = "";
+        if (submitBtn) submitBtn.textContent = "Loading dashboard…";
         await openDashboard(uid);
       } catch (e) {
         console.error(e);
-        els.loginError.textContent = e.message || String(e);
-        els.loginError.hidden = false;
+        showLoginError(e.message || String(e));
+        showLogin();
       } finally {
-        submitBtn.disabled = false;
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = submitLabel;
+        }
       }
     });
 
@@ -1566,23 +1637,31 @@
 
   async function boot() {
     bindLogin();
-    const { users, authEnabled: enabled } = await window.LSAuth.loadInvestors();
-    investorUsers = users;
-    authEnabled = enabled;
+    try {
+      const { users, authEnabled: enabled } = await window.LSAuth.loadInvestors();
+      investorUsers = users;
+      authEnabled = enabled;
+      investorsReady = true;
+    } catch (e) {
+      console.error(e);
+      showLoginError(`Could not load ${window.LSAuth?.INVESTORS_URL || "investors.json"}: ${e.message || e}`);
+      investorsReady = true;
+      showLogin();
+      return;
+    }
 
     if (!authEnabled) {
       try {
         await openDashboard(null);
       } catch (e) {
         console.error(e);
-        els.loginError.textContent = e.message || String(e);
-        els.loginError.hidden = false;
+        showLoginError(e.message || String(e));
         showLogin();
       }
       return;
     }
 
-    const ids = new Set(users.map((u) => String(u.id).toLowerCase()));
+    const ids = new Set(investorUsers.map((u) => String(u.id).toLowerCase()));
     const existing = window.LSAuth.getStoredSession(ids);
     if (existing) {
       try {
@@ -1591,6 +1670,7 @@
       } catch (e) {
         console.warn("session restore failed:", e);
         window.LSAuth.clearAuthSession();
+        showLoginError(`Session expired or load failed: ${e.message || e}`);
       }
     }
     showLogin();
