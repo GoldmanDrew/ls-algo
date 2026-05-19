@@ -84,24 +84,42 @@ def parse_positions(flex_positions_xml: Path) -> list[FlexPosition]:
     return out
 
 
-def parse_borrow_fee_details(flex_borrow_xml: Path) -> list[FlexBorrowFee]:
-    """Read borrow-fee detail rows. The IBKR section name is
-    ``SLBOpenContract``/``SLBActivity``/``SLBFee`` depending on the
-    Flex template -- try the most common ones."""
+def parse_borrow_fee_details(
+    flex_borrow_xml: Path,
+    run_date: str | None = None,
+) -> list[FlexBorrowFee]:
+    """Read borrow-fee rows from Flex (``HardToBorrowDetail`` or SLB tags).
+
+    When ``run_date`` is set (YYYY-MM-DD), only rows with ``valueDate`` on or
+    before that calendar date are included (matches ``ibkr_accounting``).
+    """
+    target_yyyymmdd = (run_date or "").replace("-", "")[:8]
     out: list[FlexBorrowFee] = []
-    for tag in ("SLBFee", "SLBActivity", "SLBOpenContract"):
+    tags = ("HardToBorrowDetail", "SLBFee", "SLBActivity", "SLBOpenContract")
+    for tag in tags:
         for elem in _iter_elements(flex_borrow_xml, tag):
             a = elem.attrib
+            vd = (a.get("valueDate", "") or a.get("date", "") or "").strip()
+            if target_yyyymmdd and vd and vd > target_yyyymmdd:
+                continue
+            sym = a.get("symbol", "").strip()
+            if not sym:
+                continue
+            rate_raw = a.get("borrowFeeRate", "")
+            if rate_raw not in ("", None):
+                fee_pct = _to_float(rate_raw)
+            elif "feeRate" in a:
+                fee_pct = _to_float(a.get("feeRate")) * 100.0
+            else:
+                fee_pct = _to_float(a.get("feeRatePct"))
             out.append(
                 FlexBorrowFee(
-                    symbol=a.get("symbol", "").strip(),
-                    value_date=a.get("valueDate", "") or a.get("date", ""),
+                    symbol=sym,
+                    value_date=vd,
                     quantity=_to_float(a.get("quantity")),
                     collateral_amount=_to_float(a.get("collateralAmount")),
-                    fee_rate_pct=_to_float(a.get("feeRate")) * 100.0
-                    if "feeRate" in a
-                    else _to_float(a.get("feeRatePct")),
-                    interest=_to_float(a.get("interest")),
+                    fee_rate_pct=fee_pct,
+                    interest=_to_float(a.get("borrowFee") or a.get("interest")),
                     raw=dict(a),
                 )
             )
@@ -143,8 +161,11 @@ def summarize_borrow(borrow_rows: list[FlexBorrowFee]) -> dict[str, Any]:
 
     by_symbol: dict[str, dict[str, float]] = {}
     for r in borrow_rows:
+        sym = (r.symbol or "").strip().upper()
+        if not sym:
+            continue
         s = by_symbol.setdefault(
-            r.symbol, {"interest": 0.0, "fee_rate_pct": 0.0, "rows": 0.0}
+            sym, {"interest": 0.0, "fee_rate_pct": 0.0, "rows": 0.0}
         )
         s["interest"] += r.interest
         s["fee_rate_pct"] = max(s["fee_rate_pct"], r.fee_rate_pct)

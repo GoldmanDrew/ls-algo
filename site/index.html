@@ -29,8 +29,6 @@
   <a href="#actions-section">Actions</a>
   <a href="#slide-risk-section">Slide risk</a>
   <a href="#borrow-shock-section">Borrow shocks</a>
-  <a href="#vol-shock-section">Vol shocks</a>
-  <a href="#scenarios-section">Scenarios</a>
   <a href="#concentration-section">Concentration</a>
   <a href="#factor-section">Factor</a>
   <a href="#sleeve-section">Sleeves</a>
@@ -90,7 +88,7 @@
     <!-- Slide risk strips: SPX / NDX / RUT -->
     <section id="slide-risk-section" class="panel">
       <div class="panel-head">
-        <h2>Slide risk &mdash; delta-adjusted index shocks</h2>
+        <h2>Slide risk &mdash; SPX &amp; VIX shocks</h2>
         <div id="slide-risk-meta" class="quality-line"></div>
       </div>
       <div id="slide-risk-content"></div>
@@ -99,34 +97,10 @@
     <!-- Borrow rate shock sensitivity -->
     <section id="borrow-shock-section" class="panel">
       <div class="panel-head">
-        <h2>Borrow shock sensitivity</h2>
+        <h2>Borrow shock sensitivity (short ETF sleeve)</h2>
         <div id="borrow-shock-meta" class="quality-line"></div>
       </div>
       <div id="borrow-shock-content"></div>
-    </section>
-
-    <!-- VIX / realized vol shock sensitivity -->
-    <section id="vol-shock-section" class="panel">
-      <div class="panel-head">
-        <h2>Vol shock sensitivity (VIX + realized vol)</h2>
-        <div id="vol-shock-meta" class="quality-line"></div>
-      </div>
-      <div id="vol-shock-content"></div>
-    </section>
-
-    <!-- Top-line strip -->
-    <section class="panel">
-      <h2>Book summary</h2>
-      <div id="strip" class="strip"></div>
-      <div id="breaches" class="breaches"></div>
-    </section>
-
-    <!-- Scenario shocks -->
-    <section id="scenarios-section" class="panel">
-      <h2>Shock scenarios</h2>
-      <div id="scenario-content"></div>
-      <h3>Worst-case contributors</h3>
-      <div id="contributor-content"></div>
     </section>
 
     <!-- Concentration -->
@@ -147,7 +121,7 @@
 
     <!-- Factor exposure -->
     <section id="factor-section" class="panel">
-      <h2>Factor exposure (beta to SPY)</h2>
+      <h2>Factor exposure (beta to SPY / QQQ / IWM)</h2>
       <div id="factor-summary" class="strip"></div>
       <h3>By sector</h3>
       <div id="factor-sectors"></div>
@@ -172,6 +146,7 @@
           <tr>
             <th>Bucket</th>
             <th>Gross $</th>
+            <th>Target gross $</th>
             <th>Net $</th>
             <th>Actual %</th>
             <th>Target %</th>
@@ -200,7 +175,7 @@
     <section id="borrow-section" class="panel">
       <h2>Borrow &amp; microstructure</h2>
       <div id="borrow-content"></div>
-      <h3>Squeeze risk (short qty vs. available)</h3>
+      <h3>Squeeze risk (short ETF sleeve)</h3>
       <div id="squeeze-content"></div>
     </section>
 

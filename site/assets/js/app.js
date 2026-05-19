@@ -493,18 +493,21 @@
         delta: deltaBadge(deltas.delta_net_beta_to_spy, { lowerIsBetter: false }),
       },
       {
-        label: "Worst shock",
-        value: fmtUsdSigned(worst.pnl_usd),
-        sub: `${safeText(worst.label, "no scenario")} / ${fmtPct(worst.pnl_pct_nav, 2)}`,
-        cls: signedClass(worst.pnl_usd),
-        spark: sparklineSvg(series("worst_shock_pct_nav"), { stroke: "#c0392b" }),
-        delta: deltaBadge(deltas.delta_worst_shock_pct_nav, { isPct: true, lowerIsBetter: false }),
+        label: "Worst scenario contributor",
+        value: safeText(top.underlying, "none"),
+        sub: `${safeText(worst.scenario || worst.label, "no scenario")} / ${fmtUsdSigned(top.pnl_usd)}`,
+        cls: signedClass(top.pnl_usd),
       },
       {
-        label: "Top offender",
-        value: safeText(top.underlying, "none"),
-        sub: `${safeText(top.bucket, "-")} ${fmtUsdSigned(top.pnl_usd)}`,
-        cls: signedClass(top.pnl_usd),
+        label: "Worst slide P&L",
+        value: fmtUsdSigned(worst.pnl_usd),
+        sub: `${safeText(worst.scenario || worst.label, "no scenario")} / ${fmtPct(
+          worst.pnl_pct_nav ?? worst.total_pnl_pct_nav,
+          2
+        )}`,
+        cls: signedClass(worst.pnl_usd ?? worst.pnl_pct_nav),
+        spark: sparklineSvg(series("worst_shock_pct_nav"), { stroke: "#c0392b" }),
+        delta: deltaBadge(deltas.delta_worst_shock_pct_nav, { isPct: true, lowerIsBetter: false }),
       },
       {
         label: "Alerts",
@@ -536,7 +539,7 @@
     }
     els.alertRows.innerHTML = `
       <table class="tight alert-table"><thead><tr>
-        <th>Status</th><th>Metric</th><th>Value</th><th>Limit</th><th>Action</th>
+        <th>Status</th><th>Category</th><th>Metric</th><th>Value</th><th>Limit</th><th>Action</th>
       </tr></thead><tbody>${rows
         .slice(0, 12)
         .map((r) => {
@@ -547,6 +550,7 @@
           const value = typeof r.value === "number" ? r.value.toFixed(3) : safeText(r.value, "-");
           return `<tr class="${rowStatusClass(r.status)}">
             <td>${statusPill(r.status)}</td>
+            <td class="dim small">${safeText(r.category_label || r.category, "-")}</td>
             <td><strong>${safeText(r.label || r.metric)}</strong><div class="dim small">${safeText(
               r.source,
               "source unavailable"
@@ -664,13 +668,13 @@
       { label: "Underlyings", value: String(t.n_underlyings ?? 0) },
       {
         label: "Beta-weighted net",
-        value: fmtUsdSigned(t.delta_weighted_net_usd),
+        value: fmtUsdSigned(t.beta_weighted_net_usd),
         sub: t.net_beta_to_spy == null ? "-" : t.net_beta_to_spy.toFixed(2) + "x NAV",
-        cls: signedClass(t.delta_weighted_net_usd),
+        cls: signedClass(t.beta_weighted_net_usd),
       },
       {
         label: "Beta-weighted gross",
-        value: fmtUsd(t.delta_weighted_gross_usd),
+        value: fmtUsd(t.beta_weighted_gross_usd),
         sub: t.gross_beta_to_spy == null ? "-" : t.gross_beta_to_spy.toFixed(2) + "x NAV",
       },
       {
@@ -705,17 +709,17 @@
             r.net_notional_usd
           )}</td>
             <td class="num">${fmtUsd(r.gross_notional_usd)}</td>
-            <td class="num ${signedClass(r.delta_weighted_net_usd)}">${fmtUsdSigned(
-            r.delta_weighted_net_usd
+            <td class="num ${signedClass(r.beta_weighted_net_usd)}">${fmtUsdSigned(
+            r.beta_weighted_net_usd
           )}</td>
-            <td class="num">${fmtUsd(r.delta_weighted_gross_usd)}</td>
+            <td class="num">${fmtUsd(r.beta_weighted_gross_usd)}</td>
           </tr>`
         )
         .join("")}</tbody></table>`;
 
     function rowTbl(rows) {
       return `<table class="tight"><thead><tr>
-        <th>Underlying</th><th>Sector</th><th>Beta</th><th>Net $</th><th>Beta net $</th>
+        <th>Underlying</th><th>Sector</th><th>Beta SPY</th><th>Beta QQQ</th><th>Beta IWM</th><th>Net $</th><th>Beta net $</th>
       </tr></thead><tbody>${(rows || [])
         .map(
           (r) => `<tr>
@@ -724,14 +728,14 @@
             ""
           )}</span></td>
             <td>${safeText(r.sector)}</td>
-            <td class="num ${r.delta_source === "default" ? "dim" : ""}" title="${
-            r.delta_source
+            <td class="num ${r.beta_source === "default" ? "dim" : ""}" title="${
+            r.beta_source
           }">${r.beta_to_spy.toFixed(2)}</td>
             <td class="num ${signedClass(r.net_notional_usd)}">${fmtUsdSigned(
             r.net_notional_usd
           )}</td>
-            <td class="num ${signedClass(r.delta_weighted_net_usd)}">${fmtUsdSigned(
-            r.delta_weighted_net_usd
+            <td class="num ${signedClass(r.beta_weighted_net_usd)}">${fmtUsdSigned(
+            r.beta_weighted_net_usd
           )}</td>
           </tr>`
         )
@@ -767,6 +771,37 @@
     const indices = panel.indices || [];
     const stripsHtml = indices
       .map((idx) => {
+        if (idx.strip_type === "vix_pts") {
+          const vixRows = idx.shock_rows || [];
+          const vixHeader = vixRows
+            .map((r) => `<th class="slide-shock">${safeText(r.label)}</th>`)
+            .join("");
+          const vixCells = vixRows
+            .map(
+              (r) =>
+                `<td class="num ${signedClass(r.pnl_pct_nav)} ${scenarioHeatClass(r.pnl_pct_nav)}" title="${fmtUsdSigned(r.pnl_usd)}">${fmtPct(r.pnl_pct_nav, 1)}</td>`
+            )
+            .join("");
+          const volRows = idx.vol_regime_rows || [];
+          const volBody = volRows
+            .map(
+              (r) => `<tr>
+              <td><strong>${safeText(r.label)}</strong></td>
+              <td class="num ${signedClass(r.pnl_pct_nav)}">${fmtPct(r.pnl_pct_nav, 2)}</td>
+              <td class="dim small">${r.top_loss ? safeText(r.top_loss.underlying) + " " + fmtUsdSigned(r.top_loss.pnl_t0_usd) : "-"}</td>
+            </tr>`
+            )
+            .join("");
+          return `<div class="slide-strip">
+            <div class="slide-strip-head"><h3>VIX vega shocks</h3></div>
+            <div class="slide-strip-scroll">
+              <table class="tight slide-table"><thead><tr><th class="row-label">Shock</th>${vixHeader}</tr></thead>
+              <tbody><tr><th class="row-label">T+0</th>${vixCells}</tr></tbody></table>
+            </div>
+            <h4 class="dim small">Realized-vol regime (LETF decay)</h4>
+            <table class="tight"><thead><tr><th>Regime</th><th>% NAV</th><th>Worst name</th></tr></thead><tbody>${volBody || "<tr><td colspan=3 class=dim>(none)</td></tr>"}</tbody></table>
+          </div>`;
+        }
         const rows = idx.shock_rows || [];
         const horizons = panel.horizons_days || [0];
         const headerCells = rows
@@ -775,12 +810,7 @@
         const t0Row = rows
           .map(
             (r) =>
-              `<td class="num ${signedClass(r.pnl_pct_nav)} ${scenarioHeatClass(
-                r.pnl_pct_nav
-              )}" title="${safeText(r.label)}: ${fmtUsdSigned(r.pnl_usd)}">${fmtPct(
-                r.pnl_pct_nav,
-                1
-              )}</td>`
+              `<td class="num ${signedClass(r.pnl_pct_nav)} ${scenarioHeatClass(r.pnl_pct_nav)}" title="${safeText(r.label)}: ${fmtUsdSigned(r.pnl_usd)}">${fmtPct(r.pnl_pct_nav, 1)}</td>`
           )
           .join("");
         const horizonRows = horizons
@@ -790,11 +820,7 @@
               .map((r) => {
                 const h = (r.horizons || []).find((hh) => hh.horizon_days === d);
                 if (!h) return `<td class="dim">-</td>`;
-                return `<td class="num ${signedClass(
-                  h.total_pnl_pct_nav
-                )} ${scenarioHeatClass(h.total_pnl_pct_nav)}" title="decay ${fmtUsdSigned(
-                  h.decay_usd
-                )}">${fmtPct(h.total_pnl_pct_nav, 1)}</td>`;
+                return `<td class="num ${signedClass(h.total_pnl_pct_nav)} ${scenarioHeatClass(h.total_pnl_pct_nav)}" title="decay ${fmtUsdSigned(h.decay_usd)}">${fmtPct(h.total_pnl_pct_nav, 1)}</td>`;
               })
               .join("");
             return `<tr><th class="row-label">T+${d}d</th>${cells}</tr>`;
@@ -804,16 +830,12 @@
           .map((r) => {
             const tip = r.shock_pct < 0 ? r.top_loss : r.top_gain;
             if (!tip) return `<td class="dim">-</td>`;
-            return `<td class="dim small">${safeText(tip.underlying)}<br>${fmtUsdSigned(
-              tip.pnl_t0_usd
-            )}</td>`;
+            return `<td class="dim small">${safeText(tip.underlying)}<br>${fmtUsdSigned(tip.pnl_t0_usd)}</td>`;
           })
           .join("");
         return `<div class="slide-strip">
           <div class="slide-strip-head">
-            <h3>${safeText(idx.index)} <span class="dim small">(${Math.round(
-          (idx.coverage_pct || 0) * 100
-        )}% coverage, ${idx.n_names_covered}/${idx.n_names_total} names)</span></h3>
+            <h3>${safeText(idx.index)} <span class="dim small">(${Math.round((idx.coverage_pct || 0) * 100)}% coverage, ${idx.n_names_covered}/${idx.n_names_total} names)</span></h3>
           </div>
           <div class="slide-strip-scroll">
             <table class="tight slide-table">
@@ -902,8 +924,12 @@
            .join("")}</tbody></table>`
       : "";
     els.borrowShockContent.innerHTML = `
-      <h3>Absolute rate shocks (basis points)</h3>
-      ${renderLadder(panel.abs_ladder, "Shock")}
+      <h3>Focus: +50bp absolute shock (short ETF sleeve)</h3>
+      ${renderLadder(panel.focus_abs_ladder || panel.abs_ladder, "Shock")}
+      <h3>Focus: 2x current APR</h3>
+      ${renderLadder(panel.focus_mult_ladder || panel.mult_ladder, "Multiplier")}
+      <details><summary class="dim small">All absolute shocks</summary>${renderLadder(panel.abs_ladder, "Shock")}</details>
+      <details><summary class="dim small">All multiplicative shocks</summary>${renderLadder(panel.mult_ladder, "Multiplier")}</details>
       <h3>Multiplicative rate shocks (x current APR)</h3>
       ${renderLadder(panel.mult_ladder, "Multiplier")}
       ${namesTable}
@@ -984,29 +1010,37 @@
     `;
   }
 
-  function renderActionQueue(actions) {
+  function renderActionQueue(queuePayload) {
     if (!els.actionQueue) return;
-    if (!actions || !actions.length) {
+    const actions = Array.isArray(queuePayload) ? queuePayload : queuePayload?.items || [];
+    const cap = queuePayload?.cap || 5;
+    if (!actions.length) {
       els.actionQueue.innerHTML = `<span class="pill pill-ok">No actions required</span>`;
       return;
     }
-    els.actionQueue.innerHTML = `
-      <table class="tight action-table"><thead><tr>
-        <th>Priority</th><th>Action</th><th>Detail</th><th>Hedge hint</th><th>Source</th>
-      </tr></thead><tbody>${actions
-        .map(
-          (a) => `<tr class="${rowStatusClass(a.status)}">
+    const shown = actions.slice(0, cap);
+    const hidden = actions.slice(cap);
+    const rowHtml = (a) => `<tr class="${rowStatusClass(a.status)}">
             <td>${statusPill(a.status, a.priority === 0 ? "P0" : "P1")}</td>
+            <td class="dim small">${safeText(a.sleeve, "-")}</td>
             <td><strong>${safeText(a.title)}</strong><div class="dim small">${safeText(
-            a.category,
+            a.breach_category_label || a.category,
             ""
           )}</div></td>
             <td>${safeText(a.detail)}</td>
             <td class="dim">${safeText(a.hedge_hint, "")}</td>
             <td class="dim small">${safeText(a.source, "")}</td>
-          </tr>`
-        )
-        .join("")}</tbody></table>`;
+          </tr>`;
+    els.actionQueue.innerHTML = `
+      <table class="tight action-table"><thead><tr>
+        <th>Priority</th><th>Sleeve</th><th>Action</th><th>Detail</th><th>Hedge hint</th><th>Source</th>
+      </tr></thead><tbody>${shown.map(rowHtml).join("")}</tbody></table>
+      ${
+        hidden.length
+          ? `<details class="action-more"><summary class="dim small">Show ${hidden.length} more action(s)</summary>
+        <table class="tight action-table"><tbody>${hidden.map(rowHtml).join("")}</tbody></table></details>`
+          : ""
+      }`;
   }
 
   function renderConcentration(panel) {
@@ -1184,6 +1218,9 @@
         const grossCell = available
           ? `<td class="num">${fmtUsd(r.gross_usd)}</td>`
           : unavailableCell;
+        const targetGrossCell = available
+          ? `<td class="num dim">${r.target_gross_usd == null ? "-" : fmtUsd(r.target_gross_usd)}</td>`
+          : unavailableCell;
         const netCell = available
           ? `<td class="num ${signedClass(r.net_usd)}">${fmtUsd(r.net_usd)}</td>`
           : unavailableCell;
@@ -1197,8 +1234,9 @@
           ? `<td>${statusPill(r.drift_status)}</td>`
           : `<td>${statusPill("unknown", "n/a")}</td>`;
         return `<tr class="${trCls}">
-          <td><strong>${r.bucket}</strong></td>
+          <td><strong>${safeText(r.bucket_label || r.bucket)}</strong></td>
           ${grossCell}
+          ${targetGrossCell}
           ${netCell}
           ${actualCell}
           <td class="num">${
@@ -1457,10 +1495,6 @@
     renderActionQueue(snap.action_queue || []);
     renderSlideRisk(snap.slide_risk_panel || {});
     renderBorrowShock(snap.borrow_shock_panel || {});
-    renderVolShock(snap.vol_shock_panel || {});
-    renderStrip(snap.book || {});
-    renderBreaches(snap.book?.breaches || []);
-    renderScenarios(snap.scenario_panel || {});
     renderConcentration(snap.concentration_panel || {});
     renderFactor(snap.factor_panel || {});
     renderSleeveTable(snap.book || {});
