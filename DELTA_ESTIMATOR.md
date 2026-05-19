@@ -136,7 +136,7 @@ All existing columns are preserved.  New columns:
 
 | Column                    | Description |
 |---------------------------|-------------|
-| `Delta_se`                 | Posterior standard error of `Beta` (HAC, robust). |
+| `Delta_se`                 | Posterior standard error of `Delta` (HAC, robust). |
 | `Delta_resid_sigma_annual` | Annualized residual σ at the chosen horizon (hedge tracking error). |
 | `Delta_horizon_chosen`     | 1 or 5 — which horizon the multi-horizon gate selected. |
 | `Delta_quality`            | `ok`, `non_stationary`, `low_n`, `imputed_missing_prices`. |
@@ -204,9 +204,9 @@ value should be committed.
 ## Things deliberately not changed
 
 - `ibkr_accounting.compute_net_exposure` is untouched — it consumes
-  `Beta` through `load_etf_delta_map` and the new column drops in.
+  `Delta` through `load_etf_delta_map` (legacy CSV column `Beta` still accepted).
 - `compute_delta_adjusted_net_notional` and the rebalancer were not
-  modified; they read the same `Beta` column.
+  modified; they read the same `Delta` column.
 - The legacy `compute_beta_shrunk` function is retained for the
   existing test suite (`tests/test_beta_shrinkage.py`) and is still
   used by `enrich_with_decay_and_vol` as a *fill-in for missing β*.
