@@ -1,1 +1,3 @@
-symbol,description,realized_pnl,unrealized_pnl,dividends,withholding_tax,pil_dividends,borrow_fees,short_credit_interest,other_fees,bond_interest,total_pnl
+underlying,symbols,realized_pnl,unrealized_pnl,dividends,withholding_tax,pil_dividends,borrow_fees,short_credit_interest,other_fees,bond_interest,total_pnl
+ASTS,ASTS,-2.779958325296462,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,-2.779958325296462
+COIN,COIN,-16.147912115337714,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,-16.147912115337714

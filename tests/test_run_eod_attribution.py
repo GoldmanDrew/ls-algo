@@ -94,6 +94,8 @@ def test_compute_bucket_capital_snapshot_splits_spot_and_uses_maintenance_margin
         [
             {
                 "ETF": "LETF",
+                "Underlying": "LETF_U",
+                "delta": 2.0,
                 "bucket": "bucket_1",
                 "maint_pct_long": 0.50,
                 "maint_pct_short": 0.60,

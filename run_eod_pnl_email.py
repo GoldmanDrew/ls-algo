@@ -18,10 +18,12 @@ from ibkr_accounting import (
     EXCLUDE_SYMBOLS,
     SUPPLEMENTAL_ETF_MAP,
     canonical_symbol,
+    complete_etf_maps_from_positions,
     compute_net_exposure,
     expand_blacklist,
     format_exposure_table,
     load_blacklist,
+    load_etf_delta_map,
     load_etf_to_under_map,
     load_universe_from_screened,
     normalize_plan_etf_ticker,
@@ -30,6 +32,28 @@ from ibkr_accounting import (
     _filter_positions_blacklist,
 )
 from strategy_config import load_config
+
+
+def _spot_capital_bucket_ratios(
+    position_qty: float,
+    ledger_qty: dict[str, float],
+) -> tuple[float, float, float]:
+    """
+    Split spot MV across buckets from ledger qty only.
+
+    Unlike exposure attribution, unattributed shares (ledger total < IBKR line)
+    are excluded from bucket capital rather than pushed into bucket 1.
+    """
+    if abs(position_qty) <= 1e-12:
+        return 0.0, 0.0, 0.0
+    b1 = float(ledger_qty.get("bucket_1", 0.0))
+    b2 = float(ledger_qty.get("bucket_2", 0.0))
+    b4 = float(ledger_qty.get("bucket_4", 0.0))
+    ledger_total = b1 + b2 + b4
+    if abs(ledger_total) > abs(position_qty) and abs(ledger_total) > 1e-12:
+        scale = abs(position_qty) / abs(ledger_total)
+        b1, b2, b4 = b1 * scale, b2 * scale, b4 * scale
+    return b1 / position_qty, b2 / position_qty, b4 / position_qty
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent  # adjust if needed
@@ -370,6 +394,70 @@ def _load_screened_for_run(run_date: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def _load_flow_universe_sets(run_date: str) -> tuple[set[str], set[str]]:
+    """Flow-program shorts and low-delta symbols (bucket 3 overlay), matching accounting."""
+    flow_short: set[str] = set()
+    flow_low: set[str] = set()
+    cfg_path = PROJECT_ROOT / "config" / "strategy_config.yml"
+    if cfg_path.exists():
+        cfg = load_config(cfg_path)
+        portfolio_cfg = cfg.get("portfolio", {}) or {}
+        sleeves_cfg = portfolio_cfg.get("sleeves", {}) or {}
+        flow_cfg = sleeves_cfg.get("flow_program", {}) or {}
+        flow_universe_cfg = flow_cfg.get("universe", {}) or {}
+        flow_short = {
+            canonical_symbol(x)
+            for x in (flow_universe_cfg.get("shorts", []) or [])
+            if str(x).strip()
+        }
+    totals_path = RUNS_ROOT / run_date / "accounting" / "totals.json"
+    if totals_path.exists():
+        try:
+            obj = json.loads(totals_path.read_text(encoding="utf-8"))
+            flow_low = {
+                canonical_symbol(x)
+                for x in (obj.get("bucket3_flow_low_delta_symbols") or [])
+                if str(x).strip()
+            }
+        except Exception:
+            pass
+    return flow_short, flow_low
+
+
+def _bucket_pnl_from_totals(totals: dict) -> dict[str, float]:
+    """Canonical cumulative strategy PnL by bucket from accounting totals.json."""
+    bp = totals.get("bucket_pnl") or {}
+    return {b: float(bp.get(b, 0.0) or 0.0) for b in BUCKET_KEYS}
+
+
+def _etf_capital_bucket(
+    sym: str,
+    etf_to_delta: dict[str, float],
+    *,
+    flow_short_set: set[str],
+    flow_low_delta_syms: set[str],
+    b4_etf_syms: set[str],
+) -> str | None:
+    """
+    Map an ETF line to a capital bucket using the same beta rules as ibkr_accounting
+    exposure. Returns None for bucket-3-only symbols (excluded from b124 capital).
+    """
+    beta = float(etf_to_delta.get(sym, 1.0))
+    if beta < 0 and sym in flow_short_set:
+        return None
+    if sym in flow_low_delta_syms and 0.0 < beta <= 1.5:
+        return None
+    if sym in b4_etf_syms:
+        return "bucket_4"
+    if beta < 0:
+        return "bucket_4"
+    if beta > 1.5:
+        return "bucket_1"
+    if beta > 0:
+        return "bucket_2"
+    return None
+
+
 def _blocked_exposure_sets(run_date: str) -> tuple[set[str], set[str]]:
     """Return (blocked_symbols, blocked_underlyings) for exposure metrics."""
     config_yml = PROJECT_ROOT / "config" / "strategy_config.yml"
@@ -398,6 +486,32 @@ def _pnl_symbol_bucket_map(pnl_symbol: pd.DataFrame) -> dict[str, set[str]]:
         if sym and bucket:
             out.setdefault(sym, set()).add(bucket)
     return out
+
+
+def _etf_maps_from_screened(screened: pd.DataFrame) -> tuple[dict[str, str], dict[str, float]]:
+    """Build ETF→underlying and ETF→delta maps from a screened DataFrame."""
+    if screened is None or screened.empty:
+        return {}, {}
+    cols = {c.lower(): c for c in screened.columns}
+    etf_col = next((cols[k] for k in ("etf", "symbol", "ticker", "etf_symbol") if k in cols), None)
+    under_col = next(
+        (cols[k] for k in ("underlying", "underlyingsymbol", "underlying_symbol", "root") if k in cols),
+        None,
+    )
+    delta_col = next((cols[k] for k in ("delta", "beta", "leverage", "lev") if k in cols), None)
+    if etf_col is None or under_col is None:
+        return {}, {}
+    u = screened[[etf_col, under_col] + ([delta_col] if delta_col else [])].dropna(subset=[etf_col, under_col])
+    u = u.copy()
+    u[etf_col] = u[etf_col].astype(str).str.upper().map(canonical_symbol)
+    u[under_col] = u[under_col].astype(str).str.upper().map(canonical_symbol)
+    etf_to_under = dict(zip(u[etf_col], u[under_col]))
+    if delta_col:
+        u[delta_col] = pd.to_numeric(u[delta_col], errors="coerce").fillna(1.0)
+        etf_to_delta = dict(zip(u[etf_col], u[delta_col]))
+    else:
+        etf_to_delta = {k: 1.0 for k in etf_to_under}
+    return etf_to_under, etf_to_delta
 
 
 def _screened_margin_and_bucket_maps(screened: pd.DataFrame) -> tuple[set[str], dict[str, str], dict[str, tuple[float, float]]]:
@@ -446,24 +560,81 @@ def compute_bucket_capital_snapshot(
     *,
     blocked_symbols: set[str] | None = None,
     blocked_underlyings: set[str] | None = None,
+    run_date: str | None = None,
+    flow_short_set: set[str] | None = None,
+    flow_low_delta_syms: set[str] | None = None,
+    b4_etf_syms: set[str] | None = None,
 ) -> dict[str, float]:
     """
-    Compute current per-bucket capital bases from open positions.
+    Compute current per-bucket capital bases from open positions (buckets 1, 2, 4).
 
-    Net capital is signed long MV less absolute short MV. Gross capital is abs(MV).
-    Maintenance margin requirement uses screened ETF margin percentages when
-    available and conservative stock defaults for spot underlyings.
+    Uses the same universe filters and ETF beta→bucket rules as ibkr_accounting
+  exposure (excluding bucket-3 flow symbols). Net capital is signed MV; gross is
+  |MV|; margin uses screened maintenance rates for ETFs.
     """
     snap = _empty_bucket_capital_snapshot()
     if positions is None or positions.empty or "symbol" not in positions.columns:
         return snap
 
-    etf_symbols, screened_bucket_by_symbol, margin_by_symbol = _screened_margin_and_bucket_maps(screened)
-    bucket_sets_by_symbol = _pnl_symbol_bucket_map(pnl_symbol)
+    _etf_syms, _, margin_by_symbol = _screened_margin_and_bucket_maps(screened)
     lot_qty_by_under = _lot_qty_map(lot_state)
 
+    if screened is not None:
+        if not screened.empty:
+            etf_to_under, etf_to_delta = _etf_maps_from_screened(screened)
+        else:
+            etf_to_under, etf_to_delta = {}, {}
+    else:
+        screened_path = PROJECT_ROOT / "data" / "etf_screened_today.csv"
+        if run_date:
+            dated = RUNS_ROOT / run_date / "etf_screened_today.csv"
+            if dated.exists():
+                screened_path = dated
+        etf_to_under, etf_to_delta = load_etf_delta_map(screened_path)
+    for e_sym, u_sym in SUPPLEMENTAL_ETF_MAP.items():
+        etf_to_under.setdefault(e_sym, u_sym)
+        etf_to_delta.setdefault(e_sym, etf_to_delta.get(e_sym, -1.0))
+
+    pos = positions.copy()
+    pos["symbol"] = pos["symbol"].map(lambda s: canonical_symbol(str(s)))
+    pos = pos[(pos["symbol"].astype(bool)) & (~pos["symbol"].isin(EXCLUDE_SYMBOLS))].copy()
+    etf_to_under, etf_to_delta = complete_etf_maps_from_positions(
+        pos, etf_to_under, etf_to_delta
+    )
+
+    if blocked_symbols or blocked_underlyings:
+        pos = _filter_positions_blacklist(
+            pos,
+            blocked_symbols or set(),
+            blocked_underlyings or set(),
+            etf_to_under,
+        )
+
+    if run_date and (flow_short_set is None or flow_low_delta_syms is None):
+        _fs, _fl = _load_flow_universe_sets(run_date)
+        flow_short_set = flow_short_set if flow_short_set is not None else _fs
+        flow_low_delta_syms = flow_low_delta_syms if flow_low_delta_syms is not None else _fl
+    flow_short_set = flow_short_set or set()
+    flow_low_delta_syms = flow_low_delta_syms or set()
+    bucket3_only = flow_short_set | flow_low_delta_syms
+    pos = pos[~pos["symbol"].isin(bucket3_only)].copy()
+
+    if b4_etf_syms is None and run_date:
+        b4_path = RUNS_ROOT / run_date / "accounting" / "bucket4_pairs.csv"
+        if b4_path.exists():
+            try:
+                b4_etf_syms = set(pd.read_csv(b4_path)["etf"].astype(str).map(canonical_symbol))
+            except Exception:
+                b4_etf_syms = set()
+        else:
+            b4_etf_syms = set()
+    b4_etf_syms = b4_etf_syms or set()
+
+    if pos.empty:
+        return snap
+
     def _add(bucket: str | None, signed_mv: float, margin_key: str | None) -> None:
-        if bucket not in BUCKET_KEYS or abs(signed_mv) <= 1e-12:
+        if bucket not in BUCKET_KEYS or bucket == "bucket_3" or abs(signed_mv) <= 1e-12:
             return
         long_pct, short_pct = margin_by_symbol.get(
             margin_key or "",
@@ -473,42 +644,6 @@ def compute_bucket_capital_snapshot(
         snap[f"net_capital_{bucket}"] += signed_mv
         snap[f"gross_capital_{bucket}"] += abs(signed_mv)
         snap[f"margin_req_{bucket}"] += abs(signed_mv) * margin_pct
-
-    pos = positions.copy()
-    pos["symbol"] = pos["symbol"].map(lambda s: canonical_symbol(str(s)))
-    pos = pos[(pos["symbol"].astype(bool)) & (~pos["symbol"].isin(EXCLUDE_SYMBOLS))].copy()
-    if blocked_symbols or blocked_underlyings:
-        etf_to_under: dict[str, str] = {}
-        if screened is not None and not screened.empty:
-            cols = {c.lower(): c for c in screened.columns}
-            etf_col = next(
-                (cols[k] for k in ("etf", "symbol", "ticker", "etf_symbol", "etf_ticker") if k in cols),
-                None,
-            )
-            under_col = next(
-                (
-                    cols[k]
-                    for k in ("underlying", "underlyingsymbol", "underlying_symbol", "root", "underlyingticker")
-                    if k in cols
-                ),
-                None,
-            )
-            if etf_col and under_col:
-                for _, r in screened[[etf_col, under_col]].dropna().iterrows():
-                    e = canonical_symbol(str(r[etf_col]))
-                    u = canonical_symbol(str(r[under_col]))
-                    if e and u:
-                        etf_to_under[e] = u
-        for e_sym, u_sym in SUPPLEMENTAL_ETF_MAP.items():
-            etf_to_under.setdefault(e_sym, u_sym)
-        pos = _filter_positions_blacklist(
-            pos,
-            blocked_symbols or set(),
-            blocked_underlyings or set(),
-            etf_to_under,
-        )
-    if pos.empty:
-        return snap
 
     for _, row in pos.iterrows():
         sym = str(row.get("symbol", "") or "")
@@ -520,36 +655,31 @@ def compute_bucket_capital_snapshot(
         if abs(signed_mv) <= 1e-12 and abs(position) > 1e-12 and px_base > 0:
             signed_mv = position * px_base
 
-        bucket_set = bucket_sets_by_symbol.get(sym, set())
-        unique_bucket = next(iter(bucket_set)) if len(bucket_set) == 1 else None
-
-        if sym in etf_symbols:
-            _add(unique_bucket or screened_bucket_by_symbol.get(sym), signed_mv, sym)
+        is_etf = sym in etf_to_under
+        if is_etf:
+            bucket = _etf_capital_bucket(
+                sym,
+                etf_to_delta,
+                flow_short_set=flow_short_set,
+                flow_low_delta_syms=flow_low_delta_syms,
+                b4_etf_syms=b4_etf_syms,
+            )
+            _add(bucket, signed_mv, sym)
             continue
 
         lot_qty = lot_qty_by_under.get(sym)
-        if lot_qty:
-            # Attributed capital per bucket = qty_b* * mark price. Cap the
-            # total attributed |MV| at the actual EOD position |MV| so a
-            # stale ledger (qty_b* total >> live IBKR line) cannot inflate
-            # bucket capital, while orphan shares (qty_b* total < live line,
-            # e.g. blacklisted / pre-strategy holdings) are simply excluded.
-            raw_per_bucket = {
-                b: float(q) * px_base
-                for b, q in lot_qty.items()
-                if abs(q) > 1e-12
-            }
-            total_raw_abs = sum(abs(v) for v in raw_per_bucket.values())
-            position_mv_abs = abs(signed_mv)
-            if total_raw_abs > 1e-12:
-                scale = 1.0
-                if total_raw_abs > position_mv_abs and position_mv_abs > 1e-12:
-                    scale = position_mv_abs / total_raw_abs
-                for bucket, raw in raw_per_bucket.items():
-                    _add(bucket, raw * scale, None)
-                continue
+        if lot_qty and abs(position) > 1e-12:
+            r1, r2, r4 = _spot_capital_bucket_ratios(position, lot_qty)
+            for bucket, ratio in (
+                ("bucket_1", r1),
+                ("bucket_2", r2),
+                ("bucket_4", r4),
+            ):
+                if abs(ratio) > 1e-12:
+                    _add(bucket, signed_mv * ratio, None)
+            continue
 
-        _add(unique_bucket, signed_mv, None)
+        _add("bucket_1", signed_mv, None)
 
     return snap
 
@@ -577,6 +707,7 @@ def build_bucket_capital_snapshot_from_run(run_date: str) -> dict[str, float]:
         lot_state,
         blocked_symbols=blocked_symbols,
         blocked_underlyings=blocked_underlyings,
+        run_date=run_date,
     )
 
 
@@ -1200,6 +1331,22 @@ def update_pnl_history(
     return hist
 
 
+def rebuild_pnl_history_from_runs() -> pd.DataFrame:
+    """
+    Rebuild pnl_history.csv from every run's accounting totals.json and a fresh
+    per-day capital snapshot. Use after restating historical accounting outputs.
+    """
+    ensure_ledger_dir()
+    hist = pd.DataFrame(columns=["date"] + list(PNL_HISTORY_RETURN_BASE_COLS))
+    hist = enrich_history_bucket_cols_from_runs(hist)
+    hist = hist[hist["date"].dt.weekday != 5].copy()
+    hist_out = hist.copy()
+    hist_out["date"] = hist_out["date"].dt.strftime("%Y-%m-%d")
+    hist_out.to_csv(PNL_HISTORY_CSV, index=False)
+    start_dt = pd.to_datetime(START_DATE)
+    return hist[hist["date"] >= start_dt].copy()
+
+
 def format_period_pnl_summary(history: pd.DataFrame, run_date: str) -> str:
     """Format daily, week-to-date, and month-to-date changes from cumulative PnL history."""
     if history.empty:
@@ -1730,6 +1877,7 @@ def main() -> int:
     # 3) Load outputs
     pnl_under_csv, pnl_symbol_csv, pnl_bucket_csv, totals_json_path, totals = load_outputs(run_date)
     total_pnl = float(totals.get("total_pnl", 0.0))
+    bucket_pnl_ytd = _bucket_pnl_from_totals(totals)
 
     # 4) Create underlying breakdown table (bucket 1&2 combined) + bucket table
     underlying_table, underlying_total = format_underlying_table(pnl_under_csv, pnl_symbol_csv)
@@ -1743,15 +1891,14 @@ def main() -> int:
     pnl_b3_csv = outdir / "pnl_bucket_3.csv"
     pnl_b4_csv = outdir / "pnl_bucket_4.csv"
 
-    # Bucket 1 PnL (levered ETFs + pro-rata spot)
-    b1_pnl_total = 0.0
+    # Bucket 1 PnL (levered ETFs + pro-rata spot) — headline totals from totals.json
+    b1_pnl_total = float(bucket_pnl_ytd["bucket_1"])
     b1_pnl_table = "(no bucket 1 data)"
     if pnl_b1_csv.exists():
         try:
             _b1_df = pd.read_csv(pnl_b1_csv)
             if not _b1_df.empty and "total_pnl" in _b1_df.columns:
                 _b1_df["total_pnl"] = pd.to_numeric(_b1_df["total_pnl"], errors="coerce").fillna(0.0)
-                b1_pnl_total = float(_b1_df["total_pnl"].sum())
                 # Build per-symbol detail from pnl_by_symbol filtered to bucket_1
                 _sym_b1 = pd.DataFrame()
                 if pnl_symbol_csv.exists():
@@ -1765,14 +1912,13 @@ def main() -> int:
             pass
 
     # Bucket 2 PnL (standard ETFs + pro-rata spot)
-    b2_pnl_total = 0.0
+    b2_pnl_total = float(bucket_pnl_ytd["bucket_2"])
     b2_pnl_table = "(no bucket 2 data)"
     if pnl_b2_csv.exists():
         try:
             _b2_df = pd.read_csv(pnl_b2_csv)
             if not _b2_df.empty and "total_pnl" in _b2_df.columns:
                 _b2_df["total_pnl"] = pd.to_numeric(_b2_df["total_pnl"], errors="coerce").fillna(0.0)
-                b2_pnl_total = float(_b2_df["total_pnl"].sum())
                 _sym_b2 = pd.DataFrame()
                 if pnl_symbol_csv.exists():
                     try:
@@ -1786,7 +1932,9 @@ def main() -> int:
 
     # Bucket 3 PnL (inverse/hedge by symbol)
     b3_pnl_table, b3_pnl_total = format_bucket_3_pnl(pnl_b3_csv)
+    b3_pnl_total = float(bucket_pnl_ytd["bucket_3"])
     b4_pnl_table, b4_pnl_total = format_bucket_4_pnl(pnl_b4_csv, pnl_symbol_csv)
+    b4_pnl_total = float(bucket_pnl_ytd["bucket_4"])
 
     # 4b) Load pre-computed exposure tables from accounting outputs
     exposure_csv_path = outdir / "net_exposure_by_underlying.csv"
@@ -1868,22 +2016,25 @@ def main() -> int:
     b4_gross = b4_gross_tbl
 
     # 5) Update history + plot since START_DATE
-    grand_total = b1_pnl_total + b2_pnl_total + b3_pnl_total + b4_pnl_total
-    bucket_pnl_map = {
-        "bucket_1": b1_pnl_total,
-        "bucket_2": b2_pnl_total,
-        "bucket_3": b3_pnl_total,
-        "bucket_4": b4_pnl_total,
-    }
+    grand_total = float(sum(bucket_pnl_ytd.values()))
     bucket_capital_snapshot = build_bucket_capital_snapshot_from_run(run_date)
     hist = update_pnl_history(
         run_date,
-        b1=b1_pnl_total,
-        b2=b2_pnl_total,
-        b3=b3_pnl_total,
-        b4=b4_pnl_total,
+        b1=bucket_pnl_ytd["bucket_1"],
+        b2=bucket_pnl_ytd["bucket_2"],
+        b3=bucket_pnl_ytd["bucket_3"],
+        b4=bucket_pnl_ytd["bucket_4"],
         bucket_capital=bucket_capital_snapshot,
     )
+    # YTD bucket PnL and averaged capital denominators from persisted history
+    bucket_pnl_map = bucket_pnl_ytd
+    if not hist.empty:
+        _hist_row = hist[hist["date"].dt.strftime("%Y-%m-%d") == run_date]
+        if not _hist_row.empty:
+            _r = _hist_row.iloc[-1]
+            bucket_pnl_map = {
+                b: float(_r.get(f"pnl_{b}", bucket_pnl_ytd[b]) or 0.0) for b in BUCKET_KEYS
+            }
     bucket_capital_avg = compute_average_bucket_capital(hist)
     bucket_return_table = format_bucket_return_table(bucket_pnl_map, bucket_capital_avg)
     period_pnl_summary = format_period_pnl_summary(hist, run_date)
