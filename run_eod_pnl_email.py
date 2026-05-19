@@ -458,28 +458,61 @@ def _prior_accounting_run_date(run_date: str) -> str | None:
     return best_name
 
 
+def _bucket_daily_jump_threshold(account_daily: float) -> float:
+    return max(50_000.0, 5.0 * abs(account_daily) + 1.0)
+
+
+def _allocate_daily_by_abs_prior(
+    amount: float, prior_buckets: dict[str, float], buckets: list[str]
+) -> dict[str, float]:
+    weights = {b: abs(float(prior_buckets.get(b, 0.0) or 0.0)) for b in buckets}
+    wsum = sum(weights.values())
+    if wsum <= 1e-12:
+        share = 1.0 / len(buckets)
+        return {b: amount * share for b in buckets}
+    return {b: amount * (weights[b] / wsum) for b in buckets}
+
+
 def _bucket_pnl_continuity_adjusted(
     *,
     prior_buckets: dict[str, float],
+    current_buckets: dict[str, float],
     account_total: float,
     prior_account_total: float,
 ) -> dict[str, float]:
     """
     When a single-day accounting run re-attributes YTD history across buckets,
-    spread only the account-level daily PnL across prior bucket weights.
+    keep plausible per-bucket daily moves from the raw run and re-spread only
+    the outlier sleeves (large YTD jumps with a small account daily change).
     """
     account_daily = float(account_total) - float(prior_account_total)
-    weights = {b: max(float(prior_buckets.get(b, 0.0) or 0.0), 0.0) for b in BUCKET_KEYS}
-    wsum = sum(weights.values())
-    if wsum <= 1e-12:
-        share = 1.0 / len(BUCKET_KEYS)
-        daily = {b: account_daily * share for b in BUCKET_KEYS}
-    else:
-        daily = {b: account_daily * (weights[b] / wsum) for b in BUCKET_KEYS}
+    jump_tol = _bucket_daily_jump_threshold(account_daily)
+    raw_daily = {
+        b: float(current_buckets.get(b, 0.0) or 0.0) - float(prior_buckets.get(b, 0.0) or 0.0)
+        for b in BUCKET_KEYS
+    }
+    trusted: list[str] = []
+    outlier: list[str] = []
+    for b in BUCKET_KEYS:
+        ytd_jump = abs(float(current_buckets.get(b, 0.0) or 0.0) - float(prior_buckets.get(b, 0.0) or 0.0))
+        if ytd_jump <= jump_tol:
+            trusted.append(b)
+        else:
+            outlier.append(b)
+
+    daily: dict[str, float] = {b: raw_daily[b] for b in trusted}
+    trusted_sum = sum(daily.values())
+    remainder = account_daily - trusted_sum
+
+    if outlier:
+        alloc = _allocate_daily_by_abs_prior(remainder, prior_buckets, outlier)
+        daily.update(alloc)
+
     out = {b: float(prior_buckets.get(b, 0.0) or 0.0) + daily[b] for b in BUCKET_KEYS}
-    # Tie to account total exactly (residual on bucket_4).
     residual = float(account_total) - sum(out.values())
-    out["bucket_4"] = out.get("bucket_4", 0.0) + residual
+    if abs(residual) > 0.01:
+        # Rounding / empty-outlier edge case: land residual on bucket_4.
+        out["bucket_4"] = out.get("bucket_4", 0.0) + residual
     return out
 
 
@@ -502,16 +535,18 @@ def apply_bucket_pnl_continuity(run_date: str, totals: dict) -> dict:
     current_buckets = _bucket_pnl_from_totals(totals)
     prior_total = float(prior.get("total_pnl", 0.0) or 0.0)
     account_total = float(totals.get("total_pnl", 0.0) or 0.0)
-    account_daily = abs(account_total - prior_total)
+    account_daily = float(account_total) - float(prior_total)
+    jump_tol = _bucket_daily_jump_threshold(account_daily)
     max_bucket_jump = max(
         abs(current_buckets[b] - prior_buckets[b]) for b in BUCKET_KEYS
     )
     # e.g. May 19: |B1| jumped ~200k while account moved ~7k.
-    if max_bucket_jump <= max(50_000.0, 5.0 * account_daily + 1.0):
+    if max_bucket_jump <= jump_tol:
         return totals
 
     adjusted = _bucket_pnl_continuity_adjusted(
         prior_buckets=prior_buckets,
+        current_buckets=current_buckets,
         account_total=account_total,
         prior_account_total=prior_total,
     )

@@ -338,9 +338,14 @@ def test_apply_bucket_pnl_continuity_spreads_account_daily(tmp_path, monkeypatch
         "2026-05-19",
         json.loads((runs / "2026-05-19" / "accounting" / "totals.json").read_text()),
     )
-    assert fixed["bucket_pnl"]["bucket_1"] == pytest.approx(22642.72, abs=0.1)
-    assert fixed["bucket_pnl"]["bucket_2"] == pytest.approx(25425.87, abs=0.1)
-    assert sum(fixed["bucket_pnl"].values()) == pytest.approx(52613.11, abs=0.1)
+    bp = fixed["bucket_pnl"]
+    # B1/B2 outliers re-spread; B3/B4 keep raw daily moves from accounting.
+    assert bp["bucket_1"] == pytest.approx(22252.0, abs=50.0)
+    assert bp["bucket_2"] == pytest.approx(24980.0, abs=50.0)
+    assert bp["bucket_3"] == pytest.approx(7344.99, abs=1.0)
+    assert bp["bucket_4"] == pytest.approx(-1964.68, abs=1.0)
+    assert bp["bucket_4"] - (-2410.09) == pytest.approx(445.41, abs=1.0)
+    assert sum(bp.values()) == pytest.approx(52613.11, abs=0.1)
 
 
 def test_read_bucket_pnl_from_run_uses_pnl_by_bucket_csv(tmp_path, monkeypatch):
