@@ -302,53 +302,166 @@ def _load_screener_borrow_meta(screener_csv: Path | None) -> dict[str, dict[str,
     return meta
 
 
-def _load_shares_outstanding_map(repo_root: Path, cfg: dict[str, Any]) -> dict[str, float]:
-    try:
-        from generate_trade_plan import load_shares_outstanding_map
-
-        paths_cfg = dict((cfg.get("paths") or {}))
-        return load_shares_outstanding_map(paths_cfg)[0]
-    except Exception:
-        paths_cfg = (cfg.get("paths") or {}) if isinstance(cfg, dict) else {}
-        configured = paths_cfg.get("etf_shares_outstanding_csv")
-        candidates: list[Path] = []
+def _etf_dashboard_data_paths(repo_root: Path, cfg: dict[str, Any]) -> list[Path]:
+    """Candidate etf-dashboard data files (sibling repo or vendored copy under data/)."""
+    repo_root = repo_root.resolve()
+    paths_cfg = (cfg.get("paths") or {}) if isinstance(cfg, dict) else {}
+    out: list[Path] = []
+    for key in ("etf_metrics_daily_csv", "etf_metrics_latest_json"):
+        configured = paths_cfg.get(key)
         if configured:
-            candidates.append(repo_root / str(configured))
-        candidates.extend(
-            [
-                repo_root.parent / "etf-dashboard" / "data" / "etf_shares_outstanding.csv",
-                repo_root / "data" / "etf_shares_outstanding.csv",
-            ]
-        )
-        for path in candidates:
-            if not path.is_file():
+            out.append(repo_root / str(configured))
+    out.extend(
+        [
+            repo_root.parent / "etf-dashboard" / "data" / "etf_metrics_daily.csv",
+            repo_root.parent / "etf-dashboard" / "data" / "etf_metrics_latest.json",
+            repo_root / "data" / "etf_metrics_daily.csv",
+            repo_root / "data" / "etf_metrics_latest.json",
+        ]
+    )
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for p in out:
+        key = str(p.resolve()) if p.exists() else str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(p)
+    return unique
+
+
+def _load_shares_outstanding_from_etf_metrics(repo_root: Path, cfg: dict[str, Any]) -> dict[str, float]:
+    """Latest shares_outstanding per ticker from etf-dashboard metrics ingest."""
+    for path in _etf_dashboard_data_paths(repo_root, cfg):
+        if path.suffix.lower() == ".json" and path.is_file():
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
                 continue
+            rows = payload.get("rows") or []
+            out: dict[str, float] = {}
+            for row in rows:
+                sym = _clean_str(row.get("ticker") or row.get("ETF")).upper()
+                sh = row.get("shares_outstanding")
+                if sym and sh is not None and float(sh) > 0:
+                    out[sym] = float(sh)
+            if out:
+                return out
+        if path.suffix.lower() == ".csv" and path.is_file():
+            try:
+                df = pd.read_csv(path, usecols=["date", "ticker", "shares_outstanding"])
+            except Exception:
+                try:
+                    df = pd.read_csv(path)
+                except Exception:
+                    continue
+            if "ticker" not in df.columns or "shares_outstanding" not in df.columns:
+                continue
+            df["date"] = pd.to_datetime(df["date"], errors="coerce")
+            df = df.dropna(subset=["date", "ticker"])
+            df["shares_outstanding"] = pd.to_numeric(df["shares_outstanding"], errors="coerce")
+            latest = (
+                df.sort_values("date")
+                .groupby(df["ticker"].astype(str).str.upper(), as_index=False)
+                .tail(1)
+            )
+            out = {
+                _clean_str(r["ticker"]).upper(): float(r["shares_outstanding"])
+                for _, r in latest.iterrows()
+                if pd.notna(r["shares_outstanding"]) and float(r["shares_outstanding"]) > 0
+            }
+            if out:
+                return out
+    return {}
+
+
+def _load_median_volume_from_etf_metrics(
+    repo_root: Path, cfg: dict[str, Any], *, lookback_days: int = 60
+) -> dict[str, float]:
+    """Median daily ``shares_traded`` over recent history (etf-dashboard metrics)."""
+    for path in _etf_dashboard_data_paths(repo_root, cfg):
+        if path.suffix.lower() != ".csv" or not path.is_file():
+            continue
+        try:
+            df = pd.read_csv(path, usecols=["date", "ticker", "shares_traded"])
+        except Exception:
             try:
                 df = pd.read_csv(path)
             except Exception:
                 continue
-            sym_col = next((c for c in df.columns if c.upper() in ("ETF", "SYMBOL", "TICKER")), None)
-            sh_col = next(
-                (c for c in df.columns if "shares" in c.lower() and "out" in c.lower()),
-                None,
-            )
-            if sym_col is None or sh_col is None:
-                continue
-            out: dict[str, float] = {}
-            for _, r in df[[sym_col, sh_col]].dropna().iterrows():
-                sym = _clean_str(r[sym_col]).upper()
-                if sym:
-                    out[sym] = float(r[sh_col])
+        if "ticker" not in df.columns or "shares_traded" not in df.columns:
+            continue
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df["shares_traded"] = pd.to_numeric(df["shares_traded"], errors="coerce")
+        df = df.dropna(subset=["date", "ticker"])
+        df = df[df["shares_traded"] > 0]
+        if df.empty:
+            continue
+        max_date = df["date"].max()
+        cutoff = max_date - pd.Timedelta(days=int(lookback_days) * 2)
+        df = df[df["date"] >= cutoff]
+        med = (
+            df.groupby(df["ticker"].astype(str).str.upper())["shares_traded"]
+            .median()
+            .dropna()
+        )
+        return {str(k).upper(): float(v) for k, v in med.items() if float(v) > 0}
+    return {}
+
+
+def _load_shares_outstanding_map(repo_root: Path, cfg: dict[str, Any]) -> dict[str, float]:
+    repo_root = repo_root.resolve()
+    try:
+        from generate_trade_plan import load_shares_outstanding_map
+
+        paths_cfg = dict((cfg.get("paths") or {}))
+        out, src = load_shares_outstanding_map(paths_cfg)
+        if out:
             return out
-        return {}
+    except Exception:
+        pass
+    paths_cfg = (cfg.get("paths") or {}) if isinstance(cfg, dict) else {}
+    configured = paths_cfg.get("etf_shares_outstanding_csv")
+    candidates: list[Path] = []
+    if configured:
+        candidates.append((repo_root / str(configured)).resolve())
+    candidates.extend(
+        [
+            repo_root.parent / "etf-dashboard" / "data" / "etf_shares_outstanding.csv",
+            repo_root / "data" / "etf_shares_outstanding.csv",
+        ]
+    )
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            df = pd.read_csv(path)
+        except Exception:
+            continue
+        sym_col = next((c for c in df.columns if c.upper() in ("ETF", "SYMBOL", "TICKER")), None)
+        sh_col = next(
+            (c for c in df.columns if "shares" in c.lower() and "out" in c.lower()),
+            None,
+        )
+        if sym_col is None or sh_col is None:
+            continue
+        out_map: dict[str, float] = {}
+        for _, r in df[[sym_col, sh_col]].dropna().iterrows():
+            sym = _clean_str(r[sym_col]).upper()
+            if sym:
+                out_map[sym] = float(r[sh_col])
+        if out_map:
+            return out_map
+    return _load_shares_outstanding_from_etf_metrics(repo_root, cfg)
 
 
 def _load_median_daily_volume_map(repo_root: Path, cfg: dict[str, Any]) -> dict[str, float]:
+    repo_root = repo_root.resolve()
     paths_cfg = (cfg.get("paths") or {}) if isinstance(cfg, dict) else {}
     configured = paths_cfg.get("etf_median_daily_volume_csv")
     candidates: list[Path] = []
     if configured:
-        candidates.append(repo_root / str(configured))
+        candidates.append((repo_root / str(configured)).resolve())
     candidates.extend(
         [
             repo_root.parent / "etf-dashboard" / "data" / "etf_median_daily_volume.csv",
@@ -378,8 +491,9 @@ def _load_median_daily_volume_map(repo_root: Path, cfg: dict[str, Any]) -> dict[
             sym = _clean_str(r[sym_col]).upper()
             if sym:
                 out[sym] = float(r[vol_col])
-        return out
-    return {}
+        if out:
+            return out
+    return _load_median_volume_from_etf_metrics(repo_root, cfg)
 
 
 def _symbol_bucket(sym: str, screener_meta: dict[str, dict[str, Any]]) -> str:
@@ -944,6 +1058,13 @@ def compute_borrow_panel(
         "n_short_etfs": len(short_etf_rows),
         "borrow_limits_by_bucket": ctx.borrow_apr_pct_by_bucket,
         "liquidity_cap_fracs": ctx.liquidity_cap_fracs,
+        "liquidity_data": {
+            "n_shares_outstanding": len(shares_out_map),
+            "n_median_volume": len(median_vol_map),
+            "n_short_with_liquidity_util": sum(
+                1 for r in squeeze_rows if r.get("liquidity_utilization") is not None
+            ),
+        },
     }
 
 
@@ -2153,6 +2274,107 @@ def _slide_enriched_factor_rows(
     return enriched
 
 
+def _pnl_concentration_summary(
+    per_name: list[dict[str, Any]],
+    total_pnl_usd: float,
+    *,
+    pnl_key: str = "pnl_t0_usd",
+    name_key: str = "underlying",
+    top_n: int = 5,
+) -> dict[str, Any]:
+    """Rank names by |P&L| and report how much of the scenario the top N explain."""
+    if not per_name:
+        return {
+            "top_contributors": [],
+            "top_n": top_n,
+            "top_n_share_of_scenario": None,
+            "diversified": True,
+        }
+    denom = sum(abs(float(p.get(pnl_key) or 0.0)) for p in per_name)
+    if denom <= 1e-9:
+        return {
+            "top_contributors": [],
+            "top_n": top_n,
+            "top_n_share_of_scenario": None,
+            "diversified": True,
+        }
+    ranked = sorted(
+        per_name,
+        key=lambda p: abs(float(p.get(pnl_key) or 0.0)),
+        reverse=True,
+    )
+    top = ranked[:top_n]
+    top_sum = sum(abs(float(p.get(pnl_key) or 0.0)) for p in top)
+    share = top_sum / denom
+    contributors: list[dict[str, Any]] = []
+    for p in top:
+        pnl = float(p.get(pnl_key) or 0.0)
+        contributors.append(
+            {
+                "underlying": p.get(name_key) or p.get("symbol"),
+                "symbols": p.get("symbols"),
+                "pnl_usd": pnl,
+                "pct_of_scenario_abs": abs(pnl) / denom,
+                "pct_of_scenario_signed": (pnl / total_pnl_usd)
+                if abs(total_pnl_usd) > 1e-9
+                else None,
+            }
+        )
+    return {
+        "top_contributors": contributors,
+        "top_n": top_n,
+        "top_n_share_of_scenario": share,
+        "diversified": share < 0.70,
+    }
+
+
+def _borrow_cost_concentration(
+    victims: list[dict[str, Any]],
+    *,
+    top_n: int = 3,
+) -> dict[str, Any]:
+    """Share of incremental borrow cost explained by the largest names."""
+    positive = [
+        v
+        for v in victims
+        if float(v.get("annual_cost_delta_usd") or v.get("annual_delta_usd") or 0.0) > 0
+    ]
+    if not positive:
+        return {"top_victims": [], "top_n": top_n, "top_n_share": None, "diversified": True}
+    denom = sum(
+        float(v.get("annual_cost_delta_usd") or v.get("annual_delta_usd") or 0.0) for v in positive
+    )
+    ranked = sorted(
+        positive,
+        key=lambda v: float(v.get("annual_cost_delta_usd") or v.get("annual_delta_usd") or 0.0),
+        reverse=True,
+    )
+    top = ranked[:top_n]
+    top_sum = sum(
+        float(v.get("annual_cost_delta_usd") or v.get("annual_delta_usd") or 0.0) for v in top
+    )
+    share = top_sum / denom if denom > 0 else None
+    out_victims: list[dict[str, Any]] = []
+    for v in top:
+        delta = float(v.get("annual_cost_delta_usd") or v.get("annual_delta_usd") or 0.0)
+        out_victims.append(
+            {
+                "symbol": v.get("symbol"),
+                "annual_cost_delta_usd": delta,
+                "pct_of_shock": (delta / denom) if denom > 0 else None,
+                "borrow_rate_pct": v.get("borrow_rate_pct") or v.get("current_apr_pct"),
+                "stressed_borrow_rate_pct": v.get("stressed_borrow_rate_pct")
+                or v.get("new_apr_pct"),
+            }
+        )
+    return {
+        "top_victims": out_victims,
+        "top_n": top_n,
+        "top_n_share": share,
+        "diversified": share is not None and share < 0.70,
+    }
+
+
 def _update_worst_slide(
     worst_shock: dict[str, Any] | None,
     *,
@@ -2169,8 +2391,10 @@ def _update_worst_slide(
     if cand_pnl is None:
         return worst_shock
     if worst_shock is None or cand_pnl < (worst_shock.get("pnl_pct_nav") or 0.0):
-        top = row.get("top_loss") or {}
+        conc = row.get("concentration") or {}
+        top_contributors = conc.get("top_contributors") or []
         scenario = row["label"]
+        lead = top_contributors[0] if top_contributors else (row.get("top_loss") or {})
         return {
             "index": index_label,
             "scenario": scenario,
@@ -2180,11 +2404,16 @@ def _update_worst_slide(
             "pnl_pct_nav": cand_pnl,
             "total_pnl_pct_nav": cand_pnl,
             "horizon_days": 0,
+            "top_contributors": top_contributors,
+            "top5_share_of_scenario": conc.get("top_n_share_of_scenario"),
             "top_contributor": {
-                "underlying": top.get("underlying"),
-                "symbols": top.get("symbols"),
-                "pnl_usd": top.get("pnl_t0_usd"),
-            },
+                "underlying": lead.get("underlying"),
+                "symbols": lead.get("symbols"),
+                "pnl_usd": lead.get("pnl_usd"),
+                "pct_of_scenario_pnl": lead.get("pct_of_scenario_abs"),
+            }
+            if lead
+            else None,
         }
     return worst_shock
 
@@ -2293,6 +2522,7 @@ def compute_slide_risk_panel(
         sorted_by_pnl = sorted(per_name_pnl_t0, key=lambda p: p["pnl_t0_usd"])
         top_loss = sorted_by_pnl[0] if sorted_by_pnl else None
         top_gain = sorted_by_pnl[-1] if sorted_by_pnl else None
+        concentration = _pnl_concentration_summary(per_name_pnl_t0, total_pnl_t0, top_n=5)
         status = _slide_status(pnl_pct_t0, limits)
         row = {
             "shock_pct": shock_pct,
@@ -2304,6 +2534,7 @@ def compute_slide_risk_panel(
             "top_loss": top_loss,
             "top_gain": top_gain,
             "n_contributors": len(per_name_pnl_t0),
+            "concentration": concentration,
         }
         spx_shock_rows.append(row)
         if status != "ok" and shock_pct < 0:
@@ -2329,12 +2560,18 @@ def compute_slide_risk_panel(
             nav_usd=nav_usd,
         )
 
+    binding_shock: dict[str, Any] | None = None
+    down_rows = [r for r in spx_shock_rows if float(r.get("shock_pct") or 0.0) < 0]
+    if down_rows:
+        binding_shock = min(down_rows, key=lambda r: float(r.get("pnl_pct_nav") or 0.0))
     indices_out.append(
         {
             "index": "SPX",
             "key": "spy",
             "strip_type": "equity_pct",
             "shock_rows": spx_shock_rows,
+            "binding_shock": binding_shock,
+            "binding_concentration": (binding_shock or {}).get("concentration"),
             "coverage_pct": (coverage_gross / total_gross) if total_gross > 0 else 0.0,
             "n_names_covered": sum(1 for e in enriched if e.get("beta_to_spy") is not None),
             "n_names_total": len(enriched),
@@ -2417,6 +2654,7 @@ def compute_slide_risk_panel(
         per_name.sort(key=lambda p: p["pnl_t0_usd"])
         total = sum(p["pnl_t0_usd"] for p in per_name)
         pnl_pct = (total / nav_usd) if nav_usd > 0 else None
+        decay_conc = _pnl_concentration_summary(per_name, total, top_n=3)
         vol_regime_rows.append(
             {
                 "multiplier": mult,
@@ -2426,6 +2664,7 @@ def compute_slide_risk_panel(
                 "status": _slide_status(pnl_pct, limits),
                 "top_loss": per_name[0] if per_name else None,
                 "n_contributors": len(per_name),
+                "decay_concentration": decay_conc,
             }
         )
 
@@ -2570,6 +2809,7 @@ def compute_borrow_shock_panel(
                 )
             per_name_delta.sort(key=lambda d: d["annual_cost_delta_usd"], reverse=True)
             total_delta = sum(d["annual_cost_delta_usd"] for d in per_name_delta)
+            victim_conc = _borrow_cost_concentration(per_name_delta, top_n=3)
             out.append(
                 {
                     "shock": shock,
@@ -2582,22 +2822,54 @@ def compute_borrow_shock_panel(
                     "persistence_delta_usd": (total_delta / TRADING_DAYS_PER_YEAR_DAYS)
                     * persistence_days,
                     "worst_victims": per_name_delta[:5],
+                    "victim_concentration": victim_conc,
+                    "is_focus": False,
                 }
             )
         return out
 
     focus_abs = [s for s in abs_shocks_bp if s in BORROW_SHOCK_FOCUS_BP] or list(BORROW_SHOCK_FOCUS_BP)
     focus_mult = [s for s in mult_shocks if s in BORROW_SHOCK_FOCUS_MULT] or list(BORROW_SHOCK_FOCUS_MULT)
+    abs_ladder = _shock_ladder(abs_shocks_bp, kind="abs_bp")
+    mult_ladder = _shock_ladder(mult_shocks, kind="mult")
+    for row in abs_ladder:
+        if row.get("shock") in focus_abs:
+            row["is_focus"] = True
+    for row in mult_ladder:
+        if row.get("shock") in focus_mult:
+            row["is_focus"] = True
+
+    current_conc = _borrow_cost_concentration(
+        [
+            {
+                "symbol": r["symbol"],
+                "annual_cost_delta_usd": r["current_annual_cost_usd"],
+            }
+            for r in name_rows
+            if float(r.get("current_annual_cost_usd") or 0.0) > 0
+        ],
+        top_n=3,
+    )
+
+    def _tile_from_ladder(ladder: list[dict[str, Any]], label_match: str) -> dict[str, Any] | None:
+        for row in ladder:
+            if row.get("label") == label_match:
+                return row
+        return None
+
+    focus_50 = _tile_from_ladder(abs_ladder, "+50bp")
+    focus_2x = _tile_from_ladder(mult_ladder, "2x")
+
     return {
         "available": True,
         "sleeve": "short_etf",
         "watchlist_n_symbols": len(watch),
         "abs_shocks_bp": list(abs_shocks_bp),
         "mult_shocks": list(mult_shocks),
-        "abs_ladder": _shock_ladder(abs_shocks_bp, kind="abs_bp"),
-        "mult_ladder": _shock_ladder(mult_shocks, kind="mult"),
-        "focus_abs_ladder": _shock_ladder(focus_abs, kind="abs_bp"),
-        "focus_mult_ladder": _shock_ladder(focus_mult, kind="mult"),
+        "abs_ladder": abs_ladder,
+        "mult_ladder": mult_ladder,
+        "focus_abs_ladder": [r for r in abs_ladder if r.get("is_focus")],
+        "focus_mult_ladder": [r for r in mult_ladder if r.get("is_focus")],
         "names": name_rows[:25],
         "n_short_symbols": len(name_rows),
         "current_annual_cost_usd": total_current_annual,
@@ -2605,6 +2877,12 @@ def compute_borrow_shock_panel(
         if nav_usd > 0
         else None,
         "persistence_days": persistence_days,
+        "current_borrow_concentration": current_conc,
+        "summary_tiles": {
+            "focus_abs_50bp": focus_50,
+            "focus_mult_2x": focus_2x,
+            "top3_share_current_borrow": current_conc.get("top_n_share"),
+        },
     }
 
 

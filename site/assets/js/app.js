@@ -574,6 +574,79 @@
     return pct < 0 ? `heat-neg-${tier}` : `heat-pos-${tier}`;
   }
 
+  function formatPnlConcentration(conc, opts = {}) {
+    const topN = opts.topN || 5;
+    if (!conc || !conc.top_contributors || !conc.top_contributors.length) {
+      return `<span class="dim small">No contributor detail</span>`;
+    }
+    const share = conc.top_n_share_of_scenario;
+    const shareTxt =
+      share == null ? "" : `Top ${topN} explain <strong>${fmtPct(share, 0)}</strong> of |scenario P&amp;L|`;
+    if (conc.diversified && share != null && share < 0.7) {
+      return `${shareTxt} <span class="dim small">(diversified)</span>`;
+    }
+    const chips = conc.top_contributors
+      .map((c) => {
+        const pct =
+          c.pct_of_scenario_abs == null ? "" : ` ${fmtPct(c.pct_of_scenario_abs, 0)}`;
+        return `<span class="conc-chip"><strong>${safeText(c.underlying)}</strong> ${fmtUsdSigned(c.pnl_usd)}${pct}</span>`;
+      })
+      .join("");
+    return `<div class="conc-line">${shareTxt}</div><div class="conc-chips">${chips}</div>`;
+  }
+
+  function formatDecayConcentration(conc) {
+    if (!conc || !conc.top_contributors || !conc.top_contributors.length) {
+      return `<span class="dim">—</span>`;
+    }
+    const share = conc.top_n_share_of_scenario;
+    if (conc.diversified && share != null && share < 0.5) {
+      return `<span class="dim small">Diversified (max ${fmtPct(
+        conc.top_contributors[0].pct_of_scenario_abs,
+        0
+      )})</span>`;
+    }
+    const shareLead =
+      share == null
+        ? ""
+        : `<span class="dim small">Top 3 = ${fmtPct(share, 0)} · </span>`;
+    const chips = conc.top_contributors
+      .map((c) => {
+        const pct =
+          c.pct_of_scenario_abs == null ? "" : ` (${fmtPct(c.pct_of_scenario_abs, 0)})`;
+        return `<strong>${safeText(c.underlying)}</strong> ${fmtUsdSigned(c.pnl_usd)}${pct}`;
+      })
+      .join(" · ");
+    return `${shareLead}<span class="small">${chips}</span>`;
+  }
+
+  function formatBorrowVictims(conc) {
+    if (!conc || !conc.top_victims || !conc.top_victims.length) {
+      return "—";
+    }
+    if (conc.diversified && conc.top_n_share != null && conc.top_n_share < 0.7) {
+      const lead = conc.top_victims[0];
+      return `<span class="dim small">Diversified</span> (max ${safeText(lead.symbol)} ${fmtPct(
+        lead.pct_of_shock,
+        0
+      )})`;
+    }
+    return conc.top_victims
+      .map((v) => {
+        const pct = v.pct_of_shock == null ? "" : ` (${fmtPct(v.pct_of_shock, 0)})`;
+        return `<strong>${safeText(v.symbol)}</strong> ${fmtUsd(v.annual_cost_delta_usd)}${pct}`;
+      })
+      .join(" · ");
+  }
+
+  function borrowCostHeatClass(pctNav) {
+    if (pctNav == null || Number.isNaN(Number(pctNav))) return "";
+    const a = Math.abs(Number(pctNav));
+    const tier = a >= 0.5 ? 3 : a >= 0.15 ? 2 : a >= 0.05 ? 1 : 0;
+    if (tier === 0) return "";
+    return `borrow-cost-${tier}`;
+  }
+
   function formatSlideShockHeader(row) {
     if (row?.label) return safeText(row.label);
     if (row?.shock_pct != null && !Number.isNaN(Number(row.shock_pct))) {
@@ -795,17 +868,16 @@
       els.slideRiskMeta.innerHTML = `<span class="dim small">Instantaneous shocks use T+0 beta only; T+${horizons} rows add LETF vol drag${betaCov} &middot; ${letf}/${total} LETF &middot; ${panel.n_names_with_vol || 0} with vol</span>`;
     }
     const worst = panel.worst_shock || null;
-    const worstContrib = worst?.top_contributor;
-    const worstContribPct =
-      worstContrib?.pct_of_scenario_pnl == null
-        ? ""
-        : ` (${fmtPct(worstContrib.pct_of_scenario_pnl, 0)} of scenario)`;
+    const worstShare =
+      worst?.top5_share_of_scenario != null
+        ? fmtPct(worst.top5_share_of_scenario, 0)
+        : null;
     const worstBanner = worst
       ? `<div class="callout warn" role="status"><strong>Worst instantaneous slide (T+0):</strong> ${safeText(
           worst.label
         )} &rarr; ${fmtPct(worst.pnl_pct_nav ?? worst.total_pnl_pct_nav, 2)} of NAV${
-          worstContrib?.underlying
-            ? ` &middot; largest contributor <strong>${safeText(worstContrib.underlying)}</strong> ${fmtUsdSigned(worstContrib.pnl_usd)}${worstContribPct}`
+          worstShare
+            ? ` &middot; top 5 names explain <strong>${worstShare}</strong> of |scenario P&amp;L|`
             : ""
         }.</div>`
       : "";
@@ -829,7 +901,7 @@
               (r) => `<tr>
               <td><strong>${safeText(r.label)}</strong></td>
               <td class="num ${signedClass(r.pnl_pct_nav)}">${fmtPct(r.pnl_pct_nav, 2)}</td>
-              <td class="dim small">${r.top_loss ? safeText(r.top_loss.underlying) + " " + fmtUsdSigned(r.top_loss.pnl_t0_usd) : "-"}</td>
+              <td class="small">${formatDecayConcentration(r.decay_concentration)}</td>
             </tr>`
             )
             .join("");
@@ -840,7 +912,7 @@
               <tbody><tr><th class="row-label">T+0</th>${vixCells}</tr></tbody></table>
             </div>
             <h4 class="dim small">Realized-vol regime (LETF decay overlay)</h4>
-            <table class="tight"><thead><tr><th>Regime</th><th>% NAV</th><th>Worst name</th></tr></thead><tbody>${volBody || "<tr><td colspan=3 class=dim>(none)</td></tr>"}</tbody></table>
+            <table class="tight"><thead><tr><th>Regime</th><th>% NAV</th><th>Decay concentration</th></tr></thead><tbody>${volBody || "<tr><td colspan=3 class=dim>(none)</td></tr>"}</tbody></table>
           </div>`;
         }
         const rows = idx.shock_rows || [];
@@ -867,17 +939,14 @@
             return `<tr><th class="row-label">T+${d}d <span class="dim small">beta + decay</span></th>${cells}</tr>`;
           })
           .join("");
-        const worstNamesRow = rows
-          .map((r) => {
-            const tip = r.shock_pct < 0 ? r.top_loss : r.top_gain;
-            if (!tip) return `<td class="dim">-</td>`;
-            const pct =
-              tip.pct_of_scenario_pnl == null
-                ? ""
-                : `<br>${fmtPct(tip.pct_of_scenario_pnl, 0)} of scenario`;
-            return `<td class="dim small">${safeText(tip.underlying)}<br>${fmtUsdSigned(tip.pnl_t0_usd)}${pct}</td>`;
-          })
-          .join("");
+        const binding = idx.binding_shock || null;
+        const bindingConc = idx.binding_concentration || binding?.concentration || null;
+        const concBlock = binding
+          ? `<div class="slide-concentration callout-soft">
+              <strong>${safeText(binding.label)} (binding down shock):</strong>
+              ${formatPnlConcentration(bindingConc, { topN: 5 })}
+            </div>`
+          : "";
         return `<div class="slide-strip">
           <div class="slide-strip-head">
             <h3>${safeText(idx.index)} <span class="dim small">(${Math.round((idx.coverage_pct || 0) * 100)}% coverage, ${idx.n_names_covered}/${idx.n_names_total} names)</span></h3>
@@ -888,10 +957,10 @@
               <tbody>
                 <tr><th class="row-label">T+0 <span class="dim small">beta only</span></th>${t0Row}</tr>
                 ${horizonRows}
-                <tr class="dim"><th class="row-label">Largest contributor (T+0)</th>${worstNamesRow}</tr>
               </tbody>
             </table>
           </div>
+          ${concBlock}
         </div>`;
       })
       .join("");
@@ -914,47 +983,57 @@
         panel.current_annual_cost_usd
       )} / yr (${fmtPct(panel.current_annual_cost_pct_nav, 2)} of NAV) &middot; ${panel.persistence_days}-day persistence column</span>`;
     }
+    const tiles = panel.summary_tiles || {};
+    const focus50 = tiles.focus_abs_50bp;
+    const focus2x = tiles.focus_mult_2x;
+    const top3Share = panel.current_borrow_concentration?.top_n_share;
+    const summaryStrip = `
+      <div class="strip borrow-summary-strip">
+        <div class="stat stat-neutral">
+          <div class="label">Current borrow / yr</div>
+          <div class="value">${fmtUsd(panel.current_annual_cost_usd)}</div>
+          <div class="sub">${fmtPct(panel.current_annual_cost_pct_nav, 2)} of NAV · ${panel.n_short_symbols} shorts</div>
+        </div>
+        <div class="stat stat-neutral">
+          <div class="label">+50bp stress</div>
+          <div class="value">${focus50 ? fmtUsd(focus50.annual_delta_usd) : "—"}</div>
+          <div class="sub">${focus50 ? `${fmtPct(focus50.annual_delta_pct_nav, 2)} NAV/yr · ${panel.persistence_days}d ${fmtUsd(focus50.persistence_delta_usd)}` : ""}</div>
+        </div>
+        <div class="stat stat-neutral">
+          <div class="label">2× APR stress</div>
+          <div class="value">${focus2x ? fmtUsd(focus2x.annual_delta_usd) : "—"}</div>
+          <div class="sub">${focus2x ? `${fmtPct(focus2x.annual_delta_pct_nav, 2)} NAV/yr · ${panel.persistence_days}d ${fmtUsd(focus2x.persistence_delta_usd)}` : ""}</div>
+        </div>
+        <div class="stat stat-neutral">
+          <div class="label">Borrow concentration</div>
+          <div class="value">${top3Share == null ? "—" : fmtPct(top3Share, 0)}</div>
+          <div class="sub">Top 3 explain share of current cost</div>
+        </div>
+      </div>`;
+
     const renderLadder = (ladder, headerLabel) => {
       if (!ladder || !ladder.length) return "";
-      const header = `<th>${headerLabel}</th><th>Add'l ann. cost</th><th>% NAV / yr</th><th>${panel.persistence_days}-day persist</th><th>Largest add'l cost</th><th>Other names</th>`;
+      const header = `<th>${headerLabel}</th><th>Add'l ann. cost</th><th>% NAV / yr</th><th>${panel.persistence_days}-day persist</th><th>Top 3 add'l cost</th>`;
       const body = ladder
         .map((r) => {
-          const victims = r.worst_victims || [];
-          const v0 = victims[0];
-          const others = victims.slice(1, 4);
-          const cost0 = v0?.annual_cost_delta_usd ?? v0?.annual_delta_usd;
-          const v0Cell = v0
-            ? `<strong>${safeText(v0.symbol)}</strong> <span class="dim small">${fmtUsd(
-                cost0
-              )}<br>Borrow ${(v0.borrow_rate_pct ?? v0.current_apr_pct ?? 0).toFixed(2)}% &rarr; ${(v0.stressed_borrow_rate_pct ?? v0.new_apr_pct ?? 0).toFixed(2)}%</span>`
-            : "-";
-          const othersCell = others
-            .map((v) => {
-              const c = v.annual_cost_delta_usd ?? v.annual_delta_usd;
-              return `${safeText(v.symbol)} <span class="dim small">${fmtUsd(c)}</span>`;
-            })
-            .join(", ");
-          const heat = scenarioHeatClass(r.annual_delta_pct_nav);
-          const totalCost = r.annual_delta_usd;
-          return `<tr>
-            <td><strong>${safeText(r.label)}</strong></td>
-            <td class="num ${heat}">${fmtUsd(totalCost)}</td>
-            <td class="num ${heat}">${fmtPct(
-            r.annual_delta_pct_nav,
-            2
-          )}</td>
+          const heat = borrowCostHeatClass(r.annual_delta_pct_nav);
+          const rowCls = r.is_focus ? "row-focus" : "";
+          return `<tr class="${rowCls}">
+            <td><strong>${safeText(r.label)}</strong>${r.is_focus ? ' <span class="pill pill-warn">focus</span>' : ""}</td>
+            <td class="num ${heat}">${fmtUsd(r.annual_delta_usd)}</td>
+            <td class="num ${heat}">${fmtPct(r.annual_delta_pct_nav, 2)}</td>
             <td class="num">${fmtUsd(r.persistence_delta_usd)}</td>
-            <td>${v0Cell}</td>
-            <td class="dim small">${othersCell || "-"}</td>
+            <td class="small">${formatBorrowVictims(r.victim_concentration)}</td>
           </tr>`;
         })
         .join("");
-      return `<table class="tight"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`;
+      return `<table class="tight borrow-ladder"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`;
     };
+
     const namesTable = (panel.names || []).length
       ? `<h3>Top shorts by implied annual borrow cost</h3>
          <table class="tight sortable"><thead><tr>
-           <th>Symbol</th><th>Short notional</th><th>Borrow Rate</th><th>Implied ann. cost</th>
+           <th>Symbol</th><th>Short notional</th><th>Borrow rate</th><th>Implied ann. cost</th>
          </tr></thead><tbody>${(panel.names || [])
            .map(
              (n) => `<tr>
@@ -966,14 +1045,18 @@
            )
            .join("")}</tbody></table>`
       : "";
+
     els.borrowShockContent.innerHTML = `
-      <h3>Focus: +50bp on borrow rate</h3>
-      ${renderLadder(panel.focus_abs_ladder || [], "Shock")}
-      <h3>Focus: 2&times; borrow rate</h3>
-      ${renderLadder(panel.focus_mult_ladder || [], "Multiplier")}
-      <details><summary class="dim small">All absolute shocks (+bp)</summary>${renderLadder(panel.abs_ladder, "Shock")}</details>
-      <details><summary class="dim small">All multiplicative shocks (&times; APR)</summary>${renderLadder(panel.mult_ladder, "Multiplier")}</details>
+      ${summaryStrip}
       ${namesTable}
+      <h3 class="borrow-ladder-title">Borrow rate shocks</h3>
+      <p class="dim small">Absolute (+bp) and multiplicative (× APR) ladders. Focus rows highlighted.</p>
+      <details open><summary><strong>Absolute shocks (+bp)</strong></summary>
+        ${renderLadder(panel.abs_ladder || [], "Shock")}
+      </details>
+      <details><summary><strong>Multiplicative shocks (× APR)</strong></summary>
+        ${renderLadder(panel.mult_ladder || [], "Multiplier")}
+      </details>
     `;
   }
 

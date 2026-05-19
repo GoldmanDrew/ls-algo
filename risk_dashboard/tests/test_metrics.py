@@ -619,6 +619,14 @@ def test_compute_slide_risk_panel_produces_spx_and_vix_strips():
     assert m3["pnl_pct_nav"] == pytest.approx(-0.024, abs=1e-6)
     assert any(h["horizon_days"] == 0 for h in m3["horizons"])
     assert m3["status"] in ("ok", "warn", "hard")
+    binding = spx.get("binding_shock")
+    assert binding is not None
+    conc = binding.get("concentration") or {}
+    assert conc.get("top_n_share_of_scenario") is not None
+    assert len(conc.get("top_contributors") or []) >= 1
+    vix = indices["VIX"]
+    vol_row = (vix.get("vol_regime_rows") or [])[0]
+    assert "decay_concentration" in vol_row
 
 
 def test_compute_slide_risk_panel_letf_decay_uses_per_leg(tmp_path: Path):
@@ -729,6 +737,81 @@ def test_compute_borrow_panel_uses_screener_rate_not_ibkr_peak(tmp_path: Path):
     assert row["borrow_rate_source"] == "borrow_current"
     assert row["implied_annual_cost_usd"] == pytest.approx(193_040 * 0.44408, rel=1e-6)
     assert row["borrow_rate_pct"] != pytest.approx(56.3084, abs=0.1)
+
+
+def test_borrow_shock_panel_includes_victim_concentration(tmp_path: Path):
+    flex = tmp_path / "flex_positions.xml"
+    flex.write_text(
+        '<FlexQueryResponse>'
+        '<OpenPosition symbol="AAA" position="-1000" markPrice="10" '
+        'positionValue="-10000" underlyingSymbol="AAA" fxRateToBase="1" multiplier="1" />'
+        '<OpenPosition symbol="BBB" position="-2000" markPrice="10" '
+        'positionValue="-20000" underlyingSymbol="BBB" fxRateToBase="1" multiplier="1" />'
+        "</FlexQueryResponse>",
+        encoding="utf-8",
+    )
+    screener = tmp_path / "screener.csv"
+    pd.DataFrame(
+        [
+            {"ETF": "AAA", "borrow_current": 0.10},
+            {"ETF": "BBB", "borrow_current": 0.05},
+        ]
+    ).to_csv(screener, index=False)
+    panel = compute_borrow_shock_panel(
+        borrow_panel={"borrow": {}},
+        flex_positions_xml=flex,
+        nav_usd=100_000.0,
+        screener_csv=screener,
+    )
+    row = next(r for r in panel["abs_ladder"] if r["label"] == "+50bp")
+    conc = row["victim_concentration"]
+    assert conc["top_n_share"] is not None
+    assert len(conc["top_victims"]) >= 1
+    assert panel["summary_tiles"]["focus_abs_50bp"]["label"] == "+50bp"
+
+
+def test_squeeze_liquidity_loads_from_etf_metrics_daily(tmp_path: Path):
+    metrics_dir = tmp_path / "data"
+    metrics_dir.mkdir()
+    (metrics_dir / "etf_metrics_daily.csv").write_text(
+        "date,ticker,shares_outstanding,shares_traded\n"
+        "2026-05-01,APLZ,1000000,400000\n"
+        "2026-05-02,APLZ,1000000,600000\n"
+        "2026-05-03,APLZ,1000000,500000\n",
+        encoding="utf-8",
+    )
+    flex_borrow = tmp_path / "flex_borrow.xml"
+    flex_borrow.write_text("<FlexQueryResponse></FlexQueryResponse>", encoding="utf-8")
+    flex_pos = tmp_path / "flex_positions.xml"
+    flex_pos.write_text(
+        '<FlexQueryResponse>'
+        '<OpenPosition symbol="APLZ" position="-10000" markPrice="10" '
+        'positionValue="-100000" underlyingSymbol="APLD" fxRateToBase="1" multiplier="1" />'
+        "</FlexQueryResponse>",
+        encoding="utf-8",
+    )
+    screener = tmp_path / "screener.csv"
+    pd.DataFrame([{"ETF": "APLZ", "borrow_current": 0.10, "bucket": "bucket_4"}]).to_csv(
+        screener, index=False
+    )
+    cfg = {
+        "paths": {
+            "etf_metrics_daily_csv": "data/etf_metrics_daily.csv",
+        }
+    }
+    panel = compute_borrow_panel(
+        flex_borrow,
+        flex_pos,
+        screener_csv=screener,
+        repo_root=tmp_path,
+    )
+    sq = next(r for r in panel["squeeze_rows"] if r["symbol"] == "APLZ")
+    assert sq["shares_outstanding"] == pytest.approx(1_000_000.0)
+    assert sq["median_daily_volume_shares"] == pytest.approx(500_000.0)
+    assert sq["short_vs_shares_out_cap"] == pytest.approx(10_000 / (1_000_000 * 0.35))
+    assert sq["short_vs_adv_cap"] == pytest.approx(10_000 / (500_000 * 0.30))
+    assert sq["liquidity_utilization"] is not None
+    assert sq["status"] == "ok"
 
 
 def test_compute_borrow_shock_panel_applies_abs_and_mult_shocks(tmp_path: Path):

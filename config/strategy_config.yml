@@ -1,7 +1,7 @@
 ibkr:
   host: 127.0.0.1
-  port: 7496
-  client_id: 41
+  port: 7497
+  client_id: 31
   prefer_delayed: true
   suppress_error_codes: [10089]
 
@@ -11,7 +11,7 @@ accounting:
 
 strategy:
   tag: ETF_LS
-  capital_usd: 800000
+  capital_usd: 80000
   gross_leverage: 4
   blacklist:
     - JPM
@@ -87,6 +87,9 @@ paths:
   proposed_trades_csv: data/proposed_trades.csv
   flow_ledger_csv: data/flow_ledger.csv
   etf_shares_outstanding_csv: ../etf-dashboard/data/etf_shares_outstanding.csv
+  # Liquidity squeeze panel falls back to these when the legacy CSV is absent:
+  etf_metrics_daily_csv: ../etf-dashboard/data/etf_metrics_daily.csv
+  etf_metrics_latest_json: ../etf-dashboard/data/etf_metrics_latest.json
   # Optional CSV (date index, columns = underlying tickers) of daily prices OR log returns
   # consumed by strategy.covariance_balance. Missing file → covariance_balance silently no-ops.
   underlying_returns_csv: data/underlying_returns.csv
