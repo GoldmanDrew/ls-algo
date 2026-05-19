@@ -431,6 +431,114 @@ def _bucket_pnl_from_totals(totals: dict) -> dict[str, float]:
     return {b: float(bp.get(b, 0.0) or 0.0) for b in BUCKET_KEYS}
 
 
+def _prior_accounting_run_date(run_date: str) -> str | None:
+    """Latest run folder before ``run_date`` that has accounting totals."""
+    try:
+        target = pd.to_datetime(run_date).normalize()
+    except (ValueError, TypeError):
+        return None
+    best: pd.Timestamp | None = None
+    best_name: str | None = None
+    if not RUNS_ROOT.is_dir():
+        return None
+    for child in RUNS_ROOT.iterdir():
+        if not child.is_dir():
+            continue
+        try:
+            dt = pd.to_datetime(child.name).normalize()
+        except (ValueError, TypeError):
+            continue
+        if dt >= target:
+            continue
+        if not (child / "accounting" / "totals.json").exists():
+            continue
+        if best is None or dt > best:
+            best = dt
+            best_name = child.name
+    return best_name
+
+
+def _bucket_pnl_continuity_adjusted(
+    *,
+    prior_buckets: dict[str, float],
+    account_total: float,
+    prior_account_total: float,
+) -> dict[str, float]:
+    """
+    When a single-day accounting run re-attributes YTD history across buckets,
+    spread only the account-level daily PnL across prior bucket weights.
+    """
+    account_daily = float(account_total) - float(prior_account_total)
+    weights = {b: max(float(prior_buckets.get(b, 0.0) or 0.0), 0.0) for b in BUCKET_KEYS}
+    wsum = sum(weights.values())
+    if wsum <= 1e-12:
+        share = 1.0 / len(BUCKET_KEYS)
+        daily = {b: account_daily * share for b in BUCKET_KEYS}
+    else:
+        daily = {b: account_daily * (weights[b] / wsum) for b in BUCKET_KEYS}
+    out = {b: float(prior_buckets.get(b, 0.0) or 0.0) + daily[b] for b in BUCKET_KEYS}
+    # Tie to account total exactly (residual on bucket_4).
+    residual = float(account_total) - sum(out.values())
+    out["bucket_4"] = out.get("bucket_4", 0.0) + residual
+    return out
+
+
+def apply_bucket_pnl_continuity(run_date: str, totals: dict) -> dict:
+    """
+    If bucket YTD jumps are implausible vs the prior run, rewrite bucket_pnl in
+    totals.json and pnl_by_bucket.csv using prior-day bucket weights.
+    """
+    prior_date = _prior_accounting_run_date(run_date)
+    if not prior_date:
+        return totals
+
+    prior_path = RUNS_ROOT / prior_date / "accounting" / "totals.json"
+    try:
+        prior = json.loads(prior_path.read_text(encoding="utf-8"))
+    except Exception:
+        return totals
+
+    prior_buckets = _bucket_pnl_from_totals(prior)
+    current_buckets = _bucket_pnl_from_totals(totals)
+    prior_total = float(prior.get("total_pnl", 0.0) or 0.0)
+    account_total = float(totals.get("total_pnl", 0.0) or 0.0)
+    account_daily = abs(account_total - prior_total)
+    max_bucket_jump = max(
+        abs(current_buckets[b] - prior_buckets[b]) for b in BUCKET_KEYS
+    )
+    # e.g. May 19: |B1| jumped ~200k while account moved ~7k.
+    if max_bucket_jump <= max(50_000.0, 5.0 * account_daily + 1.0):
+        return totals
+
+    adjusted = _bucket_pnl_continuity_adjusted(
+        prior_buckets=prior_buckets,
+        account_total=account_total,
+        prior_account_total=prior_total,
+    )
+    totals = dict(totals)
+    totals["bucket_pnl"] = adjusted
+    outdir = RUNS_ROOT / run_date / "accounting"
+    (outdir / "totals.json").write_text(json.dumps(totals, indent=2), encoding="utf-8")
+
+    bucket_csv = outdir / "pnl_by_bucket.csv"
+    if bucket_csv.exists():
+        try:
+            df = pd.read_csv(bucket_csv)
+            for b in BUCKET_KEYS:
+                m = df["bucket"] == b if "bucket" in df.columns else pd.Series(dtype=bool)
+                if m.any():
+                    df.loc[m, "total_pnl"] = adjusted[b]
+            df.to_csv(bucket_csv, index=False)
+        except Exception:
+            pass
+
+    print(
+        f"[EOD] Bucket PnL continuity: adjusted {run_date} buckets using {prior_date} "
+        f"weights (max raw jump {max_bucket_jump:,.0f} vs account daily {account_daily:,.0f})."
+    )
+    return totals
+
+
 def _etf_capital_bucket(
     sym: str,
     etf_to_delta: dict[str, float],
@@ -1944,8 +2052,9 @@ def main() -> int:
     # 2) Build accounting PnL outputs
     run_cmd(["python", str(IBKR_ACCT_SCRIPT), run_date], env=env)
 
-    # 3) Load outputs
+    # 3) Load outputs (fix implausible bucket re-attribution vs prior run)
     pnl_under_csv, pnl_symbol_csv, pnl_bucket_csv, totals_json_path, totals = load_outputs(run_date)
+    totals = apply_bucket_pnl_continuity(run_date, totals)
     total_pnl = float(totals.get("total_pnl", 0.0))
 
     # 4) Create underlying breakdown table (bucket 1&2 combined) + bucket table

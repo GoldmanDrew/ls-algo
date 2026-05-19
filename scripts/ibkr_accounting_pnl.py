@@ -1380,7 +1380,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     if missing:
         raise FileNotFoundError("Missing required IBKR Flex files:\n" + "\n".join(str(p) for p in missing))
 
-    config_yml_path = Path(__file__).resolve().parent / "config" / "strategy_config.yml"
+    config_yml_path = PROJECT_ROOT / "config" / "strategy_config.yml"
     if not config_yml_path.exists():
         raise FileNotFoundError(f"Missing strategy_config.yml at: {config_yml_path}")
 

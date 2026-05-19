@@ -6,6 +6,7 @@ import pytest
 import pandas as pd
 
 from run_eod_pnl_email import (
+    apply_bucket_pnl_continuity,
     compute_average_bucket_capital,
     compute_bucket_capital_snapshot,
     compute_period_pnl_deltas,
@@ -307,6 +308,39 @@ def test_compute_period_pnl_deltas_daily_vs_ytd():
     assert daily["bucket_1"] == pytest.approx(40603.30, rel=0, abs=0.1)
     assert daily["total"] == pytest.approx(-6765.36, rel=0, abs=0.1)
     assert daily["bucket_1"] != history.iloc[-1]["pnl_bucket_1"]
+
+
+def test_apply_bucket_pnl_continuity_spreads_account_daily(tmp_path, monkeypatch):
+    runs = tmp_path / "data" / "runs"
+    for d, bp, total in (
+        (
+            "2026-05-18",
+            {"bucket_1": 25426.75, "bucket_2": 28552.10, "bucket_3": 7809.71, "bucket_4": -2410.09},
+            59378.47,
+        ),
+        (
+            "2026-05-19",
+            {"bucket_1": 227261.17, "bucket_2": -180028.37, "bucket_3": 7344.99, "bucket_4": -1964.68},
+            52613.11,
+        ),
+    ):
+        acct = runs / d / "accounting"
+        acct.mkdir(parents=True)
+        (acct / "totals.json").write_text(
+            json.dumps({"total_pnl": total, "bucket_pnl": bp}),
+            encoding="utf-8",
+        )
+        pd.DataFrame([{"bucket": "bucket_1", "total_pnl": bp["bucket_1"]}]).to_csv(
+            acct / "pnl_by_bucket.csv", index=False
+        )
+    monkeypatch.setattr("run_eod_pnl_email.RUNS_ROOT", runs)
+    fixed = apply_bucket_pnl_continuity(
+        "2026-05-19",
+        json.loads((runs / "2026-05-19" / "accounting" / "totals.json").read_text()),
+    )
+    assert fixed["bucket_pnl"]["bucket_1"] == pytest.approx(22642.72, abs=0.1)
+    assert fixed["bucket_pnl"]["bucket_2"] == pytest.approx(25425.87, abs=0.1)
+    assert sum(fixed["bucket_pnl"].values()) == pytest.approx(52613.11, abs=0.1)
 
 
 def test_read_bucket_pnl_from_run_uses_pnl_by_bucket_csv(tmp_path, monkeypatch):
