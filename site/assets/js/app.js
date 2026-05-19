@@ -720,6 +720,12 @@
         )
         .join("")}</tbody></table>`;
 
+    function fmtBeta(v, source) {
+      if (v == null || Number.isNaN(Number(v))) return "-";
+      const dim = source === "default" ? "dim" : "";
+      return `<span class="${dim}">${Number(v).toFixed(2)}</span>`;
+    }
+
     function rowTbl(rows) {
       return `<table class="tight"><thead><tr>
         <th>Underlying</th><th>Sector</th><th>Beta SPY</th><th>Beta QQQ</th><th>Beta IWM</th><th>Net $</th><th>Beta net $</th>
@@ -731,9 +737,12 @@
             ""
           )}</span></td>
             <td>${safeText(r.sector)}</td>
-            <td class="num ${r.beta_source === "default" ? "dim" : ""}" title="${
+            <td class="num" title="${safeText(r.beta_source, "")}">${fmtBeta(
+            r.beta_to_spy,
             r.beta_source
-          }">${r.beta_to_spy.toFixed(2)}</td>
+          )}</td>
+            <td class="num">${fmtBeta(r.beta_to_qqq, r.beta_source)}</td>
+            <td class="num">${fmtBeta(r.beta_to_iwm, r.beta_source)}</td>
             <td class="num ${signedClass(r.net_notional_usd)}">${fmtUsdSigned(
             r.net_notional_usd
           )}</td>
@@ -1365,8 +1374,8 @@
         (r) => `<tr>
           <td><strong>${safeText(r.symbol)}</strong></td>
           <td class="num">${fmtUsd(r.short_notional_usd)}</td>
-          <td class="num">${(r.borrow_rate_pct ?? 0).toFixed(2)}%</td>
-          <td class="num">${fmtUsd(r.implied_annual_cost_usd)}</td>
+          <td class="num">${r.borrow_rate_pct == null ? "-" : r.borrow_rate_pct.toFixed(2) + "%"}</td>
+          <td class="num">${r.implied_annual_cost_usd == null ? "-" : fmtUsd(r.implied_annual_cost_usd)}</td>
         </tr>`
       )
       .join("");
@@ -1391,7 +1400,7 @@
       <table class="tight sortable"><thead><tr>
         <th>Symbol</th><th>Short notional</th><th>Borrow Rate</th><th>Implied ann. cost</th>
       </tr></thead><tbody>${shortEtfRows || "<tr><td colspan=4 class=dim>(none)</td></tr>"}</tbody></table>
-      <p class="dim small">Borrow Rate = screener <code>borrow_fee_annual</code> &times; 100.</p>
+      <p class="dim small">Borrow Rate = screener <code>borrow_current</code> (else <code>borrow_fee_annual</code>), &times; 100 — same as etf-dashboard.</p>
     `;
   }
 

@@ -204,6 +204,7 @@ def _borrow_watchlist_symbols(
 
 
 def _load_screener_borrow_meta(screener_csv: Path | None) -> dict[str, dict[str, Any]]:
+    """Per-ETF borrow fields from ``etf_screened_today.csv`` (etf-dashboard convention)."""
     meta: dict[str, dict[str, Any]] = {}
     if screener_csv is None or not screener_csv.is_file():
         return meta
@@ -217,52 +218,52 @@ def _load_screener_borrow_meta(screener_csv: Path | None) -> dict[str, dict[str,
         key = _clean_str(r.get("ETF")).upper()
         if not key:
             continue
-        meta[key] = {
+        row: dict[str, Any] = {
             "shares_available": (
                 float(r.get("shares_available")) if pd.notna(r.get("shares_available")) else None
             ),
-            "borrow_fee_annual": (
-                float(r.get("borrow_fee_annual")) if pd.notna(r.get("borrow_fee_annual")) else None
-            ),
         }
+        for col in ("borrow_current", "borrow_fee_annual", "borrow_net_annual"):
+            if col in screener.columns and pd.notna(r.get(col)):
+                row[col] = float(r.get(col))
+        meta[key] = row
     return meta
 
 
-def _resolve_borrow_apr(
-    symbol: str,
-    *,
-    flex_fee_by_symbol: dict[str, float],
-    screener_meta: dict[str, dict[str, Any]],
-) -> dict[str, Any]:
-    """Align APR fields across borrow panels.
+def _screener_borrow_decimal(screener_meta: dict[str, dict[str, Any]], symbol: str) -> tuple[float | None, str]:
+    """Match etf-dashboard ``_pick_borrow_fee_only``: fee-only annual rate as a decimal."""
+    row = screener_meta.get(symbol.upper()) or {}
+    for key in ("borrow_current", "borrow_fee_annual", "borrow_net_annual"):
+        val = row.get(key)
+        if val is None:
+            continue
+        try:
+            return float(val), key
+        except (TypeError, ValueError):
+            continue
+    return None, ""
 
-    * ``flex_peak_apr_pct`` — max ``borrowFeeRate`` from IBKR HardToBorrowDetail (EOD window).
-    * ``screener_model_apr_pct`` — ``borrow_fee_annual`` from the daily screener (decimal → %).
-    * ``effective_apr_pct`` — flex peak when present, else screener model (used for $ cost math).
-    """
-    sym = symbol.upper()
-    flex_peak = float(flex_fee_by_symbol.get(sym, 0.0) or 0.0)
-    screener_dec = (screener_meta.get(sym) or {}).get("borrow_fee_annual")
-    screener_pct: float | None = None
-    if screener_dec is not None:
-        screener_pct = float(screener_dec) * 100.0
-    if flex_peak > 0:
-        effective = flex_peak
-        source = "ibkr_peak"
-    elif screener_pct is not None:
-        effective = screener_pct
-        source = "screener_model"
-    else:
-        effective = 0.0
-        source = "unknown"
+
+def _screener_borrow_rate(symbol: str, screener_meta: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Screener borrow rate for dashboard cost math (decimal annual → ``borrow_rate_pct``)."""
+    dec, source = _screener_borrow_decimal(screener_meta, symbol)
+    if dec is None:
+        return {
+            "borrow_rate_pct": None,
+            "borrow_rate_decimal": None,
+            "borrow_rate_known": False,
+            "borrow_rate_source": None,
+            "current_apr_pct": None,
+            "fee_rate_pct": None,
+        }
+    pct = float(dec) * 100.0
     return {
-        "flex_peak_apr_pct": flex_peak if flex_peak > 0 else None,
-        "screener_model_apr_pct": screener_pct,
-        "effective_apr_pct": effective,
-        "apr_source": source,
-        # Back-compat keys consumed by the SPA today.
-        "current_apr_pct": effective,
-        "fee_rate_pct": flex_peak if flex_peak > 0 else effective,
+        "borrow_rate_pct": pct,
+        "borrow_rate_decimal": dec,
+        "borrow_rate_known": True,
+        "borrow_rate_source": source or "screener",
+        "current_apr_pct": pct,
+        "fee_rate_pct": pct,
     }
 
 
@@ -631,19 +632,26 @@ def compute_borrow_panel(
     screener_meta = _load_screener_borrow_meta(screener_csv)
 
     summary = summarize_borrow(borrow_rows)
-    flex_fee_by_symbol: dict[str, float] = dict(summary.get("fee_rate_by_symbol") or {})
 
     pos_summary = summarize_positions(positions)
 
+    def _names_over_30_screener() -> list[dict[str, Any]]:
+        symbols = sorted(watchlist) if watchlist else sorted(screener_meta.keys())
+        out: list[dict[str, Any]] = []
+        for sym in symbols:
+            rate = _screener_borrow_rate(sym, screener_meta)
+            pct = rate.get("borrow_rate_pct")
+            if pct is not None and float(pct) >= 30.0:
+                out.append({"symbol": sym, **rate})
+        out.sort(key=lambda d: -(float(d.get("borrow_rate_pct") or 0.0)))
+        return out
+
+    names_over_30_screener = _names_over_30_screener()
+
     breaches: list[dict[str, Any]] = []
-    for row in summary.get("names_over_30pct", []):
+    for row in names_over_30_screener:
         sym = (row.get("symbol") or "").upper()
-        if watchlist and sym not in watchlist:
-            continue
-        apr = _resolve_borrow_apr(
-            sym, flex_fee_by_symbol=flex_fee_by_symbol, screener_meta=screener_meta
-        )
-        effective = apr["effective_apr_pct"]
+        effective = float(row["borrow_rate_pct"])
         status = _classify(effective, limits["borrow_apr_pct_default"])
         if status != "ok":
             breaches.append(
@@ -652,10 +660,10 @@ def compute_borrow_panel(
                         "metric": f"borrow_apr:{sym}",
                         "label": sym,
                         "value": effective,
-                        **apr,
+                        **row,
                         "status": status,
                         "limit": limits["borrow_apr_pct_default"],
-                        "source": "effective borrow APR (IBKR peak, else screener model)",
+                        "source": "screener borrow rate (borrow_current, else borrow_fee_annual)",
                         "action": "Review borrow economics; reduce or drop names above hard cap.",
                         "sleeve": "short_etf",
                     }
@@ -672,21 +680,24 @@ def compute_borrow_panel(
 
     short_etf_rows: list[dict[str, Any]] = []
     for sym, notional in short_notional.items():
-        apr = _resolve_borrow_apr(
-            sym, flex_fee_by_symbol=flex_fee_by_symbol, screener_meta=screener_meta
-        )
+        rate = _screener_borrow_rate(sym, screener_meta)
         meta = screener_meta.get(sym, {})
-        eff = float(apr["effective_apr_pct"])
+        eff = float(rate["borrow_rate_pct"] or 0.0)
         short_etf_rows.append(
             {
                 "symbol": sym,
                 "short_notional_usd": notional,
-                **apr,
-                "implied_annual_cost_usd": notional * (eff / 100.0),
+                **rate,
+                "implied_annual_cost_usd": notional * (eff / 100.0)
+                if rate["borrow_rate_known"]
+                else None,
                 "shares_available": meta.get("shares_available"),
             }
         )
-    short_etf_rows.sort(key=lambda r: r["implied_annual_cost_usd"], reverse=True)
+    short_etf_rows.sort(
+        key=lambda r: (r["implied_annual_cost_usd"] is not None, r["implied_annual_cost_usd"] or 0.0),
+        reverse=True,
+    )
 
     squeeze_rows: list[dict[str, Any]] = []
     for row in short_etf_rows:
@@ -754,20 +765,10 @@ def compute_borrow_panel(
                     )
                 )
 
-    names_over_30_watchlist = []
-    for row in summary.get("names_over_30pct", []):
-        sym = (row.get("symbol") or "").upper()
-        if watchlist and sym not in watchlist:
-            continue
-        apr = _resolve_borrow_apr(
-            sym, flex_fee_by_symbol=flex_fee_by_symbol, screener_meta=screener_meta
-        )
-        names_over_30_watchlist.append({"symbol": sym, **apr})
-
     return {
         "borrow": {
             **summary,
-            "names_over_30pct": names_over_30_watchlist,
+            "names_over_30pct": names_over_30_screener,
             "names_over_30pct_flex": summary.get("names_over_30pct", []),
         },
         "positions": pos_summary,
@@ -2229,11 +2230,9 @@ def compute_borrow_shock_panel(
     """Per-symbol borrow cost sensitivity to rate shocks.
 
     Inputs:
-        * ``borrow_panel`` -- output of ``compute_borrow_panel``; supplies
-          per-name current ``fee_rate_pct`` from flex SLBFee rows.
         * ``flex_positions_xml`` -- short notional per symbol.
-        * ``screener_csv`` -- ``borrow_fee_annual`` baseline for synthetic
-          / inverse-ETF shorts where flex reports 0.
+        * ``screener_csv`` -- borrow rate (``borrow_current`` / ``borrow_fee_annual``),
+          same convention as etf-dashboard.
 
     Output: absolute (bp) and multiplicative ladders showing aggregate
     annualized cost delta + per-name worst victims. The 30-day
@@ -2257,10 +2256,6 @@ def compute_borrow_shock_panel(
             sym = (p.symbol or "").upper()
             short_notional[sym] = short_notional.get(sym, 0.0) + abs(p.position_value)
 
-    borrow_summary = borrow_panel.get("borrow") or {}
-    flex_fee_by_symbol: dict[str, float] = dict(
-        borrow_summary.get("fee_rate_by_symbol") or {}
-    )
     screener_meta = _load_screener_borrow_meta(screener_csv)
     watch = {s.upper() for s in (watchlist_symbols or set())}
 
@@ -2268,17 +2263,15 @@ def compute_borrow_shock_panel(
     for sym, short_n in short_notional.items():
         if watch and sym not in watch:
             continue
-        apr = _resolve_borrow_apr(
-            sym, flex_fee_by_symbol=flex_fee_by_symbol, screener_meta=screener_meta
-        )
-        eff = float(apr["effective_apr_pct"])
-        current_annual_cost = short_n * (eff / 100.0)
+        rate = _screener_borrow_rate(sym, screener_meta)
+        eff = float(rate["borrow_rate_pct"] or 0.0)
+        current_annual_cost = short_n * (eff / 100.0) if rate["borrow_rate_known"] else 0.0
         name_rows.append(
             {
                 "symbol": sym,
                 "short_notional_usd": short_n,
                 "current_annual_cost_usd": current_annual_cost,
-                **apr,
+                **rate,
             }
         )
     name_rows.sort(key=lambda r: r["current_annual_cost_usd"], reverse=True)
@@ -2289,13 +2282,13 @@ def compute_borrow_shock_panel(
         for shock in shocks:
             if kind == "abs_bp":
                 shifted_aprs = {
-                    r["symbol"]: float(r["effective_apr_pct"]) + (shock / 100.0)
+                    r["symbol"]: float(r["borrow_rate_pct"] or 0.0) + (shock / 100.0)
                     for r in name_rows
                 }
                 label = f"+{int(shock)}bp"
             else:
                 shifted_aprs = {
-                    r["symbol"]: float(r["effective_apr_pct"]) * float(shock)
+                    r["symbol"]: float(r["borrow_rate_pct"] or 0.0) * float(shock)
                     for r in name_rows
                 }
                 label = f"{shock:g}x"
@@ -2308,12 +2301,10 @@ def compute_borrow_shock_panel(
                     {
                         "symbol": r["symbol"],
                         "short_notional_usd": r["short_notional_usd"],
-                        "effective_apr_pct": r["effective_apr_pct"],
-                        "flex_peak_apr_pct": r.get("flex_peak_apr_pct"),
-                        "screener_model_apr_pct": r.get("screener_model_apr_pct"),
-                        "apr_source": r.get("apr_source"),
+                        "borrow_rate_pct": r.get("borrow_rate_pct"),
+                        "stressed_borrow_rate_pct": new_apr,
                         "stressed_apr_pct": new_apr,
-                        "current_apr_pct": r["effective_apr_pct"],
+                        "current_apr_pct": r.get("borrow_rate_pct"),
                         "new_apr_pct": new_apr,
                         "annual_cost_delta_usd": cost_delta_usd,
                         "annual_delta_usd": cost_delta_usd,

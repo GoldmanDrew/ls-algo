@@ -1589,7 +1589,12 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         )
     )
 
-    etf_screened_path = PROJECT_ROOT / "data" / "etf_screened_today.csv"
+    dated_screened_path = PROJECT_ROOT / "data" / "runs" / run_date / "etf_screened_today.csv"
+    etf_screened_path = (
+        dated_screened_path
+        if dated_screened_path.exists()
+        else PROJECT_ROOT / "data" / "etf_screened_today.csv"
+    )
     if not etf_screened_path.exists():
         raise FileNotFoundError(f"Missing etf_screened_today.csv at: {etf_screened_path}")
 
@@ -3370,6 +3375,19 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     # Ratio-split B4 is used for the reconciliation gate (must partition the same
     # detail legs as B1/B2). Pair exposure is the published B4 sleeve view.
 
+    if blocked_underlyings:
+        exposure_df = _filter_exposure_df(exposure_df, blocked_underlyings)
+        exposure_b1_df = _filter_exposure_df(exposure_b1_df, blocked_underlyings)
+        exposure_b2_df = _filter_exposure_df(exposure_b2_df, blocked_underlyings)
+        exposure_b4_from_b124_df = _filter_exposure_df(
+            exposure_b4_from_b124_df, blocked_underlyings
+        )
+        exposure_b4_df = _filter_exposure_df(exposure_b4_df, blocked_underlyings)
+        if not exposure_b4_detail_df.empty and "underlying" in exposure_b4_detail_df.columns:
+            exposure_b4_detail_df = exposure_b4_detail_df[
+                ~exposure_b4_detail_df["underlying"].astype(str).isin(blocked_underlyings)
+            ].copy()
+
     exposure_b1_df.to_csv(outdir / "net_exposure_bucket_1.csv", index=False)
     exposure_b2_df.to_csv(outdir / "net_exposure_bucket_2.csv", index=False)
     exposure_df = exposure_df.sort_values("net_notional_usd", ascending=False)
@@ -3401,6 +3419,10 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         )
     else:
         exposure_b3_df = pd.DataFrame(columns=["symbol", "net_notional_usd", "gross_notional_usd", "n_legs"])
+    if blocked_symbols and not exposure_b3_df.empty and "symbol" in exposure_b3_df.columns:
+        exposure_b3_df = exposure_b3_df[
+            ~exposure_b3_df["symbol"].astype(str).isin(blocked_symbols)
+        ].copy()
     exposure_b3_df.to_csv(outdir / "net_exposure_bucket_3.csv", index=False)
     exposure_b4_df.to_csv(outdir / "net_exposure_bucket_4.csv", index=False)
 
@@ -3457,6 +3479,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "bucket_realized_underlyings_from_trade_timing": int(len(_realized_ratio_from_trades)),
         "pnl_underlying_scope": "bucket_1_2_4",
         "bucket4_pairs": int(len(b4_registry)),
+        "excluded_underlyings_exposure": sorted(blocked_underlyings),
+        "excluded_symbols_exposure": sorted(blocked_symbols),
         "bucket_pnl": {
             row["bucket"]: float(row["total_pnl"])
             for _, row in pnl_by_bucket.iterrows()
