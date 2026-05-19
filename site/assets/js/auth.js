@@ -1,116 +1,120 @@
 /**
- * Auth + GitHub API helpers for the ls-algo risk dashboard.
+ * Investor login for the ls-algo risk dashboard (etf-dashboard pattern).
  *
- * The PAT is stored only in sessionStorage so it is wiped when the
- * tab closes. There is no fallback to localStorage on purpose - we
- * don't want a stray token to outlive the session.
- *
- * The "Are you allowed to see this dashboard?" check is just:
- *
- *   GET https://api.github.com/repos/{owner}/{repo}
- *
- * with the user's PAT. If GitHub returns 200, the user is a
- * collaborator on the private repo and we proceed. If 401/403/404,
- * the token is invalid or the user lacks access -> reject.
- *
- * The same PAT is then used by app.js to fetch the snapshot via the
- * GitHub Contents API.
+ * Passwords are verified client-side with PBKDF2-HMAC-SHA256 against
+ * site/data/investors.json (hashes only). Session lives in sessionStorage.
  */
 
 (function () {
-  const SESSION_KEY = "ls_algo_pat";
+  const INVESTORS_URL = "./data/investors.json";
+  const AUTH_STORAGE_KEY = "ls_risk_dash_session_v1";
+  const AUTH_SESSION_MS = 7 * 86400000;
 
-  const cfg = window.LS_ALGO_CONFIG;
-  const repoLabel = document.getElementById("repo-label");
-  if (repoLabel) repoLabel.textContent = `${cfg.repoOwner}/${cfg.repoName}`;
-
-  const ghApi = "https://api.github.com";
-
-  /**
-   * Validate a PAT by hitting GET /repos/{owner}/{repo}.
-   * Returns the parsed JSON on success; throws on auth failure.
-   */
-  async function validatePat(pat) {
-    const url = `${ghApi}/repos/${cfg.repoOwner}/${cfg.repoName}`;
-    const res = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${pat}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-    });
-    if (res.status === 200) {
-      return await res.json();
+  function timingSafeEqualBytes(a, b) {
+    if (!(a instanceof Uint8Array) || !(b instanceof Uint8Array) || a.length !== b.length) {
+      return false;
     }
-    if (res.status === 401) {
-      throw new Error("Bad credentials. Token is invalid or expired.");
-    }
-    if (res.status === 403) {
-      throw new Error(
-        "Forbidden. The token does not have the required scope, " +
-          "or the repository is restricted by SAML/SSO."
-      );
-    }
-    if (res.status === 404) {
-      throw new Error(
-        "Not found. The token cannot see " +
-          `${cfg.repoOwner}/${cfg.repoName} - check repo access on the PAT.`
-      );
-    }
-    throw new Error(`Unexpected status ${res.status} from GitHub.`);
+    let x = 0;
+    for (let i = 0; i < a.length; i++) x |= a[i] ^ b[i];
+    return x === 0;
   }
 
-  /**
-   * Fetch a file from the repo via the Contents API.
-   * Uses the raw media type to avoid base64 round-tripping.
-   * @param {string} pat
-   * @param {string} path - e.g. "risk_dashboard/data/latest.json"
-   * @param {string} ref  - branch / tag / sha; defaults to defaultBranch.
-   */
-  async function fetchRepoFile(pat, path, ref) {
-    const url =
-      `${ghApi}/repos/${cfg.repoOwner}/${cfg.repoName}/contents/` +
-      `${encodeURIComponent(path).replace(/%2F/g, "/")}` +
-      `?ref=${encodeURIComponent(ref || cfg.defaultBranch)}`;
-    const res = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${pat}`,
-        Accept: "application/vnd.github.raw",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-    });
-    if (!res.ok) {
-      throw new Error(
-        `Could not fetch ${path}: ${res.status} ${res.statusText}`
-      );
-    }
-    const contentType = res.headers.get("content-type") || "";
-    if (contentType.includes("application/json")) {
-      return await res.json();
-    }
-    const text = await res.text();
+  function readAuthSession(validUserIds) {
     try {
-      return JSON.parse(text);
-    } catch (e) {
-      return text;
+      const raw = sessionStorage.getItem(AUTH_STORAGE_KEY);
+      if (!raw) return null;
+      const s = JSON.parse(raw);
+      if (!s || typeof s.uid !== "string" || typeof s.exp !== "number") return null;
+      if (Date.now() > s.exp) {
+        sessionStorage.removeItem(AUTH_STORAGE_KEY);
+        return null;
+      }
+      const uid = s.uid.toLowerCase();
+      if (!validUserIds.has(uid)) {
+        sessionStorage.removeItem(AUTH_STORAGE_KEY);
+        return null;
+      }
+      return uid;
+    } catch {
+      return null;
     }
   }
 
-  function getStoredPat() {
-    return sessionStorage.getItem(SESSION_KEY);
+  function writeAuthSession(uid) {
+    sessionStorage.setItem(
+      AUTH_STORAGE_KEY,
+      JSON.stringify({ uid: uid.toLowerCase(), exp: Date.now() + AUTH_SESSION_MS })
+    );
   }
-  function storePat(pat) {
-    sessionStorage.setItem(SESSION_KEY, pat);
+
+  function clearAuthSession() {
+    sessionStorage.removeItem(AUTH_STORAGE_KEY);
   }
-  function clearPat() {
-    sessionStorage.removeItem(SESSION_KEY);
+
+  async function verifyInvestorPassword(userId, password, users) {
+    const uid = userId.trim().toLowerCase();
+    const u = users.find((x) => String(x.id || "").toLowerCase() === uid);
+    if (!u || !u.salt_b64 || !u.hash_b64) return false;
+    const iterations = Number(u.iterations) > 0 ? Number(u.iterations) : 250000;
+    let salt;
+    let expected;
+    try {
+      salt = Uint8Array.from(atob(String(u.salt_b64)), (c) => c.charCodeAt(0));
+      expected = Uint8Array.from(atob(String(u.hash_b64)), (c) => c.charCodeAt(0));
+    } catch {
+      return false;
+    }
+    if (expected.length !== 32) return false;
+    const enc = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey(
+      "raw",
+      enc.encode(password),
+      "PBKDF2",
+      false,
+      ["deriveBits"]
+    );
+    const bits = await crypto.subtle.deriveBits(
+      { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
+      keyMaterial,
+      256
+    );
+    return timingSafeEqualBytes(new Uint8Array(bits), expected);
+  }
+
+  function parseInvestorUsers(doc) {
+    if (!doc || !Array.isArray(doc.users)) return [];
+    return doc.users.filter((u) => u && u.id && u.salt_b64 && u.hash_b64);
+  }
+
+  async function loadInvestors() {
+    const bust = `?t=${Date.now()}`;
+    try {
+      const res = await fetch(INVESTORS_URL + bust, { cache: "no-store" });
+      if (!res.ok) {
+        return { users: [], authEnabled: false };
+      }
+      const doc = await res.json();
+      const users = parseInvestorUsers(doc);
+      return { users, authEnabled: users.length > 0 };
+    } catch {
+      return { users: [], authEnabled: false };
+    }
+  }
+
+  async function verifyLogin(userId, password, users) {
+    return verifyInvestorPassword(userId, password, users);
+  }
+
+  function getStoredSession(validUserIds) {
+    return readAuthSession(validUserIds);
   }
 
   window.LSAuth = {
-    validatePat,
-    fetchRepoFile,
-    getStoredPat,
-    storePat,
-    clearPat,
+    INVESTORS_URL,
+    loadInvestors,
+    verifyLogin,
+    getStoredSession,
+    writeAuthSession,
+    clearAuthSession,
   };
 })();

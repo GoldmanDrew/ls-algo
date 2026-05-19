@@ -18,6 +18,7 @@
   <div class="meta">
     <span id="run-date-label" class="dim">No data loaded</span>
     <span id="generated-at-label" class="dim"></span>
+    <span id="auth-user-label" class="topbar-user dim" hidden title="Signed in"></span>
     <button id="theme-toggle" class="btn btn-ghost" type="button" title="Toggle dark mode">Dark</button>
     <button id="logout-btn" class="btn btn-ghost" hidden>Sign out</button>
   </div>
@@ -45,29 +46,22 @@
   <section id="login-panel" class="panel login-panel">
     <h2>Sign in</h2>
     <p>
-      Paste a GitHub fine-grained personal access token (PAT) with
-      <strong>read access to the <code id="repo-label">private repo</code></strong>.
-      The token never leaves your browser; it is stored only in this tab's
-      <code>sessionStorage</code> and discarded on logout.
+      Use your <strong>login id</strong> and <strong>password</strong>.
+      Credentials are checked in the browser against salted hashes in
+      <code>data/investors.json</code>; your password is not sent to a server.
     </p>
-    <ol class="setup">
-      <li>Open <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">github.com / Settings / Developer settings / Fine-grained tokens</a> and create a new token.</li>
-      <li>Resource owner: your account. Repository access: <em>only the ls-algo repo</em>.</li>
-      <li>Permissions: Repository &raquo; Contents = <strong>Read-only</strong>; Metadata = Read-only (always).</li>
-      <li>Set a short expiration (7 / 30 days). Copy the token. Paste below.</li>
-    </ol>
     <form id="login-form" class="login-form" autocomplete="off">
-      <label for="pat-input">GitHub PAT</label>
-      <input id="pat-input" type="password" inputmode="text" autocomplete="off" spellcheck="false"
-             placeholder="github_pat_..." required minlength="20">
+      <label for="login-id-input">Login id</label>
+      <input id="login-id-input" type="text" autocomplete="username" spellcheck="false" required>
+      <label for="login-pass-input">Password</label>
+      <input id="login-pass-input" type="password" autocomplete="current-password" required>
       <button type="submit" class="btn btn-primary">Sign in</button>
       <div id="login-error" class="error" hidden></div>
     </form>
     <p class="dim small">
-      The static page itself is harmless. All numbers shown live in the
-      private <code>ls-algo</code> repo and are fetched only after GitHub
-      validates that you have read access. If you are not a collaborator,
-      sign-in fails.
+      This is UI gating on a static site. Anyone who knows the snapshot URL can
+      still download <code>data/latest.json</code> directly. Do not treat this
+      as server-side access control.
     </p>
   </section>
 
