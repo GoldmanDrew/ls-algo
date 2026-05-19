@@ -60,6 +60,7 @@ from delta_estimator import (
 from decay_distribution import enrich_with_decay_distribution
 from expense_ratios import fetch_expense_ratios
 from screener_v2_fields import enrich_screener_v2_fields, load_borrow_history_json
+from vol_shape import resolve_etf_metrics_daily_path
 from strategy_config import load_config
 from splits import (
     SplitEvent,
@@ -3548,6 +3549,13 @@ def main() -> int:
     # from Step 5b to forward-anchor its realized block-bootstrap draws; rows
     # without a meaningful expected forecast (passive_low_delta) skip the shift
     # via the ``expected_decay_available`` gate inside enrich_screener_v2_fields.
+    metrics_daily_path = resolve_etf_metrics_daily_path(
+        getattr(args, "etf_metrics_daily", None)
+    )
+    if metrics_daily_path is not None:
+        builtins.print(
+            f"  Vol-shape: joint etf_metrics_daily when available ({metrics_daily_path})"
+        )
     screened = enrich_screener_v2_fields(
         screened,
         tr_map,
@@ -3555,6 +3563,7 @@ def main() -> int:
         borrow_history_map=borrow_history_map,
         borrow_weight_halflife_days=float(args.borrow_weight_halflife_days),
         asof_date=asof_for_v2,
+        metrics_daily_path=metrics_daily_path,
     )
     screened = apply_volatility_etp_expected_decay_adjustment(screened)
 

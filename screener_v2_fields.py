@@ -12,6 +12,20 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from vol_shape import (
+    PRICE_BASIS_JOINT_METRICS,
+    PRICE_BASIS_UNDERLYING_TR,
+    VOL_SHAPE_PRIMARY_WINDOW as _VOL_SHAPE_PRIMARY_WINDOW,
+    VOL_SHAPE_WINDOWS as _VOL_SHAPE_WINDOWS,
+    all_vol_shape_columns as _all_vol_shape_columns,
+    empty_vol_shape_panel,
+    load_joint_vol_shape_panels_by_etf,
+    resolve_etf_metrics_daily_path,
+    underlying_vol_shape as _underlying_vol_shape,
+    underlying_vol_shape_20d as _underlying_vol_shape_20d,
+    underlying_vol_shape_panel as _underlying_vol_shape_panel,
+)
+
 # Match daily_screener
 TRADING_DAYS = 252
 _MIN_DAYS_DECAY = 40
@@ -43,173 +57,6 @@ def _extract_daily_drag(
         return None
     daily_drag = (float(beta) * r_und - r_etf).to_numpy(dtype=float)
     return daily_drag
-
-
-_VOL_SHAPE_WINDOWS: tuple[int, ...] = (20, 60)
-# Window used by the calibrated shape-vol model and the primary dashboard
-# display. Aligned with risk_dashboard/beta_loader.DEFAULT_WINDOW_DAYS so
-# trendiness / VCR share a clock with the realized vol used for betas.
-_VOL_SHAPE_PRIMARY_WINDOW: int = 60
-
-
-def _vol_shape_columns_for_window(window: int) -> tuple[str, ...]:
-    return (
-        f"und_rv_{window}d_daily_annual",
-        f"und_rv_{window}d_weekly_annual",
-        f"und_trend_ratio_{window}d",
-        f"und_vcr_{window}d",
-        f"und_return_{window}d",
-        f"und_abs_return_{window}d_pctile",
-        f"und_rv_{window}d_pctile",
-        f"und_trend_ratio_{window}d_pctile",
-        f"und_vcr_{window}d_pctile",
-        f"und_vcr_{window}d_median",
-        f"und_vol_shape_{window}d",
-    )
-
-
-def _all_vol_shape_columns() -> tuple[str, ...]:
-    cols: list[str] = []
-    for w in _VOL_SHAPE_WINDOWS:
-        cols.extend(_vol_shape_columns_for_window(w))
-    return tuple(cols)
-
-
-def _percentile_of_latest(values: list[float]) -> float | None:
-    a = np.asarray([v for v in values if np.isfinite(v)], dtype=float)
-    if a.size < 2:
-        return None
-    latest = float(a[-1])
-    return float(np.mean(a <= latest))
-
-
-def _vol_shape_label(
-    *,
-    trend_ratio: float | None,
-    vcr: float | None,
-    abs_return_pctile: float | None,
-    rv_pctile: float | None,
-    vcr_pctile: float | None,
-) -> str | None:
-    if trend_ratio is None or vcr is None:
-        return None
-    notable = (
-        (abs_return_pctile is not None and abs_return_pctile >= 0.80)
-        or (rv_pctile is not None and rv_pctile >= 0.80)
-    )
-    trending = trend_ratio >= 1.05
-    mean_reverting = trend_ratio <= 0.95
-    jumpy = vcr >= 0.40 or (vcr_pctile is not None and vcr_pctile >= 0.80)
-
-    if notable and trending and jumpy:
-        return "jumpy_trend"
-    if notable and trending:
-        return "boiling_trend"
-    if notable and mean_reverting:
-        return "choppy_volatile"
-    if notable:
-        return "volatile_mixed"
-    if trending:
-        return "quiet_trend"
-    if mean_reverting:
-        return "quiet_chop"
-    return "quiet_mixed"
-
-
-def _underlying_vol_shape(tr_series: pd.Series, window: int) -> dict[str, Any]:
-    """Volatility-shape diagnostics over a rolling ``window`` of underlying log returns.
-
-    ``window`` must be a positive multiple of 5 so that non-overlapping 5-day
-    sums for the weekly-sampled RV partition the window cleanly.
-    """
-    cols = _vol_shape_columns_for_window(window)
-    label_col = f"und_vol_shape_{window}d"
-    empty: dict[str, Any] = {col: np.nan for col in cols if col != label_col}
-    empty[label_col] = ""
-    if window <= 0 or window % 5 != 0:
-        return empty
-    if tr_series is None:
-        return empty
-    s = pd.to_numeric(tr_series, errors="coerce").dropna()
-    s = s[~s.index.duplicated(keep="last")].sort_index()
-    if len(s) < window + 1:
-        return empty
-
-    r = np.log(s / s.shift(1)).replace([np.inf, -np.inf], np.nan).dropna()
-    r = r[np.isfinite(r)]
-    if len(r) < window:
-        return empty
-
-    rv_daily_hist: list[float] = []
-    rv_weekly_hist: list[float] = []
-    tr_hist: list[float] = []
-    vcr_hist: list[float] = []
-    ret_hist: list[float] = []
-
-    n_weeks = window // 5
-    vals = r.to_numpy(dtype=float)
-    for end in range(window, vals.size + 1):
-        tail = vals[end - window:end]
-        sq = tail ** 2
-        sum_sq = float(np.sum(sq))
-        if not np.isfinite(sum_sq) or sum_sq <= 0:
-            continue
-        rv_daily = float(np.sqrt(np.mean(sq) * TRADING_DAYS))
-        weekly = tail.reshape(n_weeks, 5).sum(axis=1)
-        # Annualize from the 5-day chunk size (not the window) so the
-        # trend ratio rv_weekly/rv_daily has the same scale at any W:
-        # iid → 1, perfect drift → sqrt(5) ≈ 2.24.
-        rv_weekly = float(np.sqrt(np.mean(weekly ** 2) * (TRADING_DAYS / 5.0)))
-        trend_ratio = rv_weekly / rv_daily if rv_daily > 0 else np.nan
-        vcr = float(np.max(sq) / sum_sq)
-        rv_daily_hist.append(rv_daily)
-        rv_weekly_hist.append(rv_weekly)
-        tr_hist.append(float(trend_ratio))
-        vcr_hist.append(vcr)
-        ret_hist.append(float(np.sum(tail)))
-
-    if not rv_daily_hist:
-        return empty
-
-    rv_pctile = _percentile_of_latest(rv_daily_hist)
-    abs_ret_pctile = _percentile_of_latest([abs(x) for x in ret_hist])
-    trend_pctile = _percentile_of_latest(tr_hist)
-    vcr_pctile = _percentile_of_latest(vcr_hist)
-    vcr_median_hist = float(np.median(vcr_hist)) if vcr_hist else np.nan
-    label = _vol_shape_label(
-        trend_ratio=tr_hist[-1],
-        vcr=vcr_hist[-1],
-        abs_return_pctile=abs_ret_pctile,
-        rv_pctile=rv_pctile,
-        vcr_pctile=vcr_pctile,
-    )
-
-    return {
-        f"und_rv_{window}d_daily_annual": round(float(rv_daily_hist[-1]), 6),
-        f"und_rv_{window}d_weekly_annual": round(float(rv_weekly_hist[-1]), 6),
-        f"und_trend_ratio_{window}d": round(float(tr_hist[-1]), 6),
-        f"und_vcr_{window}d": round(float(vcr_hist[-1]), 6),
-        f"und_return_{window}d": round(float(ret_hist[-1]), 6),
-        f"und_abs_return_{window}d_pctile": round(float(abs_ret_pctile), 6) if abs_ret_pctile is not None else np.nan,
-        f"und_rv_{window}d_pctile": round(float(rv_pctile), 6) if rv_pctile is not None else np.nan,
-        f"und_trend_ratio_{window}d_pctile": round(float(trend_pctile), 6) if trend_pctile is not None else np.nan,
-        f"und_vcr_{window}d_pctile": round(float(vcr_pctile), 6) if vcr_pctile is not None else np.nan,
-        f"und_vcr_{window}d_median": round(float(vcr_median_hist), 6) if np.isfinite(vcr_median_hist) else np.nan,
-        f"und_vol_shape_{window}d": label or "",
-    }
-
-
-def _underlying_vol_shape_panel(tr_series: pd.Series) -> dict[str, Any]:
-    """Combine vol-shape metrics across every configured window into one row."""
-    out: dict[str, Any] = {}
-    for w in _VOL_SHAPE_WINDOWS:
-        out.update(_underlying_vol_shape(tr_series, w))
-    return out
-
-
-# Back-compat alias for callers that previously hit the 20d-only helper.
-def _underlying_vol_shape_20d(tr_series: pd.Series, window: int = 20) -> dict[str, Any]:
-    return _underlying_vol_shape(tr_series, window)
 
 
 def _block_bootstrap_annual_gross_draws(
@@ -554,6 +401,7 @@ def enrich_screener_v2_fields(
     borrow_weight_halflife_days: float = 90.0,
     asof_date: _dt.date | None = None,
     bootstrap_seed: int = 42,
+    metrics_daily_path: str | Path | None = None,
 ) -> pd.DataFrame:
     """
     Add schema v2 columns (add-only). `primary_edge_annual` matches net_decay_annual
@@ -908,20 +756,35 @@ def enrich_screener_v2_fields(
     out["gross_anchor_shift_annual"] = anchor_shift_arr
     out["gross_anchor_target_annual"] = anchor_target_arr
     out["gross_anchor_source"] = anchor_source_arr
-    vol_shape_cols = _all_vol_shape_columns()
-    vol_shape_label_cols = {f"und_vol_shape_{w}d" for w in _VOL_SHAPE_WINDOWS}
+    vol_shape_cols = list(_all_vol_shape_columns()) + ["und_vol_shape_price_basis"]
+    vol_shape_label_cols = {f"und_vol_shape_{w}d" for w in _VOL_SHAPE_WINDOWS} | {"und_vol_shape_price_basis"}
+    metrics_path = resolve_etf_metrics_daily_path(metrics_daily_path)
+    etf_symbols = {
+        str(row.get("ETF") or row.get("symbol") or "").strip().upper()
+        for _, row in out.iterrows()
+        if str(row.get("ETF") or row.get("symbol") or "").strip()
+    }
+    joint_panels = (
+        load_joint_vol_shape_panels_by_etf(metrics_path, etf_symbols)
+        if metrics_path is not None
+        else {}
+    )
     vol_shape_cache: dict[str, dict[str, Any]] = {}
-    empty_panel = _underlying_vol_shape_panel(None)
+    empty_panel = empty_vol_shape_panel()
     vol_shape_rows: list[dict[str, Any]] = []
     for _, row in out.iterrows():
+        etf = str(row.get("ETF") or row.get("symbol") or "").strip().upper()
         und = str(row.get("Underlying", "")).strip().upper() if pd.notna(row.get("Underlying")) else ""
-        if und and und not in vol_shape_cache:
-            vol_shape_cache[und] = (
-                _underlying_vol_shape_panel(tr_map[und])
-                if und in tr_map
-                else empty_panel
-            )
-        vol_shape_rows.append(vol_shape_cache.get(und, empty_panel))
+        if etf and etf not in vol_shape_cache:
+            if etf in joint_panels:
+                vol_shape_cache[etf] = joint_panels[etf]
+            elif und and und in tr_map:
+                panel = _underlying_vol_shape_panel(tr_map[und])
+                panel["und_vol_shape_price_basis"] = PRICE_BASIS_UNDERLYING_TR
+                vol_shape_cache[etf] = panel
+            else:
+                vol_shape_cache[etf] = empty_panel
+        vol_shape_rows.append(vol_shape_cache.get(etf, empty_panel))
     for col in vol_shape_cols:
         default = "" if col in vol_shape_label_cols else np.nan
         out[col] = [row.get(col, default) for row in vol_shape_rows]
