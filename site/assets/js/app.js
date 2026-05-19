@@ -574,6 +574,21 @@
     return pct < 0 ? `heat-neg-${tier}` : `heat-pos-${tier}`;
   }
 
+  function formatSlideShockHeader(row) {
+    if (row?.label) return safeText(row.label);
+    if (row?.shock_pct != null && !Number.isNaN(Number(row.shock_pct))) {
+      const pct = Number(row.shock_pct) * 100;
+      const sign = row.shock_pct >= 0 ? "+" : "";
+      const body = Math.abs(pct % 1) < 1e-9 ? Math.abs(pct).toFixed(0) : Math.abs(pct).toFixed(1);
+      return `${sign}${row.shock_pct < 0 ? "-" : ""}${body}%`;
+    }
+    if (row?.vix_shock_pts != null && !Number.isNaN(Number(row.vix_shock_pts))) {
+      const pts = Number(row.vix_shock_pts);
+      return `VIX ${pts >= 0 ? "+" : ""}${pts} pts`;
+    }
+    return "-";
+  }
+
   function renderScenarios(panel) {
     const scenarios = panel?.scenarios || [];
     const bookOnly = !!panel?.book_only_mode;
@@ -800,7 +815,7 @@
         if (idx.strip_type === "vix_pts") {
           const vixRows = idx.shock_rows || [];
           const vixHeader = vixRows
-            .map((r) => `<th class="slide-shock">${safeText(r.label)}</th>`)
+            .map((r) => `<th class="slide-shock">${formatSlideShockHeader(r)}</th>`)
             .join("");
           const vixCells = vixRows
             .map(
@@ -831,7 +846,7 @@
         const rows = idx.shock_rows || [];
         const horizons = panel.horizons_days || [0];
         const headerCells = rows
-          .map((r) => `<th class="slide-shock">${r.shock_pct >= 0 ? "+" : ""}${(r.shock_pct * 100).toFixed(0)}%</th>`)
+          .map((r) => `<th class="slide-shock">${formatSlideShockHeader(r)}</th>`)
           .join("");
         const t0Row = rows
           .map(

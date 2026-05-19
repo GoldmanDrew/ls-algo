@@ -331,14 +331,26 @@ table.slide-table {
 }
 table.slide-table th, table.slide-table td {
   border: 1px solid var(--border); padding: 5px 7px; white-space: nowrap;
-  background: var(--bg-row);
+  background: var(--bg-panel);
+  color: var(--text-primary);
 }
-table.slide-table th.slide-shock {
-  text-align: center; font-weight: 600; background: var(--bg-row-alt);
+/* Override table.tight thead (navy + white) for shock columns only in tbody labels. */
+table.slide-table thead th {
+  background: var(--accent);
+  color: #fff;
 }
-table.slide-table th.row-label {
-  text-align: left; font-weight: 600;
-  background: var(--bg-row-alt); width: 70px;
+table.slide-table thead th.slide-shock {
+  text-align: center;
+  font-weight: 600;
+  background: var(--accent);
+  color: #fff;
+}
+table.slide-table tbody th.row-label {
+  text-align: left;
+  font-weight: 600;
+  background: var(--bg-row-alt);
+  color: var(--text-primary);
+  width: 120px;
 }
 table.slide-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
 table.slide-table tr.dim td { color: var(--text-muted); }
