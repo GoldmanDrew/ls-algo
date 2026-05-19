@@ -66,7 +66,7 @@ High-level flow:
 
 ```text
 daily_screener.py
-  → etf_screened_today.csv (columns: ETF, Underlying, Beta, borrow, decay, purgatory, …)
+  → etf_screened_today.csv (columns: ETF, Underlying, Delta, borrow, decay, purgatory, …)
 
 generate_trade_plan.py
   → proposed_trades.csv (+ dated run copy)
