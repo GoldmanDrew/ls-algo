@@ -1,11 +1,22 @@
 name: EOD PnL Email + Daily Screener
 
+# One active run per branch; newer pushes cancel the previous screener run.
+concurrency:
+  group: eod-pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   schedule:
     # 06:00 UTC ≈ 02:00 America/New_York during EDT; 01:00 during EST (GitHub cron is UTC-only)
     - cron: "0 6 * * 2-6"
   push:
     branches: [main]
+    # Dashboard-only / bot-data commits should not re-run the screener (45+ min).
+    paths-ignore:
+      - "site/**"
+      - "risk_dashboard/data/**"
+      - "**.md"
+      - ".github/workflows/risk_dashboard.yml"
   workflow_dispatch:
     inputs:
       job:
@@ -29,7 +40,8 @@ jobs:
         && github.event.head_commit != null
         && !startsWith(github.event.head_commit.message, 'screener:')
         && !startsWith(github.event.head_commit.message, 'eod:')
-        && !startsWith(github.event.head_commit.message, 'risk_dashboard:'))
+        && !startsWith(github.event.head_commit.message, 'risk_dashboard:')
+        && !contains(github.event.head_commit.message, 'Merge branch'))
       || (github.event_name == 'workflow_dispatch' && (inputs.job == 'screener' || inputs.job == 'both'))
       || (github.event_name == 'schedule' && github.event.schedule == '0 6 * * 2-6')
     runs-on: ubuntu-latest
@@ -152,7 +164,7 @@ jobs:
           python ibkr_flex.py --run-date "$RUN_DATE"
 
           # 2) Build accounting
-          python ibkr_accounting.py "$RUN_DATE"
+          python scripts/ibkr_accounting_pnl.py "$RUN_DATE"
 
           # 3) Email
           python run_eod_pnl_email.py
