@@ -6,8 +6,8 @@ Compare alternative ETF→underlying beta estimators vs the screener's default
 Uses the same Yahoo v8 total-return series as daily_screener.download_all_tr_series.
 
 Examples:
-  python scripts/compare_beta_methods.py --etf ORCX HIMZ MSTX NVDL
-  python scripts/compare_beta_methods.py --etf ORCX --lookback 1y --min-days 40
+  python scripts/compare_delta_methods.py --etf ORCX HIMZ MSTX NVDL
+  python scripts/compare_delta_methods.py --etf ORCX --lookback 1y --min-days 40
 """
 from __future__ import annotations
 
@@ -156,7 +156,7 @@ def main() -> int:
         sc = pd.read_csv(args.screened)
         cols = {c.lower(): c for c in sc.columns}
         etf_c = cols.get("etf") or cols.get("symbol")
-        beta_c = cols.get("beta")
+        beta_c = cols.get("delta") or cols.get("beta")
         if etf_c and beta_c:
             for _, row in sc.iterrows():
                 sym = _norm_sym(str(row[etf_c]))
@@ -213,7 +213,7 @@ def main() -> int:
                 "ETF": etf,
                 "Underlying": und,
                 "n_level_days": int(len(lv)),
-                "screened_Beta_csv": screened_beta.get(etf),
+                "screened_Delta_csv": screened_beta.get(etf),
                 "ols_simple_default": b_default,
                 "n_obs_default": n_def,
                 "ols_simple_aligned": b_simple_tbl,

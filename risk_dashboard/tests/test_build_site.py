@@ -25,7 +25,7 @@ def _write_snapshot(out_dir: Path, run_date: str, **overrides) -> None:
         },
         "worst_shock": {
             "pnl_pct_nav": overrides.get("worst_shock_pct_nav", -0.04),
-            "label": overrides.get("worst_label", "SPX -5% (beta-adj)"),
+            "label": overrides.get("worst_label", "SPX -5% (delta-adj)"),
         },
         "factor_panel": {
             "totals": {"net_beta_to_spy": overrides.get("net_beta", -0.2)},

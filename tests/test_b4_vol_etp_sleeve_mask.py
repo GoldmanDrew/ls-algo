@@ -10,8 +10,8 @@ def test_vol_etp_b4_slice_true_when_inverse_shortable_false():
         {
             "ETF": ["UVIX"],
             "Underlying": ["SVIX"],
-            "Beta": [-2.0],
-            "Beta_product_class": ["volatility_etp"],
+            "Delta": [-2.0],
+            "Delta_product_class": ["volatility_etp"],
             "inverse_shortable": [False],
         }
     )
@@ -34,8 +34,8 @@ def test_vol_etp_b4_slice_false_when_already_in_b4_core():
         {
             "ETF": ["UVIX"],
             "Underlying": ["SVIX"],
-            "Beta": [-2.0],
-            "Beta_product_class": ["volatility_etp"],
+            "Delta": [-2.0],
+            "Delta_product_class": ["volatility_etp"],
             "inverse_shortable": [True],
         }
     )

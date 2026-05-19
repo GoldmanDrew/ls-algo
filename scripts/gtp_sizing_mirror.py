@@ -196,7 +196,7 @@ def mirror_generate_trade_plan_sizing(
     if not np.isfinite(tg_mult) or tg_mult <= 0:
         tg_mult = 1.0
     target_gross_usd = float(target_gross_usd) * float(tg_mult)
-    beta_floor = float(strategy.get("beta_floor", 0.1))
+    delta_floor = float(strategy.get("delta_floor", 0.1))
 
     b4_w = float(b4.get("target_weight", 0.0))
     b4_enabled = bool(b4.get("enabled", True))
@@ -209,7 +209,7 @@ def mirror_generate_trade_plan_sizing(
     )
 
     core_rules = core.get("rules", {}) or {}
-    core_beta_min = float(core_rules.get("min_beta_used", 1.5))
+    core_delta_min = float(core_rules.get("min_delta_used", 1.5))
     yb_rules = yb_sleeve.get("rules", {}) or {}
     _yb_edge_yaml = yb_rules.get("min_net_edge_annual", None)
     if _yb_edge_yaml is None or (isinstance(_yb_edge_yaml, float) and not np.isfinite(_yb_edge_yaml)):
@@ -255,8 +255,8 @@ def mirror_generate_trade_plan_sizing(
     keep = keep[(~keep["Underlying"].isin(blist)) & (~keep["ETF"].isin(blist))].copy()
     keep["ETF"] = keep["ETF"].astype(str).map(_norm_sym)
     keep["Underlying"] = keep["Underlying"].astype(str).map(_norm_sym)
-    keep["Beta"] = pd.to_numeric(keep["Beta"], errors="coerce")
-    keep["beta_abs"] = keep["Beta"].abs()
+    keep["Delta"] = pd.to_numeric(keep["Delta"], errors="coerce")
+    keep["delta_abs"] = keep["Delta"].abs()
     for _col in ("blended_gross_decay", "borrow_current", "net_decay_annual", "net_edge_p50_annual"):
         if _col not in keep.columns:
             keep[_col] = np.nan
@@ -298,8 +298,8 @@ def mirror_generate_trade_plan_sizing(
     core_borrow_ok = (~np.isfinite(b)) | (b <= b1_entry_borrow_cap)
     yb_borrow_ok = (~np.isfinite(b)) | (b <= b2_entry_borrow_cap)
     b4_borrow_ok = (~np.isfinite(b)) | (b <= b4_entry_borrow_cap)
-    positive_beta = eligible["Beta"].gt(0)
-    negative_beta = eligible["Beta"].lt(0)
+    positive_beta = eligible["Delta"].gt(0)
+    negative_beta = eligible["Delta"].lt(0)
     if "inverse_shortable" in eligible.columns:
         inverse_shortable = eligible["inverse_shortable"].fillna(False).astype(bool)
     else:
@@ -316,9 +316,9 @@ def mirror_generate_trade_plan_sizing(
     b4_und_vol = pd.to_numeric(eligible.get("vol_underlying_annual"), errors="coerce")
     b4_vol_ok = np.isfinite(b4_und_vol) & (b4_und_vol >= b4_min_underlying_vol)
 
-    core_pre_decay = positive_beta & eligible["beta_abs"].ge(core_beta_min) & core_borrow_ok
+    core_pre_decay = positive_beta & eligible["delta_abs"].ge(core_delta_min) & core_borrow_ok
     core_neg_decay_reset = (
-        positive_beta & eligible["beta_abs"].ge(core_beta_min) & core_borrow_ok & neg_net_decay
+        positive_beta & eligible["delta_abs"].ge(core_delta_min) & core_borrow_ok & neg_net_decay
     )
     try:
         core_decay_gate = _core_net_decay_gate_for_core(
@@ -455,7 +455,7 @@ def mirror_generate_trade_plan_sizing(
     sized, cap_diag = apply_gross_sizing_book_caps(
         sized,
         target_gross_usd=float(target_gross_usd),
-        beta_floor=float(beta_floor),
+        delta_floor=float(delta_floor),
         strategy=strategy,
         shares_out_map=shares_out_map,
     )
@@ -474,7 +474,7 @@ def mirror_generate_trade_plan_sizing(
             sized, cov_diag = _apply_cb(
                 sized,
                 target_gross_usd=float(target_gross_usd),
-                beta_floor=float(beta_floor),
+                delta_floor=float(delta_floor),
                 strategy=strategy,
                 paths=paths,
                 shares_out_map=shares_out_map,
@@ -482,7 +482,7 @@ def mirror_generate_trade_plan_sizing(
             )
             diag["covariance_balance"] = cov_diag
 
-    sized["beta_used_abs"] = sized["beta_abs"].clip(lower=beta_floor).fillna(1.0)
+    sized["beta_used_abs"] = sized["delta_abs"].clip(lower=delta_floor).fillna(1.0)
     sized["hedge_ratio"] = 1.0 / sized["beta_used_abs"]
     b4_mask = sized["sleeve"].eq("inverse_decay_bucket4")
     stock_mask = ~b4_mask
@@ -637,8 +637,8 @@ def pair_weights_with_underlying_cov_penalty(
     u_exposure: dict[str, float] = {}
     for e, u, b in universe:
         ue = _norm_sym(u)
-        beta_abs = abs(float(b)) if np.isfinite(b) else 1.0
-        u_exposure[ue] = u_exposure.get(ue, 0.0) + float(w0.get(e, 0.0)) * float(beta_abs)
+        delta_abs = abs(float(b)) if np.isfinite(b) else 1.0
+        u_exposure[ue] = u_exposure.get(ue, 0.0) + float(w0.get(e, 0.0)) * float(delta_abs)
 
     syms = sorted(u for u, v in u_exposure.items() if v > 1e-18)
     if not syms or underlying_returns is None or underlying_returns.empty:

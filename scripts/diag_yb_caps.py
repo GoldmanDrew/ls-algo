@@ -33,7 +33,7 @@ def main() -> None:
     yb_etfs = ["AMYY","BBYY","COYY","HOYY","IOYY","FBYY","MTYY","QBY","SMYY","XBTY"]
     screened = pd.read_csv(paths["screened_csv"])
     sub = screened[screened["ETF"].isin(yb_etfs)].copy().reset_index(drop=True)
-    sub["beta_abs"] = sub["Beta"].astype(float).abs()
+    sub["delta_abs"] = sub["Delta"].astype(float).abs()
     w = _decay_score_weights(sub, yb_w, sleeve_name="yieldboost")
     sub["gross_target_usd"] = yb_budget * w
     sub["sleeve"] = "yieldboost"
@@ -47,7 +47,7 @@ def main() -> None:
     liq = _liquidity_tight_book_weights(
         sub,
         target_gross_usd=deployed_T,
-        beta_floor=float(strategy.get("beta_floor", 0.1)),
+        delta_floor=float(strategy.get("delta_floor", 0.1)),
         caps={**root_caps},  # uses aum/sh_av/missing_shares
         shares_out_map=shares_out_map,
     )

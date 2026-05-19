@@ -16,27 +16,27 @@ from run_eod_pnl_email import format_period_pnl_summary
 
 
 def test_order_ref_standalone_etf_token_classifies_bucket_2() -> None:
-    etf_to_beta = {"FBYY": 0.4, "FBL": 2.0}
+    etf_to_delta = {"FBYY": 0.4, "FBL": 2.0}
     ref = "ETF_LS|META__GROUP|FBYY|ETF_DELTA|att1|ADAPTIVE_MKT"
-    assert _bucket_hint_from_order_reference(ref, etf_to_beta) == "bucket_2"
+    assert _bucket_hint_from_order_reference(ref, etf_to_delta) == "bucket_2"
 
 
 def test_order_ref_standalone_etf_token_classifies_bucket_1() -> None:
-    etf_to_beta = {"FBYY": 0.4, "FBL": 2.0}
+    etf_to_delta = {"FBYY": 0.4, "FBL": 2.0}
     ref = "ETF_LS|META__GROUP|FBL|ETF_DELTA|att1|ADAPTIVE_MKT"
-    assert _bucket_hint_from_order_reference(ref, etf_to_beta) == "bucket_1"
+    assert _bucket_hint_from_order_reference(ref, etf_to_delta) == "bucket_1"
 
 
 def test_order_ref_standalone_inverse_token_classifies_bucket_4() -> None:
-    etf_to_beta = {"APLZ": -2.0}
+    etf_to_delta = {"APLZ": -2.0}
     ref = "ETF_LS|APLD__GROUP|APLZ|ETF_DELTA|att1|ADAPTIVE_MKT"
-    assert _bucket_hint_from_order_reference(ref, etf_to_beta) == "bucket_4"
+    assert _bucket_hint_from_order_reference(ref, etf_to_delta) == "bucket_4"
 
 
 def test_order_ref_under_with_inverse_etf_classifies_bucket_4() -> None:
-    etf_to_beta = {"APLZ": -2.0}
+    etf_to_delta = {"APLZ": -2.0}
     ref = "ETF_LS|APLD__ESTABLISH|APLZ|UNDER"
-    assert _bucket_hint_from_order_reference(ref, etf_to_beta) == "bucket_4"
+    assert _bucket_hint_from_order_reference(ref, etf_to_delta) == "bucket_4"
 
 
 def test_normalize_bucket_triple_sums_to_one() -> None:

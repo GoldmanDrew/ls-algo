@@ -228,12 +228,12 @@ def pair_spread_vol(
     df = mirror_df.copy()
     df["ETF"] = df["ETF"].astype(str).map(_norm_sym)
     df["Underlying"] = df["Underlying"].astype(str).map(_norm_sym)
-    if "Beta" not in df.columns and "beta_abs" not in df.columns:
-        raise KeyError("mirror_df missing Beta / beta_abs column")
-    beta = pd.to_numeric(df.get("Beta"), errors="coerce").abs()
-    if "beta_abs" in df.columns:
+    if "Delta" not in df.columns and "delta_abs" not in df.columns:
+        raise KeyError("mirror_df missing Beta / delta_abs column")
+    beta = pd.to_numeric(df.get("Delta"), errors="coerce").abs()
+    if "delta_abs" in df.columns:
         beta = beta.where(
-            beta.notna(), pd.to_numeric(df["beta_abs"], errors="coerce").abs()
+            beta.notna(), pd.to_numeric(df["delta_abs"], errors="coerce").abs()
         )
     beta = beta.clip(lower=0.5)
 

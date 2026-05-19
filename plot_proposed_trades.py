@@ -56,7 +56,7 @@ def load_proposed(run_date: str) -> pd.DataFrame:
         "short_usd",
         "borrow_current",
         "net_decay_annual",
-        "Beta",
+        "Delta",
         # Optional optimal-target columns (added by generate_trade_plan dual pipeline). When
         # absent (older runs), these default to NaN; render falls back to executable-only bars.
         "optimal_long_usd",
@@ -167,15 +167,15 @@ def append_no_ibkr_share_screened_rows(
     """
     if screened is None or screened.empty:
         return bucket_df
-    need = {"ETF", "Underlying", "Beta"}
+    need = {"ETF", "Underlying", "Delta"}
     if not need.issubset(set(screened.columns)):
         return bucket_df
 
     sc = screened.copy()
     sc["ETF"] = sc["ETF"].astype(str).str.strip()
     sc["Underlying"] = sc["Underlying"].astype(str).str.strip()
-    beta = pd.to_numeric(sc["Beta"], errors="coerce")
-    beta_abs = beta.abs()
+    beta = pd.to_numeric(sc["Delta"], errors="coerce")
+    delta_abs = beta.abs()
     yb = sc.get("is_yieldboost", False)
     if hasattr(yb, "fillna"):
         yb = yb.fillna(False).astype(bool)
@@ -189,7 +189,7 @@ def append_no_ibkr_share_screened_rows(
     if bucket == "b2":
         bucket_mask = yb & (beta > 0)
     elif bucket == "b1":
-        bucket_mask = (~yb) & (beta_abs > 1.5) & (beta > 0)
+        bucket_mask = (~yb) & (delta_abs > 1.5) & (beta > 0)
     elif bucket == "b4":
         # Core B4 proxy: negative β + inverse_shortable (matches ``in_b4`` spirit).
         # Volatility ETPs (UVIX/SVIX/VIX complex) often have ``inverse_shortable`` false on
@@ -225,7 +225,7 @@ def append_no_ibkr_share_screened_rows(
         edge = _edge_signal(row)
         proxy_gross = med_g * (edge / med_edge)
         proxy_gross = float(np.clip(proxy_gross, 5_000.0, 2.0 * med_g))
-        b = float(row["Beta"])
+        b = float(row["Delta"])
         if bucket == "b4":
             olg, osg = _legs_from_gross_b4(gross=proxy_gross, beta=b)
             sleeve = B4_SLEEVE
@@ -236,7 +236,7 @@ def append_no_ibkr_share_screened_rows(
             {
                 "ETF": key[0],
                 "Underlying": key[1],
-                "Beta": b,
+                "Delta": b,
                 "sleeve": sleeve,
                 "long_usd": 0.0,
                 "short_usd": 0.0,
@@ -285,7 +285,7 @@ def split_buckets(df_active: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, 
     if "sleeve" not in df_active.columns:
         stock = df_active.copy()
         b4 = df_active.iloc[0:0].copy()
-        b = pd.to_numeric(stock["Beta"], errors="coerce")
+        b = pd.to_numeric(stock["Delta"], errors="coerce")
         b1 = stock[b > 1.5].copy()
         b2 = stock[(b > 0) & (b <= 1.5)].copy()
         return b1, b2, b4

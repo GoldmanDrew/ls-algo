@@ -21,8 +21,8 @@ def _make_df(rows: list[dict]) -> pd.DataFrame:
 def test_clean_pair_is_not_outlier() -> None:
     df = _make_df(
         [
-            {"ETF": "AAPU", "vol_underlying_annual": 0.30, "vol_etf_annual": 0.60, "Beta": 2.0},
-            {"ETF": "TQQQ", "vol_underlying_annual": 0.25, "vol_etf_annual": 0.75, "Beta": 3.0},
+            {"ETF": "AAPU", "vol_underlying_annual": 0.30, "vol_etf_annual": 0.60, "Delta": 2.0},
+            {"ETF": "TQQQ", "vol_underlying_annual": 0.25, "vol_etf_annual": 0.75, "Delta": 3.0},
         ]
     )
     out = ds.recompute_vol_ratio_gate(df, screener_cfg=None)
@@ -44,7 +44,7 @@ def test_unhandled_split_outlier_is_flagged() -> None:
                 "ETF": "BAIG",
                 "vol_underlying_annual": 1.25,
                 "vol_etf_annual": 5.0,
-                "Beta": 2.0,
+                "Delta": 2.0,
             }
         ]
     )
@@ -65,7 +65,7 @@ def test_post_fix_baig_ratio_is_clean() -> None:
                 "ETF": "BAIG",
                 "vol_underlying_annual": 1.25,
                 "vol_etf_annual": 2.50,
-                "Beta": 2.0,
+                "Delta": 2.0,
             }
         ]
     )
@@ -91,7 +91,7 @@ def test_yaml_gate_widening_relaxes_outlier_flag() -> None:
                 "ETF": "BAIG",
                 "vol_underlying_annual": 1.25,
                 "vol_etf_annual": 5.0,
-                "Beta": 2.0,
+                "Delta": 2.0,
             }
         ]
     )
@@ -110,7 +110,7 @@ def test_disabled_gate_suppresses_purgatory_effect_only() -> None:
                 "ETF": "BAIG",
                 "vol_underlying_annual": 1.25,
                 "vol_etf_annual": 3.19,
-                "Beta": 2.0,
+                "Delta": 2.0,
             }
         ]
     )

@@ -7,7 +7,7 @@ to ``PAIR_WEIGHTS`` / ``PAIR_FRAC_BY_KEY``-shaped dicts.
 
 Public entry points used by the notebook:
 
-* ``build_joint_bundle(..., min_decay_obs=, min_beta_obs=)`` — history-quality
+* ``build_joint_bundle(..., min_decay_obs=, min_delta_obs=)`` — history-quality
   gate on the mirror frame before QCQP.
 * ``run_joint_qcqp_single`` — threads DCQ sizing-v2 kwargs (confidence haircut,
   turnover anchor, EMA overrides, per-bucket pair-cap overrides); unknown kwargs
@@ -57,24 +57,24 @@ def _apply_history_quality_gate(
     mdf: pd.DataFrame,
     *,
     min_decay_obs: int = 0,
-    min_beta_obs: int = 0,
+    min_delta_obs: int = 0,
     decay_col: str = "expected_gross_decay_dist_n_obs",
-    beta_col: str = "Beta_n_obs",
+    delta_col: str = "Delta_n_obs",
 ) -> tuple[pd.DataFrame, set[tuple[str, str]]]:
     """Drop rows whose bootstrap depth is below the configured thresholds.
 
     Returns the filtered frame and the set of dropped ``(ETF, Underlying)``
     keys (already upper-cased / dot-replaced by the caller).
     """
-    if min_decay_obs <= 0 and min_beta_obs <= 0:
+    if min_decay_obs <= 0 and min_delta_obs <= 0:
         return mdf, set()
     dec = pd.to_numeric(mdf.get(decay_col), errors="coerce").fillna(0.0)
-    bet = pd.to_numeric(mdf.get(beta_col), errors="coerce").fillna(0.0)
+    bet = pd.to_numeric(mdf.get(delta_col), errors="coerce").fillna(0.0)
     keep = pd.Series(True, index=mdf.index)
     if min_decay_obs > 0:
         keep = keep & (dec >= float(min_decay_obs))
-    if min_beta_obs > 0:
-        keep = keep & (bet >= float(min_beta_obs))
+    if min_delta_obs > 0:
+        keep = keep & (bet >= float(min_delta_obs))
     dropped = mdf.loc[~keep, ["ETF", "Underlying"]].astype(str)
     drop_set = {(str(e), str(u)) for e, u in zip(dropped["ETF"].values, dropped["Underlying"].values)}
     return mdf.loc[keep].copy(), drop_set
@@ -95,12 +95,12 @@ def build_joint_bundle(
     budget_key: Mapping[str, str] | None = None,
     price_min_obs: int = 65,
     min_decay_obs: int = 0,
-    min_beta_obs: int = 0,
+    min_delta_obs: int = 0,
 ) -> dict[str, Any]:
     """Return bucket_universes, mirror dfs, sleeve_targets, and price frames.
 
-    ``min_decay_obs`` / ``min_beta_obs`` (>0) drop rows whose
-    ``expected_gross_decay_dist_n_obs`` / ``Beta_n_obs`` columns are below the
+    ``min_decay_obs`` / ``min_delta_obs`` (>0) drop rows whose
+    ``expected_gross_decay_dist_n_obs`` / ``Delta_n_obs`` columns are below the
     threshold. This is the *history-quality gate* used to keep thin-bootstrap
     pairs (e.g. simple-ITO fallback) from winning the QCQP cap plateaus.
     """
@@ -116,7 +116,7 @@ def build_joint_bundle(
     mdf["ETF"] = mdf["ETF"].astype(str).map(norm_sym)
     mdf["Underlying"] = mdf["Underlying"].astype(str).map(norm_sym)
     mdf, dropped_pairs = _apply_history_quality_gate(
-        mdf, min_decay_obs=int(min_decay_obs), min_beta_obs=int(min_beta_obs)
+        mdf, min_decay_obs=int(min_decay_obs), min_delta_obs=int(min_delta_obs)
     )
     gross = pd.to_numeric(mdf.get("gross_target_usd"), errors="coerce").fillna(0.0)
     universe_set = {(norm_sym(e), norm_sym(u)) for e, u, _ in universe}
@@ -176,7 +176,7 @@ def build_joint_bundle(
         "n_pairs_dropped_by_history": int(len(dropped_pairs)),
         "dropped_by_history_keys": dropped_pairs,
         "min_decay_obs": int(min_decay_obs),
-        "min_beta_obs": int(min_beta_obs),
+        "min_delta_obs": int(min_delta_obs),
     }
 
 
@@ -441,7 +441,7 @@ def run_joint_qcqp_single(
     if isinstance(joint_meta, dict):
         joint_meta.setdefault("n_pairs_dropped_by_history", int(bundle.get("n_pairs_dropped_by_history", 0)))
         joint_meta.setdefault("min_decay_obs", int(bundle.get("min_decay_obs", 0)))
-        joint_meta.setdefault("min_beta_obs", int(bundle.get("min_beta_obs", 0)))
+        joint_meta.setdefault("min_delta_obs", int(bundle.get("min_delta_obs", 0)))
     pw_j, pf_j = merge_joint_to_pair_globals(
         pair_frac_book=pair_frac_book,
         pair_weights_by_bucket=pair_weights_by_bucket,

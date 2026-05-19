@@ -29,7 +29,7 @@ from risk_dashboard.metrics import (
 def fake_totals() -> dict:
     # Bucket components (b1+b2+b4) must sum to the book aggregate within
     # 1% so the sleeve attribution gate stays green. Bucket 3 is a
-    # beta-normalized OVERLAY and intentionally excluded from the sum
+    # delta-normalized OVERLAY and intentionally excluded from the sum
     # (mirrors the upstream accounting reconciliation gate after the
     # Phase G fix in ``ibkr_accounting.py``).
     b1_g, b2_g, b4_g = 3_966_574.48, 228_552.80, 437_084.68
@@ -43,7 +43,7 @@ def fake_totals() -> dict:
         "gross_exposure_bucket_1": b1_g,
         "net_exposure_bucket_2": b2_n,
         "gross_exposure_bucket_2": b2_g,
-        # Bucket 3 is a beta-normalized hedge overlay; NOT included in
+        # Bucket 3 is a delta-normalized hedge overlay; NOT included in
         # the gross/net reconciliation sum on purpose.
         "net_exposure_bucket_3": 85047.29,
         "gross_exposure_bucket_3": 86236.36,
@@ -282,7 +282,7 @@ def test_scenario_panel_carries_book_only_badge():
     assert "book" in market["bucket_pnl"]
 
 
-def test_factor_panel_computes_beta_weighted_exposure(tmp_path: Path):
+def test_factor_panel_computes_delta_weighted_exposure(tmp_path: Path):
     csv = tmp_path / "net_exposure_by_underlying.csv"
     csv.write_text(
         "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n"
@@ -295,11 +295,11 @@ def test_factor_panel_computes_beta_weighted_exposure(tmp_path: Path):
     assert panel["available"] is True
     rows = {r["underlying"]: r for r in panel["rows"]}
     assert rows["NVDA"]["beta_to_spy"] == pytest.approx(1.70)
-    assert rows["NVDA"]["beta_source"] == "curated"
-    assert rows["NVDA"]["beta_weighted_net_usd"] == pytest.approx(10000 * 1.70)
-    assert rows["MSTR"]["beta_weighted_net_usd"] == pytest.approx(-5000 * 2.80)
+    assert rows["NVDA"]["delta_source"] == "curated"
+    assert rows["NVDA"]["delta_weighted_net_usd"] == pytest.approx(10000 * 1.70)
+    assert rows["MSTR"]["delta_weighted_net_usd"] == pytest.approx(-5000 * 2.80)
     # Unknown ticker -> default beta + default source.
-    assert rows["ZZUNK"]["beta_source"] == "default"
+    assert rows["ZZUNK"]["delta_source"] == "default"
     assert rows["ZZUNK"]["sector"] == "other"
     totals = panel["totals"]
     assert totals["net_beta_to_spy"] == pytest.approx(
@@ -312,7 +312,7 @@ def test_factor_map_lookup_defaults_safe():
     out = lookup_underlying("DEFINITELY_NOT_A_TICKER_42")
     assert out["sector"] == "other"
     assert out["beta_to_spy"] > 0
-    assert out["beta_source"] == "default"
+    assert out["delta_source"] == "default"
 
 
 def test_scenario_panel_appends_beta_scenarios(tmp_path: Path):
@@ -510,7 +510,7 @@ def _slide_factor_panel_fixture() -> dict:
                 "beta_to_ndx": 1.50,
                 "beta_to_rut": 1.40,
                 "regime_vol_pct": 40.0,
-                "beta_source": "computed",
+                "delta_source": "computed",
             },
             {
                 "underlying": "LLY",
@@ -523,7 +523,7 @@ def _slide_factor_panel_fixture() -> dict:
                 "beta_to_ndx": 0.30,
                 "beta_to_rut": 0.20,
                 "regime_vol_pct": 25.0,
-                "beta_source": "computed",
+                "delta_source": "computed",
             },
         ],
         "totals": {},
@@ -558,8 +558,8 @@ def test_compute_slide_risk_panel_letf_decay_uses_per_leg(tmp_path: Path):
             {
                 "ETF": "APLX",
                 "Underlying": "APLD",
-                "Beta": 1.99,
-                "Beta_product_class": "letf_long",
+                "Delta": 1.99,
+                "Delta_product_class": "letf_long",
                 "vol_etf_annual": 1.4,
                 "vol_underlying_annual": 0.7,
                 "borrow_fee_annual": 0.0,
@@ -567,8 +567,8 @@ def test_compute_slide_risk_panel_letf_decay_uses_per_leg(tmp_path: Path):
             {
                 "ETF": "APLD",
                 "Underlying": "APLD",
-                "Beta": 1.0,
-                "Beta_product_class": "passive_low_beta",
+                "Delta": 1.0,
+                "Delta_product_class": "passive_low_delta",
                 "vol_etf_annual": 0.7,
                 "vol_underlying_annual": 0.7,
                 "borrow_fee_annual": 0.0,
@@ -598,7 +598,7 @@ def test_compute_slide_risk_panel_letf_decay_uses_per_leg(tmp_path: Path):
                     "beta_to_ndx": 1.3,
                     "beta_to_rut": 1.2,
                     "regime_vol_pct": 70.0,
-                    "beta_source": "computed",
+                    "delta_source": "computed",
                 }
             ],
         },
@@ -675,8 +675,8 @@ def test_compute_vol_shock_panel_letf_decay_signed_by_net_notional(tmp_path: Pat
             {
                 "ETF": "AAPU",
                 "Underlying": "AAPL",
-                "Beta": 2.0,
-                "Beta_product_class": "letf_long",
+                "Delta": 2.0,
+                "Delta_product_class": "letf_long",
                 "vol_etf_annual": 0.5,
                 "vol_underlying_annual": 0.25,
                 "borrow_fee_annual": 0.0,
@@ -740,7 +740,7 @@ def test_compute_factor_panel_uses_computed_betas_when_provided(tmp_path: Path):
                 "beta_to_spy": 1.95,
                 "beta_to_ndx": 1.70,
                 "beta_to_rut": 1.55,
-                "beta_se": 0.05,
+                "delta_se": 0.05,
                 "n_obs": 60,
                 "r2": 0.72,
                 "regime_vol_pct": 38.5,
@@ -753,9 +753,9 @@ def test_compute_factor_panel_uses_computed_betas_when_provided(tmp_path: Path):
     assert nvda["beta_to_spy"] == pytest.approx(1.95)
     assert nvda["beta_to_ndx"] == pytest.approx(1.70)
     assert nvda["beta_to_rut"] == pytest.approx(1.55)
-    assert nvda["beta_source"] == "computed"
+    assert nvda["delta_source"] == "computed"
     assert nvda["regime_vol_pct"] == pytest.approx(38.5)
-    assert nvda["beta_n_obs"] == 60
+    assert nvda["delta_n_obs"] == 60
     counts = panel["beta_provenance_counts"]
     assert counts.get("computed") == 1
 

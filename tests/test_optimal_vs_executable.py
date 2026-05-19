@@ -24,8 +24,8 @@ def _liq_squeezed_df() -> pd.DataFrame:
         {
             "ETF": ["A", "B"],
             "Underlying": ["U1", "U2"],
-            "Beta": [2.0, 2.0],
-            "beta_abs": [2.0, 2.0],
+            "Delta": [2.0, 2.0],
+            "delta_abs": [2.0, 2.0],
             "sleeve": ["core_leveraged", "core_leveraged"],
             "gross_target_usd": [500.0, 500.0],
             "borrow_price_ref": [100.0, 100.0],
@@ -61,11 +61,11 @@ def test_cap_mode_structural_only_ignores_shares_available():
     s = _strategy_with_per_sleeve()
     # Executable: with 2 shares ? $100 ? 0.5 = $100 short cap each, gross drops well below 1000.
     out_exe, diag_exe = apply_gross_sizing_book_caps(
-        df, target_gross_usd=10_000.0, beta_floor=0.1,
+        df, target_gross_usd=10_000.0, delta_floor=0.1,
         strategy=s, shares_out_map={}, cap_mode=None,
     )
     out_opt, diag_opt = apply_gross_sizing_book_caps(
-        df, target_gross_usd=10_000.0, beta_floor=0.1,
+        df, target_gross_usd=10_000.0, delta_floor=0.1,
         strategy=s, shares_out_map={}, cap_mode="structural_only",
     )
     g_exe = float(out_exe["gross_target_usd"].sum())
@@ -80,11 +80,11 @@ def test_cap_mode_default_is_legacy_structural_plus_day_liquidity():
     df = _liq_squeezed_df()
     s = _strategy_with_per_sleeve()
     out_default, _ = apply_gross_sizing_book_caps(
-        df, target_gross_usd=10_000.0, beta_floor=0.1,
+        df, target_gross_usd=10_000.0, delta_floor=0.1,
         strategy=s, shares_out_map={}, cap_mode=None,
     )
     out_explicit, _ = apply_gross_sizing_book_caps(
-        df, target_gross_usd=10_000.0, beta_floor=0.1,
+        df, target_gross_usd=10_000.0, delta_floor=0.1,
         strategy=s, shares_out_map={}, cap_mode="structural_plus_day_liquidity",
     )
     np.testing.assert_allclose(
@@ -97,7 +97,7 @@ def test_binding_label_marks_shares_available_in_executable_pass():
     df = _liq_squeezed_df()
     s = _strategy_with_per_sleeve()
     _out, diag = apply_gross_sizing_book_caps(
-        df, target_gross_usd=10_000.0, beta_floor=0.1,
+        df, target_gross_usd=10_000.0, delta_floor=0.1,
         strategy=s, shares_out_map={},
     )
     binding = diag.get("binding_per_row")
@@ -110,7 +110,7 @@ def test_binding_label_optimal_pass_drops_shares_available():
     df = _liq_squeezed_df()
     s = _strategy_with_per_sleeve()
     _out, diag = apply_gross_sizing_book_caps(
-        df, target_gross_usd=10_000.0, beta_floor=0.1,
+        df, target_gross_usd=10_000.0, delta_floor=0.1,
         strategy=s, shares_out_map={}, cap_mode="structural_only",
     )
     binding = diag.get("binding_per_row")
@@ -128,7 +128,7 @@ def test_liquidity_tight_returns_binding_label_when_requested():
         "median_daily_volume_use_pct": 0.0,
     }
     out, lab = _liquidity_tight_book_weights(
-        df, target_gross_usd=1_000.0, beta_floor=0.1, caps=caps,
+        df, target_gross_usd=1_000.0, delta_floor=0.1, caps=caps,
         shares_out_map={}, return_binding_label=True,
     )
     assert out.shape == (2,)

@@ -13,8 +13,8 @@ def _base_sized() -> pd.DataFrame:
         {
             "ETF": ["AAA", "BBB"],
             "Underlying": ["UUU", "UUU"],
-            "Beta": [2.0, 2.0],
-            "beta_abs": [2.0, 2.0],
+            "Delta": [2.0, 2.0],
+            "delta_abs": [2.0, 2.0],
             "sleeve": ["core_leveraged", "core_leveraged"],
             "gross_target_usd": [500.0, 500.0],
             "borrow_price_ref": [50.0, 50.0],
@@ -28,7 +28,7 @@ def test_gross_caps_disabled_noop():
     out, diag = apply_gross_sizing_book_caps(
         df,
         target_gross_usd=1_000_000.0,
-        beta_floor=0.1,
+        delta_floor=0.1,
         strategy={},
         shares_out_map={},
     )
@@ -53,7 +53,7 @@ def test_max_underlying_redistributes_mass():
     out, diag = apply_gross_sizing_book_caps(
         df,
         target_gross_usd=1000.0,
-        beta_floor=0.1,
+        delta_floor=0.1,
         strategy=strategy,
         shares_out_map={},
     )
@@ -70,8 +70,8 @@ def test_liquidity_cap_tightens_pair_weight():
         {
             "ETF": ["X", "Y"],
             "Underlying": ["U1", "U2"],
-            "Beta": [2.0, 2.0],
-            "beta_abs": [2.0, 2.0],
+            "Delta": [2.0, 2.0],
+            "delta_abs": [2.0, 2.0],
             "sleeve": ["core_leveraged", "core_leveraged"],
             "gross_target_usd": [400.0, 600.0],
             "borrow_price_ref": [100.0, 100.0],
@@ -93,7 +93,7 @@ def test_liquidity_cap_tightens_pair_weight():
     out, diag = apply_gross_sizing_book_caps(
         df,
         target_gross_usd=10_000.0,
-        beta_floor=0.1,
+        delta_floor=0.1,
         strategy=strategy,
         shares_out_map={},
     )
@@ -109,8 +109,8 @@ def test_deployed_liquidity_anchor_uses_sum_gross_not_yaml_target():
         {
             "ETF": ["X", "Y"],
             "Underlying": ["U1", "U2"],
-            "Beta": [2.0, 2.0],
-            "beta_abs": [2.0, 2.0],
+            "Delta": [2.0, 2.0],
+            "delta_abs": [2.0, 2.0],
             "sleeve": ["core_leveraged", "core_leveraged"],
             "gross_target_usd": [400.0, 600.0],
             "borrow_price_ref": [100.0, 100.0],
@@ -133,7 +133,7 @@ def test_deployed_liquidity_anchor_uses_sum_gross_not_yaml_target():
     out, diag = apply_gross_sizing_book_caps(
         df,
         target_gross_usd=10_000.0,
-        beta_floor=0.1,
+        delta_floor=0.1,
         strategy=strategy,
         shares_out_map={},
     )
@@ -147,8 +147,8 @@ def _three_sleeve_df() -> pd.DataFrame:
         {
             "ETF": ["A", "B", "C"],
             "Underlying": ["U1", "U2", "U3"],
-            "Beta": [2.0, 2.0, -1.0],
-            "beta_abs": [2.0, 2.0, 1.0],
+            "Delta": [2.0, 2.0, -1.0],
+            "delta_abs": [2.0, 2.0, 1.0],
             "sleeve": ["core_leveraged", "yieldboost", "inverse_decay_bucket4"],
             "gross_target_usd": [500_000.0, 200_000.0, 200_000.0],
             "borrow_price_ref": [50.0, 50.0, 50.0],
@@ -206,8 +206,8 @@ def test_pre_cap_score_haircut_blocks_low_score_uplift_to_pair_cap():
         {
             "ETF": ["A", "B", "C", "D", "E"],
             "Underlying": ["U1", "U2", "U3", "U4", "U5"],
-            "Beta": [2.0] * 5,
-            "beta_abs": [2.0] * 5,
+            "Delta": [2.0] * 5,
+            "delta_abs": [2.0] * 5,
             "sleeve": ["yb"] * 5,
             "gross_target_usd": [400.0, 400.0, 400.0, 30.0, 30.0],
             "borrow_price_ref": [50.0] * 5,
@@ -228,7 +228,7 @@ def test_pre_cap_score_haircut_blocks_low_score_uplift_to_pair_cap():
     out_no, _ = apply_gross_sizing_book_caps(
         df,
         target_gross_usd=10_000.0,
-        beta_floor=0.1,
+        delta_floor=0.1,
         strategy={"gross_sizing_caps": base},
         shares_out_map={},
     )
@@ -236,7 +236,7 @@ def test_pre_cap_score_haircut_blocks_low_score_uplift_to_pair_cap():
     out_yes, diag_yes = apply_gross_sizing_book_caps(
         df,
         target_gross_usd=10_000.0,
-        beta_floor=0.1,
+        delta_floor=0.1,
         strategy={"gross_sizing_caps": cfg_with},
         shares_out_map={},
     )
@@ -266,8 +266,8 @@ def test_per_sleeve_concentration_vs_book_level():
         {
             "ETF": ["A", "B", "C"],
             "Underlying": ["U1", "U2", "U3"],
-            "Beta": [2.0, 2.0, 2.0],
-            "beta_abs": [2.0, 2.0, 2.0],
+            "Delta": [2.0, 2.0, 2.0],
+            "delta_abs": [2.0, 2.0, 2.0],
             "sleeve": ["core_leveraged", "core_leveraged", "whitelist_stock"],
             "gross_target_usd": [400.0, 400.0, 200.0],
             "borrow_price_ref": [50.0, 50.0, 50.0],
@@ -293,7 +293,7 @@ def test_per_sleeve_concentration_vs_book_level():
     out, diag = apply_gross_sizing_book_caps(
         df,
         target_gross_usd=1000.0,
-        beta_floor=0.1,
+        delta_floor=0.1,
         strategy=strategy,
         shares_out_map={},
     )

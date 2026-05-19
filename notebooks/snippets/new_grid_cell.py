@@ -107,7 +107,7 @@ JOINT_GRID_MU_SHRINK = float(globals().get("JOINT_GRID_MU_SHRINK", 0.10))
 # joint cell ``3f99fcea``; ``globals().get(...)`` keeps user-set values.
 # ---------------------------------------------------------------------------
 SIZING_V2_MIN_DECAY_OBS = globals().get("SIZING_V2_MIN_DECAY_OBS", 120)
-SIZING_V2_MIN_BETA_OBS = globals().get("SIZING_V2_MIN_BETA_OBS", 120)
+SIZING_V2_MIN_DELTA_OBS = globals().get("SIZING_V2_MIN_DELTA_OBS", 120)
 SIZING_V2_CONFIDENCE_HAIRCUT = globals().get("SIZING_V2_CONFIDENCE_HAIRCUT", True)
 SIZING_V2_CONF_FLOOR = globals().get("SIZING_V2_CONF_FLOOR", 0.25)
 SIZING_V2_N_OBS_FULL = globals().get("SIZING_V2_N_OBS_FULL", 252)
@@ -147,7 +147,7 @@ _DEFAULT_BASE = dict(
     turnover_lambda=float(SIZING_V2_TURNOVER_LAMBDA),
     confidence_haircut=bool(SIZING_V2_CONFIDENCE_HAIRCUT),
     min_decay_obs=int(SIZING_V2_MIN_DECAY_OBS),
-    min_beta_obs=int(SIZING_V2_MIN_BETA_OBS),
+    min_delta_obs=int(SIZING_V2_MIN_DELTA_OBS),
     ema_halflife_weeks=float(SIZING_V2_EMA_HALFLIFE_WEEKS) if SIZING_V2_EMA_HALFLIFE_WEEKS else None,
     # Per-config override of DCQ ``mu_shrink_intensity`` (defaults to JOINT_GRID_MU_SHRINK).
     mu_shrink_intensity=float(JOINT_GRID_MU_SHRINK),
@@ -334,13 +334,13 @@ def _save_joint_grid_run_artifacts(
     return run_dir
 
 
-# Bundle cache keyed by (min_decay_obs, min_beta_obs) so different gates don't
+# Bundle cache keyed by (min_decay_obs, min_delta_obs) so different gates don't
 # silently share the gated bundle.
 _BUNDLE_CACHE: dict[tuple[int, int], dict] = {}
 
 
-def _bundle_for(min_decay_obs: int, min_beta_obs: int) -> dict:
-    key = (int(min_decay_obs), int(min_beta_obs))
+def _bundle_for(min_decay_obs: int, min_delta_obs: int) -> dict:
+    key = (int(min_decay_obs), int(min_delta_obs))
     if key not in _BUNDLE_CACHE:
         _BUNDLE_CACHE[key] = build_joint_bundle(
             **_filter_build_bundle_kw({
@@ -350,7 +350,7 @@ def _bundle_for(min_decay_obs: int, min_beta_obs: int) -> dict:
                 "prices": PRICES,
                 "norm_sym": _gtp_norm,
                 "min_decay_obs": int(min_decay_obs),
-                "min_beta_obs": int(min_beta_obs),
+                "min_delta_obs": int(min_delta_obs),
             })
         )
     return _BUNDLE_CACHE[key]
@@ -376,7 +376,7 @@ for _i, cfg in enumerate(JOINT_CONFIGS, start=1):
         print(f"[joint_grid] {_i}/{len(JOINT_CONFIGS)} {name} (cached hash={h}) - skipped re-run")
         continue
 
-    _bndl = _bundle_for(int(cfg["min_decay_obs"]), int(cfg["min_beta_obs"]))
+    _bndl = _bundle_for(int(cfg["min_decay_obs"]), int(cfg["min_delta_obs"]))
     _st = _bndl["sleeve_targets"]
 
     ema_hl = cfg.get("ema_halflife_weeks")

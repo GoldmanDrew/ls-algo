@@ -46,8 +46,8 @@ def _load_inputs() -> tuple[dict, pd.DataFrame]:
     with open(CFG_PATH, "r") as f:
         cfg = yaml.safe_load(f)
     df = pd.read_csv(SCREENED_PATH)
-    df["Beta"] = pd.to_numeric(df["Beta"], errors="coerce")
-    df["beta_abs"] = df["Beta"].abs()
+    df["Delta"] = pd.to_numeric(df["Delta"], errors="coerce")
+    df["delta_abs"] = df["Delta"].abs()
     for c in ("blended_gross_decay", "borrow_current", "net_decay_annual",
               "net_edge_p50_annual", "vol_underlying_annual", "bucket4_net_edge_annual"):
         if c in df.columns:
@@ -74,8 +74,8 @@ def _build_sleeve_frames(cfg: dict, eligible: pd.DataFrame) -> dict[str, pd.Data
     is_yb, in_b2_universe, in_flow_program = _b2_b4_universe_masks(
         eligible, flow_program_etfs=flow_set
     )
-    pos_beta = eligible["Beta"].gt(0)
-    neg_beta = eligible["Beta"].lt(0)
+    pos_beta = eligible["Delta"].gt(0)
+    neg_beta = eligible["Delta"].lt(0)
 
     if "inverse_shortable" in eligible.columns:
         inv_shortable = eligible["inverse_shortable"].fillna(False).astype(bool)
@@ -97,7 +97,7 @@ def _build_sleeve_frames(cfg: dict, eligible: pd.DataFrame) -> dict[str, pd.Data
     b4 = sleeves.get("inverse_decay_bucket4", {}) or {}
 
     core_rules = core.get("rules", {}) or {}
-    core_beta_min = float(core_rules.get("min_beta_used", 1.5))
+    core_delta_min = float(core_rules.get("min_delta_used", 1.5))
 
     yb_rules = yb_sleeve.get("rules", {}) or {}
     yb_min_edge = float(yb_rules.get("min_net_edge_annual", 0.0) or 0.0)
@@ -117,12 +117,12 @@ def _build_sleeve_frames(cfg: dict, eligible: pd.DataFrame) -> dict[str, pd.Data
     ne = pd.to_numeric(eligible.get("net_edge_p50_annual"), errors="coerce")
     yb_edge_ok = np.isfinite(ne) & (ne >= yb_min_edge) if yb_min_edge > 0 else pd.Series(True, index=eligible.index)
 
-    in_core = pos_beta & eligible["beta_abs"].ge(core_beta_min) & core_borrow_ok & ~in_b2_universe
+    in_core = pos_beta & eligible["delta_abs"].ge(core_delta_min) & core_borrow_ok & ~in_b2_universe
     in_yb = pos_beta & in_b2_universe & ~in_flow_program & yb_borrow_ok & yb_edge_ok
     in_b4_core = neg_beta & inv_shortable & b4_borrow_ok & b4_edge_ok & b4_vol_ok & b4_not_excluded & ~in_flow_program
 
     is_vol_etp = pd.Series(False, index=eligible.index)
-    for col in ("Beta_product_class", "product_class"):
+    for col in ("Delta_product_class", "product_class"):
         if col in eligible.columns:
             is_vol_etp |= eligible[col].astype(str).str.lower().eq("volatility_etp")
     in_b4_vol = is_vol_etp & inv_shortable & b4_borrow_ok & b4_edge_ok & b4_vol_ok & b4_not_excluded & ~in_flow_program & ~in_b4_core

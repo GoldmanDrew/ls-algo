@@ -11,10 +11,10 @@ def test_b4_proxy_includes_vol_etp_when_inverse_shortable_false():
             {
                 "ETF": "UVIX",
                 "Underlying": "VIX",
-                "Beta": -1.98,
+                "Delta": -1.98,
                 "is_yieldboost": False,
                 "inverse_shortable": False,
-                "Beta_product_class": "volatility_etp",
+                "Delta_product_class": "volatility_etp",
                 "shares_available": 0.0,
                 "exclude_no_shares": True,
                 "net_decay_annual": 0.1,

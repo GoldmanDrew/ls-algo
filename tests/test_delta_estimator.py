@@ -1,10 +1,10 @@
-"""Tests for the robust hierarchical empirical-Bayes hedge-beta estimator.
+"""Tests for the robust hierarchical empirical-Bayes hedge-delta estimator.
 
-Pins down the contract documented in BETA_ESTIMATOR.md:
+Pins down the contract documented in DELTA_ESTIMATOR.md:
 
   * ``mu_beta == nominal_L`` ONLY for ``letf_long`` / ``letf_inverse`` rows.
   * Income / vol-ETP / unknown rows MUST NOT use row Leverage as the prior
-    mean — ``Beta_prior_source`` is never ``nominal_L`` for those classes.
+    mean — ``Delta_prior_source`` is never ``nominal_L`` for those classes.
   * Synthetic 2× LETF posterior recovers the realised slope.
   * Synthetic YieldBOOST row blends robust OLS with a sibling-derived prior.
   * Distribution-day jumps that coincide with a same-day actions event are
@@ -21,12 +21,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from beta_estimator import (
-    BetaPrior,
-    BetaResult,
+from delta_estimator import (
+    DeltaPrior,
+    DeltaResult,
     PeerPrior,
     build_yieldboost_family_priors,
-    compute_beta_for_hedging,
+    compute_delta_for_hedging,
 )
 
 
@@ -45,7 +45,7 @@ def _series(returns: np.ndarray, *, start: str = "2024-01-01") -> pd.Series:
 
 # ── (1) Prior router ───────────────────────────────────────────────────
 def test_letf_long_uses_nominal_L() -> None:
-    p = BetaPrior.for_row(
+    p = DeltaPrior.for_row(
         product_class="letf_long",
         nominal_leverage=2.0,
         underlying="QQQ",
@@ -56,7 +56,7 @@ def test_letf_long_uses_nominal_L() -> None:
 
 
 def test_letf_inverse_uses_negative_nominal_L() -> None:
-    p = BetaPrior.for_row(
+    p = DeltaPrior.for_row(
         product_class="letf_inverse",
         nominal_leverage=-3.0,
         underlying="NDX",
@@ -80,11 +80,11 @@ def test_non_letf_classes_never_use_nominal_L(pc: str) -> None:
     """No non-LETF class may carry a ``nominal_L`` prior source — even when
     a ``Leverage`` value is provided to the factory.  This is the central
     contract that hedge sizing depends on."""
-    p = BetaPrior.for_row(
+    p = DeltaPrior.for_row(
         product_class=pc,
         nominal_leverage=2.0,  # deliberately non-None — must be ignored
         underlying="MSTR",
-        peer_betas={},
+        peer_deltas={},
     )
     assert p.source != "nominal_L"
     # In particular, mu cannot equal the listed L for any of these.
@@ -93,13 +93,13 @@ def test_non_letf_classes_never_use_nominal_L(pc: str) -> None:
 
 def test_letf_classes_require_finite_leverage() -> None:
     with pytest.raises(ValueError):
-        BetaPrior.for_row(
+        DeltaPrior.for_row(
             product_class="letf_long",
             nominal_leverage=None,
             underlying="QQQ",
         )
     with pytest.raises(ValueError):
-        BetaPrior.for_row(
+        DeltaPrior.for_row(
             product_class="letf_inverse",
             nominal_leverage=float("nan"),
             underlying="NDX",
@@ -112,11 +112,11 @@ def test_synthetic_2x_letf_recovers_realized_slope(rng: np.random.Generator) -> 
     n = 1000
     r_und = rng.normal(0, 0.02, size=n)
     r_etf = 2.0 * r_und + rng.normal(0, 0.002, size=n)
-    prior = BetaPrior.for_row("letf_long", 2.0, "UND")
-    res = compute_beta_for_hedging(_series(r_etf), _series(r_und), prior)
+    prior = DeltaPrior.for_row("letf_long", 2.0, "UND")
+    res = compute_delta_for_hedging(_series(r_etf), _series(r_und), prior)
     assert res.quality in ("ok", "non_stationary")
-    assert 1.97 <= res.beta <= 2.03, res
-    assert res.beta_se < 0.04
+    assert 1.97 <= res.delta <= 2.03, res
+    assert res.delta_se < 0.04
     assert res.prior_source == "nominal_L"
     assert res.source.startswith("posterior.")
 
@@ -128,17 +128,17 @@ def test_synthetic_yieldboost_uses_peer_prior(rng: np.random.Generator) -> None:
     r_und = rng.normal(0, 0.025, size=n)
     r_etf = 0.5 * r_und - 0.0005 + rng.normal(0, 0.005, size=n)
     peers = {"MSTR": PeerPrior(mu=0.55, tau=90.0, n_siblings=3)}
-    prior = BetaPrior.for_row(
+    prior = DeltaPrior.for_row(
         "income_yieldboost",
         nominal_leverage=1.0,  # must be ignored
         underlying="MSTR",
-        peer_betas=peers,
+        peer_deltas=peers,
     )
     assert prior.source == "yieldboost_peer_MSTR"
     assert prior.mu == 0.55
-    res = compute_beta_for_hedging(_series(r_etf), _series(r_und), prior)
+    res = compute_delta_for_hedging(_series(r_etf), _series(r_und), prior)
     assert res.prior_source == "yieldboost_peer_MSTR"
-    assert 0.50 <= res.beta <= 0.58, res
+    assert 0.50 <= res.delta <= 0.58, res
     assert res.quality in ("ok", "non_stationary")
 
 
@@ -165,31 +165,31 @@ def test_distribution_day_event_excluded(rng: np.random.Generator) -> None:
     actions = pd.Series(False, index=rets_idx)
     actions.iloc[spike_idx] = True
 
-    prior = BetaPrior.for_row(
+    prior = DeltaPrior.for_row(
         "income_yieldboost",
         nominal_leverage=None,
         underlying="X",
-        peer_betas={"X": PeerPrior(mu=0.5, tau=60.0, n_siblings=2)},
+        peer_deltas={"X": PeerPrior(mu=0.5, tau=60.0, n_siblings=2)},
     )
 
-    res_clean = compute_beta_for_hedging(s_etf_clean, s_und, prior)
-    res_dirty = compute_beta_for_hedging(s_etf_dirty, s_und, prior, actions_mask=actions)
+    res_clean = compute_delta_for_hedging(s_etf_clean, s_und, prior)
+    res_dirty = compute_delta_for_hedging(s_etf_dirty, s_und, prior, actions_mask=actions)
 
     # The posterior on the cleaned series should be very close to the
     # one computed on the natively-clean series.
-    assert abs(res_clean.beta - res_dirty.beta) < 0.02, (res_clean, res_dirty)
+    assert abs(res_clean.delta - res_dirty.delta) < 0.02, (res_clean, res_dirty)
 
     # Sanity: without the actions mask, the spike biases the estimate.
-    res_dirty_no_mask = compute_beta_for_hedging(s_etf_dirty, s_und, prior)
-    assert abs(res_dirty_no_mask.beta - res_clean.beta) > abs(
-        res_dirty.beta - res_clean.beta
+    res_dirty_no_mask = compute_delta_for_hedging(s_etf_dirty, s_und, prior)
+    assert abs(res_dirty_no_mask.delta - res_clean.delta) > abs(
+        res_dirty.delta - res_clean.delta
     ) - 1e-9
 
 
 # ── (4) Sign conflict — graceful (no hard snap, soft pull to μ) ───────
 def test_sign_mismatch_inflates_tau_not_snap(rng: np.random.Generator) -> None:
     """An inverted realised relationship (β ≈ -0.4) against a μ=2 prior
-    must NOT hard-snap to exactly 2.0.  The contract (BETA_ESTIMATOR.md):
+    must NOT hard-snap to exactly 2.0.  The contract (DELTA_ESTIMATOR.md):
 
       * ``sign_conflict`` quality flag is set
       * ``τ`` is inflated above the original prior precision
@@ -200,15 +200,15 @@ def test_sign_mismatch_inflates_tau_not_snap(rng: np.random.Generator) -> None:
     n = 300
     r_und = rng.normal(0, 0.02, size=n)
     r_etf = -0.4 * r_und + rng.normal(0, 0.004, size=n)
-    prior = BetaPrior.for_row("letf_long", 2.0, "UND")
-    res = compute_beta_for_hedging(_series(r_etf), _series(r_und), prior)
+    prior = DeltaPrior.for_row("letf_long", 2.0, "UND")
+    res = compute_delta_for_hedging(_series(r_etf), _series(r_und), prior)
     assert res.extras.get("sign_conflict", False) is True
     # τ inflation
     assert res.prior_tau > prior.tau - 1e-9
     assert res.prior_tau >= prior.tau * 4.5
     # Strictly between robust slope (-0.4) and prior (2.0); no hard snap.
-    assert -0.4 < res.beta < 2.0
-    assert abs(res.beta - 2.0) > 1e-6, "must not hard-snap to L"
+    assert -0.4 < res.delta < 2.0
+    assert abs(res.delta - 2.0) > 1e-6, "must not hard-snap to L"
 
 
 # ── (5) Multi-horizon stability gate ──────────────────────────────────
@@ -225,8 +225,8 @@ def test_multi_horizon_gate_prefers_h5_on_ar1(rng: np.random.Generator) -> None:
     # non-synchronous-close microstructure.
     for t in range(1, n):
         r_etf[t] = 0.6 * r_etf[t - 1] + 1.5 * (r_und[t] - 0.6 * r_und[t - 1]) + eps_e[t]
-    prior = BetaPrior.for_row("letf_long", 2.0, "UND")
-    res = compute_beta_for_hedging(_series(r_etf), _series(r_und), prior)
+    prior = DeltaPrior.for_row("letf_long", 2.0, "UND")
+    res = compute_delta_for_hedging(_series(r_etf), _series(r_und), prior)
     # On clearly non-stationary microstructure either the gate flips to
     # h=5 OR the posterior at h=1 already passes the relative tolerance
     # window (rare for this synthetic but allowed by the contract).
@@ -236,7 +236,7 @@ def test_multi_horizon_gate_prefers_h5_on_ar1(rng: np.random.Generator) -> None:
     else:
         # Without microstructure escalation we still expect a sane
         # posterior in [1.2, 2.0] for a 1.5× construction with τ=240.
-        assert 1.2 < res.beta < 2.0
+        assert 1.2 < res.delta < 2.0
 
 
 # ── (6) Hierarchical YieldBOOST family priors ─────────────────────────
@@ -262,14 +262,14 @@ def test_yieldboost_family_priors_leave_one_out(rng: np.random.Generator) -> Non
 
 # ── (7) End-to-end: classifier + estimator routes correctly ───────────
 def test_classifier_and_router_never_emit_nominal_L_for_yieldboost() -> None:
-    """Spy on BetaPrior to assert that an income_yieldboost universe row
+    """Spy on DeltaPrior to assert that an income_yieldboost universe row
     cannot route through the nominal_L branch even when a Leverage is
     present on the row."""
-    p = BetaPrior.for_row(
+    p = DeltaPrior.for_row(
         "income_yieldboost",
         nominal_leverage=2.0,
         underlying="MSTR",
-        peer_betas={"MSTR": PeerPrior(mu=0.42, tau=90.0, n_siblings=2)},
+        peer_deltas={"MSTR": PeerPrior(mu=0.42, tau=90.0, n_siblings=2)},
     )
     assert p.source == "yieldboost_peer_MSTR"
     assert p.mu == 0.42

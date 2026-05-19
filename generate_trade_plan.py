@@ -5,7 +5,7 @@ generate_trade_plan.py
 Production portfolio construction for YAML sleeves.
 
 Implements:
-- ``core_leveraged`` sleeve: high-beta bucket-1 positives only (**excludes** ``is_yieldboost``
+- ``core_leveraged`` sleeve: high-delta bucket-1 positives only (**excludes** ``is_yieldboost``
   rows; those size in ``yieldboost``).
     * Post-B4 gross is split vs ``yieldboost`` using normalized ``target_weight`` on each sleeve.
 - ``yieldboost`` sleeve: bucket‑2 / YieldBoost only (`is_yieldboost`), gated by
@@ -26,7 +26,7 @@ Implements:
   sleeve absorbs the full gross budget.
 
 - ``core_leveraged`` bucket-1 path: optional ``min_net_decay_annual`` and ``net_decay_hysteresis`` in
-  YAML — tighter net-decay selectivity for **high-beta core rows only**. If ``min_net_decay_annual``
+  YAML — tighter net-decay selectivity for **high-delta core rows only**. If ``min_net_decay_annual``
   > 0 it is a **hard floor** (always enforced, including over hysteresis and missing-data paths).
   Hysteresis uses ``paths.core_leveraged_decay_state_json`` to reduce pairs bouncing in/out when decay oscillates.
 
@@ -80,7 +80,7 @@ def _clamp01(x: float) -> float:
 def _volatility_etp_rows_mask(df: pd.DataFrame) -> pd.Series:
     """True for screener rows classified as volatility ETPs (VIX complex, etc.)."""
     out = pd.Series(False, index=df.index)
-    for col in ("Beta_product_class", "product_class"):
+    for col in ("Delta_product_class", "product_class"):
         if col in df.columns:
             s = df[col].astype(str).str.strip().str.lower()
             out |= s.eq("volatility_etp")
@@ -304,19 +304,19 @@ def _b4_eligibility_edge_column(df: pd.DataFrame) -> str:
 def _decay_score_weights(
     df: pd.DataFrame,
     weighting_cfg: dict,
-    beta_col: str = "beta_abs",
+    delta_col: str = "delta_abs",
     sleeve_name: str | None = None,
 ) -> np.ndarray:
     """Compute portfolio weights from decay-score signal blended with equal weight.
 
     Parameters
     ----------
-    df : DataFrame of eligible names. Must contain *beta_col* and borrow ``borrow_current``.
+    df : DataFrame of eligible names. Must contain *delta_col* and borrow ``borrow_current``.
          Primary signal column defaults to ``net_edge_p50_annual`` for every sleeve (override
          with ``sizing_edge_column``). If that column is missing or all-NaN, falls back to
          ``blended_gross_decay``. Same borrow discount on the resolved signal in all modes.
     weighting_cfg : sleeve ``weighting`` dict from strategy_config.yml.
-    beta_col : column name for absolute-value beta (default ``beta_abs``).
+    delta_col : column name for absolute-value beta (default ``delta_abs``).
     sleeve_name : optional sleeve key (e.g. ``inverse_decay_bucket4``) for net-edge column defaults.
 
     Returns
@@ -354,8 +354,8 @@ def _decay_score_weights(
         raw_score = pd.Series(np.sign(rs) * np.power(np.abs(rs), float(score_p)), index=df.index)
 
     # --- margin efficiency adjustment ------------------------------------
-    beta_abs = pd.to_numeric(df[beta_col], errors="coerce").clip(lower=0.1)
-    margin_adj = np.power(1.0 / beta_abs, margin_power)  # favours 2x over 3x
+    delta_abs = pd.to_numeric(df[delta_col], errors="coerce").clip(lower=0.1)
+    margin_adj = np.power(1.0 / delta_abs, margin_power)  # favours 2x over 3x
     adjusted = (raw_score * margin_adj).fillna(0.0).clip(lower=0.0)
 
     # --- normalise signal weights ----------------------------------------
@@ -491,15 +491,15 @@ def _pick_first_column(df: pd.DataFrame, candidates: list[str]) -> str | None:
 
 
 def _short_leg_frac_array(
-    beta_abs: np.ndarray,
-    beta_floor: float,
+    delta_abs: np.ndarray,
+    delta_floor: float,
     sleeve: np.ndarray,
 ) -> np.ndarray:
     """
     Fraction of pair gross that is ETF short USD (stock sleeves: hedge_ratio / (1+hr)).
     Bucket 4: gross is the inverse ETF short leg → fraction 1.0.
     """
-    b = np.maximum(np.asarray(beta_abs, dtype=float), float(beta_floor))
+    b = np.maximum(np.asarray(delta_abs, dtype=float), float(delta_floor))
     hr = 1.0 / b
     sf = hr / (1.0 + hr)
     s = np.asarray(sleeve).astype(str)
@@ -637,7 +637,7 @@ def _liquidity_tight_book_weights(
     sized: pd.DataFrame,
     *,
     target_gross_usd: float,
-    beta_floor: float,
+    delta_floor: float,
     caps: dict[str, Any],
     shares_out_map: dict[str, float],
     cap_subset: tuple[str, ...] | None = None,
@@ -666,15 +666,15 @@ def _liquidity_tight_book_weights(
     sout_frac = float(caps.get("shares_outstanding_use_frac", 0.0) or 0.0) if "shares_outstanding" in subset else 0.0
     mv_pct = float(caps.get("median_daily_volume_use_pct", 0.0) or 0.0) if "adv" in subset else 0.0
 
-    if "beta_abs" in sized.columns:
-        ba = pd.to_numeric(sized["beta_abs"], errors="coerce").to_numpy(dtype=float)
+    if "delta_abs" in sized.columns:
+        ba = pd.to_numeric(sized["delta_abs"], errors="coerce").to_numpy(dtype=float)
     else:
-        ba = pd.to_numeric(sized["Beta"], errors="coerce").abs().to_numpy(dtype=float)
+        ba = pd.to_numeric(sized["Delta"], errors="coerce").abs().to_numpy(dtype=float)
     if "sleeve" in sized.columns:
         slv = sized["sleeve"].astype(str).to_numpy()
     else:
         slv = np.array(["core_leveraged"] * n, dtype=object)
-    sf = _short_leg_frac_array(ba, beta_floor, slv)
+    sf = _short_leg_frac_array(ba, delta_floor, slv)
     ref_short = T * sf
 
     if "borrow_price_ref" in sized.columns:
@@ -760,7 +760,7 @@ def _compute_pair_weight_caps_array(
     sized: pd.DataFrame,
     *,
     target_gross_usd: float,
-    beta_floor: float,
+    delta_floor: float,
     caps: dict[str, Any],
     shares_out_map: dict[str, float],
     cap_subset: tuple[str, ...] | None = None,
@@ -777,7 +777,7 @@ def _compute_pair_weight_caps_array(
     tight = _liquidity_tight_book_weights(
         sized,
         target_gross_usd=target_gross_usd,
-        beta_floor=beta_floor,
+        delta_floor=delta_floor,
         caps=caps,
         shares_out_map=shares_out_map,
         cap_subset=cap_subset,
@@ -1014,7 +1014,7 @@ def _apply_gross_sizing_per_sleeve_book_caps(
     gross: np.ndarray,
     *,
     target_gross_usd: float,
-    beta_floor: float,
+    delta_floor: float,
     caps: dict[str, Any],
     shares_out_map: dict[str, float],
     cap_subset: tuple[str, ...] | None = None,
@@ -1050,7 +1050,7 @@ def _apply_gross_sizing_per_sleeve_book_caps(
     liq_book, liq_binding = _liquidity_tight_book_weights(
         sized,
         target_gross_usd=target_gross_usd,
-        beta_floor=beta_floor,
+        delta_floor=delta_floor,
         caps=caps,
         shares_out_map=shares_out_map,
         cap_subset=cap_subset,
@@ -1242,7 +1242,7 @@ def _run_book_cap_pipeline_quiet(
     sized: pd.DataFrame,
     *,
     target_gross_usd: float,
-    beta_floor: float,
+    delta_floor: float,
     strategy: dict[str, Any],
     paths: dict[str, Any] | None,
     shares_out_map: dict[str, float],
@@ -1264,7 +1264,7 @@ def _run_book_cap_pipeline_quiet(
     out, init_diag = apply_gross_sizing_book_caps(
         out,
         target_gross_usd=float(target_gross_usd),
-        beta_floor=float(beta_floor),
+        delta_floor=float(delta_floor),
         strategy=strategy,
         shares_out_map=shares_out_map,
         cap_mode=cap_mode,
@@ -1288,7 +1288,7 @@ def _run_book_cap_pipeline_quiet(
                 out, _ = apply_covariance_balance(
                     out,
                     target_gross_usd=float(target_gross_usd),
-                    beta_floor=float(beta_floor),
+                    delta_floor=float(delta_floor),
                     strategy=strategy,
                     paths=paths,
                     shares_out_map=shares_out_map,
@@ -1300,7 +1300,7 @@ def _run_book_cap_pipeline_quiet(
             out, _ = apply_covariance_balance(
                 out,
                 target_gross_usd=float(target_gross_usd),
-                beta_floor=float(beta_floor),
+                delta_floor=float(delta_floor),
                 strategy=strategy,
                 paths=paths,
                 shares_out_map=shares_out_map,
@@ -1325,7 +1325,7 @@ def _run_book_cap_pipeline_quiet(
         out, final_diag = apply_gross_sizing_book_caps(
             out,
             target_gross_usd=float(target_gross_usd),
-            beta_floor=float(beta_floor),
+            delta_floor=float(delta_floor),
             strategy=strategy,
             shares_out_map=shares_out_map,
             cap_mode=cap_mode,
@@ -1344,7 +1344,7 @@ def apply_covariance_balance(
     sized: pd.DataFrame,
     *,
     target_gross_usd: float,
-    beta_floor: float,
+    delta_floor: float,
     strategy: dict[str, Any],
     paths: dict[str, Any] | None = None,
     shares_out_map: dict[str, float] | None = None,
@@ -1393,8 +1393,8 @@ def apply_covariance_balance(
     df = sized.copy()
     df["ETF"] = df["ETF"].astype(str).map(_norm_sym)
     df["Underlying"] = df["Underlying"].astype(str).map(_norm_sym)
-    if "beta_abs" not in df.columns:
-        df["beta_abs"] = pd.to_numeric(df["Beta"], errors="coerce").abs()
+    if "delta_abs" not in df.columns:
+        df["delta_abs"] = pd.to_numeric(df["Delta"], errors="coerce").abs()
 
     g = pd.to_numeric(df["gross_target_usd"], errors="coerce").fillna(0.0).clip(lower=0.0)
     gsum_book = float(g.sum())
@@ -1426,11 +1426,11 @@ def apply_covariance_balance(
     syms = [c for c in R.columns]
     sym_idx = {s: i for i, s in enumerate(syms)}
 
-    beta_abs = pd.to_numeric(df["beta_abs"], errors="coerce").fillna(1.0).clip(lower=float(beta_floor))
+    delta_abs = pd.to_numeric(df["delta_abs"], errors="coerce").fillna(1.0).clip(lower=float(delta_floor))
     exposure = np.zeros(len(syms), dtype=float)
     sub_und = df.loc[row_mask, "Underlying"].astype(str).tolist()
     sub_g = g.loc[row_mask].tolist()
-    sub_b = beta_abs.loc[row_mask].tolist()
+    sub_b = delta_abs.loc[row_mask].tolist()
     for u, w_pair, b in zip(sub_und, sub_g, sub_b):
         i = sym_idx.get(str(u))
         if i is None:
@@ -1477,7 +1477,7 @@ def apply_covariance_balance(
     out, _cap_diag = apply_gross_sizing_book_caps(
         out,
         target_gross_usd=float(target_gross_usd),
-        beta_floor=float(beta_floor),
+        delta_floor=float(delta_floor),
         strategy=strategy,
         shares_out_map=(shares_out_map or {}),
         cap_mode=cap_mode,
@@ -1560,7 +1560,7 @@ def apply_gross_sizing_book_caps(
     sized: pd.DataFrame,
     *,
     target_gross_usd: float,
-    beta_floor: float,
+    delta_floor: float,
     strategy: dict[str, Any],
     shares_out_map: dict[str, float] | None = None,
     prev_gross_by_pair: dict[tuple[str, str], float] | None = None,
@@ -1624,7 +1624,7 @@ def apply_gross_sizing_book_caps(
             sized,
             gross,
             target_gross_usd=float(liquidity_anchor_usd),
-            beta_floor=float(beta_floor),
+            delta_floor=float(delta_floor),
             caps=caps,
             shares_out_map=som,
             cap_subset=cap_subset,
@@ -1662,7 +1662,7 @@ def apply_gross_sizing_book_caps(
     pair_caps = _compute_pair_weight_caps_array(
         sized,
         target_gross_usd=float(liquidity_anchor_usd),
-        beta_floor=float(beta_floor),
+        delta_floor=float(delta_floor),
         caps=caps,
         shares_out_map=som,
         cap_subset=cap_subset,
@@ -1686,7 +1686,7 @@ def apply_gross_sizing_book_caps(
     _, liq_binding_flat = _liquidity_tight_book_weights(
         sized,
         target_gross_usd=float(liquidity_anchor_usd),
-        beta_floor=float(beta_floor),
+        delta_floor=float(delta_floor),
         caps=caps,
         shares_out_map=som,
         cap_subset=cap_subset,
@@ -1748,17 +1748,17 @@ def compute_borrow_annual_series(df: pd.DataFrame, borrow_col: str | None) -> pd
 # -----------------------------
 # Portfolio sizing logic
 # -----------------------------
-def hedge_ratio_from_beta(beta: float, beta_floor: float) -> float:
+def hedge_ratio_from_beta(beta: float, delta_floor: float) -> float:
     b = float(beta) if np.isfinite(beta) else 1.0
-    b_abs = max(abs(b), float(beta_floor))
+    b_abs = max(abs(b), float(delta_floor))
     return 1.0 / b_abs
 
 
-def size_pair_long_short(gross_usd: float, beta: float, beta_floor: float) -> Tuple[float, float]:
+def size_pair_long_short(gross_usd: float, beta: float, delta_floor: float) -> Tuple[float, float]:
     """
     gross = long + |short| where short = -hedge_ratio * long
     """
-    hr = hedge_ratio_from_beta(beta, beta_floor)
+    hr = hedge_ratio_from_beta(beta, delta_floor)
     long_usd = float(gross_usd) / (1.0 + hr)
     short_usd = -(hr * long_usd)
     return long_usd, short_usd
@@ -1787,7 +1787,7 @@ def main() -> None:
     capital_usd = float(strategy["capital_usd"])
     gross_leverage = float(strategy["gross_leverage"])
     target_gross_usd = capital_usd * gross_leverage
-    beta_floor = float(strategy.get("beta_floor", 0.1))
+    delta_floor = float(strategy.get("delta_floor", 0.1))
 
     # Sleeves
     core = sleeves.get("core_leveraged", {})
@@ -1809,7 +1809,7 @@ def main() -> None:
     )
 
     core_rules = core.get("rules", {}) or {}
-    core_beta_min = float(core_rules.get("min_beta_used", 1.5))
+    core_delta_min = float(core_rules.get("min_delta_used", 1.5))
     yb_rules = yb_sleeve.get("rules", {}) or {}
     _yb_edge_yaml = yb_rules.get("min_net_edge_annual", None)
     if _yb_edge_yaml is None or (isinstance(_yb_edge_yaml, float) and not np.isfinite(_yb_edge_yaml)):
@@ -1852,7 +1852,7 @@ def main() -> None:
         f"post_b4_stock(nominal)={stock_nominal_w:.0%} "
         f"(core_frac={core_stock_frac:.1%} yb_frac={yb_stock_frac:.1%} of that) "
         f"b4={b4_w:.0%} (enabled={b4_enabled}) "
-        f"| beta_floor={beta_floor}"
+        f"| delta_floor={delta_floor}"
     )
     print(
         f"[INFO] borrow entry caps: b1={fmt_cap(b1_entry_borrow_cap)} "
@@ -1904,7 +1904,7 @@ def main() -> None:
         screened.to_csv(proposed_latest_csv, index=False)
         return
 
-    required_cols = {"ETF", "Underlying", "purgatory", "Beta"}
+    required_cols = {"ETF", "Underlying", "purgatory", "Delta"}
     missing = required_cols - set(screened.columns)
     if missing:
         raise ValueError(f"Screened CSV missing required columns: {sorted(missing)}. Found: {list(screened.columns)}")
@@ -1921,8 +1921,8 @@ def main() -> None:
         screened.to_csv(proposed_latest_csv, index=False)
         return
 
-    screened["Beta"] = pd.to_numeric(screened["Beta"], errors="coerce")
-    screened["beta_abs"] = screened["Beta"].abs()
+    screened["Delta"] = pd.to_numeric(screened["Delta"], errors="coerce")
+    screened["delta_abs"] = screened["Delta"].abs()
 
     # Coerce decay columns for weighting (may be absent in older CSVs)
     for _col in ("blended_gross_decay", "borrow_current", "net_decay_annual", "net_edge_p50_annual"):
@@ -1969,7 +1969,7 @@ def main() -> None:
         nonzero_mask = (proposed["long_usd"] != 0) | (proposed["short_usd"] != 0)
         proposed = proposed[nonzero_mask | (proposed["purgatory"] == True)]  # noqa: E712
 
-        cols_to_drop = ["Leverage", "ExpectedLeverage", "cagr_positive", "beta_abs"]
+        cols_to_drop = ["Leverage", "ExpectedLeverage", "cagr_positive", "delta_abs"]
         proposed = proposed.drop(columns=[c for c in cols_to_drop if c in proposed.columns], errors="ignore")
 
         dated_path = run_dir(args.run_date) / "proposed_trades.csv"
@@ -1983,7 +1983,7 @@ def main() -> None:
         # -----------------------------
         # Build sleeve membership
         # -----------------------------
-        # core_leveraged: high-beta bucket-1 path only (~not ``is_yieldboost``).
+        # core_leveraged: high-delta bucket-1 path only (~not ``is_yieldboost``).
         # yieldboost: ``is_yieldboost`` rows that pass borrow + min_net_edge on net_edge_p50.
         flow_program_etfs = {_norm_sym(x) for x in (flow_shorts or [])}
         is_yieldboost, in_b2_universe, in_flow_program = _b2_b4_universe_masks(
@@ -1998,8 +1998,8 @@ def main() -> None:
         b4_borrow_ok = (~np.isfinite(b)) | (b <= b4_entry_borrow_cap)
 
         # Exclude inverse (β < 0) ETFs — they belong to Bucket 4 / flow, not the stock sleeve
-        positive_beta = eligible["Beta"].gt(0)
-        negative_beta = eligible["Beta"].lt(0)
+        positive_beta = eligible["Delta"].gt(0)
+        negative_beta = eligible["Delta"].lt(0)
         if "inverse_shortable" in eligible.columns:
             inverse_shortable = eligible["inverse_shortable"].fillna(False).astype(bool)
         else:
@@ -2019,12 +2019,12 @@ def main() -> None:
         b4_vol_ok = np.isfinite(b4_und_vol) & (b4_und_vol >= b4_min_underlying_vol)
         core_pre_decay = (
             positive_beta
-            & eligible["beta_abs"].ge(core_beta_min)
+            & eligible["delta_abs"].ge(core_delta_min)
             & core_borrow_ok
         )
         core_neg_decay_reset = (
             positive_beta
-            & eligible["beta_abs"].ge(core_beta_min)
+            & eligible["delta_abs"].ge(core_delta_min)
             & core_borrow_ok
             & neg_net_decay
         )
@@ -2257,7 +2257,7 @@ def main() -> None:
                         fee_bps=float(b4_opt2.get("fee_bps", 1.0)),
                         slippage_bps=float(b4_opt2.get("slippage_bps", 20.0)),
                         partial_hedge_ratio=b4_partial_hedge_ratio,
-                        beta_floor=beta_floor,
+                        delta_floor=delta_floor,
                     )
                     gross_by_key = {
                         (_norm_sym(str(r["ETF"])), _norm_sym(str(r["Underlying"]))): float(r["gross_target_usd"])
@@ -2374,7 +2374,7 @@ def main() -> None:
         sized, _cap_diag = apply_gross_sizing_book_caps(
             sized,
             target_gross_usd=float(target_gross_usd),
-            beta_floor=float(beta_floor),
+            delta_floor=float(delta_floor),
             strategy=strategy,
             shares_out_map=shares_out_map,
         )
@@ -2460,7 +2460,7 @@ def main() -> None:
                     sized, cov_last_diag = apply_covariance_balance(
                         sized,
                         target_gross_usd=float(target_gross_usd),
-                        beta_floor=float(beta_floor),
+                        delta_floor=float(delta_floor),
                         strategy=strategy,
                         paths=paths,
                         shares_out_map=shares_out_map,
@@ -2486,7 +2486,7 @@ def main() -> None:
                 sized, _cov_diag = apply_covariance_balance(
                     sized,
                     target_gross_usd=float(target_gross_usd),
-                    beta_floor=float(beta_floor),
+                    delta_floor=float(delta_floor),
                     strategy=strategy,
                     paths=paths,
                     shares_out_map=shares_out_map,
@@ -2538,7 +2538,7 @@ def main() -> None:
             sized, _final_cap_diag = apply_gross_sizing_book_caps(
                 sized,
                 target_gross_usd=float(target_gross_usd),
-                beta_floor=float(beta_floor),
+                delta_floor=float(delta_floor),
                 strategy=strategy,
                 shares_out_map=shares_out_map,
             )
@@ -2581,7 +2581,7 @@ def main() -> None:
             optimal_sized, _optimal_diag = _run_book_cap_pipeline_quiet(
                 sized_pre_caps,
                 target_gross_usd=float(target_gross_usd),
-                beta_floor=float(beta_floor),
+                delta_floor=float(delta_floor),
                 strategy=strategy,
                 paths=paths,
                 shares_out_map=shares_out_map,
@@ -2619,7 +2619,7 @@ def main() -> None:
             (once for executable ``gross_target_usd``, once for ``optimal_gross_target_usd``).
             """
             frame = frame.copy()
-            frame["beta_used_abs"] = frame["beta_abs"].clip(lower=beta_floor).fillna(1.0)
+            frame["beta_used_abs"] = frame["delta_abs"].clip(lower=delta_floor).fillna(1.0)
             frame["hedge_ratio"] = 1.0 / frame["beta_used_abs"]
             b4m = frame["sleeve"].eq("inverse_decay_bucket4")
             sm = ~b4m
@@ -2791,7 +2791,7 @@ def main() -> None:
         )
         proposed = proposed[nonzero_mask | (proposed["purgatory"] == True)]  # noqa: E712
 
-        cols_to_drop = ["Leverage", "ExpectedLeverage", "cagr_positive", "beta_abs"]
+        cols_to_drop = ["Leverage", "ExpectedLeverage", "cagr_positive", "delta_abs"]
         proposed = proposed.drop(columns=[c for c in cols_to_drop if c in proposed.columns], errors="ignore")
 
         dated_path = run_dir(args.run_date) / "proposed_trades.csv"
@@ -2814,7 +2814,7 @@ def main() -> None:
                 "Underlying",
                 "sleeve",
                 "strategy_tag",
-                "Beta",
+                "Delta",
                 "borrow_current",
                 "optimal_gross_target_usd",
                 "optimal_long_usd",

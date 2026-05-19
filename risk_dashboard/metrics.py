@@ -208,7 +208,7 @@ def _bucket_reconciles(totals: dict[str, Any]) -> tuple[bool, str]:
 
     Bucket gross/net components (b1 + b2 + b4) must sum to within 1% of
     the book aggregate. Bucket 3 is intentionally excluded because it is
-    a beta-normalized hedge OVERLAY (sum of |beta| * notional for
+    a delta-normalized hedge OVERLAY (sum of |beta| * notional for
     inverse / flow-hedge ETFs only), not a share-notional bucket -
     including it would double-count those legs against book gross.
 
@@ -604,7 +604,7 @@ def compute_data_quality(
     totals = totals or {}
     book_gross = float(totals.get("gross_exposure_total", 0.0) or 0.0)
     book_net = float(totals.get("net_exposure_total", 0.0) or 0.0)
-    # b1+b2+b4 only - bucket_3 is a beta-normalized overlay and excluded
+    # b1+b2+b4 only - bucket_3 is a delta-normalized overlay and excluded
     # to match the sleeve-attribution gate in ``_bucket_reconciles``.
     _reconcile_buckets = ("bucket_1", "bucket_2", "bucket_4")
     bucket_gross = sum(
@@ -702,7 +702,7 @@ def compute_scenario_panel(
 ) -> dict[str, Any]:
     """Compute deterministic first-pass shock P&L from current exposures.
 
-    If ``factor_panel`` is supplied, an additional family of beta-adjusted
+    If ``factor_panel`` is supplied, an additional family of delta-adjusted
     SPX shocks is appended that uses curated underlying-to-SPY betas.
     """
     limits = limits or DEFAULT_LIMITS
@@ -849,14 +849,14 @@ def compute_scenario_panel(
     if factor_panel and factor_panel.get("available"):
         factor_rows = factor_panel.get("rows", [])
         for shock_pct, label_id, label in (
-            (-0.03, "spx_beta_down_3", "SPX -3% (beta-adj)"),
-            (-0.05, "spx_beta_down_5", "SPX -5% (beta-adj)"),
-            (-0.10, "spx_beta_down_10", "SPX -10% (beta-adj)"),
-            (0.05, "spx_beta_up_5", "SPX +5% (beta-adj)"),
+            (-0.03, "spx_beta_down_3", "SPX -3% (delta-adj)"),
+            (-0.05, "spx_beta_down_5", "SPX -5% (delta-adj)"),
+            (-0.10, "spx_beta_down_10", "SPX -10% (delta-adj)"),
+            (0.05, "spx_beta_up_5", "SPX +5% (delta-adj)"),
         ):
             contributors: list[dict[str, Any]] = []
             for r in factor_rows:
-                pnl = r["beta_weighted_net_usd"] * shock_pct
+                pnl = r["delta_weighted_net_usd"] * shock_pct
                 if pnl == 0:
                     continue
                 contributors.append(
@@ -866,11 +866,11 @@ def compute_scenario_panel(
                         "symbols": r.get("symbols", ""),
                         "pnl_usd": pnl,
                         "driver": f"SPX {shock_pct:+.0%} x beta {r['beta_to_spy']:+.2f}"
-                                  + (" (default)" if r["beta_source"] == "default" else ""),
+                                  + (" (default)" if r["delta_source"] == "default" else ""),
                         "net_notional_usd": r.get("net_notional_usd", 0.0),
                         "gross_notional_usd": r.get("gross_notional_usd", 0.0),
                         "beta_to_spy": r["beta_to_spy"],
-                        "beta_source": r["beta_source"],
+                        "delta_source": r["delta_source"],
                     }
                 )
             scenarios.append(
@@ -938,7 +938,7 @@ def compute_factor_panel(
     bucket reconciliation is broken. Beta source flags propagate so the
     UI can show coverage honestly.
 
-    ``beta_results`` (Phase I): dict of ``{underlying_upper: BetaResult
+    ``beta_results`` (Phase I): dict of ``{underlying_upper: DeltaResult
     dict}`` from ``risk_dashboard.beta_loader.compute_betas``. When
     supplied, computed betas override the curated map and the panel
     also carries per-name ``beta_to_ndx`` / ``beta_to_rut`` /
@@ -970,11 +970,11 @@ def compute_factor_panel(
         sector = meta["sector"]
         sector_source = meta["sector_source"]
         beta_to_spy = meta["beta_to_spy"]
-        beta_source = meta["beta_source"]
+        delta_source = meta["delta_source"]
         beta_to_ndx: float | None = None
         beta_to_rut: float | None = None
-        beta_se: float | None = None
-        beta_n_obs: int | None = None
+        delta_se: float | None = None
+        delta_n_obs: int | None = None
         beta_r2: float | None = None
         regime_vol_pct: float | None = None
         shrinkage_applied: bool | None = None
@@ -983,13 +983,13 @@ def compute_factor_panel(
             if br:
                 provenance = br.get("provenance", "")
                 if provenance in ("computed", "curated_fallback", "default_fallback"):
-                    beta_source = provenance
+                    delta_source = provenance
                 if br.get("beta_to_spy") is not None:
                     beta_to_spy = float(br["beta_to_spy"])
                 beta_to_ndx = br.get("beta_to_ndx")
                 beta_to_rut = br.get("beta_to_rut")
-                beta_se = br.get("beta_se")
-                beta_n_obs = br.get("n_obs")
+                delta_se = br.get("delta_se")
+                delta_n_obs = br.get("n_obs")
                 beta_r2 = br.get("r2")
                 regime_vol_pct = br.get("regime_vol_pct")
                 shrinkage_applied = bool(br.get("shrinkage_applied"))
@@ -1009,29 +1009,29 @@ def compute_factor_panel(
                 "beta_to_spy": beta_to_spy,
                 "beta_to_ndx": beta_to_ndx,
                 "beta_to_rut": beta_to_rut,
-                "beta_se": beta_se,
-                "beta_n_obs": beta_n_obs,
+                "delta_se": delta_se,
+                "delta_n_obs": delta_n_obs,
                 "beta_r2": beta_r2,
                 "regime_vol_pct": regime_vol_pct,
-                "beta_source": beta_source,
+                "delta_source": delta_source,
                 "shrinkage_applied": shrinkage_applied,
-                "beta_weighted_net_usd": beta_net,
-                "beta_weighted_gross_usd": beta_gross,
+                "delta_weighted_net_usd": beta_net,
+                "delta_weighted_gross_usd": beta_gross,
             }
         )
 
     total_net = sum(r["net_notional_usd"] for r in rows)
     total_gross = sum(r["gross_notional_usd"] for r in rows)
-    total_beta_net = sum(r["beta_weighted_net_usd"] for r in rows)
-    total_beta_gross = sum(r["beta_weighted_gross_usd"] for r in rows)
+    total_beta_net = sum(r["delta_weighted_net_usd"] for r in rows)
+    total_beta_gross = sum(r["delta_weighted_gross_usd"] for r in rows)
     trusted_sources = {"curated", "computed", "curated_fallback"}
     known_beta_gross = sum(
-        r["gross_notional_usd"] for r in rows if r["beta_source"] in trusted_sources
+        r["gross_notional_usd"] for r in rows if r["delta_source"] in trusted_sources
     )
     coverage = (known_beta_gross / total_gross) if total_gross > 0 else 0.0
     provenance_counts: dict[str, int] = {}
     for r in rows:
-        key = r["beta_source"] or "unknown"
+        key = r["delta_source"] or "unknown"
         provenance_counts[key] = provenance_counts.get(key, 0) + 1
 
     sector_map: dict[str, dict[str, Any]] = {}
@@ -1044,37 +1044,37 @@ def compute_factor_panel(
                 "n_names": 0,
                 "net_notional_usd": 0.0,
                 "gross_notional_usd": 0.0,
-                "beta_weighted_net_usd": 0.0,
-                "beta_weighted_gross_usd": 0.0,
+                "delta_weighted_net_usd": 0.0,
+                "delta_weighted_gross_usd": 0.0,
             },
         )
         bucket["n_names"] += 1
         bucket["net_notional_usd"] += r["net_notional_usd"]
         bucket["gross_notional_usd"] += r["gross_notional_usd"]
-        bucket["beta_weighted_net_usd"] += r["beta_weighted_net_usd"]
-        bucket["beta_weighted_gross_usd"] += r["beta_weighted_gross_usd"]
+        bucket["delta_weighted_net_usd"] += r["delta_weighted_net_usd"]
+        bucket["delta_weighted_gross_usd"] += r["delta_weighted_gross_usd"]
     by_sector = sorted(
         sector_map.values(),
-        key=lambda r: abs(r["beta_weighted_net_usd"]),
+        key=lambda r: abs(r["delta_weighted_net_usd"]),
         reverse=True,
     )
 
     longs = sorted(
-        [r for r in rows if r["beta_weighted_net_usd"] > 0],
-        key=lambda r: r["beta_weighted_net_usd"],
+        [r for r in rows if r["delta_weighted_net_usd"] > 0],
+        key=lambda r: r["delta_weighted_net_usd"],
         reverse=True,
     )[:12]
     shorts = sorted(
-        [r for r in rows if r["beta_weighted_net_usd"] < 0],
-        key=lambda r: r["beta_weighted_net_usd"],
+        [r for r in rows if r["delta_weighted_net_usd"] < 0],
+        key=lambda r: r["delta_weighted_net_usd"],
     )[:12]
 
     totals = {
         "n_underlyings": len(rows),
         "net_notional_usd": total_net,
         "gross_notional_usd": total_gross,
-        "beta_weighted_net_usd": total_beta_net,
-        "beta_weighted_gross_usd": total_beta_gross,
+        "delta_weighted_net_usd": total_beta_net,
+        "delta_weighted_gross_usd": total_beta_gross,
         "net_beta_to_spy": (total_beta_net / nav_usd) if nav_usd > 0 else None,
         "gross_beta_to_spy": (total_beta_gross / nav_usd) if nav_usd > 0 else None,
         "beta_coverage_gross_pct": coverage,
@@ -1134,7 +1134,7 @@ def compute_concentration_panel(
                 "pct_nav_gross": pct_nav,
                 "pct_book_gross": share,
                 "beta_to_spy": r["beta_to_spy"],
-                "beta_source": r["beta_source"],
+                "delta_source": r["delta_source"],
                 "status": status,
                 "limit": limits["single_name_gross_pct_nav"],
             }
@@ -1454,8 +1454,8 @@ def _load_screener_etf_meta(screener_csv: Path | None) -> dict[str, dict[str, An
             usecols=[
                 "ETF",
                 "Underlying",
-                "Beta",
-                "Beta_product_class",
+                "Delta",
+                "Delta_product_class",
                 "vol_etf_annual",
                 "vol_underlying_annual",
                 "borrow_fee_annual",
@@ -1471,9 +1471,9 @@ def _load_screener_etf_meta(screener_csv: Path | None) -> dict[str, dict[str, An
         out[etf] = {
             "underlying": _clean_str(r.get("Underlying")).upper(),
             "beta_to_underlying": (
-                float(r.get("Beta")) if pd.notna(r.get("Beta")) else None
+                float(r.get("Delta")) if pd.notna(r.get("Delta")) else None
             ),
-            "product_class": _clean_str(r.get("Beta_product_class")),
+            "product_class": _clean_str(r.get("Delta_product_class")),
             "vol_etf_annual": (
                 float(r.get("vol_etf_annual"))
                 if pd.notna(r.get("vol_etf_annual"))
@@ -1494,7 +1494,7 @@ def _load_screener_etf_meta(screener_csv: Path | None) -> dict[str, dict[str, An
 
 
 def _leverage_from_product_class(product_class: str, beta: float | None = None) -> float:
-    """Map screener Beta_product_class -> LETF leverage factor ``k``."""
+    """Map screener Delta_product_class -> LETF leverage factor ``k``."""
     if beta is not None and abs(beta) > 0.25:
         if abs(beta - 2.0) < 0.25:
             return 2.0
@@ -1558,7 +1558,7 @@ def compute_slide_risk_panel(
     horizons_days: tuple[int, ...] = SLIDE_HORIZONS_DAYS,
     limits: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Maven-style slide risk: beta-adjusted SPX / NDX / RUT shock strips.
+    """Maven-style slide risk: delta-adjusted SPX / NDX / RUT shock strips.
 
     For each (index, shock_pct):
         * instantaneous P&L = sum_i (net_notional_i * beta_to_index_i * shock)
@@ -1610,19 +1610,19 @@ def compute_slide_risk_panel(
     indices_out: list[dict[str, Any]] = []
     worst_shock: dict[str, Any] | None = None
     for idx_key in ("spy", "ndx", "rut"):
-        beta_field = f"beta_to_{idx_key}"
+        delta_field = f"beta_to_{idx_key}"
         coverage_gross = 0.0
         total_gross = 0.0
         for e in enriched:
             total_gross += abs(e["net_notional_usd"])
-            if e.get(beta_field) is not None:
+            if e.get(delta_field) is not None:
                 coverage_gross += abs(e["net_notional_usd"])
 
         shock_rows: list[dict[str, Any]] = []
         for shock_pct in shocks:
             per_name_pnl_t0: list[dict[str, Any]] = []
             for e in enriched:
-                beta = e.get(beta_field)
+                beta = e.get(delta_field)
                 if beta is None:
                     continue
                 expected_return = beta * shock_pct
@@ -1632,7 +1632,7 @@ def compute_slide_risk_panel(
                         "underlying": e["underlying"],
                         "symbols": e["symbols"],
                         "net_notional_usd": e["net_notional_usd"],
-                        "beta": beta,
+                        "delta": delta,
                         "expected_return": expected_return,
                         "pnl_t0_usd": pnl_t0,
                     }
@@ -1718,7 +1718,7 @@ def compute_slide_risk_panel(
                 "key": idx_key,
                 "shock_rows": shock_rows,
                 "coverage_pct": coverage_pct,
-                "n_names_covered": sum(1 for e in enriched if e.get(beta_field) is not None),
+                "n_names_covered": sum(1 for e in enriched if e.get(delta_field) is not None),
                 "n_names_total": len(enriched),
             }
         )
@@ -1921,7 +1921,7 @@ def compute_vol_shock_panel(
     """Two strips: VIX absolute moves (vega P&L) + realized-vol multipliers
     (LETF decay over T+``decay_horizon_days``).
 
-    Vega: per-leg by Beta_product_class, signed by net_notional direction.
+    Vega: per-leg by Delta_product_class, signed by net_notional direction.
     Vol regime: per-leg LETF decay; sums signed leg decay so a short LETF
     position registers as a vol-spike *beneficiary*.
     """

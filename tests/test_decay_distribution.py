@@ -189,11 +189,11 @@ def test_enrich_with_decay_distribution_populates_new_columns_and_caches_per_und
     tr_map = {"QQQ": tr_qqq, "TSLA": tr_tsla}
 
     df = pd.DataFrame([
-        {"ETF": "TQQQ", "Underlying": "QQQ", "Beta": 3.0,
+        {"ETF": "TQQQ", "Underlying": "QQQ", "Delta": 3.0,
          "expected_gross_decay_annual": 0.10},
-        {"ETF": "QLD",  "Underlying": "QQQ", "Beta": 2.0,
+        {"ETF": "QLD",  "Underlying": "QQQ", "Delta": 2.0,
          "expected_gross_decay_annual": 0.04},
-        {"ETF": "TSLL", "Underlying": "TSLA", "Beta": 2.0,
+        {"ETF": "TSLL", "Underlying": "TSLA", "Delta": 2.0,
          "expected_gross_decay_annual": 0.30},
     ])
 
@@ -242,7 +242,7 @@ def test_enrich_with_decay_distribution_populates_new_columns_and_caches_per_und
 
 def test_enrich_falls_back_to_simple_ito_when_underlying_missing():
     df = pd.DataFrame([
-        {"ETF": "OBSCURE", "Underlying": "NEW", "Beta": 2.0,
+        {"ETF": "OBSCURE", "Underlying": "NEW", "Delta": 2.0,
          "expected_gross_decay_annual": 0.08},
     ])
     # tr_map intentionally empty — no history for NEW.
@@ -398,7 +398,7 @@ def test_simple_ito_fallback_records_panel_length_in_n_obs():
     tr = pd.Series(levels, index=idx, name="SHORT")
 
     df = pd.DataFrame([
-        {"ETF": "TSHORT", "Underlying": "SHORT", "Beta": 2.0,
+        {"ETF": "TSHORT", "Underlying": "SHORT", "Delta": 2.0,
          "expected_gross_decay_annual": 0.09},
     ])
     out = enrich_with_decay_distribution(df, {"SHORT": tr}, horizon_days=252)

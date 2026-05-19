@@ -19,7 +19,7 @@ def test_normalize_bucket_triple() -> None:
 def test_build_bucket4_pair_registry_excludes_flow_shorts(tmp_path) -> None:
     screened = tmp_path / "screened.csv"
     screened.write_text(
-        "ETF,Underlying,Beta\n"
+        "ETF,Underlying,Delta\n"
         "APLZ,APLD,-2.0\n"
         "SH,S&P500,-1.0\n"
         "TQQQ,QQQ,3.0\n",
@@ -52,12 +52,12 @@ def test_held_exposure_bucket124_weights_b4_only() -> None:
         ]
     )
     etf_to_under = {"APLZ": "APLD"}
-    etf_to_beta = {"APLZ": -2.0}
+    etf_to_delta = {"APLZ": -2.0}
     w1, w2, w4 = held_exposure_bucket124_weights(
         "APLD",
         pos,
         etf_to_under,
-        etf_to_beta,
+        etf_to_delta,
         b4_etf_syms={"APLZ"},
     )
     assert w4 == 1.0
@@ -66,7 +66,7 @@ def test_held_exposure_bucket124_weights_b4_only() -> None:
 
 
 def test_compute_bucket4_pair_exposure_net_near_hedged() -> None:
-    registry = pd.DataFrame([{"etf": "APLZ", "underlying": "APLD", "beta": -2.0, "partial_hedge_ratio": 0.75}])
+    registry = pd.DataFrame([{"etf": "APLZ", "underlying": "APLD", "delta": -2.0, "partial_hedge_ratio": 0.75}])
     pos = pd.DataFrame(
         [
             {"symbol": "APLZ", "position": -100, "markPrice": 10.0, "fxRateToBase": 1.0},
@@ -83,7 +83,7 @@ def test_compute_bucket4_pair_exposure_net_near_hedged() -> None:
 
 
 def test_pair_exposure_uses_exact_b4_share_count() -> None:
-    registry = pd.DataFrame([{"etf": "APLZ", "underlying": "APLD", "beta": -2.0, "partial_hedge_ratio": 1.0}])
+    registry = pd.DataFrame([{"etf": "APLZ", "underlying": "APLD", "delta": -2.0, "partial_hedge_ratio": 1.0}])
     pos = pd.DataFrame(
         [
             {"symbol": "APLZ", "position": -100, "markPrice": 10.0, "fxRateToBase": 1.0},
@@ -111,13 +111,13 @@ def test_realized_ratio_map_includes_bucket_4() -> None:
         ]
     )
     etf_to_under = {"APLZ": "APLD"}
-    etf_to_beta = {"APLZ": -2.0}
-    m = build_underlying_realized_bucket_ratio_map(trades, etf_to_under, etf_to_beta)
+    etf_to_delta = {"APLZ": -2.0}
+    m = build_underlying_realized_bucket_ratio_map(trades, etf_to_under, etf_to_delta)
     assert m["APLD"]["b4"] == 1.0
 
 
-def test_load_plan_sleeve_bucket_usd_buckets_by_beta(tmp_path) -> None:
-    """Plan rows are aggregated into b1/b2/b4 based on ETF beta sign/size."""
+def test_load_plan_sleeve_bucket_usd_buckets_by_delta(tmp_path) -> None:
+    """Plan rows are aggregated into b1/b2/b4 based on ETF delta sign/size."""
     plan = tmp_path / "proposed_trades.csv"
     plan.write_text(
         "ETF,Underlying,sleeve,long_usd\n"
@@ -128,14 +128,14 @@ def test_load_plan_sleeve_bucket_usd_buckets_by_beta(tmp_path) -> None:
         "MSDD,MSTR,inverse_decay_bucket4,-2600\n",
         encoding="utf-8",
     )
-    etf_to_beta = {
+    etf_to_delta = {
         "MSTU": 2.0,
         "MSTX": 2.0,
         "MTYY": 0.37,
         "MSTZ": -2.0,
         "MSDD": -2.0,
     }
-    out = load_plan_sleeve_bucket_usd(plan, etf_to_beta)
+    out = load_plan_sleeve_bucket_usd(plan, etf_to_delta)
     assert "MSTR" in out
     assert out["MSTR"]["b1"] == 1400.0
     assert out["MSTR"]["b2"] == 15000.0
@@ -151,9 +151,9 @@ def test_pair_exposure_emits_underlying_once_per_underlying() -> None:
     """Multiple inverse ETFs for one underlying must not duplicate the under leg."""
     registry = pd.DataFrame(
         [
-            {"etf": "MSDD", "underlying": "MSTR", "beta": -2.0, "partial_hedge_ratio": 1.0},
-            {"etf": "MSTZ", "underlying": "MSTR", "beta": -2.0, "partial_hedge_ratio": 1.0},
-            {"etf": "SMST", "underlying": "MSTR", "beta": -2.0, "partial_hedge_ratio": 1.0},
+            {"etf": "MSDD", "underlying": "MSTR", "delta": -2.0, "partial_hedge_ratio": 1.0},
+            {"etf": "MSTZ", "underlying": "MSTR", "delta": -2.0, "partial_hedge_ratio": 1.0},
+            {"etf": "SMST", "underlying": "MSTR", "delta": -2.0, "partial_hedge_ratio": 1.0},
         ]
     )
     pos = pd.DataFrame(

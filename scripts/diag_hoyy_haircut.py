@@ -35,7 +35,7 @@ def main() -> None:
         "AMYY", "BBYY", "COYY", "HOYY", "IOYY", "FBYY", "MTYY", "QBY", "SMYY", "XBTY",
     ]
     sub = screened[screened["ETF"].isin(yb_etfs)].copy().reset_index(drop=True)
-    sub["beta_abs"] = sub["Beta"].astype(float).abs()
+    sub["delta_abs"] = sub["Delta"].astype(float).abs()
 
     w = _decay_score_weights(sub, yb_w, sleeve_name="yieldboost")
     sub["gross_target_usd"] = 1_600_000.0 * w
@@ -52,7 +52,7 @@ def main() -> None:
     out, diag = apply_gross_sizing_book_caps(
         sub,
         target_gross_usd=3_200_000.0,
-        beta_floor=0.1,
+        delta_floor=0.1,
         strategy=strategy,
         shares_out_map=shares_out_map,
     )

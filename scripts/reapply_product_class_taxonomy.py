@@ -5,7 +5,7 @@ What this script does:
   1. Re-derives ``product_class`` from the (Beta, Leverage, is_yieldboost)
      triplet using the new ``screener_v2_fields._product_class`` taxonomy.
   2. Re-derives ``expected_decay_available`` from that taxonomy.
-  3. For ``passive_low_beta`` rows, nulls out the family of expected /
+  3. For ``passive_low_delta`` rows, nulls out the family of expected /
      distributional decay columns (Itô identity gives ~0 around β=1, so any
      value there is at best noise; the dashboard falls back to realized).
   4. Writes the file back in place AND mirrors to today's dated run dir.
@@ -73,7 +73,7 @@ def reapply(input_csv: Path) -> pd.DataFrame:
     new_class: list[str] = []
     new_avail: list[bool] = []
     for _, row in df.iterrows():
-        beta = row.get("Beta")
+        beta = row.get("Delta")
         lev = row.get("Leverage") if "Leverage" in df.columns else None
         is_yb = _truthy(row.get("is_yieldboost", False))
         cls = _product_class(lev, beta, is_yieldboost=is_yb)
@@ -92,7 +92,7 @@ def reapply(input_csv: Path) -> pd.DataFrame:
     df["product_class"] = new_class
     df["expected_decay_available"] = new_avail
 
-    passive_mask = df["product_class"].astype(str).eq("passive_low_beta")
+    passive_mask = df["product_class"].astype(str).eq("passive_low_delta")
     n_passive = int(passive_mask.sum())
     if n_passive:
         for col in _PASSIVE_NULL_COLS:
@@ -100,14 +100,14 @@ def reapply(input_csv: Path) -> pd.DataFrame:
                 df.loc[passive_mask, col] = np.nan
         if "expected_gross_decay_dist_model" in df.columns:
             df.loc[passive_mask, "expected_gross_decay_dist_model"] = (
-                "passive_low_beta_na"
+                "passive_low_delta_na"
             )
         if "expected_gross_decay_reliable" in df.columns:
             df.loc[passive_mask, "expected_gross_decay_reliable"] = False
 
     counts = df["product_class"].value_counts(dropna=False).to_dict()
     print(f"[REAPPLY] product_class counts: {counts}")
-    print(f"[REAPPLY] passive_low_beta rows nulled: {n_passive}")
+    print(f"[REAPPLY] passive_low_delta rows nulled: {n_passive}")
 
     return df
 

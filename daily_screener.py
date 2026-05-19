@@ -51,11 +51,11 @@ import pandas as pd
 import requests
 import yfinance as yf
 
-from beta_estimator import (
-    BetaPrior,
-    BetaResult,
+from delta_estimator import (
+    DeltaPrior,
+    DeltaResult,
     build_yieldboost_family_priors,
-    compute_beta_for_hedging,
+    compute_delta_for_hedging,
 )
 from decay_distribution import enrich_with_decay_distribution
 from expense_ratios import fetch_expense_ratios
@@ -1145,7 +1145,7 @@ _YIELDBOOST_PAIRS_NORMED = [
 ]
 
 
-def classify_beta_product_class(row: pd.Series) -> str:
+def classify_delta_product_class(row: pd.Series) -> str:
     """Classify a universe row for the beta-prior router.
 
     The classification is *independent* of any realized β (we need the
@@ -1199,7 +1199,7 @@ def classify_beta_product_class(row: pd.Series) -> str:
     return "unknown"
 
 
-def add_betas(
+def add_deltas(
     universe_df: pd.DataFrame,
     tr_map: dict[str, pd.Series],
     min_days: int = BETA_MIN_DAYS,
@@ -1207,16 +1207,16 @@ def add_betas(
     cc_default_mu: float = 0.55,
     cc_default_tau: float = 30.0,
 ) -> pd.DataFrame:
-    """Populate Beta + posterior diagnostics via :mod:`beta_estimator`.
+    """Populate Beta + posterior diagnostics via :mod:`delta_estimator`.
 
     Outputs (CSV-stable):
-        Beta, Beta_n_obs, Beta_source        — back-compat (Beta_source
+        Beta, Delta_n_obs, Delta_source        — back-compat (Delta_source
             becomes ``posterior.<prior_source>`` for the new path,
             ``imputed_*`` for fallthrough).
-        Beta_se, Beta_resid_sigma_annual,
-        Beta_horizon_chosen, Beta_quality,
-        Beta_prior_mu, Beta_prior_tau,
-        Beta_prior_source, Beta_product_class.
+        Delta_se, Delta_resid_sigma_annual,
+        Delta_horizon_chosen, Delta_quality,
+        Delta_prior_mu, Delta_prior_tau,
+        Delta_prior_source, Delta_product_class.
 
     The two LETF classes are the only ones that read row[``Leverage``]
     for the prior mean; income / vol-ETP / unknown rows use class-level
@@ -1225,8 +1225,8 @@ def add_betas(
 
     df = universe_df.copy()
 
-    df["Beta_product_class"] = df.apply(classify_beta_product_class, axis=1)
-    pclass_counts = df["Beta_product_class"].value_counts().to_dict()
+    df["Delta_product_class"] = df.apply(classify_delta_product_class, axis=1)
+    pclass_counts = df["Delta_product_class"].value_counts().to_dict()
     print(
         "[BETA] Product class counts: "
         + " | ".join(f"{k}={v}" for k, v in pclass_counts.items())
@@ -1271,7 +1271,7 @@ def add_betas(
     for _, row in df.iterrows():
         etf = _norm_sym(row["ETF"])
         und = _norm_sym(row["Underlying"]) if pd.notna(row.get("Underlying")) else None
-        product_class = str(row["Beta_product_class"])
+        product_class = str(row["Delta_product_class"])
         lev_raw = row.get("Leverage")
         try:
             lev_f = float(lev_raw) if pd.notna(lev_raw) else None
@@ -1280,17 +1280,17 @@ def add_betas(
 
         # Build prior. ONLY letf_long / letf_inverse may use nominal L.
         try:
-            prior = BetaPrior.for_row(
+            prior = DeltaPrior.for_row(
                 product_class=product_class,
                 nominal_leverage=lev_f,
                 underlying=und,
-                peer_betas=yb_priors,
+                peer_deltas=yb_priors,
                 cc_default_mu=cc_default_mu,
                 cc_default_tau=cc_default_tau,
             )
         except ValueError:
             # LETF row missing nominal leverage → impute via fallback path
-            prior = BetaPrior(
+            prior = DeltaPrior(
                 mu=0.0,
                 tau=15.0,
                 source="empirical_bayes_global",
@@ -1310,13 +1310,13 @@ def add_betas(
             prior_sources.append(prior.source)
             continue
 
-        result: BetaResult = compute_beta_for_hedging(
+        result: DeltaResult = compute_delta_for_hedging(
             tr_map[etf], tr_map[und], prior, min_days=min_days
         )
-        betas.append(float(result.beta))
+        betas.append(float(result.delta))
         nobs.append(int(result.n_obs))
         sources.append(str(result.source))
-        ses.append(float(result.beta_se))
+        ses.append(float(result.delta_se))
         resid_sigmas.append(float(result.resid_sigma_annual))
         horizons.append(int(result.horizon))
         qualities.append(str(result.quality))
@@ -1324,18 +1324,18 @@ def add_betas(
         prior_taus.append(float(result.prior_tau))
         prior_sources.append(str(result.prior_source))
 
-    df["Beta"] = betas
-    df["Beta_n_obs"] = nobs
-    df["Beta_source"] = sources
-    df["Beta_se"] = ses
-    df["Beta_resid_sigma_annual"] = resid_sigmas
-    df["Beta_horizon_chosen"] = horizons
-    df["Beta_quality"] = qualities
-    df["Beta_prior_mu"] = prior_mus
-    df["Beta_prior_tau"] = prior_taus
-    df["Beta_prior_source"] = prior_sources
+    df["Delta"] = betas
+    df["Delta_n_obs"] = nobs
+    df["Delta_source"] = sources
+    df["Delta_se"] = ses
+    df["Delta_resid_sigma_annual"] = resid_sigmas
+    df["Delta_horizon_chosen"] = horizons
+    df["Delta_quality"] = qualities
+    df["Delta_prior_mu"] = prior_mus
+    df["Delta_prior_tau"] = prior_taus
+    df["Delta_prior_source"] = prior_sources
 
-    src_counts = df["Beta_source"].value_counts().to_dict()
+    src_counts = df["Delta_source"].value_counts().to_dict()
     summary = " | ".join(f"{k}={v}" for k, v in src_counts.items())
     print(f"[BETA] {summary} | Total: {len(df)}")
     return df
@@ -1565,7 +1565,7 @@ def apply_sub2_borrow_floor(
 # (new-entry caps = ``entry_borrow_cap``).
 _FALLBACK = {
     "min_shares_available": 10,
-    "min_beta_days": 30,
+    "min_delta_days": 30,
     "borrow_floor_price_usd": 2.0,
 }
 
@@ -2199,7 +2199,7 @@ def _compute_gross_decay(
     When aligned history has fewer than ``min_days`` observations,
     returns ``None``. :func:`enrich_with_decay_and_vol` then uses
     **100 % expected** decay in ``blended_gross_decay`` (see module
-    constant ``_MIN_DAYS_DECAY`` and ``Beta_n_obs`` gate there).
+    constant ``_MIN_DAYS_DECAY`` and ``Delta_n_obs`` gate there).
 
     Existing callers that pass ``drop_split_suspect_weeks=True`` get
     translated into ``drop_split_suspect_days=True`` on the daily path.
@@ -2236,7 +2236,7 @@ def enrich_with_decay_and_vol(
       - expected_gross_decay_reliable: False if β<0 and we had to zero out λ̄_mgr
       - blended_gross_decay          : weighted mix of realized + expected
                                        (β≤0 or β>1.5); realized-only for 0<β≤1.5.
-                                       If ``Beta_n_obs`` < ``_MIN_DAYS_DECAY``
+                                       If ``Delta_n_obs`` < ``_MIN_DAYS_DECAY``
                                        (40), blend uses **100 % expected** only.
       - net_decay_annual             : realized − ETF borrow
       - decay_score                  : blended − ETF borrow (computed but omitted
@@ -2252,26 +2252,26 @@ def enrich_with_decay_and_vol(
     vols_etf_legacy = []     # legacy σ (simple, centered) kept for diagnostics
     decays = []              # daily-log realized decay (None if < _MIN_DAYS_DECAY obs)
     decays_legacy = []       # legacy weekly × 52 realized decay
-    betas_out, beta_nobs_out = [], []
-    ok_decay = ok_vol = ok_expected = betas_computed = 0
+    deltas_out, delta_nobs_out = [], []
+    ok_decay = ok_vol = ok_expected = deltas_computed = 0
 
     # ── PASS 1: betas, raw vols, realized decay ──
     for _, row in df.iterrows():
         etf = _norm_sym(row["ETF"])
         und = _norm_sym(row["Underlying"]) if pd.notna(row.get("Underlying")) else None
 
-        beta_f = float(row["Beta"]) if pd.notna(row.get("Beta")) else None
-        n_obs_i = int(row["Beta_n_obs"]) if pd.notna(row.get("Beta_n_obs")) else 0
+        delta_f = float(row["Delta"]) if pd.notna(row.get("Delta")) else None
+        n_obs_i = int(row["Delta_n_obs"]) if pd.notna(row.get("Delta_n_obs")) else 0
         exp_lev = float(row["Leverage"]) if pd.notna(row.get("Leverage")) else 2.0
 
-        # Fill missing β via the same shrunk estimator used in add_betas.
-        if beta_f is None and und and etf in tr_map and und in tr_map:
-            beta_f, n_obs_i, _src = compute_beta_shrunk(
+        # Fill missing β via the same shrunk estimator used in add_deltas.
+        if delta_f is None and und and etf in tr_map and und in tr_map:
+            delta_f, n_obs_i, _src = compute_beta_shrunk(
                 tr_map[etf], tr_map[und], exp_lev, min_days=min_days
             )
-            betas_computed += 1
-        betas_out.append(beta_f)
-        beta_nobs_out.append(n_obs_i)
+            deltas_computed += 1
+        deltas_out.append(delta_f)
+        delta_nobs_out.append(n_obs_i)
 
         # Itô-aligned σ: √(mean(log-return²) · 252). Matches the measure
         # used by the realized-decay estimator (daily log returns), so the
@@ -2287,20 +2287,20 @@ def enrich_with_decay_and_vol(
         # _compute_gross_decay → _compute_gross_decay_daily). Legacy
         # weekly × 52 retained in a diagnostic column below.
         decay = None
-        if beta_f and abs(beta_f) >= 0.1 and und and etf in tr_map and und in tr_map:
-            decay = _compute_gross_decay(tr_map[etf], tr_map[und], beta_f, label=etf)
+        if delta_f and abs(delta_f) >= 0.1 and und and etf in tr_map and und in tr_map:
+            decay = _compute_gross_decay(tr_map[etf], tr_map[und], delta_f, label=etf)
         decays.append(decay)
         if decay is not None: ok_decay += 1
 
         decay_legacy = None
-        if beta_f and abs(beta_f) >= 0.1 and und and etf in tr_map and und in tr_map:
+        if delta_f and abs(delta_f) >= 0.1 and und and etf in tr_map and und in tr_map:
             decay_legacy = _compute_gross_decay_weekly(
-                tr_map[etf], tr_map[und], beta_f, label=etf
+                tr_map[etf], tr_map[und], delta_f, label=etf
             )
         decays_legacy.append(decay_legacy)
 
-    df["Beta"] = betas_out
-    df["Beta_n_obs"] = beta_nobs_out
+    df["Delta"] = deltas_out
+    df["Delta_n_obs"] = delta_nobs_out
     df["vol_etf_annual"] = vols_etf_raw
     df["vol_etf_annual_legacy"] = vols_etf_legacy
     df["gross_decay_annual"] = decays
@@ -2363,9 +2363,9 @@ def enrich_with_decay_and_vol(
         implied_candidates: list[tuple[float, float, str]] = []
         realized_implied: list[float] = []
         for idx in df.index[mask]:
-            b = betas_out[idx]
+            b = deltas_out[idx]
             ve = vols_etf_raw[idx]
-            nobs = beta_nobs_out[idx]
+            nobs = delta_nobs_out[idx]
             if b and abs(b) >= 0.5 and ve and ve > 0 and nobs:
                 implied = float(ve) / abs(float(b))
                 weight = float(nobs) * abs(float(b))
@@ -2525,9 +2525,9 @@ def enrich_with_decay_and_vol(
             lambda x, u=und: _norm_sym(x) == u if pd.notna(x) else False)
         implied_legacy: list[tuple[float, float]] = []
         for idx in df.index[mask]:
-            b = betas_out[idx]
+            b = deltas_out[idx]
             ve = vols_etf_legacy[idx]
-            nobs = beta_nobs_out[idx]
+            nobs = delta_nobs_out[idx]
             if b and abs(b) >= 0.5 and ve and ve > 0 and nobs:
                 implied_legacy.append((float(ve) / abs(float(b)), float(nobs) * abs(float(b))))
 
@@ -2597,10 +2597,10 @@ def enrich_with_decay_and_vol(
         er_vals.append(er_val)
         er_sources.append(er_src)
 
-        beta_f = betas_out[i]
+        delta_f = deltas_out[i]
         mgr_borrow = 0.0
         reliable = True
-        if beta_f is not None and beta_f < 0:
+        if delta_f is not None and delta_f < 0:
             # Inverse LETF — manager pays borrow on the underlying. If we have
             # the underlying's borrow from IBKR FTP, use it; otherwise flag
             # the row as not-fully-reliable and fall back to 0.0.
@@ -2625,10 +2625,10 @@ def enrich_with_decay_and_vol(
         sigma_caps_per_row.append(sigma_cap_row)
 
         exp_decay = None
-        if beta_f and abs(beta_f) >= 0.1 and vol_und is not None and vol_und > 0:
+        if delta_f and abs(delta_f) >= 0.1 and vol_und is not None and vol_und > 0:
             f_used = float(er_val) if er_val is not None else 0.0
             exp_decay = expected_gross_decay(
-                beta_f,
+                delta_f,
                 vol_und,
                 expense_ratio=f_used,
                 risk_free_rate=risk_free_rate,
@@ -2641,10 +2641,10 @@ def enrich_with_decay_and_vol(
         # Legacy (simple-σ) expected decay — diagnostic only, so downstream
         # regressions can reproduce the old behaviour exactly.
         exp_decay_legacy = None
-        if beta_f and abs(beta_f) >= 0.1 and vol_und_legacy is not None and vol_und_legacy > 0:
+        if delta_f and abs(delta_f) >= 0.1 and vol_und_legacy is not None and vol_und_legacy > 0:
             f_used = float(er_val) if er_val is not None else 0.0
             exp_decay_legacy = expected_gross_decay(
-                beta_f,
+                delta_f,
                 vol_und_legacy,
                 expense_ratio=f_used,
                 risk_free_rate=risk_free_rate,
@@ -2674,12 +2674,12 @@ def enrich_with_decay_and_vol(
     for i, row in df.iterrows():
         realized = row.get("gross_decay_annual")
         expected = row.get("expected_gross_decay_annual")
-        beta_f = betas_out[i]
+        delta_f = deltas_out[i]
         etf = _norm_sym(row["ETF"]) if pd.notna(row.get("ETF")) else None
         und = _norm_sym(row["Underlying"]) if pd.notna(row.get("Underlying")) else None
         if (
             etf is None or und is None or etf not in tr_map or und not in tr_map
-            or beta_f is None or abs(beta_f) < 0.1
+            or delta_f is None or abs(delta_f) < 0.1
             or pd.isna(realized) or pd.isna(expected)
         ):
             continue
@@ -2693,7 +2693,7 @@ def enrich_with_decay_and_vol(
         repaired_decay = _compute_gross_decay(
             tr_map[etf],
             tr_map[und],
-            beta_f,
+            delta_f,
             label=etf,
             drop_split_suspect_weeks=True,
         )
@@ -2718,17 +2718,17 @@ def enrich_with_decay_and_vol(
     # Blended gross decay: trust realized more as n_obs grows.
     # For 0 < β ≤ 1.5 (beta-hedgeable single-stock sleeves), use realized only —
     # do not mix in theoretical expected decay.
-    # If Beta_n_obs < _MIN_DAYS_DECAY (40): insufficient history for the daily
+    # If Delta_n_obs < _MIN_DAYS_DECAY (40): insufficient history for the daily
     # realized estimator — use **100 % expected** in the blend (not weekly).
     # w_realized = min(1.0, n_obs / realized_trust_days) when n_obs >= _MIN_DAYS_DECAY.
     blended = []
     for _, row in df.iterrows():
         realized = row["gross_decay_annual"]
         expected = row["expected_gross_decay_annual"]
-        n_obs = int(row["Beta_n_obs"]) if pd.notna(row.get("Beta_n_obs")) else 0
-        beta_f = row.get("Beta")
-        beta_f = float(beta_f) if pd.notna(beta_f) else np.nan
-        realized_only = pd.notna(beta_f) and (beta_f > 0) and (beta_f <= 1.5)
+        n_obs = int(row["Delta_n_obs"]) if pd.notna(row.get("Delta_n_obs")) else 0
+        delta_f = row.get("Delta")
+        delta_f = float(delta_f) if pd.notna(delta_f) else np.nan
+        realized_only = pd.notna(delta_f) and (delta_f > 0) and (delta_f <= 1.5)
 
         if realized_only:
             blended.append(realized if pd.notna(realized) else np.nan)
@@ -2779,7 +2779,7 @@ def enrich_with_decay_and_vol(
     # by the second call below (with YAML-resolved bounds) in ``main()``.
     df = recompute_vol_ratio_gate(df, screener_cfg=None, verbose=False)
 
-    print(f"\n[DECAY] Beta OLS fill-ins: {betas_computed} | Vol: {ok_vol}/{len(df)} "
+    print(f"\n[DECAY] Beta OLS fill-ins: {deltas_computed} | Vol: {ok_vol}/{len(df)} "
           f"| Realized decay: {ok_decay}/{len(df)} | Expected decay: {ok_expected}/{len(df)}")
     return df
 
@@ -2861,7 +2861,7 @@ def recompute_vol_ratio_gate(
 
     vu_arr = pd.to_numeric(out.get("vol_underlying_annual"), errors="coerce")
     ve_arr = pd.to_numeric(out.get("vol_etf_annual"), errors="coerce")
-    b_arr = pd.to_numeric(out.get("Beta"), errors="coerce")
+    b_arr = pd.to_numeric(out.get("Delta"), errors="coerce")
 
     ratio_vals: list[float] = []
     outlier_flags: list[bool] = []
@@ -2933,7 +2933,7 @@ def estimate_margin_requirements(df: pd.DataFrame) -> pd.DataFrame:
 
     Hard-to-borrow or borrow-spiking symbols get 100% short margin.
     """
-    lev = df["Beta"].abs().fillna(1.0)
+    lev = df["Delta"].abs().fillna(1.0)
 
     df["maint_pct_long"]  = (lev * 0.25).clip(upper=1.0)
     df["maint_pct_short"] = (lev * 0.30).clip(upper=1.0)
@@ -3317,10 +3317,10 @@ def main() -> int:
     )
     print(f"[CONFIG] borrow_floor_price_usd=${borrow_floor_price_usd:.2f}")
 
-    # Resolve min_beta_days: CLI > config > fallback
-    min_beta_days = (args.min_beta_days
-                     or int(screener_cfg.get("min_beta_days", _FALLBACK["min_beta_days"])))
-    print(f"[CONFIG] min_beta_days={min_beta_days}")
+    # Resolve min_delta_days: CLI > config > fallback
+    min_delta_days = (args.min_delta_days
+                     or int(screener_cfg.get("min_delta_days", _FALLBACK["min_delta_days"])))
+    print(f"[CONFIG] min_delta_days={min_delta_days}")
 
     borrow_hist_path = args.borrow_history_path or os.environ.get("BORROW_HISTORY_PATH")
     if not borrow_hist_path:
@@ -3409,10 +3409,10 @@ def main() -> int:
     else:
         print("[IBKR-CHECK] Skipped (--skip-ibkr-check)")
 
-    universe = add_betas(universe, tr_map, min_days=min_beta_days)
+    universe = add_deltas(universe, tr_map, min_days=min_delta_days)
 
     # Save intermediate beta file
-    beta_csv = dated_dir / "all_pairs_with_betas.csv"
+    beta_csv = dated_dir / "all_pairs_with_deltas.csv"
     universe.to_csv(beta_csv, index=False)
     print(f"[BETA] Saved: {beta_csv}")
 
@@ -3509,7 +3509,7 @@ def main() -> int:
     screened = enrich_with_decay_and_vol(
         screened,
         tr_map,
-        min_days=min_beta_days,
+        min_days=min_delta_days,
         realized_trust_days=realized_trust_days,
         expense_ratios=expense_map,
         risk_free_rate=risk_free_rate,
@@ -3533,12 +3533,12 @@ def main() -> int:
     # Step 5c — Schema v2 (product_class, gross_edge_definition, anchor-shifted
     # net-edge bootstrap). The bootstrap reads ``expected_gross_decay_p50_annual``
     # from Step 5b to forward-anchor its realized block-bootstrap draws; rows
-    # without a meaningful expected forecast (passive_low_beta) skip the shift
+    # without a meaningful expected forecast (passive_low_delta) skip the shift
     # via the ``expected_decay_available`` gate inside enrich_screener_v2_fields.
     screened = enrich_screener_v2_fields(
         screened,
         tr_map,
-        min_days=min_beta_days,
+        min_days=min_delta_days,
         borrow_history_map=borrow_history_map,
         borrow_weight_halflife_days=float(args.borrow_weight_halflife_days),
         asof_date=asof_for_v2,
@@ -3550,12 +3550,12 @@ def main() -> int:
     # any "expected decay" we report there is at best noise. The distributional
     # forecast inherits the same problem (the cb factor multiplies the
     # lognormal IV quantiles by ~0). For the dashboard to consistently render
-    # "—" for passive_low_beta and fall back to the realized measure, we
+    # "—" for passive_low_delta and fall back to the realized measure, we
     # null-out the entire family of expected/distributional decay columns
     # for those rows here. See screener_v2_fields._product_class for the
     # taxonomy and _expected_decay_available for the policy.
     if "product_class" in screened.columns:
-        passive_mask = screened["product_class"].astype(str).eq("passive_low_beta")
+        passive_mask = screened["product_class"].astype(str).eq("passive_low_delta")
     else:
         passive_mask = pd.Series(False, index=screened.index)
     if passive_mask.any():
@@ -3580,13 +3580,13 @@ def main() -> int:
                 screened.loc[passive_mask, col] = np.nan
         if "expected_gross_decay_dist_model" in screened.columns:
             screened.loc[passive_mask, "expected_gross_decay_dist_model"] = (
-                "passive_low_beta_na"
+                "passive_low_delta_na"
             )
         if "expected_gross_decay_reliable" in screened.columns:
             screened.loc[passive_mask, "expected_gross_decay_reliable"] = False
         n_passive = int(passive_mask.sum())
         print(
-            f"[DECAY-DIST] passive_low_beta policy applied: nulled expected "
+            f"[DECAY-DIST] passive_low_delta policy applied: nulled expected "
             f"decay columns on {n_passive} row(s); dashboard falls back to realized."
         )
 
@@ -3606,9 +3606,9 @@ def main() -> int:
     # Bucket labels and Bucket 4 eligibility diagnostics.
     screened["bucket"] = np.select(
         [
-            pd.to_numeric(screened.get("Beta"), errors="coerce").lt(0.0),
-            pd.to_numeric(screened.get("Beta"), errors="coerce").gt(1.5),
-            pd.to_numeric(screened.get("Beta"), errors="coerce").gt(0.0),
+            pd.to_numeric(screened.get("Delta"), errors="coerce").lt(0.0),
+            pd.to_numeric(screened.get("Delta"), errors="coerce").gt(1.5),
+            pd.to_numeric(screened.get("Delta"), errors="coerce").gt(0.0),
         ],
         ["bucket_4", "bucket_1", "bucket_2"],
         default="",
@@ -3707,7 +3707,7 @@ def main() -> int:
     # Summary stats — terminal table mirrors the etf-dashboard headline grid:
     #   beta │ borrow │ gross realiz. │ exp. p50 │ p10/p90 │ net edge.
     # ``net_decay_annual`` is the dashboard-style net-edge column (realized
-    # gross decay minus borrow). For ``product_class == "passive_low_beta"``
+    # gross decay minus borrow). For ``product_class == "passive_low_delta"``
     # rows expected p50/p10/p90 are NaN (dashboard falls back to realized).
     valid_net = screened["net_decay_annual"].dropna()
     if len(valid_net) > 0:
@@ -3754,7 +3754,7 @@ def main() -> int:
         print(f"    {'-' * (len(hdr) - 4)}")
         for _, r in top_net.iterrows():
             etf_sym = str(r["ETF"])[:_W_ETF]
-            beta = r.get("Beta")
+            beta = r.get("Delta")
             borrow = r.get("borrow_current")
             gross = r.get("gross_decay_annual")
             exp_p50 = r.get("expected_gross_decay_p50_annual")

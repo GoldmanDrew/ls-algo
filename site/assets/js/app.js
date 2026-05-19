@@ -664,13 +664,13 @@
       { label: "Underlyings", value: String(t.n_underlyings ?? 0) },
       {
         label: "Beta-weighted net",
-        value: fmtUsdSigned(t.beta_weighted_net_usd),
+        value: fmtUsdSigned(t.delta_weighted_net_usd),
         sub: t.net_beta_to_spy == null ? "-" : t.net_beta_to_spy.toFixed(2) + "x NAV",
-        cls: signedClass(t.beta_weighted_net_usd),
+        cls: signedClass(t.delta_weighted_net_usd),
       },
       {
         label: "Beta-weighted gross",
-        value: fmtUsd(t.beta_weighted_gross_usd),
+        value: fmtUsd(t.delta_weighted_gross_usd),
         sub: t.gross_beta_to_spy == null ? "-" : t.gross_beta_to_spy.toFixed(2) + "x NAV",
       },
       {
@@ -705,10 +705,10 @@
             r.net_notional_usd
           )}</td>
             <td class="num">${fmtUsd(r.gross_notional_usd)}</td>
-            <td class="num ${signedClass(r.beta_weighted_net_usd)}">${fmtUsdSigned(
-            r.beta_weighted_net_usd
+            <td class="num ${signedClass(r.delta_weighted_net_usd)}">${fmtUsdSigned(
+            r.delta_weighted_net_usd
           )}</td>
-            <td class="num">${fmtUsd(r.beta_weighted_gross_usd)}</td>
+            <td class="num">${fmtUsd(r.delta_weighted_gross_usd)}</td>
           </tr>`
         )
         .join("")}</tbody></table>`;
@@ -724,14 +724,14 @@
             ""
           )}</span></td>
             <td>${safeText(r.sector)}</td>
-            <td class="num ${r.beta_source === "default" ? "dim" : ""}" title="${
-            r.beta_source
+            <td class="num ${r.delta_source === "default" ? "dim" : ""}" title="${
+            r.delta_source
           }">${r.beta_to_spy.toFixed(2)}</td>
             <td class="num ${signedClass(r.net_notional_usd)}">${fmtUsdSigned(
             r.net_notional_usd
           )}</td>
-            <td class="num ${signedClass(r.beta_weighted_net_usd)}">${fmtUsdSigned(
-            r.beta_weighted_net_usd
+            <td class="num ${signedClass(r.delta_weighted_net_usd)}">${fmtUsdSigned(
+            r.delta_weighted_net_usd
           )}</td>
           </tr>`
         )

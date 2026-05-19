@@ -176,7 +176,7 @@ Everything operational reads from this file. **Do not treat the table below as a
 | **`execution.*`** | Order style, timeouts, `dry_run`, parallelism, short-first behaviour. |
 | **`screener.*`** | Borrow “soft” cap, purgatory margin, whitelist hard cap, staleness rules. Flow borrow caps live under `portfolio.sleeves.flow_program.rules`. |
 | **`portfolio.rebalance.*`** | Minimum trade and net-exposure triggers used by `rebalance_strategy` and `harvest_underexposed_shorts`. |
-| **`portfolio.sleeves.core_leveraged`** | Core (levered long ETFs): `target_weight`, `min_beta_used`, optional **`min_net_decay_annual`**, **`net_decay_hysteresis`**, `weighting` (decay_score vs equal, caps, blend). |
+| **`portfolio.sleeves.core_leveraged`** | Core (levered long ETFs): `target_weight`, `min_delta_used`, optional **`min_net_decay_annual`**, **`net_decay_hysteresis`**, `weighting` (decay_score vs equal, caps, blend). |
 | **`portfolio.sleeves.yieldboost`** | YieldBoost / bucket‑2 sleeve: **`is_yieldboost`** names from the screener only, `rules.min_net_edge_annual`, `weighting`; budget vs core from **`target_weight`**. |
 | **`portfolio.sleeves.inverse_decay_bucket4`** | Inverse decay pairs: **`enabled`** master switch, borrow / vol / edge rules, **`partial_hedge_ratio`**, shares-outstanding cap, weighting. |
 | **`portfolio.sleeves.flow_program`** | Flow shorts universe, schedule, **`fixed_usd_per_week`** (or deployment base from YAML), **fixed weights** summing to **1.0**. |
@@ -211,7 +211,7 @@ Full operator playbook, edge-case table, and verification checklist live in [`SP
 ## Sleeves vs accounting “buckets”
 
 - **Sleeves** (`core_leveraged`, `yieldboost`, `inverse_decay_bucket4`, `flow_program`) are **portfolio construction** labels written into **`proposed_trades.csv`** and used by execution / rebalancing.
-- **Accounting buckets** (`bucket_1` … `bucket_4`) in **`ibkr_accounting.py`** are **attribution / reporting** groupings (e.g. high-beta levered vs inverse decay). They are related concepts but **not identical** to YAML sleeve names. When interpreting `pnl_bucket_*.csv`, read the accounting script headers.
+- **Accounting buckets** (`bucket_1` … `bucket_4`) in **`ibkr_accounting.py`** are **attribution / reporting** groupings (e.g. high-delta levered vs inverse decay). They are related concepts but **not identical** to YAML sleeve names. When interpreting `pnl_bucket_*.csv`, read the accounting script headers.
 - **Bucket 4 (inverse decay)** attributes PnL and exposure at the **pair** level: short inverse ETF plus short underlying (see `pnl_bucket_4_by_pair.csv`, `bucket4_pairs.csv`). Spot legs are split across buckets 1 / 2 / 4 using held exposure and trade-timed ratios (`qty_b4` in `underlying_bucket_state.csv`).
 - **Combined stock-sleeve views** (`pnl_by_underlying.csv`, `net_exposure_by_underlying.csv`) sum **buckets 1 + 2 + 4** (flow inverse bucket 3 remains separate). Legacy bucket-1&2-only PnL is still written to `pnl_by_underlying_b12.csv`.
 

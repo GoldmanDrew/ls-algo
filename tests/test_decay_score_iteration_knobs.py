@@ -17,8 +17,8 @@ def _base_df() -> pd.DataFrame:
         {
             "ETF": ["AAA", "BBB", "CCC", "DDD"],
             "Underlying": ["U1", "U2", "U3", "U4"],
-            "Beta": [2.0, 2.0, 2.0, 2.0],
-            "beta_abs": [2.0, 2.0, 2.0, 2.0],
+            "Delta": [2.0, 2.0, 2.0, 2.0],
+            "delta_abs": [2.0, 2.0, 2.0, 2.0],
             "blended_gross_decay": [0.10, 0.20, 0.40, 0.80],
             "borrow_current": [0.0, 0.0, 0.0, 0.0],
             "net_edge_p50_annual": [0.10, 0.20, 0.40, 0.80],
@@ -48,8 +48,8 @@ def test_weight_hysteresis_snaps_small_changes():
         {
             "ETF": ["AAA", "BBB"],
             "Underlying": ["U1", "U2"],
-            "Beta": [2.0, 2.0],
-            "beta_abs": [2.0, 2.0],
+            "Delta": [2.0, 2.0],
+            "delta_abs": [2.0, 2.0],
             "sleeve": ["core_leveraged", "core_leveraged"],
             "gross_target_usd": [510.0, 490.0],  # tiny tilt vs prior 500/500
             "borrow_price_ref": [50.0, 50.0],
@@ -74,7 +74,7 @@ def test_weight_hysteresis_snaps_small_changes():
     out, diag = apply_gross_sizing_book_caps(
         sized,
         target_gross_usd=2_000_000.0,
-        beta_floor=0.1,
+        delta_floor=0.1,
         strategy=strategy,
         shares_out_map={},
         prev_gross_by_pair=prev,

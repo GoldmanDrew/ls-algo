@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""scripts/validate_beta_estimator.py
+"""scripts/validate_delta_estimator.py
 
-Validation harness for the new robust hedge-beta estimator.
+Validation harness for the new robust hedge-delta estimator.
 
 For a fixed run date (default 2026-05-05) and a list of underlying symbols,
 this script:
@@ -10,19 +10,19 @@ this script:
   2. Fetches total-return prices from Yahoo for every ETF + underlying
      touched by those positions.
   3. Computes BOTH the old shrunk-OLS β (``compute_beta_shrunk``) and the
-     new robust hierarchical EB posterior (``compute_beta_for_hedging``)
+     new robust hierarchical EB posterior (``compute_delta_for_hedging``)
      for each ETF.
   4. Re-runs the screener's ``compute_net_exposure`` once with the OLD β
      map and once with the NEW β map, then prints a side-by-side
-     beta-adjusted exposure table for the requested underlyings.
+     delta-adjusted exposure table for the requested underlyings.
 
 This is *not* a unit test; it's a stand-alone diagnostic that should be
 run before/after the cutover to confirm the change has the expected
 direction and magnitude on the live book.
 
 Run:
-    python scripts/validate_beta_estimator.py
-    python scripts/validate_beta_estimator.py --run-date 2026-05-05 \\
+    python scripts/validate_delta_estimator.py
+    python scripts/validate_delta_estimator.py --run-date 2026-05-05 \\
         --underlyings NVTS MSTR MARA AMD INTC IONQ MU BE GOOGL META
 
 Yieldboost symbols are also reported per-symbol because the prior change
@@ -41,10 +41,10 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from beta_estimator import (  # noqa: E402
-    BetaPrior,
+from delta_estimator import (  # noqa: E402
+    DeltaPrior,
     build_yieldboost_family_priors,
-    compute_beta_for_hedging,
+    compute_delta_for_hedging,
 )
 import daily_screener as ds  # noqa: E402  — for legacy shrunk_OLS + lists
 from ibkr_accounting import (  # noqa: E402
@@ -53,7 +53,7 @@ from ibkr_accounting import (  # noqa: E402
     canonical_symbol,
     compute_net_exposure,
     load_blacklist,
-    load_etf_beta_map,
+    load_etf_delta_map,
     load_etf_to_under_map,
     load_universe_from_screened,
     parse_open_positions,
@@ -93,14 +93,14 @@ def _fetch_many(symbols: Iterable[str], period: str = "2y") -> dict[str, pd.Seri
     return out
 
 
-def _legacy_beta_for_etf(etf: str, und: str | None, exp_lev: float, tr: dict) -> float | None:
+def _legacy_delta_for_etf(etf: str, und: str | None, exp_lev: float, tr: dict) -> float | None:
     if not und or etf not in tr or und not in tr:
         return None
     b, _, _ = ds.compute_beta_shrunk(tr[etf], tr[und], exp_lev)
     return float(b)
 
 
-def _new_beta_for_etf(
+def _new_delta_for_etf(
     etf: str,
     und: str | None,
     product_class: str,
@@ -111,16 +111,16 @@ def _new_beta_for_etf(
     if not und or etf not in tr or und not in tr:
         return None
     try:
-        prior = BetaPrior.for_row(
+        prior = DeltaPrior.for_row(
             product_class=product_class,
             nominal_leverage=nominal_lev,
             underlying=und,
-            peer_betas=yb_priors,
+            peer_deltas=yb_priors,
         )
     except ValueError:
         return None
-    res = compute_beta_for_hedging(tr[etf], tr[und], prior)
-    return float(res.beta), prior.source
+    res = compute_delta_for_hedging(tr[etf], tr[und], prior)
+    return float(res.delta), prior.source
 
 
 def main() -> int:
@@ -155,7 +155,7 @@ def main() -> int:
     etf_to_under = load_etf_to_under_map(etf_screened)
     for s, u in SUPPLEMENTAL_ETF_MAP.items():
         etf_to_under.setdefault(s, u)
-    _, etf_to_beta_map = load_etf_beta_map(etf_screened)
+    _, etf_to_delta_map = load_etf_delta_map(etf_screened)
 
     # Determine the set of (ETF, Underlying) pairs we need TR for.
     syms_need: set[str] = set()
@@ -191,15 +191,15 @@ def main() -> int:
             # spot underlying — beta is 1 by definition
             continue
         u_row = u_row.iloc[0]
-        product_class = ds.classify_beta_product_class(u_row)
+        product_class = ds.classify_delta_product_class(u_row)
         lev_raw = u_row.get("Leverage")
         try:
             nominal_lev = float(lev_raw) if pd.notna(lev_raw) else None
         except (TypeError, ValueError):
             nominal_lev = None
 
-        old = _legacy_beta_for_etf(sym, und, float(nominal_lev or 2.0), tr)
-        new = _new_beta_for_etf(sym, und, product_class, nominal_lev, yb_priors, tr)
+        old = _legacy_delta_for_etf(sym, und, float(nominal_lev or 2.0), tr)
+        new = _new_delta_for_etf(sym, und, product_class, nominal_lev, yb_priors, tr)
         if old is None or new is None:
             continue
         rows.append(
@@ -224,28 +224,28 @@ def main() -> int:
     print(df_per_etf.to_string(index=False, float_format=lambda v: f"{v:+.4f}"))
 
     # ── Beta-adjusted exposure: re-run compute_net_exposure with the new map
-    # The screener stores beta in etf_screened_today.csv via load_etf_beta_map;
-    # we patch in-memory by overriding `etf_to_beta` returned values for ETFs
+    # The screener stores beta in etf_screened_today.csv via load_etf_delta_map;
+    # we patch in-memory by overriding `etf_to_delta` returned values for ETFs
     # we re-estimated.
-    new_beta_map = dict(etf_to_beta_map)
+    new_delta_map = dict(etf_to_delta_map)
     for r in rows:
-        new_beta_map[r["etf"]] = r["beta_new"]
+        new_delta_map[r["etf"]] = r["beta_new"]
 
     # Build a fresh exposure DataFrame using the new beta. Reuse the screener
-    # path: we monkey-patch load_etf_beta_map's output via direct assignment.
+    # path: we monkey-patch load_etf_delta_map's output via direct assignment.
     pos_local = pos.copy()
     pos_local["is_etf"] = pos_local["symbol"].isin(etf_to_under)
     pos_local["underlying"] = np.where(
         pos_local["is_etf"], pos_local["symbol"].map(etf_to_under), pos_local["symbol"]
     )
 
-    def _exposure(beta_map: dict) -> pd.DataFrame:
+    def _exposure(delta_map: dict) -> pd.DataFrame:
         p = pos_local.copy()
-        p["beta"] = np.where(
-            p["is_etf"], p["symbol"].map(beta_map).astype(float), 1.0
+        p["delta"] = np.where(
+            p["is_etf"], p["symbol"].map(delta_map).astype(float), 1.0
         )
-        p["beta"] = pd.to_numeric(p["beta"], errors="coerce").fillna(1.0)
-        p["mv_base"] = p["position"] * p["beta"] * p["markPrice"] * p["fxRateToBase"]
+        p["delta"] = pd.to_numeric(p["delta"], errors="coerce").fillna(1.0)
+        p["mv_base"] = p["position"] * p["delta"] * p["markPrice"] * p["fxRateToBase"]
         p["gross_mv_base"] = p["mv_base"].abs()
         agg = (
             p.groupby("underlying", as_index=False)
@@ -257,8 +257,8 @@ def main() -> int:
         )
         return agg
 
-    exp_old = _exposure(etf_to_beta_map).rename(columns={"net": "net_old", "gross": "gross_old"})
-    exp_new = _exposure(new_beta_map).rename(columns={"net": "net_new", "gross": "gross_new"})
+    exp_old = _exposure(etf_to_delta_map).rename(columns={"net": "net_old", "gross": "gross_old"})
+    exp_new = _exposure(new_delta_map).rename(columns={"net": "net_new", "gross": "gross_new"})
     merged = exp_old.merge(
         exp_new[["underlying", "net_new", "gross_new"]], on="underlying", how="outer"
     )

@@ -35,7 +35,7 @@ Both legs use explicit total-return price series:
 so dividends are correctly captured on both sides.
 
 If Beta is missing (NaN) for a row, it is estimated via OLS on total-return
-series, with the same sign / leverage plausibility guards as ``daily_screener.add_betas``
+series, with the same sign / leverage plausibility guards as ``daily_screener.add_deltas``
 (fallback to listed leverage when OLS is unusable or implausible).
 
 Usage:
@@ -378,7 +378,7 @@ def enrich_with_decay_and_vol(
 
     New / updated columns:
       Beta                  - computed via OLS when missing (NaN)
-      Beta_n_obs            - observation count for OLS beta
+      Delta_n_obs            - observation count for OLS beta
       vol_underlying_annual - annualized realized vol of underlying (total return)
       vol_etf_annual        - annualized realized vol of ETF (total return)
       gross_decay_annual    - per $1 ETF short
@@ -405,37 +405,37 @@ def enrich_with_decay_and_vol(
 
     vols_etf_raw = []
     decays = []
-    betas_out = []
-    beta_nobs_out = []
+    deltas_out = []
+    delta_nobs_out = []
 
     ok_decay = 0
     ok_vol = 0
-    betas_computed = 0
+    deltas_computed = 0
 
     # ── PASS 1: betas, raw ETF vols, realized decay ──
     for _, row in df.iterrows():
         etf = norm(row["ETF"])
         und = norm(row["Underlying"]) if pd.notna(row.get("Underlying")) else None
 
-        # ── Beta: use existing or compute from OLS ──
-        beta = row.get("Beta")
-        beta_f = float(beta) if pd.notna(beta) else None
-        n_obs = row.get("Beta_n_obs")
+        # ── Delta: use existing or compute from OLS ──
+        beta = row.get("Delta")
+        delta_f = float(beta) if pd.notna(beta) else None
+        n_obs = row.get("Delta_n_obs")
         n_obs_i = int(n_obs) if pd.notna(n_obs) else 0
         exp_lev = float(row["Leverage"]) if pd.notna(row.get("Leverage")) else 2.0
 
-        if beta_f is None and und and etf in tr_map and und in tr_map:
+        if delta_f is None and und and etf in tr_map and und in tr_map:
             # Delegate to daily_screener.compute_beta_shrunk so the analytics
             # path mirrors the screener exactly (single source of truth).
             from daily_screener import compute_beta_shrunk
-            beta_f, n_obs_i, _src = compute_beta_shrunk(
+            delta_f, n_obs_i, _src = compute_beta_shrunk(
                 tr_map[etf], tr_map[und], exp_lev, min_days=min_days
             )
-            if beta_f is not None:
-                betas_computed += 1
+            if delta_f is not None:
+                deltas_computed += 1
 
-        betas_out.append(beta_f)
-        beta_nobs_out.append(n_obs_i)
+        deltas_out.append(delta_f)
+        delta_nobs_out.append(n_obs_i)
 
         # Itô-aligned σ: √(mean(log_return²) · 252). Matches the measure
         # used by the new _compute_gross_decay (daily log form).
@@ -445,20 +445,20 @@ def enrich_with_decay_and_vol(
         # ── Gross decay ──
         decay = None
         if (
-            beta_f is not None
-            and abs(beta_f) >= 0.1
+            delta_f is not None
+            and abs(delta_f) >= 0.1
             and und
             and etf in tr_map
             and und in tr_map
         ):
-            decay = _compute_gross_decay(tr_map[etf], tr_map[und], beta_f)
+            decay = _compute_gross_decay(tr_map[etf], tr_map[und], delta_f)
 
         decays.append(decay)
         if decay is not None:
             ok_decay += 1
 
-    df["Beta"] = betas_out
-    df["Beta_n_obs"] = beta_nobs_out
+    df["Delta"] = deltas_out
+    df["Delta_n_obs"] = delta_nobs_out
     df["vol_etf_annual"] = vols_etf_raw
     df["gross_decay_annual"] = decays
 
@@ -481,9 +481,9 @@ def enrich_with_decay_and_vol(
             lambda x, u=und: norm(x) == u if pd.notna(x) else False)
         implied_candidates = []
         for idx in df.index[mask]:
-            b = betas_out[idx]
+            b = deltas_out[idx]
             ve = vols_etf_raw[idx]
-            nobs = beta_nobs_out[idx]
+            nobs = delta_nobs_out[idx]
             if b and abs(b) >= 0.5 and ve and ve > 0 and nobs:
                 implied = ve / abs(b)
                 weight = nobs * abs(b)
@@ -527,7 +527,7 @@ def enrich_with_decay_and_vol(
     )
 
     # ── Summary ──
-    print(f"\n[etf_analytics] Beta computed from OLS: {betas_computed}")
+    print(f"\n[etf_analytics] Beta computed from OLS: {deltas_computed}")
     print(f"[etf_analytics] Volatility computed: {ok_vol}/{len(df)}")
     print(f"[etf_analytics] Decay computed:      {ok_decay}/{len(df)}")
 
@@ -560,7 +560,7 @@ def enrich_with_decay_and_vol(
                 f"borrow={bn*100 if pd.notna(bn) else 0:5.2f}%  "
                 f"vol_und={r['vol_underlying_annual']*100:5.1f}%  "
                 f"vol_etf={r['vol_etf_annual']*100:5.1f}%  "
-                f"B={r['Beta']:.2f}"
+                f"B={r['Delta']:.2f}"
             )
 
     print("=" * 60)

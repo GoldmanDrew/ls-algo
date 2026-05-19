@@ -465,7 +465,7 @@ def _product_class(
       * ``income_yieldboost``  — covered weekly 95/88 put-spread on a 2× ETF;
         decay must come from the put-spread NAV-decay model (intrinsic decay),
         not the LETF Itô identity (which gives ~0 at β≈1).
-      * ``passive_low_beta``   — Bucket-2 fund with 0 < β ≤ 1.5 and no income
+      * ``passive_low_delta``   — Bucket-2 fund with 0 < β ≤ 1.5 and no income
         overlay. The Itô identity says expected decay is ~0; using realized
         drag is the only honest signal. Dashboard renders Exp. decay = "—".
       * ``letf``               — standard 2×/3× LETF (β > 1.5).
@@ -484,7 +484,7 @@ def _product_class(
         if b > 1.5:
             return "letf"
         if 0.0 < b <= 1.5:
-            return "passive_low_beta"
+            return "passive_low_delta"
     if lev is not None and pd.notna(lev) and not _nanf(lev):
         l = float(lev)
         if abs(l - 1.0) < 0.01:
@@ -494,7 +494,7 @@ def _product_class(
 
 
 # Product classes for which a model-based "expected gross decay" is meaningful.
-# ``passive_low_beta`` deliberately maps to ``False`` so the screener emits NaN
+# ``passive_low_delta`` deliberately maps to ``False`` so the screener emits NaN
 # for the distributional decay columns and the dashboard falls back to the
 # realized measure / renders "—" rather than a misleading near-zero Itô number.
 _EXPECTED_DECAY_CLASSES = {
@@ -539,7 +539,7 @@ def _gross_edge_definition(
     if beta is not None and pd.notna(beta) and not _nanf(beta):
         b = float(beta)
         if 0 < b <= 1.5:
-            # Passive low-beta and other 0 < β ≤ 1.5 funds: realized-only
+            # Passive low-delta and other 0 < β ≤ 1.5 funds: realized-only
             # drives both the headline edge and the bootstrap distribution.
             return "realized_daily_log_drag"
     return "blended_realized_expected"
@@ -644,7 +644,7 @@ def enrich_screener_v2_fields(
     for j, (_, row) in enumerate(df.iterrows()):
         etf = str(row.get("ETF", "")).strip()
         und = str(row.get("Underlying", "")).strip() if pd.notna(row.get("Underlying")) else ""
-        beta = row.get("Beta")
+        beta = row.get("Delta")
         lev = row.get("Leverage") if "Leverage" in row else np.nan
         # NaN-safe coercion: ``bool(np.nan)`` is True in Python, which has
         # historically mis-tagged inverse ETFs (where ``is_yieldboost`` was
@@ -675,7 +675,7 @@ def enrich_screener_v2_fields(
             bavg[j] = np.nan
             bmed[j] = np.nan
 
-        n_obs = int(row["Beta_n_obs"]) if not _nanf(row.get("Beta_n_obs")) else 0
+        n_obs = int(row["Delta_n_obs"]) if not _nanf(row.get("Delta_n_obs")) else 0
         realized_ok = bool(
             etf in tr_map
             and und in tr_map
@@ -759,7 +759,7 @@ def enrich_screener_v2_fields(
         anchor_applied = False
         # Only anchor-shift when an expected forecast is meaningful for this
         # product class (i.e. ``expected_decay_available`` is True). For
-        # ``passive_low_beta`` rows the simple-Itô identity collapses to ~0
+        # ``passive_low_delta`` rows the simple-Itô identity collapses to ~0
         # and ``daily_screener`` Step 5d nulls the distributional columns;
         # we skip the shift here regardless of CSV column state.
         if (

@@ -1,6 +1,6 @@
-"""beta_estimator — robust, total-return-validated, empirical-Bayes hedge-beta.
+"""delta_estimator — robust, total-return-validated, empirical-Bayes hedge-delta.
 
-This module replaces the simple shrunk-OLS hedge-beta estimator that lived in
+This module replaces the simple shrunk-OLS hedge-delta estimator that lived in
 ``daily_screener`` (``compute_beta_shrunk``) with a more robust, hierarchical
 empirical-Bayes posterior that is appropriate for income / YieldBOOST sleeves
 where there is *no* listed leverage to anchor a prior on.
@@ -8,28 +8,28 @@ where there is *no* listed leverage to anchor a prior on.
 Core API
 --------
 
-``BetaPrior(mu, tau, source, product_class, sign_inflation)``
+``DeltaPrior(mu, tau, source, product_class, sign_inflation)``
     A simple value object that carries the prior mean (``mu``) for the
     hedge-ratio of an ETF vs its underlying, and the prior precision
     expressed in *effective trading days* (``tau``).  ``source`` is a short
     dotted tag that is propagated all the way to the screener CSV via
-    ``Beta_prior_source``.
+    ``Delta_prior_source``.
 
-``compute_beta_for_hedging(etf_tr, und_tr, prior, *, min_days=60) -> BetaResult``
+``compute_delta_for_hedging(etf_tr, und_tr, prior, *, min_days=60) -> DeltaResult``
     Returns the posterior hedge-ratio together with diagnostics.  The
     estimator combines:
 
     * total-return-aware return alignment (daily *log* returns)
     * EWMA weighting (half-life 63 trading days, with a floor)
     * Huber IRLS regression (numpy-only; ~3 reweighting passes)
-    * Newey-West / HAC standard error (lag 5) for ``β̂_robust``
+    * Newey-West / HAC standard error (lag 5) for ``δ̂_robust``
     * a multi-horizon stability gate at ``h ∈ {1, 5}`` that prefers the
       longer horizon and inflates ``τ`` when the estimator is unstable
     * a Gaussian-conjugate posterior
 
       .. code-block:: text
 
-          β̂ = (τ·μ + n_eff·β_robust) / (τ + n_eff)
+          δ̂ = (τ·μ + n_eff·delta_robust) / (τ + n_eff)
 
     The estimator does **not** hard-snap to the prior on sign mismatch;
     instead, when the data sign disagrees materially with the prior sign
@@ -38,14 +38,14 @@ Core API
 The two LETF product classes (``letf_long``, ``letf_inverse``) are the
 *only* classes that may carry ``mu = nominal listed leverage L``.  All
 other classes — covered-call 1×, YieldBOOST, scraped income, vol ETPs,
-unknown — must use a non-L prior built via :func:`BetaPrior.for_row`.
+unknown — must use a non-L prior built via :func:`DeltaPrior.for_row`.
 
 Design notes
 ------------
 
 The posterior precision depends on the residual variance of the robust
 fit and on the effective sample size of the *robustly-weighted* design
-matrix; the resulting ``Beta_se`` is a usable hedge-quality signal even
+matrix; the resulting ``Delta_se`` is a usable hedge-quality signal even
 when the EWMA half-life truncates the long tail.
 
 Family priors for YieldBOOST are computed via
@@ -82,9 +82,9 @@ HORIZONS = (1, 5)
 HORIZON_STABILITY_REL_TOL = 0.25  # |β1 - β5| > 0.25·|μ| triggers
 HORIZON_STABILITY_SE_MULT = 2.0  # OR > 2·SE(β5) triggers
 
-# Sign-inflation factor when sign(β_robust) ≠ sign(μ)
+# Sign-inflation factor when sign(delta_robust) ≠ sign(μ)
 SIGN_INFLATION_FACTOR = 5.0
-SIGN_CONFLICT_MIN_BETA = 0.30
+SIGN_CONFLICT_MIN_DELTA = 0.30
 
 # Distribution-day guard threshold (fraction)
 DIST_DAY_RESIDUAL_THRESHOLD = 0.25
@@ -95,10 +95,10 @@ _POSTERIOR_PREFIX = "posterior"
 
 # ── Data classes ──────────────────────────────────────────────────────
 @dataclass(frozen=True)
-class BetaPrior:
+class DeltaPrior:
     """Prior over the hedge-ratio :math:`β` for one ETF/underlying pair.
 
-    ``mu``      Prior mean (the value that ``β̂`` is shrunk toward).
+    ``mu``      Prior mean (the value that ``δ̂`` is shrunk toward).
     ``tau``     Prior precision, in *effective trading days*.
     ``source``  Short dotted tag describing where ``mu`` came from.
                 Examples: ``nominal_L``, ``covered_call_default``,
@@ -124,17 +124,17 @@ class BetaPrior:
         nominal_leverage: float | None,
         underlying: str | None,
         *,
-        peer_betas: dict[str, "PeerPrior"] | None = None,
+        peer_deltas: dict[str, "PeerPrior"] | None = None,
         cc_default_mu: float = 0.55,
         cc_default_tau: float = 30.0,
         yieldboost_default_mu: float | None = None,
         yieldboost_default_tau: float = 30.0,
         unknown_mu: float = 0.0,
         unknown_tau: float = 15.0,
-    ) -> "BetaPrior":
-        """Build a ``BetaPrior`` from the row's product class.
+    ) -> "DeltaPrior":
+        """Build a ``DeltaPrior`` from the row's product class.
 
-        ``peer_betas`` is the per-underlying YieldBOOST family map produced
+        ``peer_deltas`` is the per-underlying YieldBOOST family map produced
         by :func:`build_yieldboost_family_priors` (keys are underlying
         symbols, values are :class:`PeerPrior` records with ``mu``/``tau``
         already aggregated).  Pass an empty dict if no peers are
@@ -152,7 +152,7 @@ class BetaPrior:
                     "got None / non-finite"
                 )
             L = float(nominal_leverage)
-            return BetaPrior(
+            return DeltaPrior(
                 mu=L,
                 tau=60.0 * max(1.0, L * L),
                 source="nominal_L",
@@ -167,7 +167,7 @@ class BetaPrior:
                     "got None / non-finite"
                 )
             L = float(nominal_leverage)
-            return BetaPrior(
+            return DeltaPrior(
                 mu=L,
                 tau=60.0 * max(1.0, L * L),
                 source="nominal_L",
@@ -176,7 +176,7 @@ class BetaPrior:
 
         # ── (3) Covered-call 1× ── calibrated constant, NO nominal L
         if pc == "covered_call_1x":
-            return BetaPrior(
+            return DeltaPrior(
                 mu=float(cc_default_mu),
                 tau=float(cc_default_tau),
                 source="covered_call_default",
@@ -186,18 +186,18 @@ class BetaPrior:
         # ── (4) YieldBOOST ── hierarchical empirical Bayes, NO nominal L
         if pc == "income_yieldboost":
             und = str(underlying or "").strip().upper()
-            peer = (peer_betas or {}).get(und)
+            peer = (peer_deltas or {}).get(und)
             if peer is not None and peer.tau > 0 and np.isfinite(peer.mu):
-                return BetaPrior(
+                return DeltaPrior(
                     mu=float(peer.mu),
                     tau=float(peer.tau),
                     source=f"yieldboost_peer_{und}",
                     product_class=pc,
                 )
             # Global fallback: aggregate all siblings
-            global_peer = (peer_betas or {}).get("__global__")
+            global_peer = (peer_deltas or {}).get("__global__")
             if global_peer is not None and global_peer.tau > 0 and np.isfinite(global_peer.mu):
-                return BetaPrior(
+                return DeltaPrior(
                     mu=float(global_peer.mu),
                     tau=float(global_peer.tau),
                     source="yieldboost_global",
@@ -209,7 +209,7 @@ class BetaPrior:
                 if yieldboost_default_mu is not None
                 else cc_default_mu
             )
-            return BetaPrior(
+            return DeltaPrior(
                 mu=float(mu),
                 tau=float(yieldboost_default_tau),
                 source="yieldboost_default",
@@ -218,7 +218,7 @@ class BetaPrior:
 
         # ── (5) Volatility ETPs ── no shrinkage to a hedge ratio
         if pc == "volatility_etp":
-            return BetaPrior(
+            return DeltaPrior(
                 mu=0.0,
                 tau=0.0,
                 source="volatility_etp",
@@ -228,7 +228,7 @@ class BetaPrior:
 
         # ── (6) Scraped income (YieldMax / Roundhill / generic 1× income) ─
         if pc == "scraped_income":
-            return BetaPrior(
+            return DeltaPrior(
                 mu=float(cc_default_mu),
                 tau=float(cc_default_tau),
                 source="scraped_income_default",
@@ -236,7 +236,7 @@ class BetaPrior:
             )
 
         # ── (7) Unknown / residual ──
-        return BetaPrior(
+        return DeltaPrior(
             mu=float(unknown_mu),
             tau=float(unknown_tau),
             source="empirical_bayes_global",
@@ -254,11 +254,11 @@ class PeerPrior:
 
 
 @dataclass(frozen=True)
-class BetaResult:
-    """Posterior + diagnostics returned by :func:`compute_beta_for_hedging`."""
+class DeltaResult:
+    """Posterior + diagnostics returned by :func:`compute_delta_for_hedging`."""
 
-    beta: float
-    beta_se: float
+    delta: float
+    delta_se: float
     n_obs: int
     n_eff: float
     resid_sigma_annual: float
@@ -328,9 +328,9 @@ def _huber_irls(
     """
     if x.size == 0:
         return float("nan"), np.zeros(0)
-    beta = float(np.sum(w * x * y) / max(np.sum(w * x * x), 1e-30))
+    delta = float(np.sum(w * x * y) / max(np.sum(w * x * x), 1e-30))
     for _ in range(int(n_passes)):
-        resid = y - beta * x
+        resid = y - delta * x
         scale = 1.4826 * float(np.median(np.abs(resid - np.median(resid))))
         if not np.isfinite(scale) or scale <= 0:
             scale = float(np.std(resid)) or 1e-12
@@ -341,8 +341,8 @@ def _huber_irls(
         denom = float(np.sum(ww * x * x))
         if denom <= 1e-30:
             break
-        beta = float(np.sum(ww * x * y) / denom)
-    return beta, y - beta * x
+        delta = float(np.sum(ww * x * y) / denom)
+    return delta, y - delta * x
 
 
 def _newey_west_se(
@@ -377,10 +377,10 @@ def _newey_west_se(
         s += 2.0 * wt * cov
     if s <= 0.0:
         return float("inf")
-    var_beta = s / (sxx * sxx)
-    if not np.isfinite(var_beta) or var_beta <= 0:
+    var_delta = s / (sxx * sxx)
+    if not np.isfinite(var_delta) or var_delta <= 0:
         return float("inf")
-    return float(np.sqrt(var_beta))
+    return float(np.sqrt(var_delta))
 
 
 def _annualized_resid_sigma(resid: np.ndarray, w: np.ndarray, h: int) -> float:
@@ -415,15 +415,15 @@ def _fit_at_horizon(
     if n < 3:
         return None
     w = _ewma_weights(n, halflife=halflife, floor=EWMA_FLOOR_RATIO)
-    beta, resid = _huber_irls(y, x, w)
-    if not np.isfinite(beta):
+    delta, resid = _huber_irls(y, x, w)
+    if not np.isfinite(delta):
         return None
     se = _newey_west_se(x, resid, w, lag=HAC_LAG)
     n_eff = float(np.sum(w))
     sw_x = float(np.sum(w))
     var_und = float(np.sum(w * x * x) / sw_x) if sw_x > 0 else 0.0
     return {
-        "beta": float(beta),
+        "delta": float(delta),
         "se": float(se),
         "n_obs": int(n),
         "n_eff": float(n_eff),
@@ -459,16 +459,16 @@ def _distribution_day_mask(
 
 
 # ── Main estimator ────────────────────────────────────────────────────
-def compute_beta_for_hedging(
+def compute_delta_for_hedging(
     etf_tr: pd.Series,
     und_tr: pd.Series,
-    prior: BetaPrior,
+    prior: DeltaPrior,
     *,
     min_days: int = 60,
     halflife_days: float = float(EWMA_HALFLIFE_DAYS),
     actions_mask: pd.Series | None = None,
-) -> BetaResult:
-    """Posterior hedge-beta estimate for one ETF/underlying pair.
+) -> DeltaResult:
+    """Posterior hedge-delta estimate for one ETF/underlying pair.
 
     Parameters
     ----------
@@ -476,8 +476,8 @@ def compute_beta_for_hedging(
         Total-return-adjusted price series for the ETF and its
         underlying.  The estimator forms aligned daily log returns from
         these and is robust to non-overlapping or duplicated dates.
-    prior : BetaPrior
-        Prior mean / precision and provenance.  See :class:`BetaPrior`.
+    prior : DeltaPrior
+        Prior mean / precision and provenance.  See :class:`DeltaPrior`.
     min_days : int
         Minimum number of aligned daily returns before any data is
         used.  Below this we return the prior with quality ``low_n``.
@@ -494,9 +494,9 @@ def compute_beta_for_hedging(
     aligned = _aligned_log_returns(etf_tr, und_tr)
     if aligned is None or aligned[0].size < int(min_days):
         # Not enough overlap → return prior with quality flag.
-        return BetaResult(
-            beta=float(prior.mu),
-            beta_se=float("inf"),
+        return DeltaResult(
+            delta=float(prior.mu),
+            delta_se=float("inf"),
             n_obs=0 if aligned is None else int(aligned[0].size),
             n_eff=0.0,
             resid_sigma_annual=float("nan"),
@@ -528,9 +528,9 @@ def compute_beta_for_hedging(
         r_und = r_und[keep]
 
     if r_etf.size < int(min_days):
-        return BetaResult(
-            beta=float(prior.mu),
-            beta_se=float("inf"),
+        return DeltaResult(
+            delta=float(prior.mu),
+            delta_se=float("inf"),
             n_obs=int(r_etf.size),
             n_eff=0.0,
             resid_sigma_annual=float("nan"),
@@ -550,9 +550,9 @@ def compute_beta_for_hedging(
     # Choose horizon and inflate tau if unstable
     chosen = fit_h1 or fit_h5
     if chosen is None:
-        return BetaResult(
-            beta=float(prior.mu),
-            beta_se=float("inf"),
+        return DeltaResult(
+            delta=float(prior.mu),
+            delta_se=float("inf"),
             n_obs=int(r_etf.size),
             n_eff=0.0,
             resid_sigma_annual=float("nan"),
@@ -569,17 +569,17 @@ def compute_beta_for_hedging(
     tau_eff = float(prior.tau)
     chosen = fit_h1 if fit_h1 is not None else fit_h5
     if fit_h1 is not None and fit_h5 is not None:
-        gap = abs(fit_h1["beta"] - fit_h5["beta"])
+        gap = abs(fit_h1["delta"] - fit_h5["delta"])
         rel_threshold = HORIZON_STABILITY_REL_TOL * max(abs(prior.mu), 1.0)
         se_threshold = HORIZON_STABILITY_SE_MULT * max(fit_h5["se"], 1e-9)
         if gap > max(rel_threshold, se_threshold):
             chosen = fit_h5
             tau_eff = tau_eff * 2.0
             quality_extras["non_stationary"] = True
-            quality_extras["beta_h1"] = fit_h1["beta"]
-            quality_extras["beta_h5"] = fit_h5["beta"]
+            quality_extras["delta_h1"] = fit_h1["delta"]
+            quality_extras["delta_h5"] = fit_h5["delta"]
 
-    beta_robust = float(chosen["beta"])
+    delta_robust = float(chosen["delta"])
     n_eff = float(chosen["n_eff"])
     se_robust = float(chosen["se"])
     horizon = int(chosen["horizon"])
@@ -588,9 +588,9 @@ def compute_beta_for_hedging(
     if (
         prior.allow_sign_inflation
         and prior.tau > 0
-        and abs(beta_robust) > SIGN_CONFLICT_MIN_BETA
+        and abs(delta_robust) > SIGN_CONFLICT_MIN_DELTA
         and abs(prior.mu) > 1e-9
-        and (np.sign(beta_robust) != np.sign(prior.mu))
+        and (np.sign(delta_robust) != np.sign(prior.mu))
     ):
         tau_eff = tau_eff * SIGN_INFLATION_FACTOR
         quality_extras["sign_conflict"] = True
@@ -598,10 +598,10 @@ def compute_beta_for_hedging(
     # ── Conjugate Gaussian posterior on β ──────────────────────────
     denom = tau_eff + n_eff
     if denom <= 0:
-        beta_post = beta_robust
+        delta_post = delta_robust
         post_var = se_robust * se_robust
     else:
-        beta_post = (tau_eff * float(prior.mu) + n_eff * beta_robust) / denom
+        delta_post = (tau_eff * float(prior.mu) + n_eff * delta_robust) / denom
         # Posterior SE: combine prior precision (in effective days, scaled
         # by the same residual variance) with robust SE^2.
         # SE_post^2 = 1/(τ + n_eff) · resid_var_per_day / Var(r_und_h)
@@ -619,9 +619,9 @@ def compute_beta_for_hedging(
     if quality_extras.get("non_stationary"):
         quality = "non_stationary"
 
-    return BetaResult(
-        beta=float(np.round(beta_post, 6)),
-        beta_se=float(post_se),
+    return DeltaResult(
+        delta=float(np.round(delta_post, 6)),
+        delta_se=float(post_se),
         n_obs=int(chosen["n_obs"]),
         n_eff=float(n_eff),
         resid_sigma_annual=float(chosen["resid_sigma_annual"]),
@@ -678,7 +678,7 @@ def build_yieldboost_family_priors(
     The "leave-one-out" median is per-underlying; with a single sibling
     (no LOO possible) we fall back to the sibling's own raw β.  The
     posterior estimator handles the degenerate τ=0 case by dropping
-    back through :func:`BetaPrior.for_row` to the global default.
+    back through :func:`DeltaPrior.for_row` to the global default.
     """
     siblings: dict[str, list[float]] = {}
     sibling_n: dict[str, list[int]] = {}
@@ -694,12 +694,12 @@ def build_yieldboost_family_priors(
         ols = _raw_ols_beta_log(tr_map[e], tr_map[u], min_days=min_days)
         if ols is None:
             continue
-        beta_raw, n = ols
-        if not np.isfinite(beta_raw):
+        delta_raw, n = ols
+        if not np.isfinite(delta_raw):
             continue
-        siblings.setdefault(u, []).append(float(beta_raw))
+        siblings.setdefault(u, []).append(float(delta_raw))
         sibling_n.setdefault(u, []).append(int(n))
-        all_betas.append(float(beta_raw))
+        all_betas.append(float(delta_raw))
 
     out: dict[str, PeerPrior] = {}
     for u, betas in siblings.items():
@@ -724,11 +724,11 @@ def build_yieldboost_family_priors(
 
 
 __all__ = [
-    "BetaPrior",
-    "BetaResult",
+    "DeltaPrior",
+    "DeltaResult",
     "PeerPrior",
     "build_yieldboost_family_priors",
-    "compute_beta_for_hedging",
+    "compute_delta_for_hedging",
     "EWMA_HALFLIFE_DAYS",
     "HUBER_K",
     "HAC_LAG",

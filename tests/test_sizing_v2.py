@@ -38,7 +38,7 @@ def _toy_mirror_df() -> pd.DataFrame:
         {
             "ETF": ["AMDL", "AMUU", "BITX", "AAPU", "DUMD"],
             "Underlying": ["AMD", "AMD", "IBIT", "AAPL", "AMD"],
-            "Beta": [2.0, 2.0, 2.0, 2.0, -2.0],
+            "Delta": [2.0, 2.0, 2.0, 2.0, -2.0],
             "blended_gross_decay": [0.50, 0.55, 0.30, 0.10, 0.20],
             "borrow_current": [0.04, 0.05, 0.03, 0.06, 0.08],
             "net_edge_p05_annual": [0.18, 0.22, 0.10, -0.05, -0.30],

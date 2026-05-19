@@ -501,7 +501,7 @@ def enrich_with_decay_distribution(
     horizon_days: int = _HORIZON_DEFAULT_DAYS,
     quantiles: Sequence[float] = _QUANTILES_DEFAULT,
     underlying_col: str = "Underlying",
-    beta_col: str = "Beta",
+    delta_col: str = "Delta",
     fallback_col: str = "expected_gross_decay_annual",
     yieldboost_col: str = "is_yieldboost",
     norm_sym: Optional[callable] = None,
@@ -533,7 +533,7 @@ def enrich_with_decay_distribution(
             else:
                 out[col] = np.nan
 
-    if underlying_col not in out.columns or beta_col not in out.columns:
+    if underlying_col not in out.columns or delta_col not in out.columns:
         return out
 
     # Cache: underlying symbol → (panel, fit, sigma_log_iv, mu_log_rv_steady)
@@ -551,7 +551,7 @@ def enrich_with_decay_distribution(
             n_skip += 1
             continue
         und = norm_sym(und_raw)
-        beta_val = row.get(beta_col)
+        beta_val = row.get(delta_col)
         try:
             beta = float(beta_val)
         except (TypeError, ValueError):

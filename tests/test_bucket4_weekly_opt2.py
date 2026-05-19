@@ -135,7 +135,7 @@ def test_parity_with_dynamic_h_when_no_threshold():
 def test_sco_excluded_from_pairs(tmp_path):
     csv = tmp_path / "s.csv"
     rows = [
-        "ETF,Underlying,Beta,bucket,vol_underlying_annual,bucket4_net_edge_annual",
+        "ETF,Underlying,Delta,bucket,vol_underlying_annual,bucket4_net_edge_annual",
         "SCO,USO,-1.5,bucket_4,0.8,0.3",
         "XYZ,QQQ,-1.2,bucket_4,0.8,0.3",
     ]
@@ -151,7 +151,7 @@ def test_targets_short_legs_and_weights(tmp_path):
     csv.write_text(
         "\n".join(
             [
-                "ETF,Underlying,Beta,bucket,vol_underlying_annual,bucket4_net_edge_annual,borrow_current",
+                "ETF,Underlying,Delta,bucket,vol_underlying_annual,bucket4_net_edge_annual,borrow_current",
                 "E1,U1,-2.0,bucket_4,0.8,0.3,0.05",
                 "E2,U2,-1.5,bucket_4,0.8,0.3,0.04",
             ]
@@ -223,7 +223,7 @@ def test_targets_short_legs_and_weights(tmp_path):
         bucket4_pairs=[("E1", "U1"), ("E2", "U2")],
     )
     w = {("E1", "U1"): 0.5, ("E2", "U2"): 0.5}
-    tgt, meta = compute_bucket4_targets(st, w, "2024-04-01", 100_000.0, partial_hedge_ratio=1.0, beta_floor=0.1)
+    tgt, meta = compute_bucket4_targets(st, w, "2024-04-01", 100_000.0, partial_hedge_ratio=1.0, delta_floor=0.1)
     assert len(tgt) == 2
     assert float(tgt["pair_weight"].sum()) == pytest.approx(1.0)
     assert all(tgt["inverse_etf_short_usd"] > 0)
@@ -236,7 +236,7 @@ def test_targets_threshold_diagnostics_when_current_legs_supplied(tmp_path):
     csv.write_text(
         "\n".join(
             [
-                "ETF,Underlying,Beta,bucket,vol_underlying_annual,bucket4_net_edge_annual,borrow_current",
+                "ETF,Underlying,Delta,bucket,vol_underlying_annual,bucket4_net_edge_annual,borrow_current",
                 "E1,U1,-2.0,bucket_4,0.8,0.3,0.05",
             ]
         ),
@@ -299,7 +299,7 @@ def test_uvix_included_from_screened_when_eligible(tmp_path):
     csv.write_text(
         "\n".join(
             [
-                "ETF,Underlying,Beta,bucket,vol_underlying_annual,bucket4_net_edge_annual,borrow_current,inverse_shortable",
+                "ETF,Underlying,Delta,bucket,vol_underlying_annual,bucket4_net_edge_annual,borrow_current,inverse_shortable",
                 "UVIX,SVIX,-1.0,bucket_4,0.8,0.3,0.15,True",
                 "SCO,USO,-1.5,bucket_4,0.8,0.3,0.10,True",
                 "BAD,QQQ,-1.5,bucket_4,0.8,0.3,0.10,False",

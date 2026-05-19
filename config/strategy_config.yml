@@ -159,7 +159,7 @@ screener:
     bucket_4:
       entry_borrow_cap: 0.90
       keep_borrow_cap: 1.20
-  min_beta_days: 30
+  min_delta_days: 30
   max_stale_days: 5             # drop ETFs with no trade in last N calendar days (delisted/liquidated)
   # Vol-ratio data-quality gate. ``vol_ratio_value = vol_etf / (|β| · vol_und)``;
   # an ETF with Beta=2 should sit near 1.0. Outliers (e.g. unhandled reverse
@@ -189,7 +189,7 @@ portfolio:
     # - executable: legacy behavior; band and orders both read executable columns.
     # - optimal: band and orders both read optimal columns. Pair with FTP cap in the executor.
     target_basis: "hybrid"
-    # Phase 3 hedge rule: compare beta-adjusted net exposure to gross exposure.
+    # Phase 3 hedge rule: compare delta-adjusted net exposure to gross exposure.
     # Trigger is when to act; target is where to stop after acting.
     hedge:
       too_long:
@@ -288,7 +288,7 @@ portfolio:
       # Share of gross after inverse_decay_bucket4, split vs ``yieldboost`` (normalized together).
       target_weight: 0.48
       rules:
-        min_beta_used: 1.50
+        min_delta_used: 1.50
         # Core = accounting bucket-1 style levered longs. Optional net-decay floor (annual fraction).
         # If min_net_decay_annual > 0: ALWAYS enforced (hard cap) even when hysteresis is ON — no bypass.
         # With hysteresis OFF: require net_decay_annual >= min_net_decay_annual when min > 0.

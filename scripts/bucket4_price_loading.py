@@ -233,23 +233,23 @@ def load_beta_values(
     fallback_a: float,
     fallback_b: float,
 ) -> tuple[float, float]:
-    beta_map = {_norm_sym(ticker_a): float(fallback_a), _norm_sym(ticker_b): float(fallback_b)}
+    delta_map = {_norm_sym(ticker_a): float(fallback_a), _norm_sym(ticker_b): float(fallback_b)}
     if use_screened:
         try:
             df = pd.read_csv(screened_csv)
             cols_lower = {c.lower(): c for c in df.columns}
             etf_col = cols_lower.get("etf")
-            beta_col = cols_lower.get("beta")
-            if etf_col and beta_col:
+            delta_col = cols_lower.get("delta") or cols_lower.get("beta")
+            if etf_col and delta_col:
                 df[etf_col] = df[etf_col].astype(str).str.upper().str.strip()
-                tmp = df[[etf_col, beta_col]].dropna()
+                tmp = df[[etf_col, delta_col]].dropna()
                 for _, r in tmp.iterrows():
                     etf = str(r[etf_col])
-                    if etf in beta_map:
-                        beta_map[etf] = float(r[beta_col])
+                    if etf in delta_map:
+                        delta_map[etf] = float(r[delta_col])
         except Exception as e:
             print(f"[WARN] Could not load betas from {screened_csv}: {e}")
-    return beta_map[_norm_sym(ticker_a)], beta_map[_norm_sym(ticker_b)]
+    return delta_map[_norm_sym(ticker_a)], delta_map[_norm_sym(ticker_b)]
 
 
 def perf_stats(bt: pd.DataFrame) -> pd.Series:

@@ -39,7 +39,7 @@ from ibkr_accounting import (
     EXCLUDE_SYMBOLS,
     SUPPLEMENTAL_ETF_MAP,
     canonical_symbol,
-    load_etf_beta_map,
+    load_etf_delta_map,
     load_etf_to_under_map,
     load_universe_from_screened,
     normalize_plan_etf_ticker,
@@ -457,9 +457,9 @@ def main() -> int:
     write_harvest_csv(disc_input_path, disc)
     tprint(f"[HARVEST] Discrepancy input ({disc_source}) -> {disc_input_path}")
 
-    _etf_to_under_raw, _etf_to_beta_raw = load_etf_beta_map(screened_csv)
+    _etf_to_under_raw, _etf_to_delta_raw = load_etf_delta_map(screened_csv)
     etf_to_under = {canonical_symbol(str(k)): canonical_symbol(str(v)) for k, v in _etf_to_under_raw.items()}
-    etf_to_beta = {canonical_symbol(str(k)): float(v) for k, v in _etf_to_beta_raw.items()}
+    etf_to_delta = {canonical_symbol(str(k)): float(v) for k, v in _etf_to_delta_raw.items()}
 
     blacklist = {canonical_symbol(str(s)) for s in load_blacklist(cfg)}
     blocked_by_under = {etf for etf, und in etf_to_under.items() if und in blacklist}
@@ -468,9 +468,9 @@ def main() -> int:
     cands = disc[disc["under_exposed"]].copy()
     cands = cands[~cands["symbol"].isin(blocked_symbols)].copy()
     cands["underlying"] = cands["symbol"].map(etf_to_under)
-    cands["beta"] = cands["symbol"].map(etf_to_beta)
+    cands["delta"] = cands["symbol"].map(etf_to_delta)
     cands = cands[cands["underlying"].astype(str).str.len() > 0].copy()
-    cands = cands[pd.to_numeric(cands["beta"], errors="coerce").fillna(0.0) > 0.0].copy()
+    cands = cands[pd.to_numeric(cands["delta"], errors="coerce").fillna(0.0) > 0.0].copy()
     cands = cands.sort_values("abs_discrepancy_usd", ascending=False).reset_index(drop=True)
     if args.top_n > 0:
         cands = cands.head(int(args.top_n)).copy()
@@ -526,7 +526,7 @@ def main() -> int:
 
             etf = norm_sym(str(row["symbol"]))
             under = norm_sym(str(row["underlying"]))
-            beta = float(row["beta"])
+            beta = float(row["delta"])
             need_usd = max(0.0, -float(row.get("gross_gap_usd", 0.0) or 0.0))
             if max_short_usd_per_etf > 0:
                 need_usd = min(need_usd, max_short_usd_per_etf)
@@ -623,7 +623,7 @@ def main() -> int:
                 {
                     "symbol": etf,
                     "underlying": under,
-                    "beta": beta,
+                    "delta": delta,
                     "target_short_usd": need_usd,
                     "etf_px": px_etf,
                     "under_px": px_under,
@@ -646,7 +646,7 @@ def main() -> int:
         )
         preview_df["planned_under_buy_sh_if_full_fill"] = (
             (
-                (preview_df["requested_short_sh"] * preview_df["etf_px"] * preview_df["beta"])
+                (preview_df["requested_short_sh"] * preview_df["etf_px"] * preview_df["delta"])
                 / preview_df["under_px"]
             )
             * max(0.0, 1.0 - float(args.underhedge_buffer_pct))
@@ -703,7 +703,7 @@ def main() -> int:
 
             etf = norm_sym(str(row["symbol"]))
             under = norm_sym(str(row["underlying"]))
-            beta = float(row["beta"])
+            beta = float(row["delta"])
             need_usd = float(row["target_short_usd"])
             px_etf = float(row["etf_px"])
             px_under = float(row["under_px"])
@@ -744,7 +744,7 @@ def main() -> int:
                     "error_code": short_res.error_code,
                     "error_msg": short_res.error_msg,
                     "price_ref": px_etf,
-                    "beta": beta,
+                    "delta": delta,
                     "ftp_available": avail,
                     "ftp_borrow_annual": borrow,
                 }
@@ -812,7 +812,7 @@ def main() -> int:
                         "error_code": hedge_res.error_code,
                         "error_msg": hedge_res.error_msg,
                         "price_ref": px_under,
-                        "beta": beta,
+                        "delta": delta,
                         "ftp_available": None,
                         "ftp_borrow_annual": None,
                     }
@@ -841,7 +841,7 @@ def main() -> int:
                     "filled_under_buy_sh": filled_under_sh,
                     "etf_px": px_etf,
                     "under_px": px_under,
-                    "beta": beta,
+                    "delta": delta,
                     "short_fill_notional_usd": filled_short_sh * px_etf,
                     "hedge_fill_notional_usd": filled_under_sh * px_under,
                     "residual_beta_usd_after_hedge": residual_beta_usd,

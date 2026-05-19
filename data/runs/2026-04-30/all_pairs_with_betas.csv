@@ -1,4 +1,4 @@
-ETF,Underlying,Leverage,is_yieldboost,scenario_style,Beta,Beta_n_obs,Beta_source
+ETF,Underlying,Leverage,is_yieldboost,scenario_style,Delta,Delta_n_obs,Delta_source
 AAPU,AAPL,2.0,False,,1.985635,500,ols
 AMUU,AMD,2.0,False,,2.007407,268,ols
 AMZU,AMZN,2.0,False,,1.989846,500,ols

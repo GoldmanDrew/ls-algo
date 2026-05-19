@@ -3,7 +3,7 @@
 Convert IBKR "Portfolio" CSV export (Financial Instrument, Position, Last, …)
 into minimal Flex XML stubs so `ibkr_accounting.py` can find the expected files.
 
-Also prints beta-normalized net exposure by underlying (same as
+Also prints delta-normalized net exposure by underlying (same as
 `compute_net_exposure` in ibkr_accounting.py).
 
 Usage:
@@ -27,7 +27,7 @@ from ibkr_accounting import (  # noqa: E402
     PROJECT_ROOT,
     canonical_symbol,
     compute_net_exposure,
-    load_etf_beta_map,
+    load_etf_delta_map,
     parse_open_positions,
     yyyymmdd_from_run_date,
 )
@@ -77,7 +77,7 @@ def csv_to_positions_df(csv_path: Path, etf_screened: Path) -> pd.DataFrame:
     if col_sym not in raw.columns:
         raise ValueError(f"Expected column {col_sym!r}; got {list(raw.columns)[:8]}…")
 
-    etf_to_under, etf_to_beta = load_etf_beta_map(etf_screened)
+    etf_to_under, etf_to_delta = load_etf_delta_map(etf_screened)
 
     rows: list[dict] = []
     for _, r in raw.iterrows():

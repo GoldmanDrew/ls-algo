@@ -16,7 +16,7 @@ def test_sizing_signal_column_defaults():
 def test_default_decay_score_uses_net_edge_p50_then_explicit_blended_column():
     df = pd.DataFrame(
         {
-            "beta_abs": [2.0, 2.0],
+            "delta_abs": [2.0, 2.0],
             "blended_gross_decay": [0.20, 0.10],
             "net_edge_p50_annual": [0.12, 0.18],
             "borrow_current": [0.02, 0.02],
@@ -49,7 +49,7 @@ def test_default_decay_score_uses_net_edge_p50_then_explicit_blended_column():
 def test_net_edge_mode_matches_default_blended_when_both_resolve_to_p50():
     df = pd.DataFrame(
         {
-            "beta_abs": [2.0, 2.0],
+            "delta_abs": [2.0, 2.0],
             "blended_gross_decay": [0.20, 0.10],
             "net_edge_p50_annual": [0.12, 0.18],
             "borrow_current": [0.02, 0.02],
@@ -71,7 +71,7 @@ def test_net_edge_mode_matches_default_blended_when_both_resolve_to_p50():
 def test_net_edge_falls_back_when_column_missing():
     df = pd.DataFrame(
         {
-            "beta_abs": [2.0],
+            "delta_abs": [2.0],
             "blended_gross_decay": [0.15],
             "borrow_current": [0.01],
         }

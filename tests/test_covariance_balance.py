@@ -23,8 +23,8 @@ def _two_pair_df(g1: float = 500.0, g2: float = 500.0) -> pd.DataFrame:
         {
             "ETF": ["AAA", "BBB"],
             "Underlying": ["U1", "U2"],
-            "Beta": [2.0, 2.0],
-            "beta_abs": [2.0, 2.0],
+            "Delta": [2.0, 2.0],
+            "delta_abs": [2.0, 2.0],
             "sleeve": ["core_leveraged", "core_leveraged"],
             "gross_target_usd": [g1, g2],
             "borrow_price_ref": [50.0, 50.0],
@@ -48,7 +48,7 @@ def test_disabled_is_noop():
     out, diag = apply_covariance_balance(
         df,
         target_gross_usd=1_000_000.0,
-        beta_floor=0.1,
+        delta_floor=0.1,
         strategy={**_CAPS},
         returns_df=_make_returns(),
     )
@@ -62,7 +62,7 @@ def test_thin_data_skips():
     out, diag = apply_covariance_balance(
         df,
         target_gross_usd=1_000_000.0,
-        beta_floor=0.1,
+        delta_floor=0.1,
         strategy=strategy,
         returns_df=_make_returns(n=20),
     )
@@ -80,7 +80,7 @@ def test_perfect_corr_equal_exposure_yields_no_tilt():
     out, diag = apply_covariance_balance(
         df,
         target_gross_usd=1_000_000.0,
-        beta_floor=0.1,
+        delta_floor=0.1,
         strategy=strategy,
         returns_df=R,
     )
@@ -98,7 +98,7 @@ def test_higher_vol_underlying_gets_attenuated():
     out, diag = apply_covariance_balance(
         df,
         target_gross_usd=1_000_000.0,
-        beta_floor=0.1,
+        delta_floor=0.1,
         strategy=strategy,
         returns_df=R,
     )
@@ -133,8 +133,8 @@ def _mixed_book_df() -> pd.DataFrame:
         {
             "ETF": ["CAAA", "CBBB", "YZZZ"],
             "Underlying": ["U1", "U2", "U3"],
-            "Beta": [2.0, 2.0, 1.0],
-            "beta_abs": [2.0, 2.0, 1.0],
+            "Delta": [2.0, 2.0, 1.0],
+            "delta_abs": [2.0, 2.0, 1.0],
             "sleeve": ["core_leveraged", "core_leveraged", "yieldboost"],
             "gross_target_usd": [400.0, 400.0, 100.0],
             "borrow_price_ref": [50.0, 50.0, 50.0],
@@ -155,7 +155,7 @@ def test_covariance_scope_core_only_leaves_yieldboost_unchanged_with_caps_off():
     out, diag = apply_covariance_balance(
         df,
         target_gross_usd=1_000_000.0,
-        beta_floor=0.1,
+        delta_floor=0.1,
         strategy=strategy,
         returns_df=R,
         covariance_scope=("core_leveraged",),
@@ -178,7 +178,7 @@ def test_post_cov_recap_enforces_pair_cap():
     out, diag = apply_covariance_balance(
         df,
         target_gross_usd=1_000.0,
-        beta_floor=0.1,
+        delta_floor=0.1,
         strategy=strategy,
         returns_df=R,
     )

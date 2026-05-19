@@ -76,7 +76,7 @@ def test_min_trade_usd_is_post_trigger_execution_floor() -> None:
         account_equity=50_000.0,
         gross_leverage=4.0,
         etf_to_under={"AAPU": "AAPL"},
-        etf_to_beta={"AAPU": 2.0},
+        etf_to_delta={"AAPU": 2.0},
         short_map={},
         blocked_short_etfs=set(),
         flow_etfs=set(),

@@ -283,7 +283,7 @@ def build_hedge_panel_opt2(
     )
     vix_beta_panel = (
         _underlying_vix_beta_panel(closes_broad, b4_unds, all_dates, p["vix_symbol"], window=int(p.get("vix_beta_window", 252)))
-        if use_regime and p["vix_shock_enable"] and float(p.get("vix_beta_weight", 0.0)) > 0.0
+        if use_regime and p["vix_shock_enable"] and float(p.get("vix_delta_weight", 0.0)) > 0.0
         else None
     )
     dd_panel = (
@@ -390,7 +390,7 @@ def build_hedge_panel_opt2(
                             rally_cut = 1
                     if p["vix_shock_enable"] and vix_shock_now:
                         vix_mult_universal = float(p["vix_h_mult"])
-                        beta_w = float(p.get("vix_beta_weight", 0.0))
+                        beta_w = float(p.get("vix_delta_weight", 0.0))
                         beta_u = 1.0
                         if vix_beta_panel is not None and u in vix_beta_panel.columns and as_of in vix_beta_panel.index:
                             b_val = vix_beta_panel.at[as_of, u]
@@ -442,7 +442,7 @@ DEFAULT_OVERLAY_NOTEBOOK: dict[str, Any] = dict(
     vix_term_ratio_max=1.00,
     vix_vvix_dlog5_min=0.15,
     vix_h_mult=1.12,
-    vix_beta_weight=0.75,
+    vix_delta_weight=0.75,
     vix_beta_window=252,
     dd_cut_enable=True,
     dd_lookback=252,
@@ -482,10 +482,10 @@ def load_bucket4_pairs_from_screened(
     cols = {c.lower(): c for c in df.columns}
     etf_col = cols.get("etf")
     und_col = cols.get("underlying")
-    beta_col = cols.get("beta")
+    delta_col = cols.get("delta") or cols.get("beta")
     bucket_col = cols.get("bucket")
     inverse_shortable_col = cols.get("inverse_shortable")
-    if etf_col is None or und_col is None or beta_col is None:
+    if etf_col is None or und_col is None or delta_col is None:
         raise ValueError("screened_csv must include ETF/Underlying/Beta columns")
     vol_candidates = [
         "vol_underlying_annual",
@@ -501,16 +501,16 @@ def load_bucket4_pairs_from_screened(
         raise ValueError(f"Could not find an underlying vol column. Tried: {vol_candidates}")
     if decay_col is None:
         raise ValueError(f"Could not find a net decay column. Tried: {decay_candidates}")
-    use_cols = [etf_col, und_col, beta_col, vol_col, decay_col] + ([bucket_col] if bucket_col else [])
+    use_cols = [etf_col, und_col, delta_col, vol_col, decay_col] + ([bucket_col] if bucket_col else [])
     if inverse_shortable_col:
         use_cols.append(inverse_shortable_col)
     tmp = df[use_cols].copy()
     tmp[etf_col] = tmp[etf_col].astype(str).map(norm_sym)
     tmp[und_col] = tmp[und_col].astype(str).map(norm_sym)
-    tmp[beta_col] = pd.to_numeric(tmp[beta_col], errors="coerce")
+    tmp[delta_col] = pd.to_numeric(tmp[delta_col], errors="coerce")
     tmp[vol_col] = pd.to_numeric(tmp[vol_col], errors="coerce")
     tmp[decay_col] = pd.to_numeric(tmp[decay_col], errors="coerce")
-    mask = tmp[beta_col].notna() & (tmp[beta_col] < 0) & tmp[etf_col].ne("") & tmp[und_col].ne("")
+    mask = tmp[delta_col].notna() & (tmp[delta_col] < 0) & tmp[etf_col].ne("") & tmp[und_col].ne("")
     if require_bucket_tag and bucket_col:
         b = tmp[bucket_col].astype(str).str.lower()
         mask = mask & b.isin(["bucket_4", "bucket_3_inverse", "bucket_3"])
@@ -700,9 +700,9 @@ class Bucket4WeeklyConfig:
     )
     use_borrow_from_screened: bool = True
     borrow_fallback_annual: float = 0.1
-    use_beta_from_screened: bool = True
-    leg_a_beta_fallback: float = -2.0
-    leg_b_beta_fallback: float = 1.0
+    use_delta_from_screened: bool = True
+    leg_a_delta_fallback: float = -2.0
+    leg_b_delta_fallback: float = 1.0
     fee_bps: float = 1.0
     slippage_bps: float = 20.0
     gross_multiplier: float = 1.0
@@ -761,7 +761,7 @@ def build_closes_broad(
 def _inverse_etfs_from_screened(screened_csv: str) -> list[str]:
     df = pd.read_csv(screened_csv)
     cl = {c.lower(): c for c in df.columns}
-    ec, bc = cl.get("etf"), cl.get("beta")
+    ec, bc = cl.get("etf"), cl.get("delta") or cl.get("beta")
     if ec is None or bc is None:
         return []
     beta = pd.to_numeric(df[bc], errors="coerce")
@@ -789,9 +789,9 @@ def build_pair_cache(
             etf_sym,
             und_sym,
             cfg.screened_csv,
-            cfg.use_beta_from_screened,
-            cfg.leg_a_beta_fallback,
-            cfg.leg_b_beta_fallback,
+            cfg.use_delta_from_screened,
+            cfg.leg_a_delta_fallback,
+            cfg.leg_b_delta_fallback,
         )
         if beta_a_i >= 0:
             cache[(etf_sym, und_sym)] = {"skip_reason": "non-inverse beta_a"}
@@ -924,7 +924,7 @@ def compute_bucket4_targets(
     fee_bps: float | None = None,
     slippage_bps: float | None = None,
     partial_hedge_ratio: float = 1.0,
-    beta_floor: float = 0.1,
+    delta_floor: float = 0.1,
     current_leg_notional_by_pair: Mapping[tuple[str, str], Mapping[str, float]] | None = None,
     small_epsilon: float = 100.0,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
@@ -964,7 +964,7 @@ def compute_bucket4_targets(
         kw["slippage_bps"] = s_bps
         beta_a = float(kw.get("beta_a", -2.0))
         beta_b = float(kw.get("beta_b", 1.0))
-        beta_used = max(beta_floor, abs(beta_a))
+        beta_used = max(delta_floor, abs(beta_a))
         h_ser = state.hedge_by_underlying[und_sym]
         h_hist = h_ser.loc[pd.DatetimeIndex(h_ser.index) <= as_of_ts].dropna()
         h = float(h_hist.iloc[-1]) if len(h_hist) else float(state.hedge_base)

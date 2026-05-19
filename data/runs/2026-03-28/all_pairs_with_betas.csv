@@ -1,4 +1,4 @@
-ETF,Underlying,Leverage,Beta,Beta_n_obs,Beta_source
+ETF,Underlying,Leverage,Delta,Delta_n_obs,Delta_source
 AAPU,AAPL,2.0,1.985917,500,ols
 AMUU,AMD,2.0,2.007489,246,ols
 AMZU,AMZN,2.0,1.988453,500,ols

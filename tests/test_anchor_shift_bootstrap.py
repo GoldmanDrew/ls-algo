@@ -13,8 +13,8 @@ Tests we run:
        lands within MC noise of the anchor target.
     2. Without an expected p50 (NaN), no shift is applied; the bootstrap
        reproduces the legacy realized-only behavior.
-    3. ``passive_low_beta`` rows skip the shift even when expected p50 is
-       present, because ``_expected_decay_available("passive_low_beta")``
+    3. ``passive_low_delta`` rows skip the shift even when expected p50 is
+       present, because ``_expected_decay_available("passive_low_delta")``
        is False (Itô identity at β≈1 is unreliable).
 """
 
@@ -71,8 +71,8 @@ def _minimal_letf_row(
     return {
         "ETF": etf,
         "Underlying": underlying,
-        "Beta": beta,
-        "Beta_n_obs": float(n_obs),
+        "Delta": beta,
+        "Delta_n_obs": float(n_obs),
         "Leverage": beta if not is_yieldboost else 2.0,
         "is_yieldboost": is_yieldboost,
         "borrow_current": 0.0,
@@ -152,17 +152,17 @@ def test_no_anchor_shift_when_expected_p50_missing():
     assert row["gross_anchor_source"] == ""
 
 
-def test_passive_low_beta_skips_anchor_shift():
-    """expected_decay_available is False for passive_low_beta → no shift."""
+def test_passive_low_delta_skips_anchor_shift():
+    """expected_decay_available is False for passive_low_delta → no shift."""
     sigma = 0.20
     n = 600
     und = _gbm_tr(n, sigma_annual=sigma, seed=99)
-    # β=1.0 ⇒ classified as passive_low_beta
+    # β=1.0 ⇒ classified as passive_low_delta
     etf = _build_letf_tr(und, beta=1.0, daily_drag=0.0002)
     tr_map = {"DEF": etf, "DEFUND": und}
 
     # Even if some upstream stage filled an expected p50 by accident, the
-    # shift should be skipped for passive_low_beta.
+    # shift should be skipped for passive_low_delta.
     df = pd.DataFrame(
         [
             _minimal_letf_row(
@@ -176,7 +176,7 @@ def test_passive_low_beta_skips_anchor_shift():
     )
     out = enrich_screener_v2_fields(df, tr_map, bootstrap_seed=11)
     row = out.iloc[0]
-    assert row["product_class"] == "passive_low_beta"
+    assert row["product_class"] == "passive_low_delta"
     # Bootstrap mean stays anchored on realized (~5% annualized at this drag),
     # not on the bogus 50%.
     assert float(row["net_edge_p50_annual"]) < 0.20
