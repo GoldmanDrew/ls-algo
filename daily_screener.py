@@ -3164,8 +3164,14 @@ def main() -> int:
     ap.add_argument("--skip-ftp", action="store_true", help="Skip IBKR FTP borrow fetch")
     ap.add_argument("--skip-ibkr-check", action="store_true",
                     help="Skip IBKR contract validation (requires TWS/Gateway running)")
-    ap.add_argument("--min-beta-days", type=int, default=None,
-                    help="Min overlapping days for OLS beta (default: from config or 20)")
+    ap.add_argument(
+        "--min-delta-days",
+        "--min-beta-days",
+        dest="min_delta_days",
+        type=int,
+        default=None,
+        help="Min overlapping days for OLS hedge delta (default: from config or 30)",
+    )
     ap.add_argument("--config", default=None, help="Path to strategy_config.yml")
     ap.add_argument(
         "--borrow-history-path",
@@ -3318,8 +3324,15 @@ def main() -> int:
     print(f"[CONFIG] borrow_floor_price_usd=${borrow_floor_price_usd:.2f}")
 
     # Resolve min_delta_days: CLI > config > fallback
-    min_delta_days = (args.min_delta_days
-                     or int(screener_cfg.get("min_delta_days", _FALLBACK["min_delta_days"])))
+    min_delta_days = (
+        args.min_delta_days
+        or int(
+            screener_cfg.get(
+                "min_delta_days",
+                screener_cfg.get("min_beta_days", _FALLBACK["min_delta_days"]),
+            )
+        )
+    )
     print(f"[CONFIG] min_delta_days={min_delta_days}")
 
     borrow_hist_path = args.borrow_history_path or os.environ.get("BORROW_HISTORY_PATH")
