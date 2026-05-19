@@ -57,37 +57,13 @@ def _skip_pnl_history_run_date(run_date: str) -> bool:
 
 
 def rebuild_pnl_history(run_dates: list[str]) -> None:
-    rows: list[dict] = []
-    for run_date in run_dates:
-        if run_date < START_DATE:
-            continue
-        if _skip_pnl_history_run_date(run_date):
-            continue
-        totals_path = RUNS_ROOT / run_date / "accounting" / "totals.json"
-        if not totals_path.exists():
-            continue
-        obj = json.loads(totals_path.read_text(encoding="utf-8"))
-        bp = obj.get("bucket_pnl") or {}
-        b1 = float(bp.get("bucket_1", 0.0))
-        b2 = float(bp.get("bucket_2", 0.0))
-        b3 = float(bp.get("bucket_3", 0.0))
-        b4 = float(bp.get("bucket_4", 0.0))
-        rows.append(
-            {
-                "date": run_date,
-                "pnl_bucket_1": b1,
-                "pnl_bucket_2": b2,
-                "pnl_bucket_3": b3,
-                "pnl_bucket_4": b4,
-                "total_pnl": b1 + b2 + b3 + b4,
-            }
-        )
+    """Delegate to run_eod_pnl_email so bucket PnL and capital stay in sync."""
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from run_eod_pnl_email import rebuild_pnl_history_from_runs
 
-    if not rows:
-        return
-    PNL_HISTORY_CSV.parent.mkdir(parents=True, exist_ok=True)
-    hist = pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
-    hist.to_csv(PNL_HISTORY_CSV, index=False)
+    _ = run_dates
+    rebuild_pnl_history_from_runs()
 
 
 def main() -> int:
