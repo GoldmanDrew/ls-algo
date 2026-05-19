@@ -406,6 +406,111 @@ def load_etf_delta_map(screened_csv: Path) -> tuple[dict[str, str], dict[str, fl
     return etf_to_under, etf_to_delta
 
 
+def complete_etf_maps_from_positions(
+    pos: pd.DataFrame,
+    etf_to_under: dict[str, str],
+    etf_to_delta: dict[str, float],
+) -> tuple[dict[str, str], dict[str, float]]:
+    """
+  Extend ETF maps with 1× benchmark holdings (e.g. SPY, QQQ) that appear in
+  the account but have no dedicated row in etf_screened_today.csv.
+
+  Without this, compute_net_exposure treats them as spot (underlying in the
+  strategy universe) while bucket exposure uses ledger ratios, which breaks
+  bucket↔book reconciliation.
+    """
+    if pos is None or pos.empty:
+        return etf_to_under, etf_to_delta
+    unders_with_products = set(etf_to_under.values())
+    out_under = dict(etf_to_under)
+    out_delta = dict(etf_to_delta)
+    for sym in pos["symbol"].astype(str).dropna().unique():
+        s = canonical_symbol(sym)
+        if not s or s in out_delta:
+            continue
+        if s in unders_with_products:
+            out_under[s] = s
+            out_delta[s] = 1.0
+    return out_under, out_delta
+
+
+def _spot_ledger_bucket_ratios(
+    position_qty: float,
+    ledger_qty: dict[str, float],
+) -> tuple[float, float, float]:
+    """
+    Signed share ratios for a spot leg from FIFO ledger qty_b*.
+
+    Caps attributed qty at the live IBKR line when the ledger is stale, and
+    assigns any unattributed remainder to bucket_1 (orphan / pre-strategy shares).
+    """
+    if abs(position_qty) <= 1e-12:
+        return 0.0, 0.0, 0.0
+    b1 = float(ledger_qty.get("bucket_1", 0.0))
+    b2 = float(ledger_qty.get("bucket_2", 0.0))
+    b4 = float(ledger_qty.get("bucket_4", 0.0))
+    ledger_total = b1 + b2 + b4
+    if abs(ledger_total) > abs(position_qty) and abs(ledger_total) > 1e-12:
+        scale = abs(position_qty) / abs(ledger_total)
+        b1, b2, b4 = b1 * scale, b2 * scale, b4 * scale
+        ledger_total = b1 + b2 + b4
+    r1 = b1 / position_qty
+    r2 = b2 / position_qty
+    r4 = b4 / position_qty
+    ratio_sum = r1 + r2 + r4
+    if ratio_sum < 1.0 - 1e-9:
+        r1 += 1.0 - ratio_sum
+    elif ratio_sum > 1.0 + 1e-9:
+        scale = 1.0 / ratio_sum
+        r1, r2, r4 = r1 * scale, r2 * scale, r4 * scale
+    return r1, r2, r4
+
+
+def _normalize_exposure_bucket_ratios(
+    detail: pd.DataFrame,
+    *,
+    etf_to_delta_map: dict[str, float],
+    flow_low_delta_bucket3_syms: set[str],
+    flow_short_set: set[str],
+    b4_etf_syms: set[str],
+) -> pd.DataFrame:
+    """Ensure each exposure leg's bucket ratios sum to 1 (or 0 if flat)."""
+    d = detail.copy()
+    for idx, row in d.iterrows():
+        sym = str(row["symbol"])
+        if sym in b4_etf_syms:
+            continue
+        r1 = float(row.get("_ratio_b1", 0.0) or 0.0)
+        r2 = float(row.get("_ratio_b2", 0.0) or 0.0)
+        r4 = float(row.get("_ratio_b4", 0.0) or 0.0)
+        gross = float(row.get("gross_notional_usd", 0.0) or 0.0)
+        if gross <= 1e-12:
+            continue
+        ratio_sum = r1 + r2 + r4
+        if ratio_sum > 1e-12:
+            if ratio_sum < 1.0 - 1e-9:
+                d.at[idx, "_ratio_b1"] = r1 + (1.0 - ratio_sum)
+            elif ratio_sum > 1.0 + 1e-9:
+                scale = 1.0 / ratio_sum
+                d.at[idx, "_ratio_b1"] = r1 * scale
+                d.at[idx, "_ratio_b2"] = r2 * scale
+                d.at[idx, "_ratio_b4"] = r4 * scale
+            continue
+        beta = float(etf_to_delta_map.get(sym, 1.0))
+        if bool(row.get("_is_etf", False)):
+            if beta > 1.5:
+                d.at[idx, "_ratio_b1"] = 1.0
+            elif (beta > 0) and (beta <= 1.5) and sym not in flow_low_delta_bucket3_syms:
+                d.at[idx, "_ratio_b2"] = 1.0
+            elif beta < 0 and sym not in flow_short_set:
+                d.at[idx, "_ratio_b4"] = 1.0
+            else:
+                d.at[idx, "_ratio_b1"] = 1.0
+        else:
+            d.at[idx, "_ratio_b1"] = 1.0
+    return d
+
+
 def build_bucket4_pair_registry(
     screened_csv: Path,
     *,
@@ -1826,17 +1931,20 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     # bucket_1: ETF beta > 1.5  (levered)
     # bucket_2: ETF beta 0 < β ≤ 1.5  (standard / low-lev)
     # bucket_3: ETF beta < 0  (inverse)
-    # Spot positions (not in etf_to_delta_map) are split pro-rata by the
-    # absolute betas of the ETFs sharing their underlying.
-    _, etf_to_delta_map = load_etf_delta_map(etf_screened_path)
+    # Spot positions (not in etf_to_under) are split pro-rata by the
+    # absolute deltas of the ETFs sharing their underlying.
+    etf_to_under, etf_to_delta_map = load_etf_delta_map(etf_screened_path)
+    etf_to_under, etf_to_delta_map = complete_etf_maps_from_positions(
+        pos, etf_to_under, etf_to_delta_map
+    )
     flow_low_delta_bucket3_syms = {
         s for s in flow_short_set if 0 < float(etf_to_delta_map.get(s, 0.0)) <= 1.0
     }
     neg_beta_syms = {s for s, b in etf_to_delta_map.items() if b < 0}
     bucket3_etf_syms = set(neg_beta_syms) | set(flow_low_delta_bucket3_syms)
 
-    is_etf = df["symbol"].isin(etf_to_delta_map)
-    sym_beta = df["symbol"].map(etf_to_delta_map)
+    is_etf = df["symbol"].isin(etf_to_under)
+    sym_beta = df["symbol"].map(etf_to_delta_map).fillna(1.0)
 
     # Assign buckets for ETF positions
     def _etf_bucket(b):
@@ -3150,25 +3258,25 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         _d = exposure_detail_df.copy()
         _d["symbol"] = _d["symbol"].astype(str)
         _d["underlying"] = _d["underlying"].astype(str)
-        _d["_is_etf"] = _d["symbol"].isin(etf_to_delta_map)
+        _d["_is_etf"] = _d["symbol"].isin(etf_to_under)
         _d["_beta"] = pd.to_numeric(_d["symbol"].map(etf_to_delta_map), errors="coerce").fillna(1.0)
-        def _ledger_spot_ratio(_row: pd.Series, _bkt: str) -> float:
+
+        def _spot_ratios_for_row(_row: pd.Series) -> tuple[float, float, float]:
             if bool(_row["_is_etf"]):
-                return 0.0
+                return 0.0, 0.0, 0.0
             _sym = str(_row["symbol"])
             _u = str(_row["underlying"])
             if _sym != _u:
-                return 0.0
+                return 0.0, 0.0, 0.0
             _pos_q = float(_spot_qty.get(_sym, 0.0))
-            if abs(_pos_q) <= 1e-12:
-                return 0.0
-            _lq = float(_ledger_qty_map.get(_u, {}).get(_bkt, 0.0))
-            return _lq / _pos_q
+            _ledger = _ledger_qty_map.get(_u, {})
+            return _spot_ledger_bucket_ratios(_pos_q, _ledger)
 
+        _spot_ratios = _d.apply(_spot_ratios_for_row, axis=1, result_type="expand")
         _d["_ratio_b1"] = np.where(
             _d["_is_etf"],
             np.where(_d["_beta"] > 1.5, 1.0, 0.0),
-            _d.apply(lambda r: _ledger_spot_ratio(r, "bucket_1"), axis=1),
+            _spot_ratios[0],
         )
         _d["_ratio_b2"] = np.where(
             _d["_is_etf"],
@@ -3178,17 +3286,24 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 1.0,
                 0.0,
             ),
-            _d.apply(lambda r: _ledger_spot_ratio(r, "bucket_2"), axis=1),
+            _spot_ratios[1],
         )
         _d["_ratio_b4"] = np.where(
             _d["_is_etf"],
             np.where((_d["_beta"] < 0) & (~_d["symbol"].isin(flow_short_set)), 1.0, 0.0),
-            _d.apply(lambda r: _ledger_spot_ratio(r, "bucket_4"), axis=1),
+            _spot_ratios[2],
         )
         # Pure bucket-4 ETF legs: no b1/b2 residual
         _d.loc[_d["symbol"].isin(b4_etf_syms), "_ratio_b1"] = 0.0
         _d.loc[_d["symbol"].isin(b4_etf_syms), "_ratio_b2"] = 0.0
         _d.loc[_d["symbol"].isin(b4_etf_syms), "_ratio_b4"] = 1.0
+        _d = _normalize_exposure_bucket_ratios(
+            _d,
+            etf_to_delta_map=etf_to_delta_map,
+            flow_low_delta_bucket3_syms=flow_low_delta_bucket3_syms,
+            flow_short_set=flow_short_set,
+            b4_etf_syms=b4_etf_syms,
+        )
 
         def _scale_detail(_detail: pd.DataFrame, ratio_col: str) -> pd.DataFrame:
             out = _detail[_detail[ratio_col] > 1e-12].copy()
