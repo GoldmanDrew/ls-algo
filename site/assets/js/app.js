@@ -701,13 +701,14 @@
     const sectors = panel.by_sector || [];
     els.factorSectors.innerHTML = `
       <table class="tight"><thead><tr>
-        <th>Sector</th><th>Names</th><th>Net $</th><th>Gross $</th>
+        <th>Sector</th><th>Names</th><th>Book share</th><th>Net $</th><th>Gross $</th>
         <th>Beta-wtd net</th><th>Beta-wtd gross</th>
       </tr></thead><tbody>${sectors
         .map(
           (r) => `<tr>
             <td><strong>${safeText(r.sector)}</strong></td>
             <td class="num">${r.n_names}</td>
+            <td class="num">${fmtPct(r.pct_book_gross, 1)}</td>
             <td class="num ${signedClass(r.net_notional_usd)}">${fmtUsdSigned(
             r.net_notional_usd
           )}</td>
@@ -1141,11 +1142,12 @@
     const names = (panel.top_names || []).slice(0, 15);
     els.concentrationNames.innerHTML = `
       <table class="tight"><thead><tr>
-        <th>Underlying</th><th>Sector</th><th>Gross $</th><th>Gross / NAV</th><th>Status</th>
+        <th>Underlying</th><th>Bucket</th><th>Sector</th><th>Gross $</th><th>Gross / NAV</th><th>Status</th>
       </tr></thead><tbody>${names
         .map(
           (r) => `<tr class="${rowStatusClass(r.status)}">
             <td><strong>${safeText(r.underlying)}</strong></td>
+            <td>${safeText(r.bucket)}</td>
             <td>${safeText(r.sector)}</td>
             <td class="num">${fmtUsd(r.gross_notional_usd)}</td>
             <td class="num">${fmtPct(r.pct_nav_gross, 1)}</td>
@@ -1157,14 +1159,14 @@
     const sectors = panel.by_sector || [];
     els.concentrationSectors.innerHTML = `
       <table class="tight"><thead><tr>
-        <th>Sector</th><th>Names</th><th>Gross $</th><th>Gross / NAV</th><th>Status</th>
+        <th>Sector</th><th>Names</th><th>Gross $</th><th>Share of book</th><th>Status</th>
       </tr></thead><tbody>${sectors
         .map(
           (r) => `<tr class="${rowStatusClass(r.status)}">
             <td><strong>${safeText(r.sector)}</strong></td>
             <td class="num">${r.n_names}</td>
             <td class="num">${fmtUsd(r.gross_notional_usd)}</td>
-            <td class="num">${fmtPct(r.pct_nav_gross, 1)}</td>
+            <td class="num">${fmtPct(r.pct_book_gross, 1)}</td>
             <td>${statusPill(r.status)}</td>
           </tr>`
         )
@@ -1180,27 +1182,30 @@
     const top = rows.slice(0, 100);
     els.squeezeContent.innerHTML = `
       <table class="tight"><thead><tr>
-        <th>Symbol</th><th>Short qty</th><th>Shares available</th>
-        <th>Utilization</th><th>Borrow Rate</th><th>Status</th>
+        <th>Symbol</th><th>Bucket</th><th>Short qty</th>
+        <th>vs shares-out cap</th><th>vs median vol cap</th><th>Liquidity util</th>
+        <th>Borrow rate</th><th>Status</th>
       </tr></thead><tbody>${top
         .map(
           (r) => `<tr class="${rowStatusClass(r.status)}">
             <td><strong>${safeText(r.symbol)}</strong></td>
-            <td class="num">${Math.round(r.short_qty).toLocaleString()}</td>
+            <td>${safeText(r.bucket)}</td>
+            <td class="num">${r.short_qty == null ? "-" : Math.round(r.short_qty).toLocaleString()}</td>
             <td class="num">${
-              r.shares_available == null
-                ? "<span class=dim>unknown</span>"
-                : Math.round(r.shares_available).toLocaleString()
+              r.short_vs_shares_out_cap == null ? "-" : fmtPct(r.short_vs_shares_out_cap, 0)
             }</td>
             <td class="num">${
-              r.utilization == null ? "-" : fmtPct(r.utilization, 0)
+              r.short_vs_adv_cap == null ? "-" : fmtPct(r.short_vs_adv_cap, 0)
+            }</td>
+            <td class="num">${
+              r.liquidity_utilization == null ? "-" : fmtPct(r.liquidity_utilization, 0)
             }</td>
             <td class="num">${r.borrow_rate_pct == null ? "-" : r.borrow_rate_pct.toFixed(2) + "%"}</td>
             <td>${statusPill(r.status)}</td>
           </tr>`
         )
         .join("")}</tbody></table>
-      <p class="dim small">Status: warn &ge; 25% utilization, hard &ge; 50% (proxy for buy-in risk).</p>
+      <p class="dim small">Liquidity util = max(short / (shares-out &times; cap), short / (median vol &times; cap)). Warn &ge; 80%, hard &ge; 100% of sizing cap.</p>
     `;
   }
 

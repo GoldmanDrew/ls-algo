@@ -337,35 +337,56 @@ def test_scenario_panel_appends_beta_scenarios(tmp_path: Path):
 
 
 def test_concentration_panel_flags_single_name_over_cap(tmp_path: Path):
-    csv = tmp_path / "net_exposure_by_underlying.csv"
-    csv.write_text(
+    accounting = tmp_path / "accounting"
+    accounting.mkdir()
+    (accounting / "net_exposure_by_underlying.csv").write_text(
         "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n"
         "NVDA,NVDA,90000,90000,1\n"
         "AAPL,AAPL,10000,10000,1\n",
         encoding="utf-8",
     )
-    factor = compute_factor_panel(csv, nav_usd=100_000.0)
-    panel = compute_concentration_panel(factor, nav_usd=100_000.0)
+    (accounting / "net_exposure_bucket_4.csv").write_text(
+        "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n"
+        "NVDA,NVDA,90000,90000,1\n",
+        encoding="utf-8",
+    )
+    factor = compute_factor_panel(accounting / "net_exposure_by_underlying.csv", nav_usd=100_000.0)
+    panel = compute_concentration_panel(
+        factor,
+        nav_usd=100_000.0,
+        accounting_dir=accounting,
+    )
     assert panel["available"] is True
     nvda = next(r for r in panel["top_names"] if r["underlying"] == "NVDA")
     assert nvda["status"] == "hard"
+    assert nvda["bucket"] == "bucket_4"
     assert nvda["pct_nav_gross"] == pytest.approx(0.90)
     metrics_in_breaches = {b["metric"] for b in panel["breaches"]}
-    assert "single_name:NVDA" in metrics_in_breaches
+    assert "single_name:bucket_4:NVDA" in metrics_in_breaches
     assert "top10_gross_pct_nav" in metrics_in_breaches
     assert panel["totals"]["hhi_underlying"] > 0
 
 
 def test_action_queue_emits_quantitative_trim(tmp_path: Path):
-    csv = tmp_path / "net_exposure_by_underlying.csv"
-    csv.write_text(
+    accounting = tmp_path / "accounting"
+    accounting.mkdir()
+    (accounting / "net_exposure_by_underlying.csv").write_text(
         "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n"
-        "NVDA,NVDA,30000,30000,1\n"
+        "NVDA,NVDA,45000,45000,1\n"
         "OTHER,OTHER,10000,10000,1\n",
         encoding="utf-8",
     )
-    factor = compute_factor_panel(csv, nav_usd=100_000.0)
-    conc = compute_concentration_panel(factor, nav_usd=100_000.0)
+    (accounting / "net_exposure_bucket_1.csv").write_text(
+        "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n"
+        "NVDA,NVDA,45000,45000,1\n",
+        encoding="utf-8",
+    )
+    factor = compute_factor_panel(accounting / "net_exposure_by_underlying.csv", nav_usd=100_000.0)
+    conc = compute_concentration_panel(
+        factor,
+        nav_usd=100_000.0,
+        accounting_dir=accounting,
+    )
     book = compute_book_summary(
         totals={
             "gross_exposure_total": 40_000.0,

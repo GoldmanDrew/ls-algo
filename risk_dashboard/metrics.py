@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import pandas as pd
+import yaml
 
 from .factor_map import lookup_underlying
 from .flex_parser import (
@@ -69,25 +70,96 @@ def _load_blocked_exposure_keys(
     return blocked_symbols | blocked_underlyings
 
 
-# Limits live in code (not YAML) so a kill switch firing is auditable in
-# the git history. Override at call-site only via an explicit kwarg.
+# Fallback limits when strategy_config.yml is missing. Production uses
+# ``load_risk_limits()`` which merges YAML borrow bands and sleeve caps.
 DEFAULT_LIMITS: dict[str, dict[str, Any]] = {
-    "gross_exposure_pct_nav": {"warn": 2.25, "hard": 2.50},
+    "gross_exposure_pct_nav": {"warn": 4.0, "hard": 4.5},
     "abs_net_beta": {"warn": 0.15, "hard": 0.20},
     "sleeve_drift_pp": {"warn": 5.0, "hard": 10.0},
     "es99_1d_pct_nav": {"warn": 0.012, "hard": 0.020},
     "scenario_loss_pct_nav": {"warn": -0.05, "hard": -0.07},
-    "borrow_apr_pct_b4": {"warn": 60.0, "hard": 90.0},
-    "borrow_apr_pct_default": {"warn": 20.0, "hard": 30.0},
-    "shares_outstanding_pct": {"warn": 15.0, "hard": 20.0},
-    "aum_to_adv": {"warn": 0.30, "hard": 1.00},
-    "premium_discount_zscore": {"warn": 3.0, "hard": 5.0},
-    "single_name_gross_pct_nav": {"warn": 0.05, "hard": 0.10},
-    "single_sector_gross_pct_nav": {"warn": 0.30, "hard": 0.50},
+    "single_sector_gross_pct_book": {"warn": 0.30, "hard": 0.50},
     "top10_gross_pct_nav": {"warn": 0.50, "hard": 0.75},
     "hhi_underlying": {"warn": 1500.0, "hard": 2500.0},
     "hhi_sector": {"warn": 2500.0, "hard": 4000.0},
+    "liquidity_short_vs_cap": {"warn": 0.80, "hard": 1.00},
 }
+
+BUCKET_SLEEVE_KEYS: dict[str, str] = {
+    "bucket_1": "core_leveraged",
+    "bucket_2": "yieldboost",
+    "bucket_4": "inverse_decay_bucket4",
+}
+
+
+@dataclass
+class RiskLimitsContext:
+    """Limits and per-bucket thresholds from ``config/strategy_config.yml``."""
+
+    limits: dict[str, dict[str, Any]]
+    borrow_apr_pct_by_bucket: dict[str, dict[str, float]]
+    underlying_gross_frac_by_bucket: dict[str, dict[str, float]]
+    liquidity_cap_fracs: dict[str, float]
+
+
+def _decimal_borrow_to_pct_limits(entry_cap: float, keep_cap: float) -> dict[str, float]:
+    return {"warn": float(entry_cap) * 100.0, "hard": float(keep_cap) * 100.0}
+
+
+def load_risk_limits(config_yml: Path | None = None) -> RiskLimitsContext:
+    """Load dashboard limits from strategy_config (borrow bands, sleeve caps, liquidity)."""
+    limits = {k: dict(v) for k, v in DEFAULT_LIMITS.items()}
+    borrow_by_bucket: dict[str, dict[str, float]] = {
+        "bucket_1": {"warn": 55.0, "hard": 75.0},
+        "bucket_2": {"warn": 40.0, "hard": 50.0},
+        "bucket_4": {"warn": 90.0, "hard": 120.0},
+    }
+    underlying_by_bucket: dict[str, dict[str, float]] = {
+        "bucket_1": {"warn": 0.20, "hard": 0.20},
+        "bucket_2": {"warn": 0.20, "hard": 0.20},
+        "bucket_4": {"warn": 0.30, "hard": 0.30},
+    }
+    liquidity = {"shares_outstanding_use_frac": 0.35, "median_daily_volume_use_pct": 0.30}
+
+    path = config_yml or Path("config/strategy_config.yml")
+    if path.is_file():
+        try:
+            cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            cfg = {}
+        screener = (cfg.get("screener") or {}) if isinstance(cfg, dict) else {}
+        per_bucket = (screener.get("per_bucket") or {}) if isinstance(screener, dict) else {}
+        for bkt in ("bucket_1", "bucket_2", "bucket_4"):
+            row = per_bucket.get(bkt) or {}
+            if row:
+                borrow_by_bucket[bkt] = _decimal_borrow_to_pct_limits(
+                    float(row.get("entry_borrow_cap", borrow_by_bucket[bkt]["warn"] / 100.0)),
+                    float(row.get("keep_borrow_cap", borrow_by_bucket[bkt]["hard"] / 100.0)),
+                )
+        gross_caps = ((cfg.get("strategy") or {}).get("gross_sizing_caps") or {}) if isinstance(
+            cfg, dict
+        ) else {}
+        if gross_caps:
+            liquidity["shares_outstanding_use_frac"] = float(
+                gross_caps.get("shares_outstanding_use_frac", liquidity["shares_outstanding_use_frac"])
+            )
+            liquidity["median_daily_volume_use_pct"] = float(
+                gross_caps.get("median_daily_volume_use_pct", liquidity["median_daily_volume_use_pct"])
+            )
+        per_sleeve = (gross_caps.get("per_sleeve") or {}) if isinstance(gross_caps, dict) else {}
+        for bkt, sleeve_key in BUCKET_SLEEVE_KEYS.items():
+            sleeve_row = per_sleeve.get(sleeve_key) or {}
+            cap = sleeve_row.get("max_underlying_weight")
+            if cap is not None:
+                frac = float(cap)
+                underlying_by_bucket[bkt] = {"warn": frac, "hard": frac}
+
+    return RiskLimitsContext(
+        limits=limits,
+        borrow_apr_pct_by_bucket=borrow_by_bucket,
+        underlying_gross_frac_by_bucket=underlying_by_bucket,
+        liquidity_cap_fracs=liquidity,
+    )
 
 SLEEVE_TARGET_WEIGHTS = {
     "bucket_1": 0.55,
@@ -204,7 +276,7 @@ def _borrow_watchlist_symbols(
 
 
 def _load_screener_borrow_meta(screener_csv: Path | None) -> dict[str, dict[str, Any]]:
-    """Per-ETF borrow fields from ``etf_screened_today.csv`` (etf-dashboard convention)."""
+    """Per-ETF fields from ``etf_screened_today.csv`` (borrow + bucket assignment)."""
     meta: dict[str, dict[str, Any]] = {}
     if screener_csv is None or not screener_csv.is_file():
         return meta
@@ -218,16 +290,104 @@ def _load_screener_borrow_meta(screener_csv: Path | None) -> dict[str, dict[str,
         key = _clean_str(r.get("ETF")).upper()
         if not key:
             continue
-        row: dict[str, Any] = {
-            "shares_available": (
-                float(r.get("shares_available")) if pd.notna(r.get("shares_available")) else None
-            ),
-        }
+        row: dict[str, Any] = {}
+        if "bucket" in screener.columns and pd.notna(r.get("bucket")):
+            row["bucket"] = _clean_str(r.get("bucket"))
+        if "borrow_price_ref" in screener.columns and pd.notna(r.get("borrow_price_ref")):
+            row["borrow_price_ref"] = float(r.get("borrow_price_ref"))
         for col in ("borrow_current", "borrow_fee_annual", "borrow_net_annual"):
             if col in screener.columns and pd.notna(r.get(col)):
                 row[col] = float(r.get(col))
         meta[key] = row
     return meta
+
+
+def _load_shares_outstanding_map(repo_root: Path, cfg: dict[str, Any]) -> dict[str, float]:
+    try:
+        from generate_trade_plan import load_shares_outstanding_map
+
+        paths_cfg = dict((cfg.get("paths") or {}))
+        return load_shares_outstanding_map(paths_cfg)[0]
+    except Exception:
+        paths_cfg = (cfg.get("paths") or {}) if isinstance(cfg, dict) else {}
+        configured = paths_cfg.get("etf_shares_outstanding_csv")
+        candidates: list[Path] = []
+        if configured:
+            candidates.append(repo_root / str(configured))
+        candidates.extend(
+            [
+                repo_root.parent / "etf-dashboard" / "data" / "etf_shares_outstanding.csv",
+                repo_root / "data" / "etf_shares_outstanding.csv",
+            ]
+        )
+        for path in candidates:
+            if not path.is_file():
+                continue
+            try:
+                df = pd.read_csv(path)
+            except Exception:
+                continue
+            sym_col = next((c for c in df.columns if c.upper() in ("ETF", "SYMBOL", "TICKER")), None)
+            sh_col = next(
+                (c for c in df.columns if "shares" in c.lower() and "out" in c.lower()),
+                None,
+            )
+            if sym_col is None or sh_col is None:
+                continue
+            out: dict[str, float] = {}
+            for _, r in df[[sym_col, sh_col]].dropna().iterrows():
+                sym = _clean_str(r[sym_col]).upper()
+                if sym:
+                    out[sym] = float(r[sh_col])
+            return out
+        return {}
+
+
+def _load_median_daily_volume_map(repo_root: Path, cfg: dict[str, Any]) -> dict[str, float]:
+    paths_cfg = (cfg.get("paths") or {}) if isinstance(cfg, dict) else {}
+    configured = paths_cfg.get("etf_median_daily_volume_csv")
+    candidates: list[Path] = []
+    if configured:
+        candidates.append(repo_root / str(configured))
+    candidates.extend(
+        [
+            repo_root.parent / "etf-dashboard" / "data" / "etf_median_daily_volume.csv",
+            repo_root.parent / "etf-dashboard" / "data" / "etf_adv.csv",
+            repo_root / "data" / "etf_median_daily_volume.csv",
+        ]
+    )
+    vol_cols = (
+        "median_daily_volume_shares",
+        "median_volume_shares_60d",
+        "adv_median_shares",
+        "median_volume_shares",
+    )
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            df = pd.read_csv(path)
+        except Exception:
+            continue
+        sym_col = next((c for c in df.columns if c.upper() in ("ETF", "SYMBOL", "TICKER")), None)
+        vol_col = next((c for c in vol_cols if c in df.columns), None)
+        if sym_col is None or vol_col is None:
+            continue
+        out: dict[str, float] = {}
+        for _, r in df[[sym_col, vol_col]].dropna().iterrows():
+            sym = _clean_str(r[sym_col]).upper()
+            if sym:
+                out[sym] = float(r[vol_col])
+        return out
+    return {}
+
+
+def _symbol_bucket(sym: str, screener_meta: dict[str, dict[str, Any]]) -> str:
+    row = screener_meta.get(sym.upper()) or {}
+    bkt = _clean_str(row.get("bucket"))
+    if bkt in BUCKET_SLEEVE_KEYS:
+        return bkt
+    return "bucket_4"
 
 
 def _screener_borrow_decimal(screener_meta: dict[str, dict[str, Any]], symbol: str) -> tuple[float | None, str]:
@@ -620,8 +780,20 @@ def compute_borrow_panel(
     screener_csv: Path | None = None,
     *,
     run_date: str | None = None,
+    limits_ctx: RiskLimitsContext | None = None,
+    repo_root: Path | None = None,
 ) -> dict[str, Any]:
-    limits = limits or DEFAULT_LIMITS
+    ctx = limits_ctx or load_risk_limits()
+    limits = limits or ctx.limits
+    repo_root = repo_root or Path(".")
+    cfg: dict[str, Any] = {}
+    cfg_path = repo_root / "config" / "strategy_config.yml"
+    if cfg_path.is_file():
+        try:
+            cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            cfg = {}
+
     borrow_rows: list[FlexBorrowFee] = parse_borrow_fee_details(flex_borrow_xml, run_date=run_date)
     positions: list[FlexPosition] = parse_positions(flex_positions_xml)
 
@@ -630,145 +802,138 @@ def compute_borrow_panel(
         flex_positions_xml=flex_positions_xml,
     )
     screener_meta = _load_screener_borrow_meta(screener_csv)
+    shares_out_map = _load_shares_outstanding_map(repo_root, cfg)
+    median_vol_map = _load_median_daily_volume_map(repo_root, cfg)
+    sout_frac = float(ctx.liquidity_cap_fracs.get("shares_outstanding_use_frac", 0.35))
+    adv_frac = float(ctx.liquidity_cap_fracs.get("median_daily_volume_use_pct", 0.30))
+    liq_limits = limits.get(
+        "liquidity_short_vs_cap", DEFAULT_LIMITS["liquidity_short_vs_cap"]
+    )
 
     summary = summarize_borrow(borrow_rows)
-
     pos_summary = summarize_positions(positions)
 
-    def _names_over_30_screener() -> list[dict[str, Any]]:
-        symbols = sorted(watchlist) if watchlist else sorted(screener_meta.keys())
-        out: list[dict[str, Any]] = []
-        for sym in symbols:
-            rate = _screener_borrow_rate(sym, screener_meta)
-            pct = rate.get("borrow_rate_pct")
-            if pct is not None and float(pct) >= 30.0:
-                out.append({"symbol": sym, **rate})
-        out.sort(key=lambda d: -(float(d.get("borrow_rate_pct") or 0.0)))
-        return out
-
-    names_over_30_screener = _names_over_30_screener()
-
-    breaches: list[dict[str, Any]] = []
-    for row in names_over_30_screener:
-        sym = (row.get("symbol") or "").upper()
-        effective = float(row["borrow_rate_pct"])
-        status = _classify(effective, limits["borrow_apr_pct_default"])
-        if status != "ok":
-            breaches.append(
-                _normalize_breach(
-                    {
-                        "metric": f"borrow_apr:{sym}",
-                        "label": sym,
-                        "value": effective,
-                        **row,
-                        "status": status,
-                        "limit": limits["borrow_apr_pct_default"],
-                        "source": "screener borrow rate (borrow_current, else borrow_fee_annual)",
-                        "action": "Review borrow economics; reduce or drop names above hard cap.",
-                        "sleeve": "short_etf",
-                    }
-                )
-            )
-
     short_notional: dict[str, float] = {}
+    short_qty_by_sym: dict[str, float] = {}
     for p in positions:
         if float(getattr(p, "position_value", 0) or 0) < 0:
             sym = (getattr(p, "symbol", "") or "").upper()
             if watchlist and sym not in watchlist:
                 continue
             short_notional[sym] = short_notional.get(sym, 0.0) + abs(p.position_value)
+            short_qty_by_sym[sym] = short_qty_by_sym.get(sym, 0.0) + abs(
+                float(getattr(p, "quantity", 0) or 0)
+            )
 
     short_etf_rows: list[dict[str, Any]] = []
+    expensive_borrow: list[dict[str, Any]] = []
+    breaches: list[dict[str, Any]] = []
+
     for sym, notional in short_notional.items():
         rate = _screener_borrow_rate(sym, screener_meta)
-        meta = screener_meta.get(sym, {})
+        bkt = _symbol_bucket(sym, screener_meta)
+        bkt_limits = ctx.borrow_apr_pct_by_bucket.get(bkt, ctx.borrow_apr_pct_by_bucket["bucket_4"])
         eff = float(rate["borrow_rate_pct"] or 0.0)
         short_etf_rows.append(
             {
                 "symbol": sym,
+                "bucket": bkt,
                 "short_notional_usd": notional,
                 **rate,
                 "implied_annual_cost_usd": notional * (eff / 100.0)
                 if rate["borrow_rate_known"]
                 else None,
-                "shares_available": meta.get("shares_available"),
+                "borrow_limit_pct": bkt_limits,
             }
         )
+        if rate["borrow_rate_known"]:
+            br_status = _classify(eff, bkt_limits)
+            if br_status != "ok":
+                expensive_borrow.append({"symbol": sym, "bucket": bkt, **rate})
+                breaches.append(
+                    _normalize_breach(
+                        {
+                            "metric": f"borrow_apr:{sym}",
+                            "label": sym,
+                            "value": eff,
+                            **rate,
+                            "status": br_status,
+                            "limit": bkt_limits,
+                            "source": (
+                                f"screener borrow vs {bkt} "
+                                f"(entry {bkt_limits['warn']:.0f}%, keep {bkt_limits['hard']:.0f}%)"
+                            ),
+                            "action": "Review borrow economics; reduce or drop names above keep cap.",
+                            "sleeve": bkt,
+                        }
+                    )
+                )
+
     short_etf_rows.sort(
         key=lambda r: (r["implied_annual_cost_usd"] is not None, r["implied_annual_cost_usd"] or 0.0),
         reverse=True,
     )
+    expensive_borrow.sort(key=lambda d: -(float(d.get("borrow_rate_pct") or 0.0)))
 
     squeeze_rows: list[dict[str, Any]] = []
-    for row in short_etf_rows:
-        sym = row["symbol"]
-        shares_avail = row.get("shares_available")
-        short_qty = None
-        for p in positions:
-            if (getattr(p, "symbol", "") or "").upper() != sym:
-                continue
-            if float(getattr(p, "quantity", 0) or 0) < 0:
-                short_qty = abs(float(getattr(p, "quantity", 0) or 0))
-        ratio = None
-        status = "unknown"
-        if shares_avail and shares_avail > 0 and short_qty is not None:
-            ratio = short_qty / shares_avail
-            if ratio >= 0.5:
-                status = "hard"
-            elif ratio >= 0.25:
-                status = "warn"
-            else:
-                status = "ok"
+    for sym, notional in short_notional.items():
+        rate = _screener_borrow_rate(sym, screener_meta)
+        bkt = _symbol_bucket(sym, screener_meta)
+        short_qty = short_qty_by_sym.get(sym)
+        sh_out = shares_out_map.get(sym)
+        med_vol = median_vol_map.get(sym)
+        cap_shares_out = (sh_out * sout_frac) if sh_out and sh_out > 0 else None
+        cap_adv = (med_vol * adv_frac) if med_vol and med_vol > 0 else None
+        ratio_out = (
+            (short_qty / cap_shares_out) if (short_qty is not None and cap_shares_out) else None
+        )
+        ratio_adv = (short_qty / cap_adv) if (short_qty is not None and cap_adv) else None
+        ratios = [r for r in (ratio_out, ratio_adv) if r is not None]
+        ratio_peak = max(ratios) if ratios else None
+        status = _classify(ratio_peak, liq_limits) if ratio_peak is not None else "unknown"
         squeeze_rows.append(
             {
                 "symbol": sym,
+                "bucket": bkt,
                 "short_qty": short_qty,
-                "shares_available": shares_avail,
-                "utilization": ratio,
+                "short_notional_usd": notional,
+                "shares_outstanding": sh_out,
+                "median_daily_volume_shares": med_vol,
+                "short_vs_shares_out_cap": ratio_out,
+                "short_vs_adv_cap": ratio_adv,
+                "liquidity_utilization": ratio_peak,
                 "status": status,
-                **row,
+                **rate,
             }
         )
-        squeeze_rows.sort(
-            key=lambda r: (-1.0 if r["utilization"] is None else r["utilization"]),
-            reverse=True,
-        )
-        for r in squeeze_rows:
-            if r["status"] == "hard":
-                breaches.append(
-                    _normalize_breach(
-                        {
-                            "metric": f"borrow_squeeze:{r['symbol']}",
-                            "label": r["symbol"],
-                            "value": r["utilization"],
-                            "status": "hard",
-                            "limit": {"warn": 0.25, "hard": 0.50},
-                            "source": "shares_available vs short qty (short ETF sleeve)",
-                            "action": f"Risk of buy-in on {r['symbol']}; reduce or lock borrow.",
-                            "sleeve": "bucket_4",
-                        }
-                    )
+        if status in ("warn", "hard"):
+            breaches.append(
+                _normalize_breach(
+                    {
+                        "metric": f"borrow_squeeze:{sym}",
+                        "label": sym,
+                        "value": ratio_peak,
+                        "status": status,
+                        "limit": liq_limits,
+                        "source": (
+                            "short qty vs liquidity caps "
+                            f"(shares_out×{sout_frac:.0%}, median_vol×{adv_frac:.0%})"
+                        ),
+                        "action": f"Reduce {sym} short; position exceeds sizing liquidity cap.",
+                        "sleeve": bkt,
+                    }
                 )
-            elif r["status"] == "warn":
-                breaches.append(
-                    _normalize_breach(
-                        {
-                            "metric": f"borrow_squeeze:{r['symbol']}",
-                            "label": r["symbol"],
-                            "value": r["utilization"],
-                            "status": "warn",
-                            "limit": {"warn": 0.25, "hard": 0.50},
-                            "source": "shares_available vs short qty (short ETF sleeve)",
-                            "action": f"Monitor {r['symbol']} availability; consider hedge.",
-                            "sleeve": "bucket_4",
-                        }
-                    )
-                )
+            )
+
+    squeeze_rows.sort(
+        key=lambda r: (-1.0 if r["liquidity_utilization"] is None else r["liquidity_utilization"]),
+        reverse=True,
+    )
 
     return {
         "borrow": {
             **summary,
-            "names_over_30pct": names_over_30_screener,
+            "names_over_30pct": expensive_borrow,
             "names_over_30pct_flex": summary.get("names_over_30pct", []),
         },
         "positions": pos_summary,
@@ -777,6 +942,8 @@ def compute_borrow_panel(
         "short_etf_rows": short_etf_rows,
         "watchlist_n_symbols": len(watchlist),
         "n_short_etfs": len(short_etf_rows),
+        "borrow_limits_by_bucket": ctx.borrow_apr_pct_by_bucket,
+        "liquidity_cap_fracs": ctx.liquidity_cap_fracs,
     }
 
 
@@ -1326,6 +1493,16 @@ def compute_factor_panel(
         key=lambda r: abs(r["beta_weighted_net_usd"]),
         reverse=True,
     )
+    if total_gross > 0:
+        for s in by_sector:
+            share = s["gross_notional_usd"] / total_gross
+            s["pct_book_gross_raw"] = share
+            s["pct_book_gross"] = share
+        sector_gross_sum = sum(s["gross_notional_usd"] for s in by_sector)
+        if sector_gross_sum > 0 and abs(sector_gross_sum - total_gross) > 1e-6:
+            scale = total_gross / sector_gross_sum
+            for s in by_sector:
+                s["pct_book_gross"] = (s["gross_notional_usd"] * scale) / total_gross
 
     longs = sorted(
         [r for r in rows if r["beta_weighted_net_usd"] > 0],
@@ -1359,14 +1536,51 @@ def compute_factor_panel(
     }
 
 
+def _load_bucket_underlying_rows(
+    accounting_dir: Path | None,
+    *,
+    blocked_exposure_keys: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    if accounting_dir is None or not accounting_dir.is_dir():
+        return []
+    out: list[dict[str, Any]] = []
+    for bucket in BUCKET_SLEEVE_KEYS:
+        path = accounting_dir / f"net_exposure_{bucket}.csv"
+        df = _read_csv_or_empty(path)
+        if blocked_exposure_keys and not df.empty and _filter_exposure_df is not None:
+            df = _filter_exposure_df(df, blocked_exposure_keys)
+        if df.empty:
+            continue
+        for _, raw in df.iterrows():
+            underlying = _first_nonblank(raw.get("underlying"), raw.get("symbol"))
+            gross = float(raw.get("gross_notional_usd", 0.0) or 0.0)
+            if gross <= 0:
+                continue
+            out.append(
+                {
+                    "bucket": bucket,
+                    "underlying": underlying,
+                    "symbols": _first_nonblank(raw.get("symbols"), underlying),
+                    "gross_notional_usd": gross,
+                    "net_notional_usd": float(raw.get("net_notional_usd", 0.0) or 0.0),
+                    "n_legs": int(raw.get("n_legs", 0) or 0),
+                }
+            )
+    return out
+
+
 def compute_concentration_panel(
     factor_panel: dict[str, Any],
     nav_usd: float,
     *,
     limits: dict[str, dict[str, Any]] | None = None,
+    limits_ctx: RiskLimitsContext | None = None,
+    accounting_dir: Path | None = None,
+    blocked_exposure_keys: set[str] | None = None,
 ) -> dict[str, Any]:
-    """Concentration metrics: HHI, top-N, single-name & sector caps."""
-    limits = limits or DEFAULT_LIMITS
+    """Concentration metrics: HHI, top-N, per-bucket single-name & sector caps."""
+    ctx = limits_ctx or load_risk_limits()
+    limits = limits or ctx.limits
     if not factor_panel or not factor_panel.get("available"):
         return {
             "available": False,
@@ -1387,26 +1601,46 @@ def compute_concentration_panel(
             "breaches": [],
         }
 
-    warn_pct = limits["single_name_gross_pct_nav"]["warn"]
-    ranked = sorted(rows, key=lambda r: r["gross_notional_usd"], reverse=True)
-    top_names = []
-    for r in ranked:
-        pct_nav = r["gross_notional_usd"] / nav_usd
-        share = r["gross_notional_usd"] / total_gross
-        status = _classify(pct_nav, limits["single_name_gross_pct_nav"])
+    sector_lookup = {r["underlying"]: r.get("sector") for r in rows}
+    bucket_rows = _load_bucket_underlying_rows(
+        accounting_dir, blocked_exposure_keys=blocked_exposure_keys
+    )
+    if not bucket_rows:
+        bucket_rows = [
+            {
+                "bucket": "bucket_1",
+                "underlying": r["underlying"],
+                "symbols": r.get("symbols"),
+                "gross_notional_usd": r["gross_notional_usd"],
+                "net_notional_usd": r["net_notional_usd"],
+                "n_legs": r.get("n_legs", 0),
+            }
+            for r in rows
+        ]
+
+    top_names: list[dict[str, Any]] = []
+    for br in bucket_rows:
+        bkt = br["bucket"]
+        underlying = br["underlying"]
+        gross = br["gross_notional_usd"]
+        pct_nav = gross / nav_usd
+        bkt_limits = ctx.underlying_gross_frac_by_bucket.get(
+            bkt, ctx.underlying_gross_frac_by_bucket["bucket_4"]
+        )
+        status = _classify(pct_nav, bkt_limits)
+        warn_pct = bkt_limits["warn"]
         trim_to_warn_usd = max((pct_nav - warn_pct) * nav_usd, 0.0)
         top_names.append(
             {
-                "underlying": r["underlying"],
-                "sector": r["sector"],
-                "gross_notional_usd": r["gross_notional_usd"],
-                "net_notional_usd": r["net_notional_usd"],
+                "underlying": underlying,
+                "bucket": bkt,
+                "sector": sector_lookup.get(underlying),
+                "gross_notional_usd": gross,
+                "net_notional_usd": br["net_notional_usd"],
                 "pct_nav_gross": pct_nav,
-                "pct_book_gross": share,
-                "beta_to_spy": r["beta_to_spy"],
-                "beta_source": r.get("beta_source"),
+                "pct_book_gross": gross / total_gross if total_gross > 0 else 0.0,
                 "status": status,
-                "limit": limits["single_name_gross_pct_nav"],
+                "limit": bkt_limits,
                 "trim_to_warn_usd": trim_to_warn_usd,
             }
         )
@@ -1414,12 +1648,15 @@ def compute_concentration_panel(
         key=lambda r: (0 if r["status"] == "ok" else 1, -r["trim_to_warn_usd"], -r["pct_nav_gross"])
     )
 
+    sector_cap = limits["single_sector_gross_pct_book"]
     sector_rows = []
     for s in sectors:
         sector_gross = s["gross_notional_usd"]
         pct_nav = sector_gross / nav_usd if nav_usd > 0 else 0.0
-        share = sector_gross / total_gross if total_gross > 0 else 0.0
-        status = _classify(pct_nav, limits["single_sector_gross_pct_nav"])
+        share = float(s.get("pct_book_gross", 0.0) or 0.0)
+        if share <= 0 and total_gross > 0:
+            share = sector_gross / total_gross
+        status = _classify(share, sector_cap)
         sector_rows.append(
             {
                 "sector": s["sector"],
@@ -1429,17 +1666,20 @@ def compute_concentration_panel(
                 "pct_nav_gross": pct_nav,
                 "pct_book_gross": share,
                 "status": status,
-                "limit": limits["single_sector_gross_pct_nav"],
+                "limit": sector_cap,
             }
         )
-    sector_rows.sort(key=lambda r: r["pct_nav_gross"], reverse=True)
+    sector_rows.sort(key=lambda r: r["pct_book_gross"], reverse=True)
 
     def hhi(shares: Iterable[float]) -> float:
         return float(sum((s * 100.0) ** 2 for s in shares))
 
-    underlying_shares = [r["pct_book_gross"] for r in top_names]
+    ranked = sorted(rows, key=lambda r: r["gross_notional_usd"], reverse=True)
+    book_underlying_shares = [
+        r["gross_notional_usd"] / total_gross for r in ranked if total_gross > 0
+    ]
     sector_shares = [r["pct_book_gross"] for r in sector_rows]
-    hhi_underlying = hhi(underlying_shares)
+    hhi_underlying = hhi(book_underlying_shares)
     hhi_sector = hhi(sector_shares)
 
     top5 = sum(r["gross_notional_usd"] for r in ranked[:5]) / nav_usd
@@ -1448,13 +1688,17 @@ def compute_concentration_panel(
     breaches: list[dict[str, Any]] = []
     for r in top_names:
         if r["status"] != "ok":
+            metric_key = f"single_name:{r['bucket']}:{r['underlying']}"
             breaches.append(
                 _limit_row(
-                    metric=f"single_name:{r['underlying']}",
+                    metric=metric_key,
                     value=r["pct_nav_gross"],
-                    limits={"single_name:" + r["underlying"]: limits["single_name_gross_pct_nav"]},
-                    source="concentration cap (single name)",
-                    action=f"Trim {r['underlying']} or hedge sector exposure.",
+                    limits={metric_key: r["limit"]},
+                    source=f"per-bucket cap ({r['bucket']})",
+                    action=(
+                        f"Trim {r['underlying']} in {r['bucket']} "
+                        f"(now {r['pct_nav_gross']:.0%} of NAV vs {r['limit']['warn']:.0%} warn)."
+                    ),
                 )
             )
     for r in sector_rows:
@@ -1462,10 +1706,10 @@ def compute_concentration_panel(
             breaches.append(
                 _limit_row(
                     metric=f"sector:{r['sector']}",
-                    value=r["pct_nav_gross"],
-                    limits={"sector:" + r["sector"]: limits["single_sector_gross_pct_nav"]},
-                    source="concentration cap (sector)",
-                    action=f"Diversify away from {r['sector']} sleeve.",
+                    value=r["pct_book_gross"],
+                    limits={"sector:" + r["sector"]: sector_cap},
+                    source="concentration cap (sector share of book gross)",
+                    action=f"Diversify away from {r['sector']} ({r['pct_book_gross']:.0%} of book gross).",
                 )
             )
     top10_status = _classify(top10, limits["top10_gross_pct_nav"])
@@ -1564,26 +1808,32 @@ def compute_action_queue(
     for name in (concentration_panel or {}).get("top_names", []):
         if name["status"] == "ok":
             continue
-        target_pct = limits["single_name_gross_pct_nav"]["warn"]
+        target_pct = (name.get("limit") or {}).get("warn", 0.0)
         trim_usd = (name["pct_nav_gross"] - target_pct) * nav_usd
         if trim_usd <= 0:
             continue
+        bkt = name.get("bucket") or "book"
         _append(
             {
                 "priority": 0 if name["status"] == "hard" else 1,
                 "status": name["status"],
-                "category": f"single_name:{name['underlying']}",
-                "sleeve": name.get("sector") or "book",
-                "title": f"Trim {name['underlying']} ({name['sector']})",
-                "detail": f"Reduce ~${trim_usd:,.0f} gross to bring {name['underlying']} below {target_pct:.0%} of NAV.",
-                "source": "concentration cap (single name)",
+                "category": f"single_name:{bkt}:{name['underlying']}",
+                "sleeve": bkt,
+                "title": f"Trim {name['underlying']} ({bkt})",
+                "detail": (
+                    f"Reduce ~${trim_usd:,.0f} gross in {bkt} to bring "
+                    f"{name['underlying']} below {target_pct:.0%} of NAV."
+                ),
+                "source": f"per-bucket cap ({bkt})",
             }
         )
     for sector in (concentration_panel or {}).get("by_sector", []):
         if sector["status"] == "ok":
             continue
-        target_pct = limits["single_sector_gross_pct_nav"]["warn"]
-        trim_usd = (sector["pct_nav_gross"] - target_pct) * nav_usd
+        target_share = limits["single_sector_gross_pct_book"]["warn"]
+        trim_usd = (sector["pct_book_gross"] - target_share) * (
+            (concentration_panel or {}).get("totals", {}).get("total_gross_usd") or nav_usd
+        )
         if trim_usd <= 0:
             continue
         _append(
@@ -1593,8 +1843,11 @@ def compute_action_queue(
                 "category": f"sector:{sector['sector']}",
                 "sleeve": sector["sector"],
                 "title": f"De-risk {sector['sector']} sector",
-                "detail": f"Reduce ~${trim_usd:,.0f} gross of {sector['sector']} (now {sector['pct_nav_gross']:.0%} of NAV).",
-                "source": "concentration cap (sector)",
+                "detail": (
+                    f"Reduce ~${trim_usd:,.0f} book gross in {sector['sector']} "
+                    f"(now {sector['pct_book_gross']:.0%} of book vs {target_share:.0%} warn)."
+                ),
+                "source": "concentration cap (sector share of book gross)",
             }
         )
 
@@ -1644,23 +1897,24 @@ def compute_action_queue(
     for sq in (borrow_panel or {}).get("squeeze_rows", []):
         if sq.get("status") != "hard":
             continue
-        target_qty = 0.5 * float(sq.get("shares_available") or 0)
-        if target_qty <= 0:
+        util = sq.get("liquidity_utilization")
+        short_qty = sq.get("short_qty")
+        if util is None or short_qty is None:
             continue
-        trim_qty = max(sq["short_qty"] - target_qty, 0)
+        cap_qty = short_qty / util if util > 0 else None
+        trim_qty = max(short_qty - (cap_qty or 0) * 0.8, 0) if cap_qty else 0
         _append(
             {
                 "priority": 0,
                 "status": "hard",
                 "category": f"borrow_squeeze:{sq['symbol']}",
-                        "sleeve": "short_etf",
-                        "title": f"Reduce short on {sq['symbol']}",
+                "sleeve": sq.get("bucket") or "bucket_4",
+                "title": f"Reduce short on {sq['symbol']}",
                 "detail": (
-                    f"Utilization {sq['utilization']:.0%} of available borrow ("
-                    f"{sq['short_qty']:,.0f} short vs {sq['shares_available']:,.0f} avail). "
-                    f"Cut ~{trim_qty:,.0f} shares to fall below 50% utilization."
+                    f"Liquidity utilization {util:.0%} vs sizing cap "
+                    f"({short_qty:,.0f} short). Cut ~{trim_qty:,.0f} shares to reach warn band."
                 ),
-                "source": "shares_available vs short qty (short ETF sleeve)",
+                "source": "short qty vs shares-out / median-volume caps",
             }
         )
 
@@ -2580,7 +2834,12 @@ class RiskSnapshot:
             "alert_rows": self.alert_rows,
             "universe_counts": self.universe_counts,
             "raw_totals": self.raw_totals,
-            "limits": DEFAULT_LIMITS,
+            "limits": getattr(self, "_limits", DEFAULT_LIMITS),
+            "borrow_limits_by_bucket": getattr(self, "_borrow_limits_by_bucket", {}),
+            "underlying_gross_frac_by_bucket": getattr(
+                self, "_underlying_gross_frac_by_bucket", {}
+            ),
+            "liquidity_cap_fracs": getattr(self, "_liquidity_cap_fracs", {}),
             "sleeve_target_weights": SLEEVE_TARGET_WEIGHTS,
         }
 
@@ -2597,6 +2856,14 @@ def build_snapshot(
     beta_cache_dir: Path | None = None,
 ) -> RiskSnapshot:
     """Build a full snapshot from a ``data/runs/<run_date>`` folder."""
+    repo_root = runs_root
+    for candidate in (runs_root, runs_root.parent, runs_root.parent.parent):
+        if (candidate / "config" / "strategy_config.yml").is_file():
+            repo_root = candidate
+            break
+    limits_ctx = load_risk_limits(repo_root / "config" / "strategy_config.yml")
+    limits = limits or limits_ctx.limits
+
     run_dir = runs_root / run_date
     accounting = run_dir / "accounting"
     flex = run_dir / "ibkr_flex"
@@ -2622,6 +2889,8 @@ def build_snapshot(
         limits=limits,
         screener_csv=screener_csv,
         run_date=run_date,
+        limits_ctx=limits_ctx,
+        repo_root=repo_root,
     )
     borrow_watchlist = _borrow_watchlist_symbols(
         screener_csv=screener_csv,
@@ -2667,6 +2936,9 @@ def build_snapshot(
         factor_panel=factor_panel,
         nav_usd=nav_usd,
         limits=limits,
+        limits_ctx=limits_ctx,
+        accounting_dir=accounting,
+        blocked_exposure_keys=blocked_exposure_keys,
     )
     slide_risk_panel = compute_slide_risk_panel(
         factor_panel=factor_panel,
@@ -2706,7 +2978,7 @@ def build_snapshot(
         "universe_allowed_underlyings": totals.get("universe_allowed_underlyings"),
     }
 
-    return RiskSnapshot(
+    snap = RiskSnapshot(
         run_date=run_date,
         generated_at_utc=generated_at_utc,
         nav_usd=nav_usd,
@@ -2723,3 +2995,8 @@ def build_snapshot(
         universe_counts=universe_counts,
         raw_totals=totals,
     )
+    snap._limits = limits_ctx.limits
+    snap._borrow_limits_by_bucket = limits_ctx.borrow_apr_pct_by_bucket
+    snap._underlying_gross_frac_by_bucket = limits_ctx.underlying_gross_frac_by_bucket
+    snap._liquidity_cap_fracs = limits_ctx.liquidity_cap_fracs
+    return snap
