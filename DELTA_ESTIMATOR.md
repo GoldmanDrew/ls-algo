@@ -2,7 +2,7 @@
 
 `delta_estimator.py` replaces the old shrunk-OLS estimator
 (`daily_screener.compute_beta_shrunk` — still kept around for back-compat
-imports / tests) for the purpose of producing the **`Beta`** column in
+imports / tests) for the purpose of producing the **`Delta`** column in
 `data/etf_screened_today.csv`.
 
 The estimator is consumed by `ibkr_accounting.compute_net_exposure` to
