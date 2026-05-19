@@ -526,7 +526,7 @@ def main() -> int:
 
             etf = norm_sym(str(row["symbol"]))
             under = norm_sym(str(row["underlying"]))
-            beta = float(row["delta"])
+            delta = float(row["delta"])
             need_usd = max(0.0, -float(row.get("gross_gap_usd", 0.0) or 0.0))
             if max_short_usd_per_etf > 0:
                 need_usd = min(need_usd, max_short_usd_per_etf)
@@ -703,7 +703,7 @@ def main() -> int:
 
             etf = norm_sym(str(row["symbol"]))
             under = norm_sym(str(row["underlying"]))
-            beta = float(row["delta"])
+            delta = float(row["delta"])
             need_usd = float(row["target_short_usd"])
             px_etf = float(row["etf_px"])
             px_under = float(row["under_px"])
@@ -767,7 +767,7 @@ def main() -> int:
                 )
                 continue
 
-            hedge_notional_usd = filled_short_sh * px_etf * beta
+            hedge_notional_usd = filled_short_sh * px_etf * delta
             hedge_target_sh = (
                 int(
                     math.floor(
@@ -819,7 +819,7 @@ def main() -> int:
                 )
 
             remaining_short_usd = max(0.0, need_usd - (filled_short_sh * px_etf))
-            residual_beta_usd = (filled_short_sh * px_etf * beta) - (filled_under_sh * px_under)
+            residual_beta_usd = (filled_short_sh * px_etf * delta) - (filled_under_sh * px_under)
             summary_rows.append(
                 {
                     "symbol": etf,
