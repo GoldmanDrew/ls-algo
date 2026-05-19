@@ -1347,16 +1347,26 @@ def rebuild_pnl_history_from_runs() -> pd.DataFrame:
     return hist[hist["date"] >= start_dt].copy()
 
 
-def format_period_pnl_summary(history: pd.DataFrame, run_date: str) -> str:
-    """Format daily, week-to-date, and month-to-date changes from cumulative PnL history."""
-    if history.empty:
-        return "PERIOD PnL: unavailable (no history rows)."
+def compute_period_pnl_deltas(
+    history: pd.DataFrame,
+    run_date: str,
+    *,
+    period: str = "daily",
+) -> dict[str, float] | None:
+    """
+    Return bucket/total PnL changes vs a prior cumulative snapshot in history.
+
+    Keys: bucket_1 … bucket_4, total. ``period`` is daily (prior run date),
+    wtd (prior calendar week), or mtd (prior calendar month).
+    """
+    if history is None or history.empty:
+        return None
 
     hist = history.copy()
     hist["date"] = pd.to_datetime(hist["date"], errors="coerce")
     hist = hist.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
     if hist.empty:
-        return "PERIOD PnL: unavailable (no valid history dates)."
+        return None
 
     cols = list(PNL_HISTORY_BUCKET_COLS) + ["total_pnl"]
     for c in cols:
@@ -1365,7 +1375,7 @@ def format_period_pnl_summary(history: pd.DataFrame, run_date: str) -> str:
     target = pd.to_datetime(run_date).normalize()
     current_rows = hist[hist["date"].dt.normalize() <= target]
     if current_rows.empty:
-        return "PERIOD PnL: unavailable (run date not in history)."
+        return None
     current = current_rows.iloc[-1]
 
     def _prior_before(cutoff: pd.Timestamp) -> pd.Series | None:
@@ -1380,25 +1390,63 @@ def format_period_pnl_summary(history: pd.DataFrame, run_date: str) -> str:
             return cur
         return cur - float(start.get(col, 0.0) or 0.0)
 
-    daily_base = _prior_before(current["date"])
-    week_start = target - pd.Timedelta(days=int(target.dayofweek))
-    month_start = target.replace(day=1)
-    periods = [
-        ("Daily", daily_base),
-        ("Week-to-date", _prior_before(week_start)),
-        ("Month-to-date", _prior_before(month_start)),
-    ]
+    period = period.strip().lower()
+    if period == "daily":
+        base = _prior_before(current["date"])
+    elif period == "wtd":
+        week_start = target - pd.Timedelta(days=int(target.dayofweek))
+        base = _prior_before(week_start)
+    elif period == "mtd":
+        month_start = target.replace(day=1)
+        base = _prior_before(month_start)
+    else:
+        raise ValueError(f"unknown period {period!r}; use daily, wtd, or mtd")
+
+    out: dict[str, float] = {}
+    for i, bucket in enumerate(BUCKET_KEYS, start=1):
+        out[bucket] = _delta(base, f"pnl_bucket_{i}")
+    out["total"] = _delta(base, "total_pnl")
+    return out
+
+
+def format_eod_pnl_subject(
+    run_date: str,
+    *,
+    daily: dict[str, float],
+    ytd_total: float,
+) -> str:
+    """Email subject: daily bucket changes (what moved today), YTD total in parentheses."""
+    return (
+        f"EOD PnL — {run_date} — "
+        f"Daily B1: {daily['bucket_1']:,.2f} | B2: {daily['bucket_2']:,.2f} | "
+        f"B3: {daily['bucket_3']:,.2f} | B4: {daily['bucket_4']:,.2f} | "
+        f"Total: {daily['total']:,.2f} (YTD Total: {ytd_total:,.2f})"
+    )
+
+
+def format_period_pnl_summary(history: pd.DataFrame, run_date: str) -> str:
+    """Format daily, week-to-date, and month-to-date changes from cumulative PnL history."""
+    if history.empty:
+        return "PERIOD PnL: unavailable (no history rows)."
 
     labels = {
-        "pnl_bucket_1": "B1",
-        "pnl_bucket_2": "B2",
-        "pnl_bucket_3": "B3",
-        "pnl_bucket_4": "B4",
-        "total_pnl": "Total",
+        "bucket_1": "B1",
+        "bucket_2": "B2",
+        "bucket_3": "B3",
+        "bucket_4": "B4",
+        "total": "Total",
     }
     lines = ["PERIOD PnL changes from cumulative history:"]
-    for name, base in periods:
-        pieces = [f"{labels[c]}: {_delta(base, c):,.2f}" for c in cols]
+    for name, period in (
+        ("Daily", "daily"),
+        ("Week-to-date", "wtd"),
+        ("Month-to-date", "mtd"),
+    ):
+        deltas = compute_period_pnl_deltas(history, run_date, period=period)
+        if deltas is None:
+            lines.append(f"  {name}: unavailable")
+            continue
+        pieces = [f"{labels[k]}: {deltas[k]:,.2f}" for k in labels]
         lines.append(f"  {name}: " + " | ".join(pieces))
     return "\n".join(lines)
 
@@ -2063,12 +2111,13 @@ def main() -> int:
     except Exception:
         asof = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    subject = (
-        f"EOD PnL — {run_date} — "
-        f"B1: {b1_pnl_total:,.2f} | B2: {b2_pnl_total:,.2f} | "
-        f"B3: {b3_pnl_total:,.2f} | B4: {b4_pnl_total:,.2f} | "
-        f"Total: {grand_total:,.2f}"
-    )
+    daily_pnl = compute_period_pnl_deltas(hist, run_date, period="daily")
+    if daily_pnl is None:
+        daily_pnl = {
+            **{b: float(bucket_pnl_ytd[b]) for b in BUCKET_KEYS},
+            "total": grand_total,
+        }
+    subject = format_eod_pnl_subject(run_date, daily=daily_pnl, ytd_total=grand_total)
 
     n_days = int(hist.shape[0])
     if not hist.empty and all(c in hist.columns for c in PNL_HISTORY_BUCKET_COLS):
@@ -2103,11 +2152,18 @@ def main() -> int:
         f"{pair_exposure_line}\n\n"
         f"Position discrepancy rows: {len(discrepancy_df)} "
         f"(under-exposed: {under_exposed_count})\n\n"
-        f"TOTAL PnL (base): {grand_total:,.2f}\n"
+        f"TOTAL PnL — day change (vs prior logged run, base):\n"
+        f"  Bucket 1 (Levered, β > 1.5):    {daily_pnl['bucket_1']:,.2f}\n"
+        f"  Bucket 2 (Standard, 0 < β ≤ 1.5): {daily_pnl['bucket_2']:,.2f}\n"
+        f"  Bucket 3 (Inverse, β < 0):       {daily_pnl['bucket_3']:,.2f}\n"
+        f"  Bucket 4 (Inverse decay, β < 0): {daily_pnl['bucket_4']:,.2f}\n"
+        f"  Total:                           {daily_pnl['total']:,.2f}\n\n"
+        f"TOTAL PnL — YTD since {START_DATE} (base):\n"
         f"  Bucket 1 (Levered, β > 1.5):    {b1_pnl_total:,.2f}\n"
         f"  Bucket 2 (Standard, 0 < β ≤ 1.5): {b2_pnl_total:,.2f}\n"
-        f"  Bucket 3 (Inverse, β < 0):       {b3_pnl_total:,.2f}\n\n"
-        f"  Bucket 4 (Inverse decay, β < 0): {b4_pnl_total:,.2f}\n\n"
+        f"  Bucket 3 (Inverse, β < 0):       {b3_pnl_total:,.2f}\n"
+        f"  Bucket 4 (Inverse decay, β < 0): {b4_pnl_total:,.2f}\n"
+        f"  Total:                           {grand_total:,.2f}\n\n"
         f"BUCKET RETURNS ON CAPITAL (denominators = average per-day capital since {START_DATE}):\n"
         "----------------------------------------\n"
         f"{bucket_return_table}\n"
