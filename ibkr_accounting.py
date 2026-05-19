@@ -3367,7 +3367,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         b4_registry,
         underlying_b4_qty=_b4_under_qty,
     )
-    _ = exposure_b4_from_b124_df  # ratio-split cross-check; pair exposure is canonical for B4
+    # Ratio-split B4 is used for the reconciliation gate (must partition the same
+    # detail legs as B1/B2). Pair exposure is the published B4 sleeve view.
 
     exposure_b1_df.to_csv(outdir / "net_exposure_bucket_1.csv", index=False)
     exposure_b2_df.to_csv(outdir / "net_exposure_bucket_2.csv", index=False)
@@ -3434,8 +3435,19 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "gross_exposure_bucket_2": float(exposure_b2_df["gross_notional_usd"].sum()) if not exposure_b2_df.empty else 0.0,
         "net_exposure_bucket_3": float(exposure_b3_df["net_notional_usd"].sum()) if not exposure_b3_df.empty else 0.0,
         "gross_exposure_bucket_3": float(exposure_b3_df["gross_notional_usd"].sum()) if not exposure_b3_df.empty else 0.0,
-        "net_exposure_bucket_4": float(exposure_b4_df["net_notional_usd"].sum()) if not exposure_b4_df.empty else 0.0,
-        "gross_exposure_bucket_4": float(exposure_b4_df["gross_notional_usd"].sum()) if not exposure_b4_df.empty else 0.0,
+        # Split attribution (b124 ratios) sums to book with b1+b2; pair CSV is separate.
+        "net_exposure_bucket_4": float(exposure_b4_from_b124_df["net_notional_usd"].sum())
+        if not exposure_b4_from_b124_df.empty
+        else 0.0,
+        "gross_exposure_bucket_4": float(exposure_b4_from_b124_df["gross_notional_usd"].sum())
+        if not exposure_b4_from_b124_df.empty
+        else 0.0,
+        "net_exposure_bucket_4_pair": float(exposure_b4_df["net_notional_usd"].sum())
+        if not exposure_b4_df.empty
+        else 0.0,
+        "gross_exposure_bucket_4_pair": float(exposure_b4_df["gross_notional_usd"].sum())
+        if not exposure_b4_df.empty
+        else 0.0,
         "yfinance_override": bool(use_yfinance),
         "yfinance_symbols_overridden": len(yf_closes),
         "bucket_split_method": split_method,
