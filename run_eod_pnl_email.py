@@ -59,7 +59,8 @@ def _spot_capital_bucket_ratios(
 PROJECT_ROOT = Path(__file__).resolve().parent  # adjust if needed
 
 IBKR_FLEX_SCRIPT = PROJECT_ROOT / "ibkr_flex.py"
-IBKR_ACCT_SCRIPT = PROJECT_ROOT / "ibkr_accounting.py"
+# Bucket PnL attribution matches the 2026-05-18 CI baseline; exposure-only fixes stay in ibkr_accounting.py.
+IBKR_ACCT_SCRIPT = PROJECT_ROOT / "scripts" / "ibkr_accounting_pnl.py"
 
 # History / plot outputs
 LEDGER_DIR = PROJECT_ROOT / "data" / "ledger"
@@ -856,12 +857,33 @@ def format_pair_exposure_flags(
 def read_bucket_pnl_from_run(run_date_str: str) -> tuple[float, float, float, float] | None:
     """
     Bucket YTD-style totals from a prior accounting run.
-    Requires totals.json with bucket_pnl fields to avoid drifting away from
-    the canonical accounting output used by the email report.
+
+    Uses ``pnl_by_bucket.csv`` (same source as the EOD email headline). Falls back
+    to ``totals.json`` ``bucket_pnl`` when the CSV is missing.
     """
     outdir = RUNS_ROOT / run_date_str / "accounting"
     if not outdir.is_dir():
         return None
+
+    bucket_csv = outdir / "pnl_by_bucket.csv"
+    if bucket_csv.exists():
+        try:
+            df = pd.read_csv(bucket_csv)
+            if not df.empty and "bucket" in df.columns and "total_pnl" in df.columns:
+                df["total_pnl"] = pd.to_numeric(df["total_pnl"], errors="coerce").fillna(0.0)
+
+                def _sum(bucket: str) -> float:
+                    rows = df[df["bucket"] == bucket]
+                    return float(rows["total_pnl"].sum()) if not rows.empty else 0.0
+
+                return (
+                    _sum("bucket_1"),
+                    _sum("bucket_2"),
+                    _sum("bucket_3"),
+                    _sum("bucket_4"),
+                )
+        except Exception:
+            pass
 
     totals_path = outdir / "totals.json"
     if not totals_path.exists():
@@ -1925,7 +1947,6 @@ def main() -> int:
     # 3) Load outputs
     pnl_under_csv, pnl_symbol_csv, pnl_bucket_csv, totals_json_path, totals = load_outputs(run_date)
     total_pnl = float(totals.get("total_pnl", 0.0))
-    bucket_pnl_ytd = _bucket_pnl_from_totals(totals)
 
     # 4) Create underlying breakdown table (bucket 1&2 combined) + bucket table
     underlying_table, underlying_total = format_underlying_table(pnl_under_csv, pnl_symbol_csv)
@@ -1939,14 +1960,15 @@ def main() -> int:
     pnl_b3_csv = outdir / "pnl_bucket_3.csv"
     pnl_b4_csv = outdir / "pnl_bucket_4.csv"
 
-    # Bucket 1 PnL (levered ETFs + pro-rata spot) — headline totals from totals.json
-    b1_pnl_total = float(bucket_pnl_ytd["bucket_1"])
+    # Bucket 1 PnL (levered ETFs + pro-rata spot) — headline from accounting CSV sums
+    b1_pnl_total = 0.0
     b1_pnl_table = "(no bucket 1 data)"
     if pnl_b1_csv.exists():
         try:
             _b1_df = pd.read_csv(pnl_b1_csv)
             if not _b1_df.empty and "total_pnl" in _b1_df.columns:
                 _b1_df["total_pnl"] = pd.to_numeric(_b1_df["total_pnl"], errors="coerce").fillna(0.0)
+                b1_pnl_total = float(_b1_df["total_pnl"].sum())
                 # Build per-symbol detail from pnl_by_symbol filtered to bucket_1
                 _sym_b1 = pd.DataFrame()
                 if pnl_symbol_csv.exists():
@@ -1960,13 +1982,14 @@ def main() -> int:
             pass
 
     # Bucket 2 PnL (standard ETFs + pro-rata spot)
-    b2_pnl_total = float(bucket_pnl_ytd["bucket_2"])
+    b2_pnl_total = 0.0
     b2_pnl_table = "(no bucket 2 data)"
     if pnl_b2_csv.exists():
         try:
             _b2_df = pd.read_csv(pnl_b2_csv)
             if not _b2_df.empty and "total_pnl" in _b2_df.columns:
                 _b2_df["total_pnl"] = pd.to_numeric(_b2_df["total_pnl"], errors="coerce").fillna(0.0)
+                b2_pnl_total = float(_b2_df["total_pnl"].sum())
                 _sym_b2 = pd.DataFrame()
                 if pnl_symbol_csv.exists():
                     try:
@@ -1980,9 +2003,24 @@ def main() -> int:
 
     # Bucket 3 PnL (inverse/hedge by symbol)
     b3_pnl_table, b3_pnl_total = format_bucket_3_pnl(pnl_b3_csv)
-    b3_pnl_total = float(bucket_pnl_ytd["bucket_3"])
     b4_pnl_table, b4_pnl_total = format_bucket_4_pnl(pnl_b4_csv, pnl_symbol_csv)
-    b4_pnl_total = float(bucket_pnl_ytd["bucket_4"])
+
+    _bucket_pnl_from_csv = {
+        "bucket_1": b1_pnl_total,
+        "bucket_2": b2_pnl_total,
+        "bucket_3": b3_pnl_total,
+        "bucket_4": b4_pnl_total,
+    }
+    totals_bucket_pnl = _bucket_pnl_from_totals(totals)
+    _bucket_tol = 0.01
+    for bucket in BUCKET_KEYS:
+        csv_v = float(_bucket_pnl_from_csv[bucket])
+        tot_v = float(totals_bucket_pnl[bucket])
+        if abs(csv_v - tot_v) > _bucket_tol:
+            print(
+                f"[EOD] WARNING: {bucket} PnL CSV sum {csv_v:,.2f} != "
+                f"totals.json {tot_v:,.2f}"
+            )
 
     # 4b) Load pre-computed exposure tables from accounting outputs
     exposure_csv_path = outdir / "net_exposure_by_underlying.csv"
@@ -2064,24 +2102,24 @@ def main() -> int:
     b4_gross = b4_gross_tbl
 
     # 5) Update history + plot since START_DATE
-    grand_total = float(sum(bucket_pnl_ytd.values()))
+    grand_total = b1_pnl_total + b2_pnl_total + b3_pnl_total + b4_pnl_total
+    bucket_pnl_map = _bucket_pnl_from_csv
     bucket_capital_snapshot = build_bucket_capital_snapshot_from_run(run_date)
     hist = update_pnl_history(
         run_date,
-        b1=bucket_pnl_ytd["bucket_1"],
-        b2=bucket_pnl_ytd["bucket_2"],
-        b3=bucket_pnl_ytd["bucket_3"],
-        b4=bucket_pnl_ytd["bucket_4"],
+        b1=b1_pnl_total,
+        b2=b2_pnl_total,
+        b3=b3_pnl_total,
+        b4=b4_pnl_total,
         bucket_capital=bucket_capital_snapshot,
     )
-    # YTD bucket PnL and averaged capital denominators from persisted history
-    bucket_pnl_map = bucket_pnl_ytd
+    # YTD bucket PnL for return table from persisted history (same as CSV sums when in sync)
     if not hist.empty:
         _hist_row = hist[hist["date"].dt.strftime("%Y-%m-%d") == run_date]
         if not _hist_row.empty:
             _r = _hist_row.iloc[-1]
             bucket_pnl_map = {
-                b: float(_r.get(f"pnl_{b}", bucket_pnl_ytd[b]) or 0.0) for b in BUCKET_KEYS
+                b: float(_r.get(f"pnl_{b}", bucket_pnl_map[b]) or 0.0) for b in BUCKET_KEYS
             }
     bucket_capital_avg = compute_average_bucket_capital(hist)
     bucket_return_table = format_bucket_return_table(bucket_pnl_map, bucket_capital_avg)
@@ -2111,13 +2149,12 @@ def main() -> int:
     except Exception:
         asof = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    daily_pnl = compute_period_pnl_deltas(hist, run_date, period="daily")
-    if daily_pnl is None:
-        daily_pnl = {
-            **{b: float(bucket_pnl_ytd[b]) for b in BUCKET_KEYS},
-            "total": grand_total,
-        }
-    subject = format_eod_pnl_subject(run_date, daily=daily_pnl, ytd_total=grand_total)
+    subject = (
+        f"EOD PnL — {run_date} — "
+        f"B1: {b1_pnl_total:,.2f} | B2: {b2_pnl_total:,.2f} | "
+        f"B3: {b3_pnl_total:,.2f} | B4: {b4_pnl_total:,.2f} | "
+        f"Total: {grand_total:,.2f}"
+    )
 
     n_days = int(hist.shape[0])
     if not hist.empty and all(c in hist.columns for c in PNL_HISTORY_BUCKET_COLS):
@@ -2152,18 +2189,11 @@ def main() -> int:
         f"{pair_exposure_line}\n\n"
         f"Position discrepancy rows: {len(discrepancy_df)} "
         f"(under-exposed: {under_exposed_count})\n\n"
-        f"TOTAL PnL — day change (vs prior logged run, base):\n"
-        f"  Bucket 1 (Levered, β > 1.5):    {daily_pnl['bucket_1']:,.2f}\n"
-        f"  Bucket 2 (Standard, 0 < β ≤ 1.5): {daily_pnl['bucket_2']:,.2f}\n"
-        f"  Bucket 3 (Inverse, β < 0):       {daily_pnl['bucket_3']:,.2f}\n"
-        f"  Bucket 4 (Inverse decay, β < 0): {daily_pnl['bucket_4']:,.2f}\n"
-        f"  Total:                           {daily_pnl['total']:,.2f}\n\n"
-        f"TOTAL PnL — YTD since {START_DATE} (base):\n"
+        f"TOTAL PnL (base): {total_pnl:,.2f}\n"
         f"  Bucket 1 (Levered, β > 1.5):    {b1_pnl_total:,.2f}\n"
         f"  Bucket 2 (Standard, 0 < β ≤ 1.5): {b2_pnl_total:,.2f}\n"
-        f"  Bucket 3 (Inverse, β < 0):       {b3_pnl_total:,.2f}\n"
-        f"  Bucket 4 (Inverse decay, β < 0): {b4_pnl_total:,.2f}\n"
-        f"  Total:                           {grand_total:,.2f}\n\n"
+        f"  Bucket 3 (Inverse, β < 0):       {b3_pnl_total:,.2f}\n\n"
+        f"  Bucket 4 (Inverse decay, β < 0): {b4_pnl_total:,.2f}\n\n"
         f"BUCKET RETURNS ON CAPITAL (denominators = average per-day capital since {START_DATE}):\n"
         "----------------------------------------\n"
         f"{bucket_return_table}\n"
