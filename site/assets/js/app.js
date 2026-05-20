@@ -967,17 +967,7 @@
       : "";
     const stripsHtml = indices
       .map((idx) => {
-        if (idx.strip_type === "vix_pts") {
-          const vixRows = idx.shock_rows || [];
-          const vixHeader = vixRows
-            .map((r) => `<th class="slide-shock">${formatSlideShockHeader(r)}</th>`)
-            .join("");
-          const vixCells = vixRows
-            .map(
-              (r) =>
-                `<td class="num ${signedClass(r.pnl_pct_nav)} ${scenarioHeatClass(r.pnl_pct_nav)}" title="${fmtUsdSigned(r.pnl_usd)}">${fmtPct(r.pnl_pct_nav, 1)}</td>`
-            )
-            .join("");
+        if (idx.strip_type === "vix_pts" || idx.strip_type === "vix_decay") {
           const vixMatrix = idx.vix_decay_matrix || null;
           const decayCells = vixMatrix?.cells || [];
           const decayHeader = decayCells
@@ -1012,22 +1002,16 @@
                 "Expected 12M book carry at SPX 0% under VIX-shocked vol."
               )} Vol→VIX β on ${vixMatrix.n_vol_betas_computed ?? "?"}/${Object.keys(vixMatrix.vol_vix_betas || {}).length} names.</p>`
             : "";
-          const decayHtml =
-            decayCells.length > 0
-              ? `<h4 class="dim small">12M expected decay vs VIX (SPX 0%)</h4>
+          if (!decayCells.length) {
+            return `<div class="slide-strip"><p class="dim small">12M VIX decay projection unavailable.</p></div>`;
+          }
+          return `<div class="slide-strip">
+            <div class="slide-strip-head"><h3>12M expected decay vs VIX (SPX 0%)</h3></div>
             ${decayMeta}
             <div class="slide-strip-scroll">
               <table class="tight slide-table"><thead><tr><th class="row-label">Horizon</th>${decayHeader}</tr></thead>
               <tbody><tr><th class="row-label">12M <span class="dim small">SPX 0%</span></th>${decayRow}</tr></tbody></table>
-            </div>`
-              : `<p class="dim small">12M VIX decay projection unavailable.</p>`;
-          return `<div class="slide-strip">
-            <div class="slide-strip-head"><h3>VIX vega shocks (T+0)</h3><span class="dim small">Instantaneous vega P&amp;L</span></div>
-            <div class="slide-strip-scroll">
-              <table class="tight slide-table"><thead><tr><th class="row-label">Shock</th>${vixHeader}</tr></thead>
-              <tbody><tr><th class="row-label">T+0</th>${vixCells}</tr></tbody></table>
             </div>
-            ${decayHtml}
           </div>`;
         }
         const rows = idx.shock_rows || [];
@@ -1102,8 +1086,7 @@
       )} / yr (${fmtPct(panel.current_annual_cost_pct_nav, 2)} of NAV) &middot; ${panel.persistence_days}-day persistence column</span>`;
     }
     const tiles = panel.summary_tiles || {};
-    const focus50 = tiles.focus_abs_50bp;
-    const focus2x = tiles.focus_mult_2x;
+    const focus500 = tiles.focus_abs_500bp;
     const top3Share = panel.current_borrow_concentration?.top_n_share;
     const summaryStrip = `
       <div class="strip borrow-summary-strip">
@@ -1113,14 +1096,9 @@
           <div class="sub">${fmtPct(panel.current_annual_cost_pct_nav, 2)} of NAV · ${panel.n_short_symbols} shorts</div>
         </div>
         <div class="stat stat-neutral">
-          <div class="label">+50bp stress</div>
-          <div class="value">${focus50 ? fmtUsd(focus50.annual_delta_usd) : "—"}</div>
-          <div class="sub">${focus50 ? `${fmtPct(focus50.annual_delta_pct_nav, 2)} NAV/yr · ${panel.persistence_days}d ${fmtUsd(focus50.persistence_delta_usd)}` : ""}</div>
-        </div>
-        <div class="stat stat-neutral">
-          <div class="label">2× APR stress</div>
-          <div class="value">${focus2x ? fmtUsd(focus2x.annual_delta_usd) : "—"}</div>
-          <div class="sub">${focus2x ? `${fmtPct(focus2x.annual_delta_pct_nav, 2)} NAV/yr · ${panel.persistence_days}d ${fmtUsd(focus2x.persistence_delta_usd)}` : ""}</div>
+          <div class="label">+500bp additional borrow / yr</div>
+          <div class="value">${focus500 ? fmtUsd(focus500.annual_delta_usd) : "—"}</div>
+          <div class="sub">${focus500 ? `Extra annual cost if rates rise 500bp · ${fmtPct(focus500.annual_delta_pct_nav, 2)} of NAV/yr · ${panel.persistence_days}d ${fmtUsd(focus500.persistence_delta_usd)}` : ""}</div>
         </div>
         <div class="stat stat-neutral">
           <div class="label">Borrow concentration</div>
@@ -1168,13 +1146,8 @@
       ${summaryStrip}
       ${namesTable}
       <h3 class="borrow-ladder-title">Borrow rate shocks</h3>
-      <p class="dim small">Absolute (+bp) and multiplicative (× APR) ladders. Focus rows highlighted.</p>
-      <details open><summary><strong>Absolute shocks (+bp)</strong></summary>
-        ${renderLadder(panel.abs_ladder || [], "Shock")}
-      </details>
-      <details><summary><strong>Multiplicative shocks (× APR)</strong></summary>
-        ${renderLadder(panel.mult_ladder || [], "Multiplier")}
-      </details>
+      <p class="dim small">Additional annual borrow cost if each shock (+bp) is applied to current rates. Focus row highlighted.</p>
+      ${renderLadder(panel.abs_ladder || [], "Shock")}
     `;
   }
 

@@ -3021,54 +3021,7 @@ def compute_slide_risk_panel(
         }
     )
 
-    # --- VIX strip (vega P&L + vol regime decay) ---
-    vix_shock_rows: list[dict[str, Any]] = []
-    for vix_pts in vix_shocks:
-        per_name = []
-        for e in enriched:
-            if abs(e["vega_frac"]) < 1e-12:
-                continue
-            net = e["net_notional_usd"]
-            sign = 1.0 if net >= 0 else -1.0
-            pnl = sign * e["gross_notional_usd"] * e["vega_frac"] * vix_pts
-            per_name.append(
-                {
-                    "underlying": e["underlying"],
-                    "symbols": e["symbols"],
-                    "pnl_t0_usd": pnl,
-                    "vega_product_class": e["vega_product_class"],
-                }
-            )
-        per_name.sort(key=lambda p: p["pnl_t0_usd"])
-        total = sum(p["pnl_t0_usd"] for p in per_name)
-        pnl_pct = (total / nav_usd) if nav_usd > 0 else None
-        sign_label = "+" if vix_pts >= 0 else ""
-        vix_row = {
-            "vix_shock_pts": vix_pts,
-            "label": f"VIX {sign_label}{vix_pts} pts",
-            "pnl_usd": total,
-            "pnl_pct_nav": pnl_pct,
-            "status": _slide_status(pnl_pct, limits),
-            "top_loss": per_name[0] if per_name else None,
-            "top_gain": per_name[-1] if per_name else None,
-            "n_contributors": len(per_name),
-        }
-        vix_shock_rows.append(vix_row)
-        if vix_row["status"] != "ok" and vix_pts > 0:
-            breaches.append(
-                _normalize_breach(
-                    {
-                        "metric": f"slide:vix_{vix_pts:+d}pts",
-                        "label": vix_row["label"],
-                        "value": pnl_pct,
-                        "status": vix_row["status"],
-                        "limit": limits["scenario_loss_pct_nav"],
-                        "source": "slide risk — VIX shock",
-                        "action": "Review short-vol / yieldboost exposure.",
-                    }
-                )
-            )
-
+    # --- VIX strip (12M decay vs VIX shocks) ---
     vix_decay_matrix = _build_vix_decay_matrix(
         enriched,
         etf_meta=etf_meta,
@@ -3081,13 +3034,9 @@ def compute_slide_risk_panel(
         {
             "index": "VIX",
             "key": "vix",
-            "strip_type": "vix_pts",
-            "shock_rows": vix_shock_rows,
+            "strip_type": "vix_decay",
             "vix_decay_matrix": vix_decay_matrix,
-            "n_vega_contributors": sum(1 for e in enriched if abs(e["vega_frac"]) > 0),
-            "n_letf_decay_contributors": sum(
-                1 for e in enriched if e["is_letf"] and e["sigma"] is not None
-            ),
+            "n_vol_betas_computed": vix_decay_matrix.get("n_vol_betas_computed"),
         }
     )
 
@@ -3114,9 +3063,7 @@ def compute_slide_risk_panel(
 
 
 BORROW_ABS_SHOCKS_BP: tuple[int, ...] = (25, 50, 100, 200, 500)
-BORROW_MULT_SHOCKS: tuple[float, ...] = (1.5, 2.0, 3.0, 5.0)
-BORROW_SHOCK_FOCUS_BP: tuple[int, ...] = (50,)
-BORROW_SHOCK_FOCUS_MULT: tuple[float, ...] = (2.0,)
+BORROW_SHOCK_FOCUS_BP: tuple[int, ...] = (500,)
 ACTION_QUEUE_CAP: int = 5
 
 
@@ -3128,7 +3075,6 @@ def compute_borrow_shock_panel(
     screener_csv: Path | None = None,
     watchlist_symbols: set[str] | None = None,
     abs_shocks_bp: tuple[int, ...] = BORROW_ABS_SHOCKS_BP,
-    mult_shocks: tuple[float, ...] = BORROW_MULT_SHOCKS,
     persistence_days: int = 30,
 ) -> dict[str, Any]:
     """Per-symbol borrow cost sensitivity to rate shocks.
@@ -3138,9 +3084,9 @@ def compute_borrow_shock_panel(
         * ``screener_csv`` -- borrow rate (``borrow_current`` / ``borrow_fee_annual``),
           same convention as etf-dashboard.
 
-    Output: absolute (bp) and multiplicative ladders showing aggregate
-    annualized cost delta + per-name worst victims. The 30-day
-    persistence column converts daily delta to a stressed MTD impact.
+    Output: absolute (+bp) ladder showing aggregate additional annual
+    borrow cost + per-name worst victims. The 30-day persistence column
+    converts daily delta to a stressed MTD impact.
     """
     positions = parse_positions(flex_positions_xml)
     if not positions:
@@ -3148,9 +3094,7 @@ def compute_borrow_shock_panel(
             "available": False,
             "reason": f"missing or empty {flex_positions_xml.name}",
             "abs_shocks_bp": list(abs_shocks_bp),
-            "mult_shocks": list(mult_shocks),
             "abs_ladder": [],
-            "mult_ladder": [],
             "names": [],
         }
 
@@ -3181,21 +3125,14 @@ def compute_borrow_shock_panel(
     name_rows.sort(key=lambda r: r["current_annual_cost_usd"], reverse=True)
     total_current_annual = sum(r["current_annual_cost_usd"] for r in name_rows)
 
-    def _shock_ladder(shocks: Iterable[Any], *, kind: str) -> list[dict[str, Any]]:
+    def _abs_shock_ladder(shocks: Iterable[int]) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         for shock in shocks:
-            if kind == "abs_bp":
-                shifted_aprs = {
-                    r["symbol"]: float(r["borrow_rate_pct"] or 0.0) + (shock / 100.0)
-                    for r in name_rows
-                }
-                label = f"+{int(shock)}bp"
-            else:
-                shifted_aprs = {
-                    r["symbol"]: float(r["borrow_rate_pct"] or 0.0) * float(shock)
-                    for r in name_rows
-                }
-                label = f"{shock:g}x"
+            shifted_aprs = {
+                r["symbol"]: float(r["borrow_rate_pct"] or 0.0) + (shock / 100.0)
+                for r in name_rows
+            }
+            label = f"+{int(shock)}bp"
             per_name_delta = []
             for r in name_rows:
                 new_apr = shifted_aprs[r["symbol"]]
@@ -3224,7 +3161,7 @@ def compute_borrow_shock_panel(
             out.append(
                 {
                     "shock": shock,
-                    "kind": kind,
+                    "kind": "abs_bp",
                     "label": label,
                     "annual_delta_usd": total_delta,
                     "annual_delta_pct_nav": (total_delta / nav_usd)
@@ -3240,14 +3177,9 @@ def compute_borrow_shock_panel(
         return out
 
     focus_abs = [s for s in abs_shocks_bp if s in BORROW_SHOCK_FOCUS_BP] or list(BORROW_SHOCK_FOCUS_BP)
-    focus_mult = [s for s in mult_shocks if s in BORROW_SHOCK_FOCUS_MULT] or list(BORROW_SHOCK_FOCUS_MULT)
-    abs_ladder = _shock_ladder(abs_shocks_bp, kind="abs_bp")
-    mult_ladder = _shock_ladder(mult_shocks, kind="mult")
+    abs_ladder = _abs_shock_ladder(abs_shocks_bp)
     for row in abs_ladder:
         if row.get("shock") in focus_abs:
-            row["is_focus"] = True
-    for row in mult_ladder:
-        if row.get("shock") in focus_mult:
             row["is_focus"] = True
 
     current_conc = _borrow_cost_concentration(
@@ -3268,19 +3200,15 @@ def compute_borrow_shock_panel(
                 return row
         return None
 
-    focus_50 = _tile_from_ladder(abs_ladder, "+50bp")
-    focus_2x = _tile_from_ladder(mult_ladder, "2x")
+    focus_500 = _tile_from_ladder(abs_ladder, "+500bp")
 
     return {
         "available": True,
         "sleeve": "short_etf",
         "watchlist_n_symbols": len(watch),
         "abs_shocks_bp": list(abs_shocks_bp),
-        "mult_shocks": list(mult_shocks),
         "abs_ladder": abs_ladder,
-        "mult_ladder": mult_ladder,
         "focus_abs_ladder": [r for r in abs_ladder if r.get("is_focus")],
-        "focus_mult_ladder": [r for r in mult_ladder if r.get("is_focus")],
         "names": name_rows[:25],
         "n_short_symbols": len(name_rows),
         "current_annual_cost_usd": total_current_annual,
@@ -3290,8 +3218,7 @@ def compute_borrow_shock_panel(
         "persistence_days": persistence_days,
         "current_borrow_concentration": current_conc,
         "summary_tiles": {
-            "focus_abs_50bp": focus_50,
-            "focus_mult_2x": focus_2x,
+            "focus_abs_500bp": focus_500,
             "top3_share_current_borrow": current_conc.get("top_n_share"),
         },
     }

@@ -610,7 +610,7 @@ def test_compute_slide_risk_panel_produces_spx_and_vix_strips():
     assert panel["available"] is True
     indices = {idx["index"]: idx for idx in panel["indices"]}
     assert set(indices) == {"SPX", "VIX"}
-    assert indices["VIX"]["strip_type"] == "vix_pts"
+    assert indices["VIX"]["strip_type"] in ("vix_decay", "vix_pts")
     spx = indices["SPX"]
     # SPX -3%: NVDA loses 50k*1.7*0.03 = 2550, LLY gains 10k*0.5*0.03 = 150
     # net = -2400 (note LLY is SHORT so -1*0.5*-0.03 = +0.015 * 10k = +150)
@@ -801,11 +801,11 @@ def test_borrow_shock_panel_includes_victim_concentration(tmp_path: Path):
         nav_usd=100_000.0,
         screener_csv=screener,
     )
-    row = next(r for r in panel["abs_ladder"] if r["label"] == "+50bp")
+    row = next(r for r in panel["abs_ladder"] if r["label"] == "+500bp")
     conc = row["victim_concentration"]
     assert conc["top_n_share"] is not None
     assert len(conc["top_victims"]) >= 1
-    assert panel["summary_tiles"]["focus_abs_50bp"]["label"] == "+50bp"
+    assert panel["summary_tiles"]["focus_abs_500bp"]["label"] == "+500bp"
 
 
 def test_squeeze_liquidity_loads_from_etf_metrics_daily(tmp_path: Path):
@@ -895,7 +895,7 @@ def test_squeeze_breach_identifies_binding_cap_and_shares(tmp_path: Path):
     assert "shares-out" in breach["source"]
 
 
-def test_compute_borrow_shock_panel_applies_abs_and_mult_shocks(tmp_path: Path):
+def test_compute_borrow_shock_panel_applies_abs_shocks(tmp_path: Path):
     flex = tmp_path / "flex_positions.xml"
     flex.write_text(
         '<FlexQueryResponse>'
@@ -924,7 +924,6 @@ def test_compute_borrow_shock_panel_applies_abs_and_mult_shocks(tmp_path: Path):
         nav_usd=1_000_000.0,
         screener_csv=screener,
         abs_shocks_bp=(100, 500),
-        mult_shocks=(2.0,),
     )
     assert panel["available"] is True
     assert panel["current_annual_cost_usd"] == pytest.approx(15_000.0)
@@ -933,9 +932,11 @@ def test_compute_borrow_shock_panel_applies_abs_and_mult_shocks(tmp_path: Path):
     assert abs_100["persistence_delta_usd"] == pytest.approx(
         abs_100["annual_delta_usd"] / 252.0 * 30.0, rel=1e-9
     )
-    mult_2 = next(r for r in panel["mult_ladder"] if r["shock"] == 2.0)
-    assert mult_2["annual_delta_usd"] == pytest.approx(15_000.0, abs=1.0)
-    assert mult_2["worst_victims"][0]["symbol"] == "TSLZ"
+    abs_500 = next(r for r in panel["abs_ladder"] if r["shock"] == 500)
+    assert abs_500["annual_delta_usd"] == pytest.approx(10_000.0, abs=1.0)
+    assert abs_500["is_focus"] is True
+    assert panel["summary_tiles"]["focus_abs_500bp"]["label"] == "+500bp"
+    assert abs_500["worst_victims"][0]["symbol"] == "TSLZ"
 
 
 # ---------------------------------------------------------------------------
