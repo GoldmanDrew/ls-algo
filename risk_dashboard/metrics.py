@@ -2668,6 +2668,8 @@ def _build_vix_decay_matrix(
         "cells": cells,
         "vol_vix_betas": beta_summary,
         "n_vol_betas_computed": vol_vix_pack.get("n_computed"),
+        "n_vol_betas_shrunk": vol_vix_pack.get("n_shrunk"),
+        "vol_vix_estimator_version": vol_vix_pack.get("estimator_version"),
     }
 
 
@@ -2851,10 +2853,21 @@ def compute_slide_risk_panel(
     )
     if vol_vix_pack is None:
         underlyings = [str(e.get("underlying") or "").upper() for e in enriched]
+        vol_meta: dict[str, dict[str, str]] = {}
+        for e in enriched:
+            u = str(e.get("underlying") or "").upper()
+            if not u:
+                continue
+            sec = lookup_underlying(u).get("sector") or "other"
+            vol_meta[u] = {
+                "product_class": str(e.get("vega_product_class") or ""),
+                "sector": str(sec),
+            }
         try:
             vol_vix_pack = compute_vol_vix_betas(
                 underlyings,
                 cache_dir=beta_cache_dir,
+                underlying_meta=vol_meta,
             )
         except Exception:
             vol_vix_pack = {

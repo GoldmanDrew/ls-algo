@@ -1000,7 +1000,9 @@
             ? `<p class="dim small">${safeText(
                 vixMatrix.description,
                 "Expected 12M book carry at SPX 0% under VIX-shocked vol."
-              )} Vol→VIX β on ${vixMatrix.n_vol_betas_computed ?? "?"}/${Object.keys(vixMatrix.vol_vix_betas || {}).length} names.</p>`
+              )} Vol→VIX β (v2 diff-OLS): ${vixMatrix.n_vol_betas_computed ?? "?"}/${Object.keys(vixMatrix.vol_vix_betas || {}).length} computed${
+                vixMatrix.n_vol_betas_shrunk != null ? `, ${vixMatrix.n_vol_betas_shrunk} shrunk` : ""
+              }.</p>`
             : "";
           if (!decayCells.length) {
             return `<div class="slide-strip"><p class="dim small">12M VIX decay projection unavailable.</p></div>`;
