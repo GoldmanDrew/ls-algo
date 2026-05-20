@@ -978,24 +978,56 @@
                 `<td class="num ${signedClass(r.pnl_pct_nav)} ${scenarioHeatClass(r.pnl_pct_nav)}" title="${fmtUsdSigned(r.pnl_usd)}">${fmtPct(r.pnl_pct_nav, 1)}</td>`
             )
             .join("");
-          const volRows = idx.vol_regime_rows || [];
-          const volBody = volRows
-            .map(
-              (r) => `<tr>
-              <td><strong>${safeText(r.label)}</strong></td>
-              <td class="num ${signedClass(r.pnl_pct_nav)}">${fmtPct(r.pnl_pct_nav, 2)}</td>
-              <td class="small">${formatDecayConcentration(r.decay_concentration)}</td>
-            </tr>`
-            )
+          const vixMatrix = idx.vix_decay_matrix || null;
+          const decayCells = vixMatrix?.cells || [];
+          const decayHeader = decayCells
+            .map((c) => `<th class="slide-shock">${safeText(c.label)}</th>`)
             .join("");
+          const decayRow = decayCells
+            .map((cell) => {
+              const tip = [
+                cell.sigma_annual_median != null
+                  ? `σ med ${(Number(cell.sigma_annual_median) * 100).toFixed(0)}%`
+                  : null,
+                cell.decay_pnl_pct_nav != null
+                  ? `Decay ${fmtPct(cell.decay_pnl_pct_nav, 2)}`
+                  : null,
+                cell.borrow_pnl_pct_nav != null
+                  ? `Borrow ${fmtPct(cell.borrow_pnl_pct_nav, 2)}`
+                  : null,
+                cell.delta_vs_current_pct_nav != null
+                  ? `Δ vs current ${fmtPct(cell.delta_vs_current_pct_nav, 2)}`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · ");
+              return `<td class="num ${signedClass(cell.total_pnl_pct_nav)} ${scenarioHeatClass(
+                cell.total_pnl_pct_nav
+              )}" title="${safeText(tip)}">${fmtPct(cell.total_pnl_pct_nav, 1)}</td>`;
+            })
+            .join("");
+          const decayMeta = vixMatrix
+            ? `<p class="dim small">${safeText(
+                vixMatrix.description,
+                "Expected 12M book carry at SPX 0% under VIX-shocked vol."
+              )} Vol→VIX β on ${vixMatrix.n_vol_betas_computed ?? "?"}/${Object.keys(vixMatrix.vol_vix_betas || {}).length} names.</p>`
+            : "";
+          const decayHtml =
+            decayCells.length > 0
+              ? `<h4 class="dim small">12M expected decay vs VIX (SPX 0%)</h4>
+            ${decayMeta}
+            <div class="slide-strip-scroll">
+              <table class="tight slide-table"><thead><tr><th class="row-label">Horizon</th>${decayHeader}</tr></thead>
+              <tbody><tr><th class="row-label">12M <span class="dim small">SPX 0%</span></th>${decayRow}</tr></tbody></table>
+            </div>`
+              : `<p class="dim small">12M VIX decay projection unavailable.</p>`;
           return `<div class="slide-strip">
             <div class="slide-strip-head"><h3>VIX vega shocks (T+0)</h3><span class="dim small">Instantaneous vega P&amp;L</span></div>
             <div class="slide-strip-scroll">
               <table class="tight slide-table"><thead><tr><th class="row-label">Shock</th>${vixHeader}</tr></thead>
               <tbody><tr><th class="row-label">T+0</th>${vixCells}</tr></tbody></table>
             </div>
-            <h4 class="dim small">Forecast-vol regime (LETF decay overlay)</h4>
-            <table class="tight"><thead><tr><th>Regime</th><th>% NAV</th><th>Decay concentration</th></tr></thead><tbody>${volBody || "<tr><td colspan=3 class=dim>(none)</td></tr>"}</tbody></table>
+            ${decayHtml}
           </div>`;
         }
         const rows = idx.shock_rows || [];

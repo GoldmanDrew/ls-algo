@@ -303,11 +303,12 @@ def model_leg_return(
     horizon_key: str,
     vol_multiplier: float = 1.0,
     underlying_sigma: float | None = None,
+    sigma_annual_override: float | None = None,
 ) -> ScenarioLegResult:
     """Route a position leg to the appropriate scenario model."""
     t_years = horizon_to_years(horizon_key)
     sigma_base, _ = resolve_sigma_annual(leg, underlying_sigma=underlying_sigma)
-    if sigma_base is None:
+    if sigma_base is None and sigma_annual_override is None:
         beta = leg.get("leverage_k") or leg.get("beta_to_spy") or 1.0
         linear = float(beta) * float(underlying_return)
         return ScenarioLegResult(
@@ -321,7 +322,10 @@ def model_leg_return(
             error="missing_sigma",
         )
 
-    sigma = sigma_base * float(vol_multiplier)
+    if sigma_annual_override is not None and math.isfinite(float(sigma_annual_override)):
+        sigma = max(0.0, float(sigma_annual_override))
+    else:
+        sigma = float(sigma_base) * float(vol_multiplier)
     product_class = str(leg.get("product_class") or "").lower()
     is_short = float(leg.get("net_notional_usd") or 0.0) < 0
     borrow = float(leg.get("borrow_fee_annual") or 0.0)
@@ -375,6 +379,7 @@ def aggregate_leg_scenario_pnl(
     horizon_key: str,
     vol_multiplier: float = 1.0,
     underlying_sigma: float | None = None,
+    sigma_overrides: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Sum scenario P&L components across legs (USD, not %)."""
     totals = {
@@ -392,12 +397,15 @@ def aggregate_leg_scenario_pnl(
         notional = float(leg.get("net_notional_usd") or 0.0)
         if abs(notional) < 1e-9:
             continue
+        sym = str(leg.get("symbol") or "").upper()
+        sigma_override = (sigma_overrides or {}).get(sym)
         result = model_leg_return(
             leg=leg,
             underlying_return=underlying_return,
             horizon_key=horizon_key,
             vol_multiplier=vol_multiplier,
             underlying_sigma=underlying_sigma,
+            sigma_annual_override=sigma_override,
         )
         models.add(result.model)
         if result.model == "beta_fallback":

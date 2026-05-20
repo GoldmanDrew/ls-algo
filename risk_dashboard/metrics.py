@@ -29,9 +29,9 @@ from .scenario_engine import (
     SLIDE_SCENARIO_HORIZONS,
     aggregate_leg_scenario_pnl,
     horizon_to_years,
-    model_leg_return,
     resolve_sigma_annual,
 )
+from .vol_vix_beta import compute_vol_vix_betas, leg_sigma_for_vix_shock
 
 try:
     from .beta_loader import compute_betas  # noqa: F401
@@ -2264,11 +2264,12 @@ def compute_alert_rows(
 
 SLIDE_SHOCK_PCTS: tuple[float, ...] = (
     -0.20, -0.15, -0.10, -0.05, -0.03, -0.02, -0.01,
+    0.0,
     0.01, 0.02, 0.03, 0.05, 0.10, 0.15, 0.20,
 )
 SLIDE_HORIZONS_DAYS: tuple[int, ...] = (0, 5, 20)  # legacy; slide panel uses SLIDE_SCENARIO_HORIZONS
 VIX_ABS_SHOCKS_POINTS: tuple[int, ...] = (-10, -5, 2, 5, 10, 15, 20, 25, 30)
-VOL_REGIME_MULTIPLIERS: tuple[float, ...] = (1.25, 1.5, 2.0, 3.0)
+VIX_DECAY_HORIZON: str = "12M"
 VEGA_FRAC_PER_VOLPOINT_BY_PRODUCT_CLASS: dict[str, float] = {
     "income_yieldboost": -0.0025,
     "covered_call_1x": -0.0015,
@@ -2485,6 +2486,31 @@ def _slide_scenario_legs_for_row(
     ]
 
 
+def _sigma_overrides_for_vix_shock(
+    legs: list[dict[str, Any]],
+    *,
+    underlying: str,
+    underlying_sigma: float | None,
+    vol_vix_pack: dict[str, Any],
+    vix_shock_pts: float,
+) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for leg in legs:
+        sym = str(leg.get("symbol") or "").upper()
+        if not sym:
+            continue
+        sigma = leg_sigma_for_vix_shock(
+            leg,
+            underlying=underlying,
+            underlying_sigma=underlying_sigma,
+            vol_vix_pack=vol_vix_pack,
+            vix_shock_pts=vix_shock_pts,
+        )
+        if sigma is not None:
+            out[sym] = sigma
+    return out
+
+
 def _slide_horizon_scenario_totals(
     enriched: list[dict[str, Any]],
     *,
@@ -2492,6 +2518,9 @@ def _slide_horizon_scenario_totals(
     shock_pct: float,
     horizon_key: str,
     vol_multiplier: float = 1.0,
+    require_beta: bool = True,
+    vol_vix_pack: dict[str, Any] | None = None,
+    vix_shock_pts: float = 0.0,
 ) -> dict[str, Any]:
     totals = {
         "beta_pnl_usd": 0.0,
@@ -2504,17 +2533,32 @@ def _slide_horizon_scenario_totals(
     }
     sigma_samples: list[float] = []
     for e in enriched:
-        beta = e.get("beta_to_spy")
-        if beta is None:
-            continue
-        underlying_return = float(shock_pct) * float(beta)
+        if require_beta:
+            beta = e.get("beta_to_spy")
+            if beta is None:
+                continue
+            underlying_return = float(shock_pct) * float(beta)
+        else:
+            underlying_return = 0.0
         legs = _slide_scenario_legs_for_row(e, etf_meta=etf_meta)
+        sigma_overrides = (
+            _sigma_overrides_for_vix_shock(
+                legs,
+                underlying=str(e.get("underlying") or ""),
+                underlying_sigma=e.get("sigma"),
+                vol_vix_pack=vol_vix_pack,
+                vix_shock_pts=vix_shock_pts,
+            )
+            if vol_vix_pack
+            else None
+        )
         agg = aggregate_leg_scenario_pnl(
             legs,
             underlying_return=underlying_return,
             horizon_key=horizon_key,
             vol_multiplier=vol_multiplier,
             underlying_sigma=e.get("sigma"),
+            sigma_overrides=sigma_overrides,
         )
         for key in (
             "beta_pnl_usd",
@@ -2527,6 +2571,10 @@ def _slide_horizon_scenario_totals(
         totals["n_legs_modeled"] += int(agg.get("n_legs_modeled") or 0)
         totals["n_legs_fallback"] += int(agg.get("n_legs_fallback") or 0)
         for leg in legs:
+            sym = str(leg.get("symbol") or "").upper()
+            if sigma_overrides and sym in sigma_overrides:
+                sigma_samples.append(sigma_overrides[sym])
+                continue
             sigma, _ = resolve_sigma_annual(leg, underlying_sigma=e.get("sigma"))
             if sigma is not None:
                 sigma_samples.append(sigma * vol_multiplier)
@@ -2536,7 +2584,91 @@ def _slide_horizon_scenario_totals(
     totals["horizon_key"] = horizon_key
     totals["horizon_years"] = horizon_to_years(horizon_key)
     totals["vol_multiplier"] = vol_multiplier
+    totals["vix_shock_pts"] = vix_shock_pts
     return totals
+
+
+def _build_vix_decay_matrix(
+    enriched: list[dict[str, Any]],
+    *,
+    etf_meta: dict[str, dict[str, Any]],
+    nav_usd: float,
+    vol_vix_pack: dict[str, Any],
+    vix_shocks: tuple[int, ...],
+    horizon_key: str = VIX_DECAY_HORIZON,
+) -> dict[str, Any]:
+    """12M expected book carry at SPX 0% under VIX-shocked forecast vol."""
+    shock_list = (0,) + tuple(sorted({int(x) for x in vix_shocks}))
+    vix_pts = vol_vix_pack.get("vix_current_pts")
+    cells: list[dict[str, Any]] = []
+    baseline_total_usd: float | None = None
+
+    for pts in shock_list:
+        if pts == 0:
+            label = (
+                f"Current VIX ({vix_pts:.1f})"
+                if isinstance(vix_pts, (int, float)) and vix_pts == vix_pts
+                else "Current VIX"
+            )
+        else:
+            label = f"VIX {pts:+d} pts"
+        vix_level = (
+            float(vix_pts) + float(pts)
+            if isinstance(vix_pts, (int, float)) and vix_pts == vix_pts
+            else None
+        )
+        totals = _slide_horizon_scenario_totals(
+            enriched,
+            etf_meta=etf_meta,
+            shock_pct=0.0,
+            horizon_key=horizon_key,
+            require_beta=False,
+            vol_vix_pack=vol_vix_pack,
+            vix_shock_pts=float(pts),
+        )
+        if pts == 0:
+            baseline_total_usd = float(totals["total_pnl_usd"])
+        total_pct = totals["total_pnl_usd"] / nav_usd if nav_usd > 0 else None
+        delta_pct = None
+        if baseline_total_usd is not None and pts != 0 and nav_usd > 0:
+            delta_pct = (float(totals["total_pnl_usd"]) - baseline_total_usd) / nav_usd
+        elif pts == 0:
+            delta_pct = 0.0
+        cells.append(
+            {
+                "vix_shock_pts": pts,
+                "label": label,
+                "vix_level_pts": vix_level,
+                "sigma_annual_median": totals.get("sigma_annual_median"),
+                "beta_pnl_pct_nav": totals["beta_pnl_usd"] / nav_usd if nav_usd > 0 else None,
+                "decay_pnl_pct_nav": totals["decay_pnl_usd"] / nav_usd if nav_usd > 0 else None,
+                "borrow_pnl_pct_nav": totals["borrow_pnl_usd"] / nav_usd if nav_usd > 0 else None,
+                "total_pnl_pct_nav": total_pct,
+                "total_pnl_usd": totals["total_pnl_usd"],
+                "decay_pnl_usd": totals["decay_pnl_usd"],
+                "borrow_pnl_usd": totals["borrow_pnl_usd"],
+                "delta_vs_current_pct_nav": delta_pct,
+            }
+        )
+
+    beta_summary = {
+        sym: res.to_dict()
+        for sym, res in (vol_vix_pack.get("betas") or {}).items()
+    }
+    return {
+        "spx_shock_pct": 0.0,
+        "horizon_key": horizon_key,
+        "horizon_label": f"{horizon_key} expected decay (SPX 0%)",
+        "description": (
+            "Expected book carry over the next 12 months at SPX 0%, "
+            "with each name's forecast vol adjusted by its historical vol→VIX β."
+        ),
+        "vix_current_pts": vol_vix_pack.get("vix_current_pts"),
+        "vix_current": vol_vix_pack.get("vix_current"),
+        "cells": cells,
+        "vol_vix_betas": beta_summary,
+        "n_vol_betas_computed": vol_vix_pack.get("n_computed"),
+    }
 
 
 def _pnl_concentration_summary(
@@ -2692,10 +2824,11 @@ def compute_slide_risk_panel(
     shocks: tuple[float, ...] = SLIDE_SHOCK_PCTS,
     scenario_horizons: tuple[str, ...] = SLIDE_SCENARIO_HORIZONS,
     vix_shocks: tuple[int, ...] = VIX_ABS_SHOCKS_POINTS,
-    vol_multipliers: tuple[float, ...] = VOL_REGIME_MULTIPLIERS,
     limits: dict[str, dict[str, Any]] | None = None,
+    beta_cache_dir: Path | None = None,
+    vol_vix_pack: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Slide risk strips for SPX (beta-adjusted) and VIX (vega + vol regime)."""
+    """Slide risk strips for SPX (beta-adjusted) and VIX (vega + vol-beta decay)."""
     limits = limits or DEFAULT_LIMITS
     rows = (factor_panel or {}).get("rows") or []
     if not rows or nav_usd <= 0:
@@ -2716,6 +2849,21 @@ def compute_slide_risk_panel(
         screener_csv=screener_csv,
         flex_positions_xml=flex_positions_xml,
     )
+    if vol_vix_pack is None:
+        underlyings = [str(e.get("underlying") or "").upper() for e in enriched]
+        try:
+            vol_vix_pack = compute_vol_vix_betas(
+                underlyings,
+                cache_dir=beta_cache_dir,
+            )
+        except Exception:
+            vol_vix_pack = {
+                "vix_current": None,
+                "vix_current_pts": None,
+                "betas": {},
+                "n_computed": 0,
+                "n_total": 0,
+            }
 
     indices_out: list[dict[str, Any]] = []
     breaches: list[dict[str, Any]] = []
@@ -2921,50 +3069,13 @@ def compute_slide_risk_panel(
                 )
             )
 
-    vol_regime_rows: list[dict[str, Any]] = []
-    for mult in vol_multipliers:
-        per_name = []
-        for e in enriched:
-            decay_usd = 0.0
-            legs = _slide_scenario_legs_for_row(e, etf_meta=etf_meta)
-            for leg in legs:
-                if not leg.get("is_letf"):
-                    continue
-                k = float(leg.get("leverage_k", 1.0))
-                if abs(k) <= 1.0001:
-                    continue
-                sigma, _ = resolve_sigma_annual(leg, underlying_sigma=e.get("sigma"))
-                if sigma is None or sigma <= 0:
-                    continue
-                result = model_leg_return(
-                    leg=leg,
-                    underlying_return=0.0,
-                    horizon_key=scenario_horizons[-1],
-                    vol_multiplier=float(mult),
-                    underlying_sigma=e.get("sigma"),
-                )
-                decay_usd += leg["net_notional_usd"] * result.decay_return
-            if abs(decay_usd) < 1e-6:
-                continue
-            per_name.append(
-                {"underlying": e["underlying"], "symbols": e["symbols"], "pnl_t0_usd": decay_usd}
-            )
-        per_name.sort(key=lambda p: p["pnl_t0_usd"])
-        total = sum(p["pnl_t0_usd"] for p in per_name)
-        pnl_pct = (total / nav_usd) if nav_usd > 0 else None
-        decay_conc = _pnl_concentration_summary(per_name, total, top_n=3)
-        vol_regime_rows.append(
-            {
-                "multiplier": mult,
-                "label": f"{mult:g}x forecast vol ({scenario_horizons[-1]})",
-                "pnl_usd": total,
-                "pnl_pct_nav": pnl_pct,
-                "status": _slide_status(pnl_pct, limits),
-                "top_loss": per_name[0] if per_name else None,
-                "n_contributors": len(per_name),
-                "decay_concentration": decay_conc,
-            }
-        )
+    vix_decay_matrix = _build_vix_decay_matrix(
+        enriched,
+        etf_meta=etf_meta,
+        nav_usd=nav_usd,
+        vol_vix_pack=vol_vix_pack,
+        vix_shocks=vix_shocks,
+    )
 
     indices_out.append(
         {
@@ -2972,7 +3083,7 @@ def compute_slide_risk_panel(
             "key": "vix",
             "strip_type": "vix_pts",
             "shock_rows": vix_shock_rows,
-            "vol_regime_rows": vol_regime_rows,
+            "vix_decay_matrix": vix_decay_matrix,
             "n_vega_contributors": sum(1 for e in enriched if abs(e["vega_frac"]) > 0),
             "n_letf_decay_contributors": sum(
                 1 for e in enriched if e["is_letf"] and e["sigma"] is not None
@@ -2994,7 +3105,7 @@ def compute_slide_risk_panel(
         "n_letf_names": n_letf,
         "n_names_with_vol": has_vol,
         "n_names_total": len(enriched),
-        "model": "etf_dashboard_scenarios_v1",
+        "model": "etf_dashboard_scenarios_v2",
     }
 
 
@@ -3188,6 +3299,8 @@ def compute_borrow_shock_panel(
 
 # ---------------------------------------------------------------------------
 # VIX / vol shock sensitivity (Phase 4) — legacy panel; folded into slide risk
+
+VOL_REGIME_MULTIPLIERS: tuple[float, ...] = (1.25, 1.5, 2.0, 3.0)
 
 
 def compute_vol_shock_panel(
@@ -3524,6 +3637,7 @@ def build_snapshot(
         screener_csv=screener_csv,
         flex_positions_xml=flex / "flex_positions.xml",
         limits=limits,
+        beta_cache_dir=beta_cache_dir,
     )
     borrow_shock_panel = compute_borrow_shock_panel(
         borrow_panel=borrow_panel,

@@ -627,8 +627,38 @@ def test_compute_slide_risk_panel_produces_spx_and_vix_strips():
     assert conc.get("top_n_share_of_scenario") is not None
     assert len(conc.get("top_contributors") or []) >= 1
     vix = indices["VIX"]
-    vol_row = (vix.get("vol_regime_rows") or [])[0]
-    assert "decay_concentration" in vol_row
+    assert vix.get("vix_decay_matrix")
+    matrix = vix["vix_decay_matrix"]
+    assert matrix.get("horizon_key") == "12M"
+    assert matrix.get("cells")
+    assert any(c.get("vix_shock_pts") == 0 for c in matrix["cells"])
+
+
+def test_compute_slide_risk_vix_decay_matrix_with_mock_vol_beta():
+    from risk_dashboard.vol_vix_beta import VolVixBetaResult
+
+    vol_pack = {
+        "vix_current": 0.20,
+        "vix_current_pts": 20.0,
+        "betas": {
+            "NVDA": VolVixBetaResult(underlying="NVDA", beta_vol_vix=1.0, provenance="test"),
+        },
+        "n_computed": 1,
+        "n_total": 1,
+    }
+    panel = compute_slide_risk_panel(
+        factor_panel=_slide_factor_panel_fixture(),
+        nav_usd=100_000.0,
+        vol_vix_pack=vol_pack,
+    )
+    vix = next(idx for idx in panel["indices"] if idx["index"] == "VIX")
+    matrix = vix["vix_decay_matrix"]
+    row12m = matrix
+    current = next(c for c in row12m["cells"] if c["vix_shock_pts"] == 0)
+    shocked = next(c for c in row12m["cells"] if c["vix_shock_pts"] == 10)
+    assert current["delta_vs_current_pct_nav"] == pytest.approx(0.0, abs=1e-12)
+    assert shocked["vix_shock_pts"] == 10
+    assert len(matrix["cells"]) >= 2
 
 
 def test_compute_slide_risk_panel_letf_decay_uses_per_leg(tmp_path: Path):
