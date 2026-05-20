@@ -812,6 +812,49 @@ def test_squeeze_liquidity_loads_from_etf_metrics_daily(tmp_path: Path):
     assert sq["short_vs_adv_cap"] == pytest.approx(10_000 / (500_000 * 0.30))
     assert sq["liquidity_utilization"] is not None
     assert sq["status"] == "ok"
+    assert sq["binding_cap"] == "median_volume"
+
+
+def test_squeeze_breach_identifies_binding_cap_and_shares(tmp_path: Path):
+    metrics_dir = tmp_path / "data"
+    metrics_dir.mkdir()
+    (metrics_dir / "etf_metrics_daily.csv").write_text(
+        "date,ticker,shares_outstanding,shares_traded\n"
+        "2026-05-01,FBYY,30001,800\n"
+        "2026-05-02,FBYY,30001,800\n"
+        "2026-05-03,FBYY,30001,800\n",
+        encoding="utf-8",
+    )
+    flex_borrow = tmp_path / "flex_borrow.xml"
+    flex_borrow.write_text("<FlexQueryResponse></FlexQueryResponse>", encoding="utf-8")
+    flex_pos = tmp_path / "flex_positions.xml"
+    flex_pos.write_text(
+        '<FlexQueryResponse>'
+        '<OpenPosition symbol="FBYY" position="-2594" markPrice="10" '
+        'positionValue="-25940" underlyingSymbol="F" fxRateToBase="1" multiplier="1" />'
+        "</FlexQueryResponse>",
+        encoding="utf-8",
+    )
+    screener = tmp_path / "screener.csv"
+    pd.DataFrame([{"ETF": "FBYY", "borrow_current": 0.03, "bucket": "bucket_2"}]).to_csv(
+        screener, index=False
+    )
+    panel = compute_borrow_panel(
+        flex_borrow,
+        flex_pos,
+        screener_csv=screener,
+        repo_root=tmp_path,
+    )
+    sq = next(r for r in panel["squeeze_rows"] if r["symbol"] == "FBYY")
+    assert sq["short_qty"] == pytest.approx(2594.0)
+    assert sq["binding_cap"] == "median_volume"
+    assert sq["status"] == "hard"
+    breach = next(b for b in panel["breaches"] if b.get("label") == "FBYY")
+    assert breach["short_qty"] == pytest.approx(2594.0)
+    assert breach["binding_cap"] == "median_volume"
+    assert "2,594 sh short" in breach["source"]
+    assert "median vol" in breach["source"]
+    assert "shares-out" in breach["source"]
 
 
 def test_compute_borrow_shock_panel_applies_abs_and_mult_shocks(tmp_path: Path):

@@ -217,6 +217,100 @@ def _normalize_breach(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _squeeze_binding_cap(
+    ratio_out: float | None,
+    ratio_adv: float | None,
+) -> str | None:
+    """Return which liquidity cap binds (drives liquidity_utilization)."""
+    candidates: list[tuple[str, float]] = []
+    if ratio_out is not None:
+        candidates.append(("shares_outstanding", float(ratio_out)))
+    if ratio_adv is not None:
+        candidates.append(("median_volume", float(ratio_adv)))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda x: x[1])[0]
+
+
+def _squeeze_cap_labels(
+    binding_cap: str | None,
+    *,
+    sout_frac: float,
+    adv_frac: float,
+    sh_out: float | None,
+    med_vol: float | None,
+    cap_shares_out: float | None,
+    cap_adv: float | None,
+) -> tuple[str | None, str | None]:
+    """Human labels for binding and non-binding caps."""
+    if binding_cap == "shares_outstanding":
+        binding = (
+            f"shares-out ({sout_frac:.0%} × {sh_out:,.0f} out = {cap_shares_out:,.0f} sh cap)"
+            if cap_shares_out and sh_out
+            else f"shares-out ({sout_frac:.0%} of shares outstanding)"
+        )
+        other = (
+            f"median vol ({adv_frac:.0%} × {med_vol:,.0f} med = {cap_adv:,.0f} sh cap)"
+            if cap_adv and med_vol
+            else None
+        )
+        return binding, other
+    if binding_cap == "median_volume":
+        binding = (
+            f"median vol ({adv_frac:.0%} × {med_vol:,.0f} 60d med = {cap_adv:,.0f} sh cap)"
+            if cap_adv and med_vol
+            else f"median vol ({adv_frac:.0%} of 60d median daily volume)"
+        )
+        other = (
+            f"shares-out ({sout_frac:.0%} × {sh_out:,.0f} out = {cap_shares_out:,.0f} sh cap)"
+            if cap_shares_out and sh_out
+            else None
+        )
+        return binding, other
+    return None, None
+
+
+def _squeeze_breach_copy(
+    sym: str,
+    *,
+    short_qty: float,
+    binding_cap: str | None,
+    binding_label: str | None,
+    other_label: str | None,
+    ratio_out: float | None,
+    ratio_adv: float | None,
+    cap_shares_out: float | None,
+    cap_adv: float | None,
+    ratio_peak: float,
+    status: str,
+) -> tuple[str, str]:
+    """Source + action text for squeeze alert rows."""
+    qty_txt = f"{short_qty:,.0f} sh short"
+    bind_txt = binding_label or "liquidity cap"
+    source_parts = [qty_txt, f"Binding: {bind_txt} ({ratio_peak:.0%} of cap)"]
+    if other_label and ratio_out is not None and ratio_adv is not None:
+        other_ratio = ratio_adv if binding_cap == "shares_outstanding" else ratio_out
+        source_parts.append(f"Other: {other_label} ({other_ratio:.0%} of cap)")
+
+    cap_qty = cap_adv if binding_cap == "median_volume" else cap_shares_out
+    if cap_qty and cap_qty > 0:
+        over_sh = max(short_qty - cap_qty, 0.0)
+        trim_warn = max(short_qty - cap_qty * 0.8, 0.0)
+        if status == "hard":
+            action = (
+                f"Cut ~{trim_warn:,.0f} sh on {sym} to reach warn band "
+                f"({over_sh:,.0f} sh over {bind_txt})."
+            )
+        else:
+            action = (
+                f"Trim ~{trim_warn:,.0f} sh on {sym} toward warn band "
+                f"({qty_txt} vs {cap_qty:,.0f} sh {bind_txt})."
+            )
+    else:
+        action = f"Reduce {sym} short; position exceeds sizing liquidity cap."
+    return " · ".join(source_parts), action
+
+
 def _action_dedupe_key(action: dict[str, Any]) -> str:
     return "|".join(
         [
@@ -1006,6 +1100,16 @@ def compute_borrow_panel(
         ratio_adv = (short_qty / cap_adv) if (short_qty is not None and cap_adv) else None
         ratios = [r for r in (ratio_out, ratio_adv) if r is not None]
         ratio_peak = max(ratios) if ratios else None
+        binding_cap = _squeeze_binding_cap(ratio_out, ratio_adv)
+        binding_label, other_cap_label = _squeeze_cap_labels(
+            binding_cap,
+            sout_frac=sout_frac,
+            adv_frac=adv_frac,
+            sh_out=sh_out,
+            med_vol=med_vol,
+            cap_shares_out=cap_shares_out,
+            cap_adv=cap_adv,
+        )
         status = _classify(ratio_peak, liq_limits) if ratio_peak is not None else "unknown"
         squeeze_rows.append(
             {
@@ -1015,14 +1119,32 @@ def compute_borrow_panel(
                 "short_notional_usd": notional,
                 "shares_outstanding": sh_out,
                 "median_daily_volume_shares": med_vol,
+                "cap_shares_out_shares": cap_shares_out,
+                "cap_median_vol_shares": cap_adv,
                 "short_vs_shares_out_cap": ratio_out,
                 "short_vs_adv_cap": ratio_adv,
+                "binding_cap": binding_cap,
+                "binding_cap_label": binding_label,
+                "other_cap_label": other_cap_label,
                 "liquidity_utilization": ratio_peak,
                 "status": status,
                 **rate,
             }
         )
-        if status in ("warn", "hard"):
+        if status in ("warn", "hard") and short_qty is not None and ratio_peak is not None:
+            source, action = _squeeze_breach_copy(
+                sym,
+                short_qty=float(short_qty),
+                binding_cap=binding_cap,
+                binding_label=binding_label,
+                other_label=other_cap_label,
+                ratio_out=ratio_out,
+                ratio_adv=ratio_adv,
+                cap_shares_out=cap_shares_out,
+                cap_adv=cap_adv,
+                ratio_peak=float(ratio_peak),
+                status=status,
+            )
             breaches.append(
                 _normalize_breach(
                     {
@@ -1031,12 +1153,17 @@ def compute_borrow_panel(
                         "value": ratio_peak,
                         "status": status,
                         "limit": liq_limits,
-                        "source": (
-                            "short qty vs liquidity caps "
-                            f"(shares_out×{sout_frac:.0%}, median_vol×{adv_frac:.0%})"
-                        ),
-                        "action": f"Reduce {sym} short; position exceeds sizing liquidity cap.",
+                        "source": source,
+                        "action": action,
                         "sleeve": bkt,
+                        "short_qty": short_qty,
+                        "binding_cap": binding_cap,
+                        "binding_cap_label": binding_label,
+                        "other_cap_label": other_cap_label,
+                        "cap_shares_out_shares": cap_shares_out,
+                        "cap_median_vol_shares": cap_adv,
+                        "short_vs_shares_out_cap": ratio_out,
+                        "short_vs_adv_cap": ratio_adv,
                     }
                 )
             )
@@ -2024,20 +2151,53 @@ def compute_action_queue(
         short_qty = sq.get("short_qty")
         if util is None or short_qty is None:
             continue
-        cap_qty = short_qty / util if util > 0 else None
+        binding = sq.get("binding_cap")
+        cap_qty = (
+            sq.get("cap_median_vol_shares")
+            if binding == "median_volume"
+            else sq.get("cap_shares_out_shares")
+        )
+        if cap_qty is None or cap_qty <= 0:
+            cap_qty = short_qty / util if util > 0 else None
         trim_qty = max(short_qty - (cap_qty or 0) * 0.8, 0) if cap_qty else 0
+        bind_txt = sq.get("binding_cap_label") or binding or "liquidity cap"
+        sym = str(sq.get("symbol") or "")
+        over_sh = max(float(short_qty) - float(cap_qty or 0), 0.0) if cap_qty else 0.0
+        ratio_out = sq.get("short_vs_shares_out_cap")
+        ratio_adv = sq.get("short_vs_adv_cap")
+        other_label = sq.get("other_cap_label")
+        other_ratio = (
+            ratio_out if binding == "median_volume" else ratio_adv
+        )
+        detail_parts = [
+            f"{short_qty:,.0f} sh short",
+            f"Binding cap: {bind_txt} ({util:.0%} utilized)",
+        ]
+        if other_label and other_ratio is not None:
+            detail_parts.append(f"Other cap: {other_label} ({other_ratio:.0%} utilized)")
+        detail_parts.append(
+            f"Cut ~{trim_qty:,.0f} sh to warn band ({over_sh:,.0f} sh over binding cap)."
+        )
         _append(
             {
                 "priority": 0,
                 "status": "hard",
-                "category": f"borrow_squeeze:{sq['symbol']}",
+                "category": f"borrow_squeeze:{sym}",
                 "sleeve": sq.get("bucket") or "bucket_4",
-                "title": f"Reduce short on {sq['symbol']}",
-                "detail": (
-                    f"Liquidity utilization {util:.0%} vs sizing cap "
-                    f"({short_qty:,.0f} short). Cut ~{trim_qty:,.0f} shares to reach warn band."
-                ),
+                "title": f"Reduce short on {sym}",
+                "detail": " · ".join(detail_parts),
                 "source": "short qty vs shares-out / median-volume caps",
+                "short_qty": short_qty,
+                "binding_cap": binding,
+                "binding_cap_label": bind_txt,
+                "other_cap_label": other_label,
+                "cap_shares_out_shares": sq.get("cap_shares_out_shares"),
+                "cap_median_vol_shares": sq.get("cap_median_vol_shares"),
+                "short_vs_shares_out_cap": ratio_out,
+                "short_vs_adv_cap": ratio_adv,
+                "liquidity_utilization": util,
+                "trim_qty": trim_qty,
+                "over_cap_shares": over_sh,
             }
         )
 

@@ -535,6 +535,49 @@
       .join("");
   }
 
+  function formatSqueezeAlertSource(r) {
+    if (r.source && !String(r.metric || "").startsWith("borrow_squeeze:")) {
+      return safeText(r.source, "source unavailable");
+    }
+    if (r.source) {
+      return safeText(r.source);
+    }
+    const parts = [];
+    if (r.short_qty != null) {
+      parts.push(`${Math.round(r.short_qty).toLocaleString()} sh short`);
+    }
+    if (r.binding_cap_label) {
+      parts.push(`Binding: ${r.binding_cap_label}`);
+    }
+    return parts.length ? parts.join(" · ") : "source unavailable";
+  }
+
+  function formatSqueezeAlertValue(r) {
+    if (!String(r.metric || "").startsWith("borrow_squeeze:")) {
+      return typeof r.value === "number" ? r.value.toFixed(3) : safeText(r.value, "-");
+    }
+    const util =
+      typeof r.value === "number"
+        ? `${r.value.toFixed(2)}×`
+        : safeText(r.value, "-");
+    const bind =
+      r.binding_cap === "median_volume"
+        ? "median vol cap"
+        : r.binding_cap === "shares_outstanding"
+        ? "shares-out cap"
+        : "liquidity cap";
+    const sub = [];
+    if (r.short_vs_shares_out_cap != null) {
+      sub.push(`shares-out ${fmtPct(r.short_vs_shares_out_cap, 0)}`);
+    }
+    if (r.short_vs_adv_cap != null) {
+      sub.push(`median vol ${fmtPct(r.short_vs_adv_cap, 0)}`);
+    }
+    return `<div class="num">${util}</div><div class="dim small">${bind}${
+      sub.length ? ` · ${sub.join(" · ")}` : ""
+    }</div>`;
+  }
+
   function renderAlerts(rows) {
     if (!rows || !rows.length) {
       els.alertRows.innerHTML = `<span class="pill pill-ok">No risk alerts</span>`;
@@ -550,14 +593,17 @@
             r.limit && typeof r.limit === "object"
               ? `warn ${r.limit.warn}, hard ${r.limit.hard}`
               : "-";
-          const value = typeof r.value === "number" ? r.value.toFixed(3) : safeText(r.value, "-");
+          const isSqueeze = String(r.metric || "").startsWith("borrow_squeeze:");
+          const metricSub = formatSqueezeAlertSource(r);
+          const value = isSqueeze
+            ? formatSqueezeAlertValue(r)
+            : typeof r.value === "number"
+            ? r.value.toFixed(3)
+            : safeText(r.value, "-");
           return `<tr class="${rowStatusClass(r.status)}">
             <td>${statusPill(r.status)}</td>
             <td class="dim small">${safeText(r.category_label || r.category, "-")}</td>
-            <td><strong>${safeText(r.label || r.metric)}</strong><div class="dim small">${safeText(
-              r.source,
-              "source unavailable"
-            )}</div></td>
+            <td><strong>${safeText(r.label || r.metric)}</strong><div class="dim small">${metricSub}</div></td>
             <td class="num">${value}</td>
             <td>${limit}</td>
             <td>${safeText(r.action, "review")}</td>
@@ -1134,6 +1180,48 @@
     `;
   }
 
+  function formatSqueezeActionDetail(a) {
+    if (!String(a.category || "").startsWith("borrow_squeeze:")) {
+      return safeText(a.detail);
+    }
+    const lines = [];
+    if (a.short_qty != null) {
+      lines.push(`<strong>${Math.round(a.short_qty).toLocaleString()} sh short</strong>`);
+    }
+    if (a.binding_cap_label) {
+      const capSh =
+        a.binding_cap === "median_volume"
+          ? a.cap_median_vol_shares
+          : a.cap_shares_out_shares;
+      const capTxt =
+        capSh != null ? ` → max ${Math.round(capSh).toLocaleString()} sh` : "";
+      const util =
+        a.liquidity_utilization != null
+          ? ` · ${fmtPct(a.liquidity_utilization, 0)} of cap`
+          : "";
+      lines.push(`Binding: ${safeText(a.binding_cap_label)}${capTxt}${util}`);
+    }
+    if (a.other_cap_label) {
+      const otherUtil =
+        a.binding_cap === "median_volume"
+          ? a.short_vs_shares_out_cap
+          : a.short_vs_adv_cap;
+      if (otherUtil != null) {
+        lines.push(`Other: ${safeText(a.other_cap_label)} · ${fmtPct(otherUtil, 0)} of cap`);
+      }
+    }
+    if (a.trim_qty != null) {
+      const over =
+        a.over_cap_shares != null
+          ? ` (${Math.round(a.over_cap_shares).toLocaleString()} sh over binding cap)`
+          : "";
+      lines.push(`Cut ~${Math.round(a.trim_qty).toLocaleString()} sh to warn band${over}.`);
+    } else if (a.detail) {
+      lines.push(safeText(a.detail));
+    }
+    return lines.join("<br>");
+  }
+
   function renderActionQueue(queuePayload) {
     if (!els.actionQueue) return;
     const actions = Array.isArray(queuePayload) ? queuePayload : queuePayload?.items || [];
@@ -1151,7 +1239,7 @@
             a.breach_category_label || a.category,
             ""
           )}</div></td>
-            <td>${safeText(a.detail)}</td>
+            <td>${formatSqueezeActionDetail(a)}</td>
             <td class="dim">${safeText(a.hedge_hint, "")}</td>
             <td class="dim small">${safeText(a.source, "")}</td>
           </tr>`;
@@ -1280,7 +1368,7 @@
     const top = rows.slice(0, 100);
     els.squeezeContent.innerHTML = `
       <table class="tight"><thead><tr>
-        <th>Symbol</th><th>Bucket</th><th>Short qty</th>
+        <th>Symbol</th><th>Bucket</th><th>Short qty</th><th>Binding cap</th>
         <th>vs shares-out cap</th><th>vs median vol cap</th><th>Liquidity util</th>
         <th>Borrow rate</th><th>Status</th>
       </tr></thead><tbody>${top
@@ -1289,6 +1377,7 @@
             <td><strong>${safeText(r.symbol)}</strong></td>
             <td>${safeText(r.bucket)}</td>
             <td class="num">${r.short_qty == null ? "-" : Math.round(r.short_qty).toLocaleString()}</td>
+            <td class="small">${safeText(r.binding_cap_label, "-")}</td>
             <td class="num">${
               r.short_vs_shares_out_cap == null ? "-" : fmtPct(r.short_vs_shares_out_cap, 0)
             }</td>
@@ -1303,7 +1392,7 @@
           </tr>`
         )
         .join("")}</tbody></table>
-      <p class="dim small">Liquidity util = max(short / (shares-out &times; cap), short / (median vol &times; cap)). Warn &ge; 80%, hard &ge; 100% of sizing cap.</p>
+      <p class="dim small">Liquidity util = max(shares-out cap, median-vol cap). Binding cap is whichever ratio is higher. Warn &ge; 80%, hard &ge; 100% of sizing cap.</p>
     `;
   }
 
