@@ -893,6 +893,34 @@
   }
 
   /* ---------------- Slide risk strips (Phase 1) ---------------- */
+  function formatSlideHorizonTooltip(h) {
+    if (!h) return "";
+    const parts = [];
+    if (h.beta_pnl_usd != null) parts.push(`Beta ${fmtUsdSigned(h.beta_pnl_usd)}`);
+    if (h.decay_pnl_usd != null) parts.push(`Decay ${fmtUsdSigned(h.decay_pnl_usd)}`);
+    if (h.borrow_pnl_usd != null) parts.push(`Borrow ${fmtUsdSigned(h.borrow_pnl_usd)}`);
+    if (h.distribution_pnl_usd != null && Math.abs(h.distribution_pnl_usd) > 1) {
+      parts.push(`Dist ${fmtUsdSigned(h.distribution_pnl_usd)}`);
+    }
+    if (h.total_pnl_usd != null) parts.push(`Total ${fmtUsdSigned(h.total_pnl_usd)}`);
+    return parts.join(" · ");
+  }
+
+  function formatDecayReference(ref) {
+    if (!ref || typeof ref !== "object") return "";
+    const keys = ["1M", "3M", "6M", "12M"].filter((k) => ref[k]);
+    if (!keys.length) return "";
+    return keys
+      .map((k) => {
+        const row = ref[k];
+        const total = fmtPct(row.total_pnl_pct_nav, 1);
+        const decay = fmtPct(row.decay_pnl_pct_nav, 1);
+        const borrow = fmtPct(row.borrow_pnl_pct_nav, 1);
+        return `<strong>${k}</strong> ${total} (decay ${decay}, borrow ${borrow})`;
+      })
+      .join(" · ");
+  }
+
   function renderSlideRisk(panel) {
     if (!els.slideRiskContent) return;
     if (!panel || panel.available === false) {
@@ -903,15 +931,17 @@
       if (els.slideRiskMeta) els.slideRiskMeta.innerHTML = "";
       return;
     }
+    const scenarioHorizons = panel.scenario_horizons || ["1M", "3M", "6M", "12M"];
     if (els.slideRiskMeta) {
-      const horizons = (panel.horizons_days || []).join(" / ");
       const letf = panel.n_letf_names || 0;
       const total = panel.n_names_total || 0;
       const betaCov =
         panel.beta_coverage_gross_pct == null
           ? ""
           : ` &middot; ${fmtPct(panel.beta_coverage_gross_pct, 0)} beta coverage (gross)`;
-      els.slideRiskMeta.innerHTML = `<span class="dim small">Instantaneous shocks use T+0 beta only; T+${horizons} rows add LETF vol drag${betaCov} &middot; ${letf}/${total} LETF &middot; ${panel.n_names_with_vol || 0} with vol</span>`;
+      els.slideRiskMeta.innerHTML = `<span class="dim small">T+0 = instantaneous beta; ${scenarioHorizons.join(
+        " / "
+      )} = etf-dashboard scenario model (forecast vol 1.0&times;, borrow included)${betaCov} &middot; ${letf}/${total} LETF &middot; ${panel.n_names_with_vol || 0} with vol</span>`;
     }
     const worst = panel.worst_shock || null;
     const worstShare =
@@ -928,6 +958,13 @@
         }.</div>`
       : "";
     const indices = panel.indices || [];
+    const spxIdx = indices.find((idx) => idx.index === "SPX");
+    const decayRef = spxIdx?.decay_reference || null;
+    const decayBanner = decayRef
+      ? `<div class="callout-soft" role="status"><strong>Expected 0&sigma; book carry (forecast vol 1.0&times;):</strong> ${formatDecayReference(
+          decayRef
+        )}</div>`
+      : "";
     const stripsHtml = indices
       .map((idx) => {
         if (idx.strip_type === "vix_pts") {
@@ -957,12 +994,11 @@
               <table class="tight slide-table"><thead><tr><th class="row-label">Shock</th>${vixHeader}</tr></thead>
               <tbody><tr><th class="row-label">T+0</th>${vixCells}</tr></tbody></table>
             </div>
-            <h4 class="dim small">Realized-vol regime (LETF decay overlay)</h4>
+            <h4 class="dim small">Forecast-vol regime (LETF decay overlay)</h4>
             <table class="tight"><thead><tr><th>Regime</th><th>% NAV</th><th>Decay concentration</th></tr></thead><tbody>${volBody || "<tr><td colspan=3 class=dim>(none)</td></tr>"}</tbody></table>
           </div>`;
         }
         const rows = idx.shock_rows || [];
-        const horizons = panel.horizons_days || [0];
         const headerCells = rows
           .map((r) => `<th class="slide-shock">${formatSlideShockHeader(r)}</th>`)
           .join("");
@@ -972,17 +1008,21 @@
               `<td class="num ${signedClass(r.pnl_pct_nav)} ${scenarioHeatClass(r.pnl_pct_nav)}" title="${safeText(r.label)}: ${fmtUsdSigned(r.pnl_usd)}">${fmtPct(r.pnl_pct_nav, 1)}</td>`
           )
           .join("");
-        const horizonRows = horizons
-          .filter((d) => d > 0)
-          .map((d) => {
+        const horizonRows = scenarioHorizons
+          .map((hk) => {
             const cells = rows
               .map((r) => {
-                const h = (r.horizons || []).find((hh) => hh.horizon_days === d);
+                const h = (r.horizons || []).find(
+                  (hh) => hh.horizon_key === hk || String(hh.horizon_days) === String(hk)
+                );
                 if (!h) return `<td class="dim">-</td>`;
-                return `<td class="num ${signedClass(h.total_pnl_pct_nav)} ${scenarioHeatClass(h.total_pnl_pct_nav)}" title="decay ${fmtUsdSigned(h.decay_usd)}">${fmtPct(h.total_pnl_pct_nav, 1)}</td>`;
+                const tip = formatSlideHorizonTooltip(h);
+                return `<td class="num ${signedClass(h.total_pnl_pct_nav)} ${scenarioHeatClass(
+                  h.total_pnl_pct_nav
+                )}" title="${safeText(tip)}">${fmtPct(h.total_pnl_pct_nav, 1)}</td>`;
               })
               .join("");
-            return `<tr><th class="row-label">T+${d}d <span class="dim small">beta + decay</span></th>${cells}</tr>`;
+            return `<tr><th class="row-label">${safeText(hk)} <span class="dim small">modeled</span></th>${cells}</tr>`;
           })
           .join("");
         const binding = idx.binding_shock || null;
@@ -999,7 +1039,7 @@
           </div>
           <div class="slide-strip-scroll">
             <table class="tight slide-table">
-              <thead><tr><th class="row-label">Shock</th>${headerCells}</tr></thead>
+              <thead><tr><th class="row-label">Horizon</th>${headerCells}</tr></thead>
               <tbody>
                 <tr><th class="row-label">T+0 <span class="dim small">beta only</span></th>${t0Row}</tr>
                 ${horizonRows}
@@ -1010,7 +1050,7 @@
         </div>`;
       })
       .join("");
-    els.slideRiskContent.innerHTML = `${worstBanner}${stripsHtml || `<p class="dim">No index strips available.</p>`}`;
+    els.slideRiskContent.innerHTML = `${worstBanner}${decayBanner}${stripsHtml || `<p class="dim">No index strips available.</p>`}`;
   }
 
   /* ---------------- Borrow shock strip (Phase 3) ---------------- */

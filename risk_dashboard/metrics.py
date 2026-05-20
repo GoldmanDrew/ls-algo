@@ -25,6 +25,13 @@ from .flex_parser import (
     summarize_borrow,
     summarize_positions,
 )
+from .scenario_engine import (
+    SLIDE_SCENARIO_HORIZONS,
+    aggregate_leg_scenario_pnl,
+    horizon_to_years,
+    model_leg_return,
+    resolve_sigma_annual,
+)
 
 try:
     from .beta_loader import compute_betas  # noqa: F401
@@ -2259,7 +2266,7 @@ SLIDE_SHOCK_PCTS: tuple[float, ...] = (
     -0.20, -0.15, -0.10, -0.05, -0.03, -0.02, -0.01,
     0.01, 0.02, 0.03, 0.05, 0.10, 0.15, 0.20,
 )
-SLIDE_HORIZONS_DAYS: tuple[int, ...] = (0, 5, 20)
+SLIDE_HORIZONS_DAYS: tuple[int, ...] = (0, 5, 20)  # legacy; slide panel uses SLIDE_SCENARIO_HORIZONS
 VIX_ABS_SHOCKS_POINTS: tuple[int, ...] = (-10, -5, 2, 5, 10, 15, 20, 25, 30)
 VOL_REGIME_MULTIPLIERS: tuple[float, ...] = (1.25, 1.5, 2.0, 3.0)
 VEGA_FRAC_PER_VOLPOINT_BY_PRODUCT_CLASS: dict[str, float] = {
@@ -2294,19 +2301,10 @@ def _load_screener_etf_meta(screener_csv: Path | None) -> dict[str, dict[str, An
     if screener_csv is None or not screener_csv.is_file():
         return {}
     try:
-        df = pd.read_csv(
-            screener_csv,
-            usecols=[
-                "ETF",
-                "Underlying",
-                "Delta",
-                "Delta_product_class",
-                "vol_etf_annual",
-                "vol_underlying_annual",
-                "borrow_fee_annual",
-            ],
-        )
+        df = pd.read_csv(screener_csv)
     except Exception:
+        return {}
+    if "ETF" not in df.columns:
         return {}
     out: dict[str, dict[str, Any]] = {}
     for _, r in df.iterrows():
@@ -2321,17 +2319,28 @@ def _load_screener_etf_meta(screener_csv: Path | None) -> dict[str, dict[str, An
             "product_class": _clean_str(r.get("Delta_product_class")),
             "vol_etf_annual": (
                 float(r.get("vol_etf_annual"))
-                if pd.notna(r.get("vol_etf_annual"))
+                if "vol_etf_annual" in df.columns and pd.notna(r.get("vol_etf_annual"))
                 else None
             ),
             "vol_underlying_annual": (
                 float(r.get("vol_underlying_annual"))
-                if pd.notna(r.get("vol_underlying_annual"))
+                if "vol_underlying_annual" in df.columns and pd.notna(r.get("vol_underlying_annual"))
                 else None
             ),
             "borrow_fee_annual": (
                 float(r.get("borrow_fee_annual"))
-                if pd.notna(r.get("borrow_fee_annual"))
+                if "borrow_fee_annual" in df.columns and pd.notna(r.get("borrow_fee_annual"))
+                else None
+            ),
+            "income_distributions_annual": (
+                float(r.get("income_distributions_annual"))
+                if "income_distributions_annual" in df.columns
+                and pd.notna(r.get("income_distributions_annual"))
+                else None
+            ),
+            "expense_ratio_annual": (
+                float(r.get("expense_ratio_annual"))
+                if "expense_ratio_annual" in df.columns and pd.notna(r.get("expense_ratio_annual"))
                 else None
             ),
         }
@@ -2387,6 +2396,11 @@ def _build_position_leg_map(
             "product_class": product_class,
             "leverage_k": float(k),
             "vol_etf_annual": float(vol) if vol is not None else None,
+            "vol_underlying_annual": screener_row.get("vol_underlying_annual"),
+            "borrow_fee_annual": screener_row.get("borrow_fee_annual"),
+            "income_distributions_annual": screener_row.get("income_distributions_annual"),
+            "expense_ratio_annual": screener_row.get("expense_ratio_annual"),
+            "beta_to_underlying": beta_und,
             "is_letf": is_letf,
         }
         out.setdefault(underlying, []).append(leg)
@@ -2434,6 +2448,95 @@ def _slide_enriched_factor_rows(
             }
         )
     return enriched
+
+
+def _slide_scenario_legs_for_row(
+    row: dict[str, Any],
+    *,
+    etf_meta: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Flatten factor row + flex legs into scenario-model legs."""
+    legs = row.get("legs") or []
+    if legs:
+        return legs
+    underlying = (row.get("underlying") or "").upper()
+    symbols = [s.strip().upper() for s in (row.get("symbols") or "").split(",") if s.strip()]
+    sym = symbols[0] if symbols else underlying
+    meta = etf_meta.get(sym) or {}
+    product_class = meta.get("product_class") or ""
+    beta_und = meta.get("beta_to_underlying")
+    k = _leverage_from_product_class(product_class, beta_und)
+    return [
+        {
+            "symbol": sym,
+            "underlying": underlying,
+            "net_notional_usd": float(row.get("net_notional_usd") or 0.0),
+            "product_class": product_class,
+            "leverage_k": float(k),
+            "vol_etf_annual": meta.get("vol_etf_annual"),
+            "vol_underlying_annual": meta.get("vol_underlying_annual"),
+            "borrow_fee_annual": meta.get("borrow_fee_annual"),
+            "income_distributions_annual": meta.get("income_distributions_annual"),
+            "expense_ratio_annual": meta.get("expense_ratio_annual"),
+            "beta_to_underlying": beta_und,
+            "beta_to_spy": row.get("beta_to_spy"),
+            "is_letf": abs(k) > 1.0001 or product_class == "letf_inverse",
+        }
+    ]
+
+
+def _slide_horizon_scenario_totals(
+    enriched: list[dict[str, Any]],
+    *,
+    etf_meta: dict[str, dict[str, Any]],
+    shock_pct: float,
+    horizon_key: str,
+    vol_multiplier: float = 1.0,
+) -> dict[str, Any]:
+    totals = {
+        "beta_pnl_usd": 0.0,
+        "decay_pnl_usd": 0.0,
+        "borrow_pnl_usd": 0.0,
+        "distribution_pnl_usd": 0.0,
+        "total_pnl_usd": 0.0,
+        "n_legs_modeled": 0,
+        "n_legs_fallback": 0,
+    }
+    sigma_samples: list[float] = []
+    for e in enriched:
+        beta = e.get("beta_to_spy")
+        if beta is None:
+            continue
+        underlying_return = float(shock_pct) * float(beta)
+        legs = _slide_scenario_legs_for_row(e, etf_meta=etf_meta)
+        agg = aggregate_leg_scenario_pnl(
+            legs,
+            underlying_return=underlying_return,
+            horizon_key=horizon_key,
+            vol_multiplier=vol_multiplier,
+            underlying_sigma=e.get("sigma"),
+        )
+        for key in (
+            "beta_pnl_usd",
+            "decay_pnl_usd",
+            "borrow_pnl_usd",
+            "distribution_pnl_usd",
+            "total_pnl_usd",
+        ):
+            totals[key] += float(agg.get(key) or 0.0)
+        totals["n_legs_modeled"] += int(agg.get("n_legs_modeled") or 0)
+        totals["n_legs_fallback"] += int(agg.get("n_legs_fallback") or 0)
+        for leg in legs:
+            sigma, _ = resolve_sigma_annual(leg, underlying_sigma=e.get("sigma"))
+            if sigma is not None:
+                sigma_samples.append(sigma * vol_multiplier)
+    totals["sigma_annual_median"] = (
+        float(sorted(sigma_samples)[len(sigma_samples) // 2]) if sigma_samples else None
+    )
+    totals["horizon_key"] = horizon_key
+    totals["horizon_years"] = horizon_to_years(horizon_key)
+    totals["vol_multiplier"] = vol_multiplier
+    return totals
 
 
 def _pnl_concentration_summary(
@@ -2587,7 +2690,7 @@ def compute_slide_risk_panel(
     screener_csv: Path | None = None,
     flex_positions_xml: Path | None = None,
     shocks: tuple[float, ...] = SLIDE_SHOCK_PCTS,
-    horizons_days: tuple[int, ...] = SLIDE_HORIZONS_DAYS,
+    scenario_horizons: tuple[str, ...] = SLIDE_SCENARIO_HORIZONS,
     vix_shocks: tuple[int, ...] = VIX_ABS_SHOCKS_POINTS,
     vol_multipliers: tuple[float, ...] = VOL_REGIME_MULTIPLIERS,
     limits: dict[str, dict[str, Any]] | None = None,
@@ -2600,12 +2703,14 @@ def compute_slide_risk_panel(
             "available": False,
             "reason": "factor panel unavailable or NAV missing",
             "shocks_pct": list(shocks),
-            "horizons_days": list(horizons_days),
+            "scenario_horizons": list(scenario_horizons),
+            "horizons_days": [],
             "vix_shocks_pts": list(vix_shocks),
             "indices": [],
             "breaches": [],
         }
 
+    etf_meta = _load_screener_etf_meta(screener_csv)
     enriched = _slide_enriched_factor_rows(
         factor_panel,
         screener_csv=screener_csv,
@@ -2643,41 +2748,43 @@ def compute_slide_risk_panel(
         total_pnl_t0 = sum(p["pnl_t0_usd"] for p in per_name_pnl_t0)
         pnl_pct_t0 = total_pnl_t0 / nav_usd if nav_usd > 0 else None
 
-        horizon_rows: list[dict[str, Any]] = []
-        for t_days in horizons_days:
-            if t_days <= 0:
-                horizon_rows.append(
-                    {
-                        "horizon_days": 0,
-                        "total_pnl_usd": total_pnl_t0,
-                        "total_pnl_pct_nav": pnl_pct_t0,
-                        "decay_usd": 0.0,
-                    }
-                )
-                continue
-            t_years = t_days / TRADING_DAYS_PER_YEAR_DAYS
-            decay_sum = 0.0
-            for e in enriched:
-                for leg in e["legs"]:
-                    if not leg.get("is_letf"):
-                        continue
-                    k = float(leg.get("leverage_k", 1.0))
-                    if abs(k) <= 1.0001:
-                        continue
-                    sigma_etf = leg.get("vol_etf_annual")
-                    if sigma_etf is None and e["sigma"] is not None:
-                        sigma_etf = abs(k) * e["sigma"]
-                    if sigma_etf is None or sigma_etf <= 0:
-                        continue
-                    decay_frac = -0.5 * k * (k - 1.0) * (sigma_etf ** 2) * t_years
-                    decay_sum += leg["net_notional_usd"] * decay_frac
-            total = total_pnl_t0 + decay_sum
+        horizon_rows: list[dict[str, Any]] = [
+            {
+                "horizon_key": "T+0",
+                "horizon_days": 0,
+                "total_pnl_usd": total_pnl_t0,
+                "total_pnl_pct_nav": pnl_pct_t0,
+                "beta_pnl_usd": total_pnl_t0,
+                "decay_pnl_usd": 0.0,
+                "borrow_pnl_usd": 0.0,
+                "distribution_pnl_usd": 0.0,
+                "decay_usd": 0.0,
+            }
+        ]
+        for horizon_key in scenario_horizons:
+            totals = _slide_horizon_scenario_totals(
+                enriched,
+                etf_meta=etf_meta,
+                shock_pct=float(shock_pct),
+                horizon_key=horizon_key,
+                vol_multiplier=1.0,
+            )
+            total = float(totals["total_pnl_usd"])
             horizon_rows.append(
                 {
-                    "horizon_days": t_days,
+                    "horizon_key": horizon_key,
+                    "horizon_years": totals["horizon_years"],
+                    "vol_multiplier": 1.0,
+                    "sigma_annual_median": totals.get("sigma_annual_median"),
                     "total_pnl_usd": total,
                     "total_pnl_pct_nav": (total / nav_usd) if nav_usd > 0 else None,
-                    "decay_usd": decay_sum,
+                    "beta_pnl_usd": totals["beta_pnl_usd"],
+                    "decay_pnl_usd": totals["decay_pnl_usd"],
+                    "borrow_pnl_usd": totals["borrow_pnl_usd"],
+                    "distribution_pnl_usd": totals["distribution_pnl_usd"],
+                    "decay_usd": totals["decay_pnl_usd"],
+                    "n_legs_modeled": totals["n_legs_modeled"],
+                    "n_legs_fallback": totals["n_legs_fallback"],
                 }
             )
 
@@ -2718,9 +2825,34 @@ def compute_slide_risk_panel(
             index_label="SPX",
             row=row,
             shock_pct=shock_pct,
-            horizons_days=horizons_days,
+            horizons_days=(0,),
             nav_usd=nav_usd,
         )
+
+    decay_reference: dict[str, Any] = {}
+    for horizon_key in scenario_horizons:
+        totals = _slide_horizon_scenario_totals(
+            enriched,
+            etf_meta=etf_meta,
+            shock_pct=0.0,
+            horizon_key=horizon_key,
+            vol_multiplier=1.0,
+        )
+        decay_reference[horizon_key] = {
+            "horizon_years": totals["horizon_years"],
+            "sigma_annual_median": totals.get("sigma_annual_median"),
+            "beta_pnl_pct_nav": totals["beta_pnl_usd"] / nav_usd if nav_usd > 0 else None,
+            "decay_pnl_pct_nav": totals["decay_pnl_usd"] / nav_usd if nav_usd > 0 else None,
+            "borrow_pnl_pct_nav": totals["borrow_pnl_usd"] / nav_usd if nav_usd > 0 else None,
+            "distribution_pnl_pct_nav": totals["distribution_pnl_usd"] / nav_usd
+            if nav_usd > 0
+            else None,
+            "total_pnl_pct_nav": totals["total_pnl_usd"] / nav_usd if nav_usd > 0 else None,
+            "beta_pnl_usd": totals["beta_pnl_usd"],
+            "decay_pnl_usd": totals["decay_pnl_usd"],
+            "borrow_pnl_usd": totals["borrow_pnl_usd"],
+            "total_pnl_usd": totals["total_pnl_usd"],
+        }
 
     binding_shock: dict[str, Any] | None = None
     down_rows = [r for r in spx_shock_rows if float(r.get("shock_pct") or 0.0) < 0]
@@ -2734,6 +2866,7 @@ def compute_slide_risk_panel(
             "shock_rows": spx_shock_rows,
             "binding_shock": binding_shock,
             "binding_concentration": (binding_shock or {}).get("concentration"),
+            "decay_reference": decay_reference,
             "coverage_pct": (coverage_gross / total_gross) if total_gross > 0 else 0.0,
             "n_names_covered": sum(1 for e in enriched if e.get("beta_to_spy") is not None),
             "n_names_total": len(enriched),
@@ -2788,26 +2921,29 @@ def compute_slide_risk_panel(
                 )
             )
 
-    t_years = horizons_days[-1] / TRADING_DAYS_PER_YEAR_DAYS if horizons_days else 0.0
     vol_regime_rows: list[dict[str, Any]] = []
     for mult in vol_multipliers:
         per_name = []
         for e in enriched:
             decay_usd = 0.0
-            for leg in e["legs"]:
+            legs = _slide_scenario_legs_for_row(e, etf_meta=etf_meta)
+            for leg in legs:
                 if not leg.get("is_letf"):
                     continue
                 k = float(leg.get("leverage_k", 1.0))
                 if abs(k) <= 1.0001:
                     continue
-                sigma_etf = leg.get("vol_etf_annual")
-                if sigma_etf is None and e["sigma"] is not None:
-                    sigma_etf = abs(k) * e["sigma"]
-                if sigma_etf is None or sigma_etf <= 0:
+                sigma, _ = resolve_sigma_annual(leg, underlying_sigma=e.get("sigma"))
+                if sigma is None or sigma <= 0:
                     continue
-                new_sigma = sigma_etf * mult
-                decay_frac = -0.5 * k * (k - 1.0) * (new_sigma ** 2) * t_years
-                decay_usd += leg["net_notional_usd"] * decay_frac
+                result = model_leg_return(
+                    leg=leg,
+                    underlying_return=0.0,
+                    horizon_key=scenario_horizons[-1],
+                    vol_multiplier=float(mult),
+                    underlying_sigma=e.get("sigma"),
+                )
+                decay_usd += leg["net_notional_usd"] * result.decay_return
             if abs(decay_usd) < 1e-6:
                 continue
             per_name.append(
@@ -2820,7 +2956,7 @@ def compute_slide_risk_panel(
         vol_regime_rows.append(
             {
                 "multiplier": mult,
-                "label": f"{mult:g}x realized vol (T+{horizons_days[-1]}d)",
+                "label": f"{mult:g}x forecast vol ({scenario_horizons[-1]})",
                 "pnl_usd": total,
                 "pnl_pct_nav": pnl_pct,
                 "status": _slide_status(pnl_pct, limits),
@@ -2849,7 +2985,8 @@ def compute_slide_risk_panel(
     return {
         "available": True,
         "shocks_pct": list(shocks),
-        "horizons_days": list(horizons_days),
+        "scenario_horizons": list(scenario_horizons),
+        "horizons_days": [],
         "vix_shocks_pts": list(vix_shocks),
         "indices": indices_out,
         "worst_shock": worst_shock,
@@ -2857,6 +2994,7 @@ def compute_slide_risk_panel(
         "n_letf_names": n_letf,
         "n_names_with_vol": has_vol,
         "n_names_total": len(enriched),
+        "model": "etf_dashboard_scenarios_v1",
     }
 
 

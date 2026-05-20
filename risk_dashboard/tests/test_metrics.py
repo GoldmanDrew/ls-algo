@@ -617,7 +617,9 @@ def test_compute_slide_risk_panel_produces_spx_and_vix_strips():
     m3 = next(r for r in spx["shock_rows"] if abs(r["shock_pct"] + 0.03) < 1e-9)
     assert m3["pnl_usd"] == pytest.approx(-2400.0, abs=1.0)
     assert m3["pnl_pct_nav"] == pytest.approx(-0.024, abs=1e-6)
-    assert any(h["horizon_days"] == 0 for h in m3["horizons"])
+    assert panel.get("scenario_horizons") == ["1M", "3M", "6M", "12M"]
+    assert any(h.get("horizon_key") == "T+0" for h in m3["horizons"])
+    assert any(h.get("horizon_key") == "1M" for h in m3["horizons"])
     assert m3["status"] in ("ok", "warn", "hard")
     binding = spx.get("binding_shock")
     assert binding is not None
@@ -687,10 +689,16 @@ def test_compute_slide_risk_panel_letf_decay_uses_per_leg(tmp_path: Path):
     )
     assert panel["available"] is True
     spx = next(idx for idx in panel["indices"] if idx["index"] == "SPX")
-    # T+20 decay applied only to APLX (k=2, vol=1.4); APLD spot leg contributes 0.
-    # Expected: $1M * -0.5*2*1*1.96*(20/252) ~= -$155.5k
-    h20 = next(h for h in spx["shock_rows"][0]["horizons"] if h["horizon_days"] == 20)
-    assert -200_000 < h20["decay_usd"] < -100_000, h20["decay_usd"]
+    assert spx.get("decay_reference")
+    h1m = next(h for h in spx["shock_rows"][0]["horizons"] if h.get("horizon_key") == "1M")
+    # APLX LETF leg: k=2, σ=0.7 underlying, $1M notional at 1M horizon.
+    assert h1m["decay_pnl_usd"] < 0
+    assert "beta_pnl_usd" in h1m
+    assert "borrow_pnl_usd" in h1m
+    assert h1m["total_pnl_usd"] == pytest.approx(
+        h1m["beta_pnl_usd"] + h1m["decay_pnl_usd"] + h1m["borrow_pnl_usd"],
+        abs=5.0,
+    )
 
 
 # ---------------------------------------------------------------------------
