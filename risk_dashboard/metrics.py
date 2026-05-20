@@ -17,6 +17,7 @@ import pandas as pd
 import yaml
 
 from .factor_map import lookup_underlying
+from .sector_loader import resolve_sector
 from .flex_parser import (
     FlexBorrowFee,
     FlexPosition,
@@ -1656,23 +1657,41 @@ def compute_factor_panel(
         net = float(raw.get("net_notional_usd", 0.0) or 0.0)
         gross = float(raw.get("gross_notional_usd", 0.0) or 0.0)
         legs = int(raw.get("n_legs", 0) or 0)
-        meta = lookup_underlying(underlying)
-        sector = meta["sector"]
-        sector_source = meta["sector_source"]
-        beta_to_spy = meta["beta_to_spy"]
-        beta_source = meta["beta_source"]
+        # Sector via tiered resolver. The override / heuristic tiers
+        # are pure functions; the vendor tier is left empty here because
+        # build_snapshot does not call yfinance.Ticker(...).info today.
+        # If beta_results carries a `sector` (sector_loader was wired
+        # upstream) prefer that so the panel matches whatever was used
+        # to compute betas.
+        sector_meta = resolve_sector(underlying)
+        sector = sector_meta["sector"]
+        sector_source = sector_meta["sector_source"]
+        sector_confidence: float | None = sector_meta.get("sector_confidence")
+        legacy = lookup_underlying(underlying)
+        beta_to_spy = legacy["beta_to_spy"]
+        beta_source = legacy["beta_source"]
         beta_to_qqq: float | None = None
         beta_to_iwm: float | None = None
+        beta_to_spy_raw: float | None = None
         beta_se: float | None = None
         beta_n_obs: int | None = None
+        beta_n_eff: int | None = None
         beta_r2: float | None = None
         regime_vol_pct: float | None = None
         shrinkage_applied: bool | None = None
+        shrinkage_weight: float | None = None
+        prior_used_spy: float | None = None
+        prior_source: str | None = None
         if beta_results:
             br = beta_results.get((underlying or "").strip().upper())
             if br:
                 provenance = br.get("provenance", "")
-                if provenance in ("computed", "curated_fallback", "default_fallback"):
+                if provenance in (
+                    "computed",
+                    "shrunk",
+                    "curated_fallback",
+                    "default_fallback",
+                ):
                     beta_source = provenance
                 if br.get("beta_to_spy") is not None:
                     beta_to_spy = float(br["beta_to_spy"])
@@ -1680,11 +1699,20 @@ def compute_factor_panel(
                     beta_to_qqq = float(br["beta_to_ndx"])
                 if br.get("beta_to_rut") is not None:
                     beta_to_iwm = float(br["beta_to_rut"])
+                beta_to_spy_raw = br.get("beta_to_spy_raw")
                 beta_se = br.get("beta_se")
                 beta_n_obs = br.get("n_obs")
+                beta_n_eff = br.get("n_eff")
                 beta_r2 = br.get("r2")
                 regime_vol_pct = br.get("regime_vol_pct")
                 shrinkage_applied = bool(br.get("shrinkage_applied"))
+                shrinkage_weight = br.get("shrinkage_weight")
+                prior_used_spy = br.get("prior_used_spy")
+                prior_source = br.get("prior_source")
+                sec_from_loader = br.get("sector")
+                if sec_from_loader:
+                    sector = str(sec_from_loader).lower()
+                    sector_source = "computed_with_sector_loader"
         if regime_vol_pct is None and screener_vol_map:
             regime_vol_pct = screener_vol_map.get((underlying or "").strip().upper())
         beta_net = net * beta_to_spy
@@ -1698,15 +1726,21 @@ def compute_factor_panel(
                 "n_legs": legs,
                 "sector": sector,
                 "sector_source": sector_source,
+                "sector_confidence": sector_confidence,
                 "beta_to_spy": beta_to_spy,
                 "beta_to_qqq": beta_to_qqq,
                 "beta_to_iwm": beta_to_iwm,
+                "beta_to_spy_raw": beta_to_spy_raw,
                 "beta_se": beta_se,
                 "beta_n_obs": beta_n_obs,
+                "beta_n_eff": beta_n_eff,
                 "beta_r2": beta_r2,
                 "regime_vol_pct": regime_vol_pct,
                 "beta_source": beta_source,
                 "shrinkage_applied": shrinkage_applied,
+                "shrinkage_weight": shrinkage_weight,
+                "prior_used_spy": prior_used_spy,
+                "prior_source": prior_source,
                 "beta_weighted_net_usd": beta_net,
                 "beta_weighted_gross_usd": beta_gross,
             }
@@ -3550,7 +3584,20 @@ def build_snapshot(
                 underlyings = []
         if underlyings:
             try:
-                _br = compute_betas(underlyings, cache_dir=beta_cache_dir)
+                # Resolve sectors first so compute_betas can build a
+                # per-sector mean prior and shrink toward it.
+                from .sector_loader import batch_resolve as _batch_resolve_sectors
+
+                sector_pack = _batch_resolve_sectors(underlyings)
+                sectors_for_betas = {
+                    sym: meta.get("sector", "other")
+                    for sym, meta in sector_pack.items()
+                }
+                _br = compute_betas(
+                    underlyings,
+                    cache_dir=beta_cache_dir,
+                    sectors=sectors_for_betas,
+                )
                 beta_results_dicts = {k: v.to_dict() for k, v in _br.items()}
             except Exception:
                 beta_results_dicts = {}

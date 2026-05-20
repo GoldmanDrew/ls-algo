@@ -169,6 +169,80 @@ output on `RiskSnapshot`, and add a panel in `app.js`.
 
 ---
 
+## Factor map provenance (sectors + betas)
+
+The factor exposure panel attributes every underlying to a sector and
+weights its net / gross by a β-to-SPY (with secondary β to QQQ and
+IWM). Both fields are computed live each build with explicit
+provenance tags so the UI can show how confident each cell is.
+
+### Sector attribution (tiered)
+
+`risk_dashboard.sector_loader.resolve_sector` walks five tiers and
+returns the first hit:
+
+| Tier | Source | Notes |
+|------|--------|-------|
+| 1. `override` | `OVERRIDE_SECTOR_MAP` in `factor_map.py` | Hand-curated thematic buckets GICS cannot express (quantum, crypto-equity, evtol, drones, space, insurtech). Edit this map when a new theme appears. |
+| 2. `screener` | Per-underlying `theme` / `sector` columns in `data/etf_screened_today.csv` | Reuses the screener's existing classification when present. |
+| 3. `vendor`   | yfinance `Ticker.info["industry"]` then `["sector"]` mapped through `VENDOR_SECTOR_MAP` | Industry-level keys win over sector-level (more specific). |
+| 4. `heuristic`| Regex set in `HEURISTIC_PATTERNS` over `longName` / `industry` / `longBusinessSummary` | Catches new thematics not yet curated. Ordered so multi-word patterns (e.g. *bitcoin miner*) match before single tokens (*bitcoin*). |
+| 5. `default`  | `"other"` | Last resort; flagged in UI. |
+
+Each row in the JSON also carries `sector_source` and
+`sector_confidence` (1.00 / 0.90 / 0.75 / 0.55 / 0.10 by tier).
+
+### Live betas (two-pass shrinkage)
+
+`risk_dashboard.beta_loader.compute_betas` runs every build:
+
+1. **Fetch closes** with a fail-over chain:
+   yfinance (cached in `data/cache/beta_history/<SYM>.csv`) →
+   Stooq CSV (`https://stooq.com/q/d/l/?s={sym}.us&i=d`) →
+   stale on-disk cache (≤14 days old) → skip.
+2. **Pass 1 — OLS** of 252 daily log returns vs SPY / QQQ / IWM. Each
+   index regression returns `(β, β_se, n_obs, R²)`. Names with at
+   least `MIN_OBS_FOR_TRUST` (60) paired observations are tagged
+   `provenance = "computed"` and the raw OLS β is stored as
+   `beta_to_spy_raw` for diagnostics.
+3. **Build per-sector mean priors** (median of pass-1 `computed`
+   betas, requires ≥ 5 reliable names per sector).
+4. **Pass 2 — Bayesian shrinkage** toward the prior:
+
+       k = K_BASE · max(1, prior²)               # K_BASE = 60
+       n_eff = n · (1 − ρ_AR1) / (1 + ρ_AR1)     # matches daily_screener
+       w = n_eff / (n_eff + k)
+       β_final = w · β_OLS + (1 − w) · prior
+
+   `prior_source` is `sector_mean` when the sector has ≥ 5 reliable
+   computed betas; otherwise the curated `BETA_TO_SPY` value;
+   otherwise `DEFAULT_SINGLE_NAME_BETA` (1.20) /
+   `DEFAULT_BROAD_INDEX_BETA` (1.00). `shrinkage_applied` is True
+   whenever the prior contributed more than 5% (i.e. `w < 0.95`).
+5. **Persist** `data/cache/beta_summary.json` with every
+   `BetaResult` + the sector means. CI commits the close cache and
+   summary back to `main` after each successful build (`[skip ci]`),
+   so the next run never starts cold.
+
+### UI badges
+
+Each row in the Factor exposure panel renders a small pill next to the
+underlying ticker:
+
+* `computed` (green) — pass-1 OLS, shrinkage didn't materially move
+  the estimate.
+* `shrunk` (amber)   — Bayesian blend with the sector / curated
+  prior pulled the OLS by ≥ 5%.
+* `fallback` (amber) — `curated_fallback` (no price data, fell to
+  `BETA_TO_SPY` map).
+* `fallback` (red)   — `default_fallback` (no price data and not in
+  the curated map).
+
+Hovering the pill shows `n_obs`, `R²`, `w`, the prior used and the
+raw OLS beta.
+
+---
+
 ## Local development
 
 ```bash

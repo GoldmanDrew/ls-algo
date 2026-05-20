@@ -857,17 +857,53 @@
 
     function fmtBeta(v, source) {
       if (v == null || Number.isNaN(Number(v))) return "-";
-      const dim = source === "default" ? "dim" : "";
+      const dim = source === "default" || source === "default_fallback" ? "dim" : "";
       return `<span class="${dim}">${Number(v).toFixed(2)}</span>`;
+    }
+
+    function betaProvenancePill(row) {
+      const src = row.beta_source || "";
+      // Pill class -> ok (computed), warn (shrunk / curated fallback),
+      // crit (default fallback). Tooltip carries n_obs / R^2 / prior.
+      let label = src;
+      let cls = "pill-warn";
+      if (src === "computed") {
+        label = "computed";
+        cls = "pill-ok";
+      } else if (src === "shrunk") {
+        label = "shrunk";
+        cls = "pill-warn";
+      } else if (src === "curated_fallback" || src === "curated") {
+        label = "fallback";
+        cls = "pill-warn";
+      } else if (src === "default_fallback" || src === "default") {
+        label = "fallback";
+        cls = "pill-crit";
+      } else if (!src) {
+        return "";
+      }
+      const w = row.shrinkage_weight;
+      const tipParts = [src];
+      if (row.beta_n_obs) tipParts.push(`n=${row.beta_n_obs}`);
+      if (row.beta_r2 != null) tipParts.push(`R²=${Number(row.beta_r2).toFixed(2)}`);
+      if (w != null) tipParts.push(`w(OLS)=${Number(w).toFixed(2)}`);
+      if (row.prior_used_spy != null) {
+        tipParts.push(`prior=${Number(row.prior_used_spy).toFixed(2)}`);
+      }
+      if (row.beta_to_spy_raw != null) {
+        tipParts.push(`raw β_SPY=${Number(row.beta_to_spy_raw).toFixed(2)}`);
+      }
+      const tip = tipParts.join(" · ");
+      return ` <span class="pill ${cls} small" title="${tip}">${label}</span>`;
     }
 
     function rowTbl(rows) {
       return `<table class="tight"><thead><tr>
-        <th>Underlying</th><th>Sector</th><th>Beta SPY</th><th>Beta QQQ</th><th>Beta IWM</th><th>Net $</th><th>Beta net $</th>
+        <th>Underlying</th><th>Sector</th><th>β SPY</th><th>β QQQ</th><th>β IWM</th><th>Net $</th><th>β-wtd net $</th>
       </tr></thead><tbody>${(rows || [])
         .map(
           (r) => `<tr>
-            <td><strong>${safeText(r.underlying)}</strong> <span class="dim small">${safeText(
+            <td><strong>${safeText(r.underlying)}</strong>${betaProvenancePill(r)} <span class="dim small">${safeText(
             r.symbols,
             ""
           )}</span></td>
