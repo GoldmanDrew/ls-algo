@@ -258,6 +258,28 @@ def test_parse_stooq_csv_skips_malformed_rows():
 # ---------------------------------------------------------------------------
 
 
+def test_parse_yahoo_v8_chart_happy_path():
+    payload = {
+        "chart": {
+            "result": [
+                {
+                    "timestamp": [1715760000, 1715846400],
+                    "indicators": {"adjclose": [{"adjclose": [100.0, 101.5]}]},
+                }
+            ]
+        }
+    }
+    s = bl._parse_yahoo_v8_chart(payload, "NVDA")
+    assert s is not None
+    assert list(s.values) == [100.0, 101.5]
+    assert s.name == "NVDA"
+
+
+def test_parse_yahoo_v8_chart_returns_none_on_empty_result():
+    assert bl._parse_yahoo_v8_chart({"chart": {"result": []}}, "NVDA") is None
+    assert bl._parse_yahoo_v8_chart({}, "NVDA") is None
+
+
 def test_fetch_closes_serves_fresh_cache_without_calling_fetcher(tmp_path: Path):
     """Fresh on-disk cache must be returned without any network hit."""
     idx = pd.bdate_range("2026-04-01", periods=80)
@@ -265,7 +287,7 @@ def test_fetch_closes_serves_fresh_cache_without_calling_fetcher(tmp_path: Path)
     bl._save_cached_closes(tmp_path, "DEMO", closes)
 
     def boom(*args, **kwargs):  # noqa: ARG001
-        raise AssertionError("yfinance should not be called for fresh cache")
+        raise AssertionError("network fetch should not run for fresh cache")
 
     out = bl._fetch_closes(
         ["DEMO"],

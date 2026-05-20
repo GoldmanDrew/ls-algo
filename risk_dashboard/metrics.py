@@ -35,9 +35,10 @@ from .scenario_engine import (
 from .vol_vix_beta import compute_vol_vix_betas, leg_sigma_for_vix_shock
 
 try:
-    from .beta_loader import compute_betas  # noqa: F401
+    from .beta_loader import compute_betas, write_summary_cache  # noqa: F401
 except Exception:  # pragma: no cover - optional dep / fallback
     compute_betas = None  # type: ignore[assignment]
+    write_summary_cache = None  # type: ignore[assignment]
 
 try:
     from ibkr_accounting import (
@@ -1750,7 +1751,7 @@ def compute_factor_panel(
     total_gross = sum(r["gross_notional_usd"] for r in rows)
     total_beta_net = sum(r["beta_weighted_net_usd"] for r in rows)
     total_beta_gross = sum(r["beta_weighted_gross_usd"] for r in rows)
-    trusted_sources = {"curated", "computed", "curated_fallback"}
+    trusted_sources = {"curated", "computed", "shrunk", "curated_fallback"}
     known_beta_gross = sum(
         r["gross_notional_usd"] for r in rows if r["beta_source"] in trusted_sources
     )
@@ -3599,6 +3600,12 @@ def build_snapshot(
                     sectors=sectors_for_betas,
                 )
                 beta_results_dicts = {k: v.to_dict() for k, v in _br.items()}
+                if write_summary_cache is not None and _br:
+                    write_summary_cache(
+                        _br,
+                        snapshot_date=run_date,
+                        path=repo_root / "data" / "cache" / "beta_summary.json",
+                    )
             except Exception:
                 beta_results_dicts = {}
 

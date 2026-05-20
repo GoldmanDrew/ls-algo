@@ -7,8 +7,8 @@ adjusted effective sample sizes (same shape as
 
 Data sources, in fail-over order:
 
-    1. yfinance batch downloads (cached on disk).
-    2. Stooq CSV (``https://stooq.com/q/d/l/?s={sym}.us&i=d``).
+    1. Yahoo Finance v8 chart API (adjclose; cached on disk).
+    2. Stooq CSV (``https://stooq.com/q/d/l/?s={sym}.us&i=d``) when enabled.
     3. Stale local cache (``data/cache/beta_history/<SYM>.csv``).
     4. Skip -- mark provenance and fall back to curated / default.
 
@@ -25,14 +25,17 @@ import csv
 import io
 import json
 import math
+import random
 import time
 import urllib.error
 import urllib.request
-import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+
+import requests
 
 import numpy as np
 import pandas as pd
@@ -70,6 +73,11 @@ TRADING_DAYS_PER_YEAR = 252
 
 STOOQ_URL_TEMPLATE = "https://stooq.com/q/d/l/?s={sym}.us&i=d"
 STOOQ_TIMEOUT_SECONDS = 8.0
+YAHOO_V8_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}"
+YAHOO_V8_TIMEOUT_SECONDS = 15.0
+YAHOO_V8_MAX_RETRIES = 3
+YAHOO_V8_USER_AGENT = "Mozilla/5.0"
+YAHOO_V8_MAX_WORKERS = 8
 
 
 # ---------------------------------------------------------------------------
@@ -169,52 +177,111 @@ def _cache_age_hours(cache_dir: Path, symbol: str) -> float | None:
 # ---------------------------------------------------------------------------
 
 
+def _yahoo_v8_range(period_days: int) -> str:
+    """Pick a Yahoo ``range`` param wide enough for ``period_days`` OLS."""
+    if period_days >= 400:
+        return "5y"
+    if period_days >= 200:
+        return "2y"
+    if period_days >= 90:
+        return "1y"
+    return "6mo"
+
+
+def _parse_yahoo_v8_chart(payload: dict[str, Any], symbol: str) -> pd.Series | None:
+    """Parse adjclose series from a Yahoo v8 chart JSON body."""
+    result = ((payload.get("chart") or {}).get("result") or [None])[0]
+    if not result:
+        return None
+    timestamps = result.get("timestamp") or []
+    adjclose = ((result.get("indicators") or {}).get("adjclose") or [{}])[0].get(
+        "adjclose"
+    )
+    if not timestamps or not adjclose:
+        return None
+    idx = (
+        pd.to_datetime(timestamps, unit="s", utc=True)
+        .tz_convert("America/New_York")
+        .normalize()
+    )
+    s = pd.Series(adjclose, index=idx, name=symbol, dtype=float).dropna()
+    if s.empty:
+        return None
+    return s
+
+
+def _fetch_one_yahoo_v8_series(
+    symbol: str,
+    *,
+    range_param: str,
+) -> pd.Series | None:
+    """Fetch one symbol's adjclose history via Yahoo v8 chart API."""
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        return None
+    yahoo_sym = sym.replace(".", "-")
+    url = YAHOO_V8_CHART_URL.format(sym=yahoo_sym)
+    params = {"range": range_param, "interval": "1d", "events": "div,splits"}
+    headers = {"User-Agent": YAHOO_V8_USER_AGENT}
+    last_exc: Exception | None = None
+    for attempt in range(1, YAHOO_V8_MAX_RETRIES + 1):
+        try:
+            resp = requests.get(
+                url,
+                params=params,
+                headers=headers,
+                timeout=YAHOO_V8_TIMEOUT_SECONDS,
+            )
+            if resp.status_code == 429:
+                raise requests.HTTPError("429 Too Many Requests")
+            resp.raise_for_status()
+            series = _parse_yahoo_v8_chart(resp.json(), sym)
+            if series is not None and not series.empty:
+                return series
+            raise ValueError("empty adjclose series")
+        except Exception as exc:
+            last_exc = exc
+            if attempt < YAHOO_V8_MAX_RETRIES:
+                sleep_s = (0.5 * (2 ** (attempt - 1))) + random.uniform(0.0, 0.25)
+                time.sleep(sleep_s)
+    _ = last_exc
+    return None
+
+
 def _fetch_yfinance_chunk(
     batch: list[str],
     *,
     period_days: int,
-    yf_module: Any | None,
+    yf_module: Any | None = None,
 ) -> dict[str, pd.Series]:
-    """Single yfinance.download batch. Returns {sym: close_series}."""
-    yf = yf_module
-    if yf is None:
-        try:
-            import yfinance as yf  # type: ignore
-        except Exception:
-            return {}
+    """Fetch a batch of symbols via Yahoo v8 chart API.
+
+    The name is kept for back-compat with callers/tests. ``yf_module`` is
+    ignored -- the v8 API replaces broken ``yfinance.download`` batches.
+    """
+    _ = yf_module
+    if not batch:
+        return {}
+    range_param = _yahoo_v8_range(max(period_days * 2 + 10, 90))
     out: dict[str, pd.Series] = {}
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            data = yf.download(
-                tickers=" ".join(batch),
-                period=f"{period_days}d",
-                interval="1d",
-                auto_adjust=True,
-                actions=False,
-                progress=False,
-                group_by="ticker",
-                threads=True,
-            )
-    except Exception:
-        return {}
-    if data is None or len(data) == 0:
-        return {}
-    for sym in batch:
-        try:
-            if isinstance(data.columns, pd.MultiIndex):
-                if sym not in data.columns.get_level_values(0):
-                    continue
-                close = data[sym]["Close"].dropna().astype(float)
-            else:
-                close = data["Close"].dropna().astype(float)
-        except Exception:
-            continue
-        if close.empty:
-            continue
-        close.name = sym
-        close.index = pd.to_datetime(close.index).normalize()
-        out[sym] = close
+    workers = min(YAHOO_V8_MAX_WORKERS, max(1, len(batch)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(
+                _fetch_one_yahoo_v8_series,
+                sym,
+                range_param=range_param,
+            ): sym
+            for sym in batch
+        }
+        for fut in as_completed(futures):
+            sym = futures[fut]
+            try:
+                series = fut.result()
+            except Exception:
+                continue
+            if series is not None and not series.empty:
+                out[sym] = series
     return out
 
 
@@ -290,16 +357,16 @@ def _fetch_closes(
     enable_stooq_fallback: bool = True,
     stale_fallback_max_age_days: float = STALE_FALLBACK_MAX_AGE_DAYS,
 ) -> dict[str, pd.Series]:
-    """Cache-first daily closes with yfinance -> Stooq -> stale-cache chain.
+    """Cache-first daily closes with Yahoo v8 -> Stooq -> stale-cache chain.
 
     Order of operations per symbol:
 
         1. Fresh on-disk cache (age <= ``refresh_max_age_hours``) wins.
-        2. Otherwise request yfinance in chunks. A chunk with zero
-           successful symbols counts toward an abort streak so the
+        2. Otherwise request Yahoo v8 chart API in chunks. A chunk with
+           zero successful symbols counts toward an abort streak so the
            build never stalls on a dead network.
-        3. Any symbol still missing after yfinance is retried via
-           Stooq (when ``enable_stooq_fallback``).
+        3. Any symbol still missing after Yahoo is retried via Stooq
+           (when ``enable_stooq_fallback``).
         4. Any symbol still missing falls back to its (possibly stale)
            on-disk cache provided the cache is at most
            ``stale_fallback_max_age_days`` old.
