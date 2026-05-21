@@ -85,6 +85,8 @@ OVERRIDE_SECTOR_MAP: dict[str, str] = {
     "KEEL": "industrials", "BE": "clean", "B": "industrials",
     "CRML": "metals", "TSUI": "industrials", "NOK": "industrials",
     "AAL": "industrials",
+    "LCID": "consumer",
+    "SOUN": "software",
 }
 
 # SPY-beta map for the highest-conviction names. Everything else falls

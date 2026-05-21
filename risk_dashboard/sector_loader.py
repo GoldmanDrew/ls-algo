@@ -169,13 +169,13 @@ def _try_override(symbol: str) -> dict[str, Any] | None:
 def _try_screener(screener_row: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if not screener_row:
         return None
+    # ``product_class`` is instrument taxonomy (letf / inverse / …), not
+    # economic sector — keep it on the row as ``instrument_class`` only.
     for key in (
         "underlying_sector",
         "sector",
         "theme",
         "underlying_theme",
-        "product_class",
-        "Delta_product_class",
     ):
         val = screener_row.get(key)
         if val is None:

@@ -13,7 +13,7 @@ Data sources, in fail-over order:
     4. Skip -- mark provenance and fall back to curated / default.
 
 Each :class:`BetaResult` carries ``beta_to_spy``, ``beta_to_ndx``,
-``beta_to_rut`` plus standard error, observation count, R^2, annualized
+``beta_to_rut``, ``beta_to_btc`` plus standard error, observation count, R^2, annualized
 realized vol (60d), AR(1)-adjusted effective sample size, and
 provenance flag (``computed`` / ``shrunk`` / ``curated_fallback`` /
 ``default_fallback``).
@@ -56,6 +56,7 @@ INDEX_TICKERS: dict[str, str] = {
     "spy": "SPY",
     "ndx": "QQQ",
     "rut": "IWM",
+    "btc": "BTC-USD",
 }
 
 DEFAULT_WINDOW_DAYS = 252
@@ -91,9 +92,11 @@ class BetaResult:
     beta_to_spy: float | None = None
     beta_to_ndx: float | None = None
     beta_to_rut: float | None = None
+    beta_to_btc: float | None = None
     beta_to_spy_raw: float | None = None   # pre-shrinkage OLS beta
     beta_to_ndx_raw: float | None = None
     beta_to_rut_raw: float | None = None
+    beta_to_btc_raw: float | None = None
     beta_se: float | None = None
     n_obs: int = 0
     n_eff: int = 0
@@ -113,9 +116,11 @@ class BetaResult:
             "beta_to_spy": self.beta_to_spy,
             "beta_to_ndx": self.beta_to_ndx,
             "beta_to_rut": self.beta_to_rut,
+            "beta_to_btc": self.beta_to_btc,
             "beta_to_spy_raw": self.beta_to_spy_raw,
             "beta_to_ndx_raw": self.beta_to_ndx_raw,
             "beta_to_rut_raw": self.beta_to_rut_raw,
+            "beta_to_btc_raw": self.beta_to_btc_raw,
             "beta_se": self.beta_se,
             "n_obs": self.n_obs,
             "n_eff": self.n_eff,
@@ -464,10 +469,58 @@ def _ols_beta(
     return beta, beta_se, len(paired), r2
 
 
+def _normalize_close_series(close: pd.Series) -> pd.Series:
+    """Align daily closes on naive calendar dates for cross-asset joins."""
+    s = close.sort_index()
+    idx = pd.to_datetime(s.index, utc=True)
+    s = s.copy()
+    s.index = idx.tz_convert(None).normalize()
+    return s.groupby(level=0).last().sort_index()
+
+
+def _btc_equity_aligned_log_returns(
+    asset_close: pd.Series,
+    btc_close: pd.Series,
+    window_days: int,
+) -> tuple[pd.Series, pd.Series]:
+    """Log returns vs BTC on the asset's equity calendar.
+
+    Yahoo ``BTC-USD`` daily bar timestamps run ~1 day behind US equity
+    session labels, so we shift BTC closes forward one calendar day
+    before sampling on equity dates.
+    """
+    y = _normalize_close_series(asset_close)
+    x = _normalize_close_series(btc_close)
+    x.index = x.index + pd.Timedelta(days=1)
+    x = x.reindex(y.index).ffill()
+    paired = pd.concat([y, x], axis=1, join="inner").dropna().tail(window_days + 1)
+    if len(paired) < 2:
+        return pd.Series(dtype=float), pd.Series(dtype=float)
+    y_ret = np.log(paired.iloc[:, 0]).diff().dropna()
+    x_ret = np.log(paired.iloc[:, 1]).diff().dropna()
+    return y_ret, x_ret
+
+
+def _aligned_log_returns(
+    y_close: pd.Series,
+    x_close: pd.Series,
+    window_days: int,
+) -> tuple[pd.Series, pd.Series]:
+    """Log returns on ``y``'s trading calendar with ``x`` sampled on same dates."""
+    y = _normalize_close_series(y_close)
+    x = _normalize_close_series(x_close).reindex(y.index).ffill()
+    paired = pd.concat([y, x], axis=1, join="inner").dropna().tail(window_days + 1)
+    if len(paired) < 2:
+        return pd.Series(dtype=float), pd.Series(dtype=float)
+    y_ret = np.log(paired.iloc[:, 0]).diff().dropna()
+    x_ret = np.log(paired.iloc[:, 1]).diff().dropna()
+    return y_ret, x_ret
+
+
 def _log_returns(close: pd.Series | None, window_days: int) -> pd.Series:
     if close is None or close.empty:
         return pd.Series(dtype=float)
-    s = close.sort_index().tail(window_days + 1)
+    s = _normalize_close_series(close).tail(window_days + 1)
     return np.log(s).diff().dropna()
 
 
@@ -626,7 +679,7 @@ def compute_betas(
     fetch_fn: Any | None = None,
     apply_shrinkage: bool = False,
 ) -> dict[str, BetaResult]:
-    """Compute beta-to-{SPY,QQQ,IWM} for each ``underlying``.
+    """Compute beta-to-{SPY,QQQ,IWM,BTC-USD} for each ``underlying``.
 
     Default (``apply_shrinkage=False``): **pure price-action OLS** over
     trailing ``window_days`` log returns vs SPY/QQQ/IWM. The displayed
@@ -707,6 +760,16 @@ def compute_betas(
             b, _, _, _ = _ols_beta(y, iwm_ret)
             res.beta_to_rut = b
             res.beta_to_rut_raw = b
+        btc_close = closes.get("BTC-USD")
+        asset_close = closes.get(sym)
+        if asset_close is not None and btc_close is not None:
+            y_btc, x_btc = _btc_equity_aligned_log_returns(
+                asset_close, btc_close, window_days
+            )
+            if not y_btc.empty and not x_btc.empty:
+                b, _, _, _ = _ols_beta(y_btc, x_btc)
+                res.beta_to_btc = b
+                res.beta_to_btc_raw = b
 
         # 60d regime vol -- captured independent of the 252d window so
         # the slide panel's regime overlay can use a current vol point

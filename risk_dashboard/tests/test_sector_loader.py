@@ -41,6 +41,23 @@ def test_override_handles_case_and_whitespace():
 # ---------------------------------------------------------------------------
 
 
+def test_screener_tier_skips_product_class_instrument_taxonomy():
+    """product_class (letf / inverse) must not become economic sector."""
+    out = resolve_sector(
+        "AMD",
+        screener_row={"product_class": "letf", "underlying_sector": "semis"},
+        use_override=False,
+    )
+    assert out["sector"] == "semis"
+    out2 = resolve_sector(
+        "NEW_NAME",
+        screener_row={"product_class": "letf"},
+        use_override=False,
+    )
+    assert out2["sector"] == "other"
+    assert out2["sector_source"] == "default"
+
+
 def test_override_off_by_default():
     out = resolve_sector("QBTS")
     assert out["sector_source"] != "override"

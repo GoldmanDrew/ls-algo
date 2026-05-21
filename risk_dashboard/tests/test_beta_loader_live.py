@@ -44,6 +44,7 @@ def _make_price_fixture(n_days: int = 300, seed: int = 20260520) -> dict[str, pd
         "SPY": spy_ret,
         "QQQ": qqq_ret,
         "IWM": iwm_ret,
+        "BTC-USD": 1.00 * spy_ret + rng.normal(0.0, 0.015, size=n_days),
         "HIBETA": 1.50 * spy_ret + rng.normal(0.0, 0.003, size=n_days),
         "MIDBETA": 1.00 * spy_ret + rng.normal(0.0, 0.003, size=n_days),
         "LOWBETA": 0.40 * spy_ret + rng.normal(0.0, 0.004, size=n_days),
@@ -97,6 +98,7 @@ def test_compute_betas_recovers_known_factor_loadings(tmp_path: Path):
         assert r.beta_to_spy == pytest.approx(r.beta_to_spy_raw)
         assert r.beta_to_ndx is not None
         assert r.beta_to_rut is not None
+        assert r.beta_to_btc is not None
         assert r.regime_vol_pct is not None and r.regime_vol_pct > 0
         assert r.shrinkage_applied is False or r.shrinkage_applied is None
 

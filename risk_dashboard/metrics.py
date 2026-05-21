@@ -8,6 +8,7 @@ business logic.
 
 from __future__ import annotations
 
+import csv
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,7 +18,8 @@ import pandas as pd
 import yaml
 
 from .factor_map import lookup_underlying
-from .sector_loader import resolve_sector
+from .sector_loader import batch_resolve, resolve_sector
+from .sector_vendor import fetch_vendor_info
 from .flex_parser import (
     FlexBorrowFee,
     FlexPosition,
@@ -98,6 +100,13 @@ BUCKET_SLEEVE_KEYS: dict[str, str] = {
     "bucket_1": "core_leveraged",
     "bucket_2": "yieldboost",
     "bucket_4": "inverse_decay_bucket4",
+}
+
+BUCKET_LABELS: dict[str, str] = {
+    "bucket_1": "Bucket 1",
+    "bucket_2": "Bucket 2",
+    "bucket_3": "Bucket 3 (flow hedge overlay)",
+    "bucket_4": "Bucket 4",
 }
 
 
@@ -1619,30 +1628,183 @@ def _load_screener_vol_map(screener_csv: Path | None) -> dict[str, float]:
 def _load_screener_underlying_rows(
     screener_csv: Path | None,
 ) -> dict[str, dict[str, Any]]:
-    """Underlying -> screener metadata for sector_loader (no override map)."""
+    """Underlying -> screener metadata (instrument class + optional economic sector)."""
     if screener_csv is None or not screener_csv.is_file():
         return {}
     try:
-        df = pd.read_csv(
-            screener_csv,
-            usecols=["Underlying", "product_class", "Delta_product_class"],
-        )
+        df = pd.read_csv(screener_csv, low_memory=False)
     except Exception:
-        try:
-            df = pd.read_csv(screener_csv, usecols=["Underlying", "product_class"])
-        except Exception:
-            return {}
+        return {}
+    if "Underlying" not in df.columns:
+        return {}
     out: dict[str, dict[str, Any]] = {}
     for _, r in df.iterrows():
         u = _clean_str(r.get("Underlying")).upper()
         if not u or u in out:
             continue
-        pc = _clean_str(r.get("product_class")) or _clean_str(r.get("Delta_product_class"))
         row: dict[str, Any] = {}
+        pc = _clean_str(r.get("product_class")) or _clean_str(r.get("Delta_product_class"))
         if pc:
+            row["instrument_class"] = pc.lower()
             row["product_class"] = pc.lower()
+        for col in ("underlying_sector", "sector", "theme", "underlying_theme"):
+            val = _clean_str(r.get(col))
+            if val and val.lower() not in {"nan", "none", "other", "unknown", ""}:
+                row.setdefault("underlying_sector", val.lower())
+                break
         out[u] = row
     return out
+
+
+def _resolve_underlying_beta_to_spy(
+    underlying: str | None,
+    *,
+    beta_results: dict[str, Any] | None = None,
+) -> tuple[float, str]:
+    """Return (beta_to_spy, beta_source). Uses OLS loader only — not curated map."""
+    from .factor_map import DEFAULT_SINGLE_NAME_BETA
+
+    beta_to_spy = float(DEFAULT_SINGLE_NAME_BETA)
+    beta_source = "default_fallback"
+    if beta_results:
+        br = beta_results.get((underlying or "").strip().upper())
+        if br:
+            provenance = br.get("provenance", "")
+            if provenance in (
+                "computed",
+                "shrunk",
+                "curated_fallback",
+                "default_fallback",
+            ):
+                beta_source = provenance
+            if br.get("beta_to_spy") is not None:
+                beta_to_spy = float(br["beta_to_spy"])
+    return beta_to_spy, beta_source
+
+
+def _write_sector_audit_csv(rows: list[dict[str, Any]], path: Path) -> None:
+    """Persist per-name sector attribution for drift review."""
+    if not rows:
+        return
+    cols = [
+        "underlying",
+        "sector",
+        "sector_source",
+        "sector_confidence",
+        "instrument_class",
+        "beta_to_spy",
+        "beta_source",
+        "net_notional_usd",
+        "gross_notional_usd",
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(cols)
+        for r in rows:
+            w.writerow([r.get(c, "") for c in cols])
+
+
+def compute_factor_by_bucket(
+    accounting_dir: Path,
+    nav_usd: float,
+    *,
+    beta_results: dict[str, Any] | None = None,
+    blocked_exposure_keys: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Per-bucket beta-weighted net exposure and net beta to SPY.
+
+    Reads ``net_exposure_bucket_{1..4}.csv`` so sleeve attribution matches
+    the bucket tabs. Bucket rows may double-count vs book-level
+    ``net_exposure_by_underlying.csv``; the UI shows both totals.
+    """
+    if accounting_dir is None or not accounting_dir.is_dir():
+        return []
+
+    bucket_rows: list[dict[str, Any]] = []
+    for bucket in ("bucket_1", "bucket_2", "bucket_3", "bucket_4"):
+        path = accounting_dir / f"net_exposure_{bucket}.csv"
+        df = _read_csv_or_empty(path)
+        if blocked_exposure_keys and not df.empty and _filter_exposure_df is not None:
+            df = _filter_exposure_df(df, blocked_exposure_keys)
+        if df.empty:
+            bucket_rows.append(
+                {
+                    "bucket": bucket,
+                    "bucket_label": BUCKET_LABELS.get(bucket, bucket),
+                    "n_names": 0,
+                    "net_notional_usd": 0.0,
+                    "gross_notional_usd": 0.0,
+                    "beta_weighted_net_usd": 0.0,
+                    "beta_weighted_gross_usd": 0.0,
+                    "net_beta_to_spy": 0.0 if nav_usd > 0 else None,
+                    "gross_beta_to_spy": 0.0 if nav_usd > 0 else None,
+                    "implied_avg_beta": None,
+                    "top_beta_names": [],
+                }
+            )
+            continue
+
+        name_rows: list[dict[str, Any]] = []
+        total_net = 0.0
+        total_gross = 0.0
+        total_beta_net = 0.0
+        total_beta_gross = 0.0
+        for _, raw in df.iterrows():
+            underlying = _first_nonblank(raw.get("underlying"), raw.get("symbol"))
+            net = float(raw.get("net_notional_usd", 0.0) or 0.0)
+            gross = float(raw.get("gross_notional_usd", 0.0) or 0.0)
+            beta_to_spy, beta_source = _resolve_underlying_beta_to_spy(
+                underlying, beta_results=beta_results
+            )
+            beta_net = net * beta_to_spy
+            beta_gross = gross * abs(beta_to_spy)
+            total_net += net
+            total_gross += gross
+            total_beta_net += beta_net
+            total_beta_gross += beta_gross
+            if abs(beta_net) > 1e-6:
+                name_rows.append(
+                    {
+                        "underlying": underlying,
+                        "symbols": _first_nonblank(raw.get("symbols"), underlying),
+                        "net_notional_usd": net,
+                        "beta_to_spy": beta_to_spy,
+                        "beta_source": beta_source,
+                        "beta_weighted_net_usd": beta_net,
+                    }
+                )
+
+        top_names = sorted(
+            name_rows,
+            key=lambda r: abs(r["beta_weighted_net_usd"]),
+            reverse=True,
+        )[:5]
+        implied_avg = (total_beta_net / total_net) if abs(total_net) > 1e-6 else None
+        bucket_rows.append(
+            {
+                "bucket": bucket,
+                "bucket_label": BUCKET_LABELS.get(bucket, bucket),
+                "n_names": len(df),
+                "net_notional_usd": total_net,
+                "gross_notional_usd": total_gross,
+                "beta_weighted_net_usd": total_beta_net,
+                "beta_weighted_gross_usd": total_beta_gross,
+                "net_beta_to_spy": (total_beta_net / nav_usd) if nav_usd > 0 else None,
+                "gross_beta_to_spy": (total_beta_gross / nav_usd) if nav_usd > 0 else None,
+                "implied_avg_beta": implied_avg,
+                "top_beta_names": top_names,
+            }
+        )
+
+    total_beta_net = sum(r["beta_weighted_net_usd"] for r in bucket_rows)
+    for row in bucket_rows:
+        if total_beta_net and abs(total_beta_net) > 1e-6:
+            row["pct_of_total_beta_net"] = row["beta_weighted_net_usd"] / total_beta_net
+        else:
+            row["pct_of_total_beta_net"] = None
+
+    return bucket_rows
 
 
 def compute_factor_panel(
@@ -1652,6 +1814,7 @@ def compute_factor_panel(
     beta_results: dict[str, Any] | None = None,
     screener_vol_map: dict[str, float] | None = None,
     screener_underlying_rows: dict[str, dict[str, Any]] | None = None,
+    vendor_info_by_symbol: dict[str, dict[str, Any]] | None = None,
     blocked_exposure_keys: set[str] | None = None,
 ) -> dict[str, Any]:
     """Compute beta-weighted net exposure, sector groupings and top names.
@@ -1677,8 +1840,12 @@ def compute_factor_panel(
             "by_sector": [],
             "top_beta_long": [],
             "top_beta_short": [],
+            "top_btc_beta_long": [],
+            "top_btc_beta_short": [],
+            "by_bucket": [],
             "totals": {},
             "beta_provenance_counts": {},
+            "sector_provenance_counts": {},
         }
 
     rows: list[dict[str, Any]] = []
@@ -1688,21 +1855,30 @@ def compute_factor_panel(
         net = float(raw.get("net_notional_usd", 0.0) or 0.0)
         gross = float(raw.get("gross_notional_usd", 0.0) or 0.0)
         legs = int(raw.get("n_legs", 0) or 0)
-        # Sector via screener / vendor / heuristic tiers (override map off).
+        # Economic sector: override map + screener theme + vendor/heuristic.
+        # Beta stays on OLS loader (``beta_results``) — not curated map.
         u_key = (underlying or "").strip().upper()
+        screener_row = (screener_underlying_rows or {}).get(u_key)
         sector_meta = resolve_sector(
             underlying,
-            screener_row=(screener_underlying_rows or {}).get(u_key),
-            use_override=False,
+            screener_row=screener_row,
+            vendor_info=(vendor_info_by_symbol or {}).get(u_key),
+            use_override=True,
         )
         sector = sector_meta["sector"]
         sector_source = sector_meta["sector_source"]
         sector_confidence: float | None = sector_meta.get("sector_confidence")
-        legacy = lookup_underlying(underlying)
-        beta_to_spy = legacy["beta_to_spy"]
-        beta_source = legacy["beta_source"]
+        instrument_class: str | None = None
+        if screener_row:
+            instrument_class = screener_row.get("instrument_class") or screener_row.get(
+                "product_class"
+            )
+        beta_to_spy, beta_source = _resolve_underlying_beta_to_spy(
+            underlying, beta_results=beta_results
+        )
         beta_to_qqq: float | None = None
         beta_to_iwm: float | None = None
+        beta_to_btc: float | None = None
         beta_to_spy_raw: float | None = None
         beta_se: float | None = None
         beta_n_obs: int | None = None
@@ -1730,6 +1906,8 @@ def compute_factor_panel(
                     beta_to_qqq = float(br["beta_to_ndx"])
                 if br.get("beta_to_rut") is not None:
                     beta_to_iwm = float(br["beta_to_rut"])
+                if br.get("beta_to_btc") is not None:
+                    beta_to_btc = float(br["beta_to_btc"])
                 beta_to_spy_raw = br.get("beta_to_spy_raw")
                 beta_se = br.get("beta_se")
                 beta_n_obs = br.get("n_obs")
@@ -1744,6 +1922,7 @@ def compute_factor_panel(
             regime_vol_pct = screener_vol_map.get((underlying or "").strip().upper())
         beta_net = net * beta_to_spy
         beta_gross = gross * abs(beta_to_spy)
+        beta_net_btc = (net * beta_to_btc) if beta_to_btc is not None else None
         rows.append(
             {
                 "underlying": underlying,
@@ -1754,9 +1933,11 @@ def compute_factor_panel(
                 "sector": sector,
                 "sector_source": sector_source,
                 "sector_confidence": sector_confidence,
+                "instrument_class": instrument_class,
                 "beta_to_spy": beta_to_spy,
                 "beta_to_qqq": beta_to_qqq,
                 "beta_to_iwm": beta_to_iwm,
+                "beta_to_btc": beta_to_btc,
                 "beta_to_spy_raw": beta_to_spy_raw,
                 "beta_se": beta_se,
                 "beta_n_obs": beta_n_obs,
@@ -1770,6 +1951,7 @@ def compute_factor_panel(
                 "prior_source": prior_source,
                 "beta_weighted_net_usd": beta_net,
                 "beta_weighted_gross_usd": beta_gross,
+                "beta_weighted_net_btc_usd": beta_net_btc,
             }
         )
 
@@ -1777,15 +1959,24 @@ def compute_factor_panel(
     total_gross = sum(r["gross_notional_usd"] for r in rows)
     total_beta_net = sum(r["beta_weighted_net_usd"] for r in rows)
     total_beta_gross = sum(r["beta_weighted_gross_usd"] for r in rows)
+    btc_rows = [r for r in rows if r.get("beta_weighted_net_btc_usd") is not None]
+    total_beta_net_btc = sum(r["beta_weighted_net_btc_usd"] for r in btc_rows)
+    known_btc_gross = sum(
+        r["gross_notional_usd"] for r in btc_rows if r.get("beta_to_btc") is not None
+    )
+    btc_coverage = (known_btc_gross / total_gross) if total_gross > 0 else 0.0
     trusted_sources = {"curated", "computed", "shrunk", "curated_fallback"}
     known_beta_gross = sum(
         r["gross_notional_usd"] for r in rows if r["beta_source"] in trusted_sources
     )
     coverage = (known_beta_gross / total_gross) if total_gross > 0 else 0.0
     provenance_counts: dict[str, int] = {}
+    sector_provenance_counts: dict[str, int] = {}
     for r in rows:
         key = r["beta_source"] or "unknown"
         provenance_counts[key] = provenance_counts.get(key, 0) + 1
+        skey = r.get("sector_source") or "unknown"
+        sector_provenance_counts[skey] = sector_provenance_counts.get(skey, 0) + 1
 
     sector_map: dict[str, dict[str, Any]] = {}
     for r in rows:
@@ -1832,15 +2023,29 @@ def compute_factor_panel(
         key=lambda r: r["beta_weighted_net_usd"],
     )[:12]
 
+    btc_longs = sorted(
+        [r for r in btc_rows if r["beta_weighted_net_btc_usd"] > 0],
+        key=lambda r: r["beta_weighted_net_btc_usd"],
+        reverse=True,
+    )[:12]
+    btc_shorts = sorted(
+        [r for r in btc_rows if r["beta_weighted_net_btc_usd"] < 0],
+        key=lambda r: r["beta_weighted_net_btc_usd"],
+    )[:12]
+
     totals = {
         "n_underlyings": len(rows),
         "net_notional_usd": total_net,
         "gross_notional_usd": total_gross,
         "beta_weighted_net_usd": total_beta_net,
         "beta_weighted_gross_usd": total_beta_gross,
+        "beta_weighted_net_btc_usd": total_beta_net_btc if btc_rows else None,
         "net_beta_to_spy": (total_beta_net / nav_usd) if nav_usd > 0 else None,
         "gross_beta_to_spy": (total_beta_gross / nav_usd) if nav_usd > 0 else None,
+        "net_beta_to_btc": (total_beta_net_btc / nav_usd) if nav_usd > 0 and btc_rows else None,
         "beta_coverage_gross_pct": coverage,
+        "btc_beta_coverage_gross_pct": btc_coverage,
+        "n_btc_beta_names": len(btc_rows),
     }
 
     return {
@@ -1849,8 +2054,12 @@ def compute_factor_panel(
         "by_sector": by_sector,
         "top_beta_long": longs,
         "top_beta_short": shorts,
+        "top_btc_beta_long": btc_longs,
+        "top_btc_beta_short": btc_shorts,
+        "by_bucket": [],
         "totals": totals,
         "beta_provenance_counts": provenance_counts,
+        "sector_provenance_counts": sector_provenance_counts,
     }
 
 
@@ -3627,14 +3836,75 @@ def build_snapshot(
 
     screener_vol_map = _load_screener_vol_map(screener_csv)
     screener_underlying_rows = _load_screener_underlying_rows(screener_csv)
+    underlyings_for_vendor: list[str] = []
+    exposure_csv = accounting / "net_exposure_by_underlying.csv"
+    if exposure_csv.is_file():
+        try:
+            _udf = pd.read_csv(exposure_csv, usecols=["underlying"])
+            if blocked_exposure_keys:
+                _udf = _udf[~_udf["underlying"].astype(str).isin(blocked_exposure_keys)]
+            underlyings_for_vendor = [
+                str(u).strip().upper() for u in _udf["underlying"].dropna().tolist()
+            ]
+        except Exception:
+            underlyings_for_vendor = []
+    vendor_info_by_symbol: dict[str, dict[str, Any]] = {}
+    if underlyings_for_vendor:
+        try:
+            vendor_info_by_symbol = fetch_vendor_info(
+                underlyings_for_vendor,
+                cache_path=repo_root / "data" / "cache" / "sector_vendor.json",
+            )
+        except Exception:
+            vendor_info_by_symbol = {}
     factor_panel = compute_factor_panel(
         underlying_exposure_csv=accounting / "net_exposure_by_underlying.csv",
         nav_usd=nav_usd,
         beta_results=beta_results_dicts or None,
         screener_vol_map=screener_vol_map or None,
         screener_underlying_rows=screener_underlying_rows or None,
+        vendor_info_by_symbol=vendor_info_by_symbol or None,
         blocked_exposure_keys=blocked_exposure_keys,
     )
+    if factor_panel.get("available") and factor_panel.get("rows"):
+        _write_sector_audit_csv(
+            factor_panel["rows"],
+            accounting / "sector_audit.csv",
+        )
+    if factor_panel.get("available"):
+        by_bucket = compute_factor_by_bucket(
+            accounting,
+            nav_usd,
+            beta_results=beta_results_dicts or None,
+            blocked_exposure_keys=blocked_exposure_keys,
+        )
+        factor_panel["by_bucket"] = by_bucket
+        portfolio_beta_net = float(
+            (factor_panel.get("totals") or {}).get("beta_weighted_net_usd") or 0.0
+        )
+        bucket_beta_sum = sum(r["beta_weighted_net_usd"] for r in by_bucket)
+        for row in by_bucket:
+            if portfolio_beta_net and abs(portfolio_beta_net) > 1e-6:
+                row["pct_of_portfolio_beta_net"] = (
+                    row["beta_weighted_net_usd"] / portfolio_beta_net
+                )
+            else:
+                row["pct_of_portfolio_beta_net"] = None
+        for row in by_bucket:
+            if bucket_beta_sum and abs(bucket_beta_sum) > 1e-6:
+                row["pct_of_bucket_sum_beta_net"] = (
+                    row["beta_weighted_net_usd"] / bucket_beta_sum
+                )
+            else:
+                row["pct_of_bucket_sum_beta_net"] = None
+        totals_block = factor_panel.setdefault("totals", {})
+        totals_block["by_bucket_beta_weighted_net_usd"] = bucket_beta_sum
+        totals_block["by_bucket_net_beta_to_spy"] = (
+            (bucket_beta_sum / nav_usd) if nav_usd > 0 else None
+        )
+        totals_block["by_bucket_reconciles"] = (
+            abs(bucket_beta_sum - portfolio_beta_net) < max(1.0, abs(portfolio_beta_net) * 0.02)
+        )
     concentration_panel = compute_concentration_panel(
         factor_panel=factor_panel,
         nav_usd=nav_usd,

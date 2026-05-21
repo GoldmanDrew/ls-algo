@@ -489,9 +489,16 @@ def enrich_screener_v2_fields(
     anchor_shift_arr: list[float] = [np.nan] * n
     anchor_target_arr: list[float] = [np.nan] * n
     anchor_source_arr: list[str] = [""] * n
+    underlying_sector: list[str] = [""] * n
+    try:
+        from risk_dashboard.factor_map import OVERRIDE_SECTOR_MAP as _sector_map
+    except ImportError:
+        _sector_map = {}
     for j, (_, row) in enumerate(df.iterrows()):
         etf = str(row.get("ETF", "")).strip()
         und = str(row.get("Underlying", "")).strip() if pd.notna(row.get("Underlying")) else ""
+        if und:
+            underlying_sector[j] = _sector_map.get(und.upper(), "")
         beta = row.get("Delta")
         lev = row.get("Leverage") if "Leverage" in row else np.nan
         # NaN-safe coercion: ``bool(np.nan)`` is True in Python, which has
@@ -720,6 +727,7 @@ def enrich_screener_v2_fields(
     out = df.copy()
     out["asof_date"] = asof
     out["product_class"] = pclass
+    out["underlying_sector"] = underlying_sector
     out["expected_decay_available"] = expected_avail
     out["gross_edge_definition"] = gdef
     out["primary_edge_annual"] = primary

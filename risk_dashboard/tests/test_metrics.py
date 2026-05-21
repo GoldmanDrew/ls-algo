@@ -20,6 +20,7 @@ from risk_dashboard.metrics import (
     compute_concentration_panel,
     compute_data_quality,
     compute_factor_panel,
+    compute_factor_by_bucket,
     compute_scenario_panel,
     compute_slide_risk_panel,
     compute_vol_shock_panel,
@@ -295,18 +296,20 @@ def test_factor_panel_computes_delta_weighted_exposure(tmp_path: Path):
     panel = compute_factor_panel(csv, nav_usd=100_000.0)
     assert panel["available"] is True
     rows = {r["underlying"]: r for r in panel["rows"]}
-    assert rows["NVDA"]["beta_to_spy"] == pytest.approx(1.70)
-    assert rows["NVDA"]["beta_source"] == "curated"
-    assert rows["NVDA"]["beta_weighted_net_usd"] == pytest.approx(10000 * 1.70)
-    assert rows["MSTR"]["beta_weighted_net_usd"] == pytest.approx(-5000 * 2.80)
-    # Unknown ticker -> default beta + default source.
-    assert rows["ZZUNK"]["beta_source"] == "default"
+    assert rows["NVDA"]["beta_to_spy"] == pytest.approx(1.20)
+    assert rows["NVDA"]["beta_source"] == "default_fallback"
+    assert rows["NVDA"]["sector"] == "semis"
+    assert rows["NVDA"]["sector_source"] == "override"
+    assert rows["NVDA"]["beta_weighted_net_usd"] == pytest.approx(10000 * 1.20)
+    assert rows["MSTR"]["beta_weighted_net_usd"] == pytest.approx(-5000 * 1.20)
+    # Unknown ticker -> default beta + default sector.
+    assert rows["ZZUNK"]["beta_source"] == "default_fallback"
     assert rows["ZZUNK"]["sector"] == "other"
     totals = panel["totals"]
     assert totals["net_beta_to_spy"] == pytest.approx(
-        (10000 * 1.70 + -5000 * 2.80 + 1000 * 1.20) / 100_000.0
+        (10000 * 1.20 + -5000 * 1.20 + 1000 * 1.20) / 100_000.0
     )
-    assert 0 < totals["beta_coverage_gross_pct"] < 1.0
+    assert totals["beta_coverage_gross_pct"] == 0.0
 
 
 def test_factor_map_lookup_defaults_safe():
@@ -1017,6 +1020,7 @@ def test_compute_factor_panel_uses_computed_betas_when_provided(tmp_path: Path):
                 "beta_to_spy": 1.95,
                 "beta_to_ndx": 1.70,
                 "beta_to_rut": 1.55,
+                "beta_to_btc": 2.10,
                 "delta_se": 0.05,
                 "n_obs": 60,
                 "r2": 0.72,
@@ -1030,9 +1034,44 @@ def test_compute_factor_panel_uses_computed_betas_when_provided(tmp_path: Path):
     assert nvda["beta_to_spy"] == pytest.approx(1.95)
     assert nvda["beta_to_qqq"] == pytest.approx(1.70)
     assert nvda["beta_to_iwm"] == pytest.approx(1.55)
+    assert nvda["beta_to_btc"] == pytest.approx(2.10)
+    assert nvda["beta_weighted_net_btc_usd"] == pytest.approx(50000 * 2.10)
     assert nvda["beta_source"] == "computed"
     assert nvda["regime_vol_pct"] == pytest.approx(38.5)
     assert nvda["beta_n_obs"] == 60
     counts = panel["beta_provenance_counts"]
     assert counts.get("computed") == 1
+
+
+def test_compute_factor_by_bucket_aggregates_beta_weighted_net(tmp_path: Path):
+    accounting = tmp_path / "accounting"
+    accounting.mkdir()
+    (accounting / "net_exposure_bucket_1.csv").write_text(
+        "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n"
+        "NVDA,NVDA,10000,10000,1\n",
+        encoding="utf-8",
+    )
+    (accounting / "net_exposure_bucket_2.csv").write_text(
+        "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n"
+        "AAPL,AAPL,-5000,5000,1\n",
+        encoding="utf-8",
+    )
+    for b in ("bucket_3", "bucket_4"):
+        (accounting / f"net_exposure_{b}.csv").write_text(
+            "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n",
+            encoding="utf-8",
+        )
+    rows = compute_factor_by_bucket(
+        accounting,
+        nav_usd=100_000.0,
+        beta_results={
+            "NVDA": {"provenance": "computed", "beta_to_spy": 2.0},
+            "AAPL": {"provenance": "computed", "beta_to_spy": 1.0},
+        },
+    )
+    by_key = {r["bucket"]: r for r in rows}
+    assert by_key["bucket_1"]["beta_weighted_net_usd"] == pytest.approx(20_000.0)
+    assert by_key["bucket_1"]["net_beta_to_spy"] == pytest.approx(0.20)
+    assert by_key["bucket_2"]["beta_weighted_net_usd"] == pytest.approx(-5_000.0)
+    assert by_key["bucket_2"]["net_beta_to_spy"] == pytest.approx(-0.05)
 

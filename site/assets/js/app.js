@@ -31,8 +31,12 @@
     contributorContent: document.getElementById("contributor-content"),
     factorSummary: document.getElementById("factor-summary"),
     factorSectors: document.getElementById("factor-sectors"),
+    factorByBucket: document.getElementById("factor-by-bucket"),
     factorLong: document.getElementById("factor-long"),
     factorShort: document.getElementById("factor-short"),
+    btcFactorSummary: document.getElementById("btc-factor-summary"),
+    btcFactorLong: document.getElementById("btc-factor-long"),
+    btcFactorShort: document.getElementById("btc-factor-short"),
     concentrationSummary: document.getElementById("concentration-summary"),
     concentrationNames: document.getElementById("concentration-names"),
     concentrationSectors: document.getElementById("concentration-sectors"),
@@ -796,6 +800,7 @@
         "Factor panel unavailable: missing net_exposure_by_underlying.csv."
       )}</div>`;
       els.factorSectors.innerHTML = "";
+      els.factorByBucket.innerHTML = "";
       els.factorLong.innerHTML = "";
       els.factorShort.innerHTML = "";
       return;
@@ -855,6 +860,64 @@
         )
         .join("")}</tbody></table>`;
 
+    const byBucket = panel.by_bucket || [];
+    if (els.factorByBucket) {
+      if (!byBucket.length) {
+        els.factorByBucket.innerHTML = `<p class="dim">No bucket beta breakdown available.</p>`;
+      } else {
+        const bucketSum = t.by_bucket_beta_weighted_net_usd;
+        const reconciles = t.by_bucket_reconciles;
+        const reconNote =
+          reconciles === false
+            ? `<p class="callout warn small">Bucket β-wtd net sum (${fmtUsdSigned(
+                bucketSum
+              )}) differs from book total (${fmtUsdSigned(
+                t.beta_weighted_net_usd
+              )}) — bucket CSVs can double-count legs vs underlying rollup.</p>`
+            : "";
+        els.factorByBucket.innerHTML = `${reconNote}<table class="tight"><thead><tr>
+          <th>Bucket</th><th>Names</th><th>Net $</th><th>Gross $</th>
+          <th>β-wtd net $</th><th>Net β SPY</th><th>Share of Σ buckets</th><th>Avg β</th>
+        </tr></thead><tbody>${byBucket
+          .map(
+            (r) => `<tr>
+              <td><strong>${safeText(r.bucket_label || r.bucket)}</strong></td>
+              <td class="num">${r.n_names ?? 0}</td>
+              <td class="num ${signedClass(r.net_notional_usd)}">${fmtUsdSigned(
+              r.net_notional_usd
+            )}</td>
+              <td class="num">${fmtUsd(r.gross_notional_usd)}</td>
+              <td class="num ${signedClass(r.beta_weighted_net_usd)}">${fmtUsdSigned(
+              r.beta_weighted_net_usd
+            )}</td>
+              <td class="num ${signedClass(r.net_beta_to_spy)}">${
+              r.net_beta_to_spy == null ? "-" : r.net_beta_to_spy.toFixed(2) + "x"
+            }</td>
+              <td class="num">${fmtPct(r.pct_of_bucket_sum_beta_net, 0)}</td>
+              <td class="num">${
+                r.implied_avg_beta == null ? "-" : Number(r.implied_avg_beta).toFixed(2)
+              }</td>
+            </tr>`
+          )
+          .join("")}<tr class="dim">
+            <td><strong>Book total</strong></td>
+            <td class="num">${t.n_underlyings ?? "-"}</td>
+            <td class="num ${signedClass(t.net_notional_usd)}">${fmtUsdSigned(
+            t.net_notional_usd
+          )}</td>
+            <td class="num">${fmtUsd(t.gross_notional_usd)}</td>
+            <td class="num ${signedClass(t.beta_weighted_net_usd)}">${fmtUsdSigned(
+            t.beta_weighted_net_usd
+          )}</td>
+            <td class="num ${signedClass(t.net_beta_to_spy)}">${
+            t.net_beta_to_spy == null ? "-" : t.net_beta_to_spy.toFixed(2) + "x"
+          }</td>
+            <td class="num">-</td>
+            <td class="num">-</td>
+          </tr></tbody></table>`;
+      }
+    }
+
     function fmtBeta(v, source) {
       if (v == null || Number.isNaN(Number(v))) return "-";
       const dim = source === "default" || source === "default_fallback" ? "dim" : "";
@@ -897,6 +960,28 @@
       return ` <span class="pill ${cls} small" title="${tip}">${label}</span>`;
     }
 
+    function sectorProvenancePill(row) {
+      const src = row.sector_source || "";
+      if (!src) return "";
+      let label = src;
+      let cls = "pill-warn";
+      if (src === "override") {
+        cls = "pill-ok";
+      } else if (src === "screener" || src === "vendor") {
+        cls = "pill-ok";
+      } else if (src === "heuristic") {
+        cls = "pill-warn";
+      } else if (src === "default") {
+        cls = "pill-crit";
+      }
+      const conf = row.sector_confidence;
+      const tipParts = [src];
+      if (conf != null) tipParts.push(`conf=${Number(conf).toFixed(2)}`);
+      if (row.instrument_class) tipParts.push(`inst=${row.instrument_class}`);
+      const tip = tipParts.join(" · ");
+      return ` <span class="pill ${cls} small" title="${tip}">${label}</span>`;
+    }
+
     function rowTbl(rows) {
       return `<table class="tight"><thead><tr>
         <th>Underlying</th><th>Sector</th><th>β SPY</th><th>β QQQ</th><th>β IWM</th><th>Net $</th><th>β-wtd net $</th>
@@ -907,7 +992,11 @@
             r.symbols,
             ""
           )}</span></td>
-            <td>${safeText(r.sector)}</td>
+            <td>${safeText(r.sector)}${sectorProvenancePill(r)}${
+            r.instrument_class
+              ? ` <span class="dim small" title="instrument class">${safeText(r.instrument_class)}</span>`
+              : ""
+          }</td>
             <td class="num" title="${safeText(r.beta_source, "")}">${fmtBeta(
             r.beta_to_spy,
             r.beta_source
@@ -926,6 +1015,94 @@
     }
     els.factorLong.innerHTML = rowTbl(panel.top_beta_long);
     els.factorShort.innerHTML = rowTbl(panel.top_beta_short);
+  }
+
+  function renderBtcFactor(panel) {
+    if (!panel || panel.available === false) {
+      if (els.btcFactorSummary) {
+        els.btcFactorSummary.innerHTML = `<div class="callout warn">${safeText(
+          panel?.reason,
+          "BTC factor panel unavailable."
+        )}</div>`;
+      }
+      if (els.btcFactorLong) els.btcFactorLong.innerHTML = "";
+      if (els.btcFactorShort) els.btcFactorShort.innerHTML = "";
+      return;
+    }
+    const t = panel.totals || {};
+    const hasBtc = (t.n_btc_beta_names ?? 0) > 0;
+    if (els.btcFactorSummary) {
+      if (!hasBtc) {
+        els.btcFactorSummary.innerHTML =
+          `<div class="callout warn">No BTC.USD betas computed for current book.</div>`;
+      } else {
+        const summary = [
+          { label: "Names w/ β BTC", value: String(t.n_btc_beta_names ?? 0) },
+          {
+            label: "BTC-weighted net",
+            value: fmtUsdSigned(t.beta_weighted_net_btc_usd),
+            sub: t.net_beta_to_btc == null ? "-" : t.net_beta_to_btc.toFixed(2) + "x NAV",
+            cls: signedClass(t.beta_weighted_net_btc_usd),
+          },
+          {
+            label: "BTC beta coverage",
+            value: fmtPct(t.btc_beta_coverage_gross_pct, 0),
+            sub: "% of gross with live β to BTC",
+            cls: (t.btc_beta_coverage_gross_pct ?? 0) >= 0.5 ? "pos" : "neg",
+          },
+        ];
+        els.btcFactorSummary.innerHTML = summary
+          .map(
+            (it) => `
+          <div class="stat stat-${it.cls || "neutral"}">
+            <div class="label">${it.label}</div>
+            <div class="value ${it.cls || ""}">${it.value}</div>
+            ${it.sub ? `<div class="sub">${it.sub}</div>` : ""}
+          </div>`
+          )
+          .join("");
+      }
+    }
+
+    function fmtBeta(v) {
+      if (v == null || Number.isNaN(Number(v))) return "-";
+      return Number(v).toFixed(2);
+    }
+
+    function btcRowTbl(rows) {
+      return `<table class="tight"><thead><tr>
+        <th>Underlying</th><th>Sector</th><th>β BTC</th><th>β SPY</th><th>Net $</th><th>β-wtd net $</th>
+      </tr></thead><tbody>${(rows || [])
+        .map(
+          (r) => `<tr>
+            <td><strong>${safeText(r.underlying)}</strong> <span class="dim small">${safeText(
+            r.symbols,
+            ""
+          )}</span></td>
+            <td>${safeText(r.sector)}</td>
+            <td class="num">${fmtBeta(r.beta_to_btc)}</td>
+            <td class="num">${fmtBeta(r.beta_to_spy)}</td>
+            <td class="num ${signedClass(r.net_notional_usd)}">${fmtUsdSigned(
+            r.net_notional_usd
+          )}</td>
+            <td class="num ${signedClass(r.beta_weighted_net_btc_usd)}">${fmtUsdSigned(
+            r.beta_weighted_net_btc_usd
+          )}</td>
+          </tr>`
+        )
+        .join("")}</tbody></table>`;
+    }
+
+    if (els.btcFactorLong) {
+      els.btcFactorLong.innerHTML = hasBtc
+        ? btcRowTbl(panel.top_btc_beta_long)
+        : `<p class="dim">No names with computed β to BTC.USD.</p>`;
+    }
+    if (els.btcFactorShort) {
+      els.btcFactorShort.innerHTML = hasBtc
+        ? btcRowTbl(panel.top_btc_beta_short)
+        : "";
+    }
   }
 
   /* ---------------- Slide risk strips (Phase 1) ---------------- */
@@ -1829,6 +2006,7 @@
       () => renderBorrowShock(snap.borrow_shock_panel || {}),
       () => renderConcentration(snap.concentration_panel || {}),
       () => renderFactor(snap.factor_panel || {}),
+      () => renderBtcFactor(snap.factor_panel || {}),
       () => renderSleeveTable(snap.book || {}),
       () => bindTabs(snap),
       () => renderBorrow(snap.borrow_panel || {}),
