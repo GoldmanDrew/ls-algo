@@ -16,8 +16,10 @@ from typing import Any
 DEFAULT_SINGLE_NAME_BETA: float = 1.20
 DEFAULT_BROAD_INDEX_BETA: float = 1.00
 
-# Sector taxonomy keeps it tight enough to scan in two seconds.
-SECTOR_MAP: dict[str, str] = {
+# Thematic overrides for sectors that GICS / vendor sector tags can't
+# express (quantum, crypto-equity, evtol, drones, space, insurtech).
+# This is tier 1 in :mod:`risk_dashboard.sector_loader`.
+OVERRIDE_SECTOR_MAP: dict[str, str] = {
     # Broad indices / sector ETFs
     "SPY": "broad", "QQQ": "broad", "IWM": "broad", "DIA": "broad",
     "ARKK": "broad", "SOXX": "semis", "SOEZ": "broad",
@@ -138,15 +140,21 @@ BETA_TO_SPY: dict[str, float] = {
 }
 
 
+# Backwards-compatible alias. New code should import OVERRIDE_SECTOR_MAP.
+SECTOR_MAP: dict[str, str] = OVERRIDE_SECTOR_MAP
+
+
 def lookup_underlying(symbol: str) -> dict[str, Any]:
     """Return sector + beta-to-SPY for a given underlying symbol.
 
-    The returned dict always has ``sector``, ``beta_to_spy``,
-    ``sector_source`` and ``beta_source``. Callers should respect
-    ``beta_source == "default"`` when computing confidence.
+    Legacy helper kept for backwards compatibility. New code should
+    call :func:`risk_dashboard.sector_loader.resolve_sector` and
+    :func:`risk_dashboard.beta_loader.compute_betas`. This function
+    only reads the override map and curated beta dict; it does NOT
+    walk the vendor/heuristic tiers.
     """
     key = (symbol or "").strip().upper()
-    sector = SECTOR_MAP.get(key)
+    sector = OVERRIDE_SECTOR_MAP.get(key)
     sector_source = "curated" if sector else "default"
     if not sector:
         sector = "other"

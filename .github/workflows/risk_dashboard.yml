@@ -142,6 +142,21 @@ jobs:
             echo "committed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Warm beta cache (history closes + summary)
+        # Persist data/cache/beta_history/*.csv + beta_summary.json
+        # back to main so the next build can compute betas even if
+        # yfinance is rate-limited. [skip ci] in the message prevents
+        # this commit from re-triggering the workflow.
+        run: |
+          git add data/cache/beta_history data/cache/beta_summary.json 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No beta-cache changes to commit"
+          else
+            git commit -m "warm beta cache ${{ steps.compute.outputs.run_date }} [skip ci]"
+            git pull --no-rebase -X ours origin main || true
+            git push
+          fi
+
   # ----------------------------------------------------------------
   # Deploy the static site to GitHub Pages.
   # Runs whenever the workflow runs (build or skip_build path).

@@ -17,6 +17,7 @@ import pandas as pd
 import yaml
 
 from .factor_map import lookup_underlying
+from .sector_loader import resolve_sector
 from .flex_parser import (
     FlexBorrowFee,
     FlexPosition,
@@ -34,9 +35,10 @@ from .scenario_engine import (
 from .vol_vix_beta import compute_vol_vix_betas, leg_sigma_for_vix_shock
 
 try:
-    from .beta_loader import compute_betas  # noqa: F401
+    from .beta_loader import compute_betas, write_summary_cache  # noqa: F401
 except Exception:  # pragma: no cover - optional dep / fallback
     compute_betas = None  # type: ignore[assignment]
+    write_summary_cache = None  # type: ignore[assignment]
 
 try:
     from ibkr_accounting import (
@@ -1614,12 +1616,42 @@ def _load_screener_vol_map(screener_csv: Path | None) -> dict[str, float]:
     return out
 
 
+def _load_screener_underlying_rows(
+    screener_csv: Path | None,
+) -> dict[str, dict[str, Any]]:
+    """Underlying -> screener metadata for sector_loader (no override map)."""
+    if screener_csv is None or not screener_csv.is_file():
+        return {}
+    try:
+        df = pd.read_csv(
+            screener_csv,
+            usecols=["Underlying", "product_class", "Delta_product_class"],
+        )
+    except Exception:
+        try:
+            df = pd.read_csv(screener_csv, usecols=["Underlying", "product_class"])
+        except Exception:
+            return {}
+    out: dict[str, dict[str, Any]] = {}
+    for _, r in df.iterrows():
+        u = _clean_str(r.get("Underlying")).upper()
+        if not u or u in out:
+            continue
+        pc = _clean_str(r.get("product_class")) or _clean_str(r.get("Delta_product_class"))
+        row: dict[str, Any] = {}
+        if pc:
+            row["product_class"] = pc.lower()
+        out[u] = row
+    return out
+
+
 def compute_factor_panel(
     underlying_exposure_csv: Path,
     nav_usd: float,
     *,
     beta_results: dict[str, Any] | None = None,
     screener_vol_map: dict[str, float] | None = None,
+    screener_underlying_rows: dict[str, dict[str, Any]] | None = None,
     blocked_exposure_keys: set[str] | None = None,
 ) -> dict[str, Any]:
     """Compute beta-weighted net exposure, sector groupings and top names.
@@ -1656,23 +1688,41 @@ def compute_factor_panel(
         net = float(raw.get("net_notional_usd", 0.0) or 0.0)
         gross = float(raw.get("gross_notional_usd", 0.0) or 0.0)
         legs = int(raw.get("n_legs", 0) or 0)
-        meta = lookup_underlying(underlying)
-        sector = meta["sector"]
-        sector_source = meta["sector_source"]
-        beta_to_spy = meta["beta_to_spy"]
-        beta_source = meta["beta_source"]
+        # Sector via screener / vendor / heuristic tiers (override map off).
+        u_key = (underlying or "").strip().upper()
+        sector_meta = resolve_sector(
+            underlying,
+            screener_row=(screener_underlying_rows or {}).get(u_key),
+            use_override=False,
+        )
+        sector = sector_meta["sector"]
+        sector_source = sector_meta["sector_source"]
+        sector_confidence: float | None = sector_meta.get("sector_confidence")
+        legacy = lookup_underlying(underlying)
+        beta_to_spy = legacy["beta_to_spy"]
+        beta_source = legacy["beta_source"]
         beta_to_qqq: float | None = None
         beta_to_iwm: float | None = None
+        beta_to_spy_raw: float | None = None
         beta_se: float | None = None
         beta_n_obs: int | None = None
+        beta_n_eff: int | None = None
         beta_r2: float | None = None
         regime_vol_pct: float | None = None
         shrinkage_applied: bool | None = None
+        shrinkage_weight: float | None = None
+        prior_used_spy: float | None = None
+        prior_source: str | None = None
         if beta_results:
             br = beta_results.get((underlying or "").strip().upper())
             if br:
                 provenance = br.get("provenance", "")
-                if provenance in ("computed", "curated_fallback", "default_fallback"):
+                if provenance in (
+                    "computed",
+                    "shrunk",
+                    "curated_fallback",
+                    "default_fallback",
+                ):
                     beta_source = provenance
                 if br.get("beta_to_spy") is not None:
                     beta_to_spy = float(br["beta_to_spy"])
@@ -1680,11 +1730,16 @@ def compute_factor_panel(
                     beta_to_qqq = float(br["beta_to_ndx"])
                 if br.get("beta_to_rut") is not None:
                     beta_to_iwm = float(br["beta_to_rut"])
+                beta_to_spy_raw = br.get("beta_to_spy_raw")
                 beta_se = br.get("beta_se")
                 beta_n_obs = br.get("n_obs")
+                beta_n_eff = br.get("n_eff")
                 beta_r2 = br.get("r2")
                 regime_vol_pct = br.get("regime_vol_pct")
                 shrinkage_applied = bool(br.get("shrinkage_applied"))
+                shrinkage_weight = br.get("shrinkage_weight")
+                prior_used_spy = br.get("prior_used_spy")
+                prior_source = br.get("prior_source")
         if regime_vol_pct is None and screener_vol_map:
             regime_vol_pct = screener_vol_map.get((underlying or "").strip().upper())
         beta_net = net * beta_to_spy
@@ -1698,15 +1753,21 @@ def compute_factor_panel(
                 "n_legs": legs,
                 "sector": sector,
                 "sector_source": sector_source,
+                "sector_confidence": sector_confidence,
                 "beta_to_spy": beta_to_spy,
                 "beta_to_qqq": beta_to_qqq,
                 "beta_to_iwm": beta_to_iwm,
+                "beta_to_spy_raw": beta_to_spy_raw,
                 "beta_se": beta_se,
                 "beta_n_obs": beta_n_obs,
+                "beta_n_eff": beta_n_eff,
                 "beta_r2": beta_r2,
                 "regime_vol_pct": regime_vol_pct,
                 "beta_source": beta_source,
                 "shrinkage_applied": shrinkage_applied,
+                "shrinkage_weight": shrinkage_weight,
+                "prior_used_spy": prior_used_spy,
+                "prior_source": prior_source,
                 "beta_weighted_net_usd": beta_net,
                 "beta_weighted_gross_usd": beta_gross,
             }
@@ -1716,7 +1777,7 @@ def compute_factor_panel(
     total_gross = sum(r["gross_notional_usd"] for r in rows)
     total_beta_net = sum(r["beta_weighted_net_usd"] for r in rows)
     total_beta_gross = sum(r["beta_weighted_gross_usd"] for r in rows)
-    trusted_sources = {"curated", "computed", "curated_fallback"}
+    trusted_sources = {"curated", "computed", "shrunk", "curated_fallback"}
     known_beta_gross = sum(
         r["gross_notional_usd"] for r in rows if r["beta_source"] in trusted_sources
     )
@@ -2668,6 +2729,8 @@ def _build_vix_decay_matrix(
         "cells": cells,
         "vol_vix_betas": beta_summary,
         "n_vol_betas_computed": vol_vix_pack.get("n_computed"),
+        "n_vol_betas_shrunk": vol_vix_pack.get("n_shrunk"),
+        "vol_vix_estimator_version": vol_vix_pack.get("estimator_version"),
     }
 
 
@@ -2851,10 +2914,21 @@ def compute_slide_risk_panel(
     )
     if vol_vix_pack is None:
         underlyings = [str(e.get("underlying") or "").upper() for e in enriched]
+        vol_meta: dict[str, dict[str, str]] = {}
+        for e in enriched:
+            u = str(e.get("underlying") or "").upper()
+            if not u:
+                continue
+            sec = lookup_underlying(u).get("sector") or "other"
+            vol_meta[u] = {
+                "product_class": str(e.get("vega_product_class") or ""),
+                "sector": str(sec),
+            }
         try:
             vol_vix_pack = compute_vol_vix_betas(
                 underlyings,
                 cache_dir=beta_cache_dir,
+                underlying_meta=vol_meta,
             )
         except Exception:
             vol_vix_pack = {
@@ -3537,17 +3611,28 @@ def build_snapshot(
                 underlyings = []
         if underlyings:
             try:
-                _br = compute_betas(underlyings, cache_dir=beta_cache_dir)
+                _br = compute_betas(
+                    underlyings,
+                    cache_dir=beta_cache_dir,
+                )
                 beta_results_dicts = {k: v.to_dict() for k, v in _br.items()}
+                if write_summary_cache is not None and _br:
+                    write_summary_cache(
+                        _br,
+                        snapshot_date=run_date,
+                        path=repo_root / "data" / "cache" / "beta_summary.json",
+                    )
             except Exception:
                 beta_results_dicts = {}
 
     screener_vol_map = _load_screener_vol_map(screener_csv)
+    screener_underlying_rows = _load_screener_underlying_rows(screener_csv)
     factor_panel = compute_factor_panel(
         underlying_exposure_csv=accounting / "net_exposure_by_underlying.csv",
         nav_usd=nav_usd,
         beta_results=beta_results_dicts or None,
         screener_vol_map=screener_vol_map or None,
+        screener_underlying_rows=screener_underlying_rows or None,
         blocked_exposure_keys=blocked_exposure_keys,
     )
     concentration_panel = compute_concentration_panel(
