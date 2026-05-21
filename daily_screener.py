@@ -1476,6 +1476,22 @@ def _parse_rate_to_decimal(x) -> float:
     except Exception: return np.nan
 
 
+def _parse_available_shares(x) -> float:
+    """Parse IBKR FTP ``available`` column (plain int or ``>10000000`` cap notation)."""
+    if x is None:
+        return np.nan
+    s = str(x).strip().replace(",", "")
+    if s == "" or s.upper() in {"N/A", "NA", "NONE", "NULL"}:
+        return np.nan
+    if s.startswith(">"):
+        s = s[1:].strip()
+    try:
+        val = float(s)
+        return val if val >= 0 else np.nan
+    except Exception:
+        return np.nan
+
+
 def get_ibkr_borrow_snapshot(etf_list: Iterable[str]) -> pd.DataFrame:
     """Fetch borrow rates from IBKR FTP for a list of ETF symbols."""
     etf_list = list(dict.fromkeys([_norm_sym(x) for x in etf_list if str(x).strip()]))
@@ -1486,7 +1502,8 @@ def get_ibkr_borrow_snapshot(etf_list: Iterable[str]) -> pd.DataFrame:
     df = short_df.copy()
     df["sym"] = df["sym"].astype(str).str.upper().str.strip()
     df["borrow_fee_annual"] = df["feerate"].map(_parse_rate_to_decimal)
-    df["available_int"] = pd.to_numeric(df.get("available", 0), errors="coerce").fillna(0)
+    avail_col = df["available"] if "available" in df.columns else pd.Series(0, index=df.index)
+    df["available_int"] = avail_col.map(_parse_available_shares).fillna(0)
 
     agg = df.groupby("sym", as_index=False).agg(
         borrow_fee_annual=("borrow_fee_annual", "max"),

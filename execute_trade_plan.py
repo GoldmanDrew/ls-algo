@@ -281,7 +281,9 @@ def fetch_ibkr_short_availability_map(
     df["sym"] = df["sym"].astype(str).str.upper().str.strip()
 
     if "available" in df.columns:
-        df["available_int"] = pd.to_numeric(df["available"], errors="coerce")
+        from daily_screener import _parse_available_shares
+
+        df["available_int"] = df["available"].map(_parse_available_shares)
     else:
         df["available_int"] = pd.NA
 
