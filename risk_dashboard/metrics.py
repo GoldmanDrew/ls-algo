@@ -1656,15 +1656,18 @@ def _load_screener_underlying_rows(
     return out
 
 
-def _resolve_underlying_beta_to_spy(
+def _resolve_underlying_betas(
     underlying: str | None,
     *,
     beta_results: dict[str, Any] | None = None,
-) -> tuple[float, str]:
-    """Return (beta_to_spy, beta_source). Uses OLS loader only — not curated map."""
+) -> dict[str, Any]:
+    """Return SPY/QQQ/IWM/BTC betas and source. OLS loader only — not curated map."""
     from .factor_map import DEFAULT_SINGLE_NAME_BETA
 
     beta_to_spy = float(DEFAULT_SINGLE_NAME_BETA)
+    beta_to_qqq: float | None = None
+    beta_to_iwm: float | None = None
+    beta_to_btc: float | None = None
     beta_source = "default_fallback"
     if beta_results:
         br = beta_results.get((underlying or "").strip().upper())
@@ -1679,7 +1682,19 @@ def _resolve_underlying_beta_to_spy(
                 beta_source = provenance
             if br.get("beta_to_spy") is not None:
                 beta_to_spy = float(br["beta_to_spy"])
-    return beta_to_spy, beta_source
+            if br.get("beta_to_ndx") is not None:
+                beta_to_qqq = float(br["beta_to_ndx"])
+            if br.get("beta_to_rut") is not None:
+                beta_to_iwm = float(br["beta_to_rut"])
+            if br.get("beta_to_btc") is not None:
+                beta_to_btc = float(br["beta_to_btc"])
+    return {
+        "beta_to_spy": beta_to_spy,
+        "beta_to_qqq": beta_to_qqq,
+        "beta_to_iwm": beta_to_iwm,
+        "beta_to_btc": beta_to_btc,
+        "beta_source": beta_source,
+    }
 
 
 def _write_sector_audit_csv(rows: list[dict[str, Any]], path: Path) -> None:
@@ -1712,7 +1727,7 @@ def compute_factor_by_bucket(
     beta_results: dict[str, Any] | None = None,
     blocked_exposure_keys: set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Per-bucket beta-weighted net exposure and net beta to SPY.
+    """Per-bucket beta-weighted net exposure and net beta to SPY/QQQ/IWM/BTC.
 
     Reads ``net_exposure_bucket_{1..4}.csv`` so sleeve attribution matches
     the bucket tabs. Bucket rows may double-count vs book-level
@@ -1737,7 +1752,13 @@ def compute_factor_by_bucket(
                     "gross_notional_usd": 0.0,
                     "beta_weighted_net_usd": 0.0,
                     "beta_weighted_gross_usd": 0.0,
+                    "beta_weighted_net_qqq_usd": 0.0,
+                    "beta_weighted_net_iwm_usd": 0.0,
+                    "beta_weighted_net_btc_usd": 0.0,
                     "net_beta_to_spy": 0.0 if nav_usd > 0 else None,
+                    "net_beta_to_qqq": 0.0 if nav_usd > 0 else None,
+                    "net_beta_to_iwm": 0.0 if nav_usd > 0 else None,
+                    "net_beta_to_btc": 0.0 if nav_usd > 0 else None,
                     "gross_beta_to_spy": 0.0 if nav_usd > 0 else None,
                     "implied_avg_beta": None,
                     "top_beta_names": [],
@@ -1750,19 +1771,31 @@ def compute_factor_by_bucket(
         total_gross = 0.0
         total_beta_net = 0.0
         total_beta_gross = 0.0
+        total_beta_net_qqq = 0.0
+        total_beta_net_iwm = 0.0
+        total_beta_net_btc = 0.0
         for _, raw in df.iterrows():
             underlying = _first_nonblank(raw.get("underlying"), raw.get("symbol"))
             net = float(raw.get("net_notional_usd", 0.0) or 0.0)
             gross = float(raw.get("gross_notional_usd", 0.0) or 0.0)
-            beta_to_spy, beta_source = _resolve_underlying_beta_to_spy(
-                underlying, beta_results=beta_results
-            )
+            betas = _resolve_underlying_betas(underlying, beta_results=beta_results)
+            beta_to_spy = betas["beta_to_spy"]
+            beta_to_qqq = betas["beta_to_qqq"]
+            beta_to_iwm = betas["beta_to_iwm"]
+            beta_to_btc = betas["beta_to_btc"]
+            beta_source = betas["beta_source"]
             beta_net = net * beta_to_spy
             beta_gross = gross * abs(beta_to_spy)
+            beta_net_qqq = (net * beta_to_qqq) if beta_to_qqq is not None else 0.0
+            beta_net_iwm = (net * beta_to_iwm) if beta_to_iwm is not None else 0.0
+            beta_net_btc = (net * beta_to_btc) if beta_to_btc is not None else 0.0
             total_net += net
             total_gross += gross
             total_beta_net += beta_net
             total_beta_gross += beta_gross
+            total_beta_net_qqq += beta_net_qqq
+            total_beta_net_iwm += beta_net_iwm
+            total_beta_net_btc += beta_net_btc
             if abs(beta_net) > 1e-6:
                 name_rows.append(
                     {
@@ -1770,6 +1803,9 @@ def compute_factor_by_bucket(
                         "symbols": _first_nonblank(raw.get("symbols"), underlying),
                         "net_notional_usd": net,
                         "beta_to_spy": beta_to_spy,
+                        "beta_to_qqq": beta_to_qqq,
+                        "beta_to_iwm": beta_to_iwm,
+                        "beta_to_btc": beta_to_btc,
                         "beta_source": beta_source,
                         "beta_weighted_net_usd": beta_net,
                     }
@@ -1790,7 +1826,13 @@ def compute_factor_by_bucket(
                 "gross_notional_usd": total_gross,
                 "beta_weighted_net_usd": total_beta_net,
                 "beta_weighted_gross_usd": total_beta_gross,
+                "beta_weighted_net_qqq_usd": total_beta_net_qqq,
+                "beta_weighted_net_iwm_usd": total_beta_net_iwm,
+                "beta_weighted_net_btc_usd": total_beta_net_btc,
                 "net_beta_to_spy": (total_beta_net / nav_usd) if nav_usd > 0 else None,
+                "net_beta_to_qqq": (total_beta_net_qqq / nav_usd) if nav_usd > 0 else None,
+                "net_beta_to_iwm": (total_beta_net_iwm / nav_usd) if nav_usd > 0 else None,
+                "net_beta_to_btc": (total_beta_net_btc / nav_usd) if nav_usd > 0 else None,
                 "gross_beta_to_spy": (total_beta_gross / nav_usd) if nav_usd > 0 else None,
                 "implied_avg_beta": implied_avg,
                 "top_beta_names": top_names,
@@ -1873,12 +1915,12 @@ def compute_factor_panel(
             instrument_class = screener_row.get("instrument_class") or screener_row.get(
                 "product_class"
             )
-        beta_to_spy, beta_source = _resolve_underlying_beta_to_spy(
-            underlying, beta_results=beta_results
-        )
-        beta_to_qqq: float | None = None
-        beta_to_iwm: float | None = None
-        beta_to_btc: float | None = None
+        betas = _resolve_underlying_betas(underlying, beta_results=beta_results)
+        beta_to_spy = betas["beta_to_spy"]
+        beta_to_qqq = betas["beta_to_qqq"]
+        beta_to_iwm = betas["beta_to_iwm"]
+        beta_to_btc = betas["beta_to_btc"]
+        beta_source = betas["beta_source"]
         beta_to_spy_raw: float | None = None
         beta_se: float | None = None
         beta_n_obs: int | None = None
@@ -1922,6 +1964,8 @@ def compute_factor_panel(
             regime_vol_pct = screener_vol_map.get((underlying or "").strip().upper())
         beta_net = net * beta_to_spy
         beta_gross = gross * abs(beta_to_spy)
+        beta_net_qqq = (net * beta_to_qqq) if beta_to_qqq is not None else None
+        beta_net_iwm = (net * beta_to_iwm) if beta_to_iwm is not None else None
         beta_net_btc = (net * beta_to_btc) if beta_to_btc is not None else None
         rows.append(
             {
@@ -1951,6 +1995,8 @@ def compute_factor_panel(
                 "prior_source": prior_source,
                 "beta_weighted_net_usd": beta_net,
                 "beta_weighted_gross_usd": beta_gross,
+                "beta_weighted_net_qqq_usd": beta_net_qqq,
+                "beta_weighted_net_iwm_usd": beta_net_iwm,
                 "beta_weighted_net_btc_usd": beta_net_btc,
             }
         )
@@ -1959,7 +2005,11 @@ def compute_factor_panel(
     total_gross = sum(r["gross_notional_usd"] for r in rows)
     total_beta_net = sum(r["beta_weighted_net_usd"] for r in rows)
     total_beta_gross = sum(r["beta_weighted_gross_usd"] for r in rows)
+    qqq_rows = [r for r in rows if r.get("beta_weighted_net_qqq_usd") is not None]
+    iwm_rows = [r for r in rows if r.get("beta_weighted_net_iwm_usd") is not None]
     btc_rows = [r for r in rows if r.get("beta_weighted_net_btc_usd") is not None]
+    total_beta_net_qqq = sum(r["beta_weighted_net_qqq_usd"] for r in qqq_rows)
+    total_beta_net_iwm = sum(r["beta_weighted_net_iwm_usd"] for r in iwm_rows)
     total_beta_net_btc = sum(r["beta_weighted_net_btc_usd"] for r in btc_rows)
     known_btc_gross = sum(
         r["gross_notional_usd"] for r in btc_rows if r.get("beta_to_btc") is not None
@@ -2039,8 +2089,12 @@ def compute_factor_panel(
         "gross_notional_usd": total_gross,
         "beta_weighted_net_usd": total_beta_net,
         "beta_weighted_gross_usd": total_beta_gross,
+        "beta_weighted_net_qqq_usd": total_beta_net_qqq if qqq_rows else None,
+        "beta_weighted_net_iwm_usd": total_beta_net_iwm if iwm_rows else None,
         "beta_weighted_net_btc_usd": total_beta_net_btc if btc_rows else None,
         "net_beta_to_spy": (total_beta_net / nav_usd) if nav_usd > 0 else None,
+        "net_beta_to_qqq": (total_beta_net_qqq / nav_usd) if nav_usd > 0 and qqq_rows else None,
+        "net_beta_to_iwm": (total_beta_net_iwm / nav_usd) if nav_usd > 0 and iwm_rows else None,
         "gross_beta_to_spy": (total_beta_gross / nav_usd) if nav_usd > 0 else None,
         "net_beta_to_btc": (total_beta_net_btc / nav_usd) if nav_usd > 0 and btc_rows else None,
         "beta_coverage_gross_pct": coverage,

@@ -1075,3 +1075,71 @@ def test_compute_factor_by_bucket_aggregates_beta_weighted_net(tmp_path: Path):
     assert by_key["bucket_2"]["beta_weighted_net_usd"] == pytest.approx(-5_000.0)
     assert by_key["bucket_2"]["net_beta_to_spy"] == pytest.approx(-0.05)
 
+
+def test_compute_factor_by_bucket_multi_factor(tmp_path: Path):
+    accounting = tmp_path / "accounting"
+    accounting.mkdir()
+    (accounting / "net_exposure_bucket_1.csv").write_text(
+        "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n"
+        "NVDA,NVDA,10000,10000,1\n",
+        encoding="utf-8",
+    )
+    for b in ("bucket_2", "bucket_3", "bucket_4"):
+        (accounting / f"net_exposure_{b}.csv").write_text(
+            "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n",
+            encoding="utf-8",
+        )
+    rows = compute_factor_by_bucket(
+        accounting,
+        nav_usd=100_000.0,
+        beta_results={
+            "NVDA": {
+                "provenance": "computed",
+                "beta_to_spy": 2.0,
+                "beta_to_ndx": 1.5,
+                "beta_to_rut": 1.2,
+                "beta_to_btc": 0.5,
+            },
+        },
+    )
+    b1 = next(r for r in rows if r["bucket"] == "bucket_1")
+    assert b1["beta_weighted_net_usd"] == pytest.approx(20_000.0)
+    assert b1["net_beta_to_spy"] == pytest.approx(0.20)
+    assert b1["net_beta_to_qqq"] == pytest.approx(0.15)
+    assert b1["net_beta_to_iwm"] == pytest.approx(0.12)
+    assert b1["net_beta_to_btc"] == pytest.approx(0.05)
+
+
+def test_factor_panel_totals_include_qqq_iwm_btc(tmp_path: Path):
+    exposure = tmp_path / "net_exposure_by_underlying.csv"
+    exposure.write_text(
+        "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n"
+        "NVDA,NVDA,10000,10000,1\n"
+        "AAPL,AAPL,-5000,5000,1\n",
+        encoding="utf-8",
+    )
+    panel = compute_factor_panel(
+        exposure,
+        nav_usd=100_000.0,
+        beta_results={
+            "NVDA": {
+                "provenance": "computed",
+                "beta_to_spy": 2.0,
+                "beta_to_ndx": 1.5,
+                "beta_to_rut": 1.2,
+                "beta_to_btc": 0.5,
+            },
+            "AAPL": {
+                "provenance": "computed",
+                "beta_to_spy": 1.0,
+                "beta_to_ndx": 0.8,
+                "beta_to_rut": 0.9,
+                "beta_to_btc": 0.1,
+            },
+        },
+    )
+    t = panel["totals"]
+    assert t["net_beta_to_spy"] == pytest.approx(0.15)  # (20k - 5k) / 100k
+    assert t["net_beta_to_qqq"] == pytest.approx(0.11)  # (15k - 4k) / 100k
+    assert t["net_beta_to_iwm"] == pytest.approx(0.075)  # (12k - 4.5k) / 100k
+    assert t["net_beta_to_btc"] == pytest.approx(0.045)  # (5k - 0.5k) / 100k

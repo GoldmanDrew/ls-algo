@@ -31,7 +31,6 @@
   <a href="#borrow-shock-section">Borrow shocks</a>
   <a href="#concentration-section">Concentration</a>
   <a href="#factor-section">Factor</a>
-  <a href="#btc-factor-section">BTC beta</a>
   <a href="#sleeve-section">Sleeves</a>
   <a href="#buckets-section">Buckets</a>
   <a href="#borrow-section">Borrow</a>
@@ -122,11 +121,9 @@
 
     <!-- Factor exposure -->
     <section id="factor-section" class="panel">
-      <h2>Factor exposure (beta to SPY / QQQ / IWM)</h2>
+      <h2>Factor exposure (beta to SPY / QQQ / IWM / BTC)</h2>
       <div id="factor-summary" class="strip"></div>
-      <h3>By sector</h3>
-      <div id="factor-sectors"></div>
-      <h3>Net beta to SPY by bucket</h3>
+      <h3>Net beta by accounting bucket</h3>
       <p class="dim small">Per-sleeve β-wtd net from <code>net_exposure_bucket_*.csv</code>. May not sum to book total when bucket legs double-count vs underlying aggregation.</p>
       <div id="factor-by-bucket"></div>
       <div class="two-col">
@@ -139,23 +136,8 @@
           <div id="factor-short"></div>
         </div>
       </div>
-    </section>
-
-    <!-- BTC factor exposure -->
-    <section id="btc-factor-section" class="panel">
-      <h2>Factor exposure (beta to BTC.USD)</h2>
-      <p class="dim small">252-day OLS log-return beta vs BTC-USD spot. β-wtd net $ = net $ × β BTC.</p>
-      <div id="btc-factor-summary" class="strip"></div>
-      <div class="two-col">
-        <div>
-          <h3>Top long BTC beta</h3>
-          <div id="btc-factor-long"></div>
-        </div>
-        <div>
-          <h3>Top short BTC beta</h3>
-          <div id="btc-factor-short"></div>
-        </div>
-      </div>
+      <h3>By sector</h3>
+      <div id="factor-sectors"></div>
     </section>
 
     <!-- Sleeve allocation -->
