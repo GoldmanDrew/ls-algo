@@ -684,6 +684,41 @@ def _normalize_b1_b2_pair(r_b1: float, r_b2: float) -> tuple[float, float]:
     return abs(float(r_b1)) / s, abs(float(r_b2)) / s
 
 
+def apply_yieldboost_spot_b2_override(
+    *,
+    lot_components: dict[str, dict[str, dict[str, float]]],
+    underlying: str,
+    df: pd.DataFrame,
+    spot_carry_cols: set[str],
+    r_b1: float,
+    r_b2: float,
+    r_b4: float = 0.0,
+) -> None:
+    """Attribute IBKR spot PnL to bucket 2 for yieldboost pairs (no B4 plan slice)."""
+    u_rows = df[
+        (df["underlying"] == underlying)
+        & (df["symbol"].astype(str) == df["underlying"].astype(str))
+    ]
+    if u_rows.empty:
+        return
+    override_cols = {"realized_pnl", "unrealized_pnl"} | set(spot_carry_cols)
+    b1_norm, b2_norm = _normalize_b1_b2_pair(r_b1, r_b2)
+    b4_frac = max(float(r_b4), 0.0)
+    for col in override_cols:
+        if col not in u_rows.columns:
+            continue
+        total = float(u_rows[col].sum())
+        if abs(total) <= 1e-9:
+            for bk in ("bucket_1", "bucket_2", "bucket_4"):
+                lot_components[underlying][bk][col] = 0.0
+            continue
+        b4_part = total * b4_frac
+        remainder = total - b4_part
+        lot_components[underlying]["bucket_4"][col] = b4_part
+        lot_components[underlying]["bucket_1"][col] = remainder * b1_norm
+        lot_components[underlying]["bucket_2"][col] = remainder * b2_norm
+
+
 def apply_plan_b4_spot_pnl_override(
     *,
     lot_components: dict[str, dict[str, dict[str, float]]],
@@ -1753,6 +1788,14 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         for x in (_acct_cfg.get("ledger_full_replay_underlyings") or [])
         if str(x).strip()
     }
+    yieldboost_spot_b2_underlyings = {
+        canonical_symbol(str(x))
+        for x in (_acct_cfg.get("yieldboost_spot_b2_underlyings") or [])
+        if str(x).strip()
+    }
+    ledger_orphan_split_threshold = float(
+        _acct_cfg.get("ledger_orphan_split_threshold", 0.10)
+    )
     bucket_state_path = PROJECT_ROOT / "data" / "accounting" / "underlying_bucket_state.csv"
     b4_partial_hedge_ratio = float(
         ((sleeves_cfg.get("inverse_decay_bucket4") or {}).get("rules") or {}).get(
@@ -2299,6 +2342,12 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             f"[ACCOUNTING] ledger full replay for "
             f"{len(ledger_full_replay_underlyings)} underlying(s): "
             f"{', '.join(sorted(ledger_full_replay_underlyings))}"
+        )
+    if yieldboost_spot_b2_underlyings:
+        print(
+            f"[ACCOUNTING] yieldboost spot->B2 override for "
+            f"{len(yieldboost_spot_b2_underlyings)} underlying(s): "
+            f"{', '.join(sorted(yieldboost_spot_b2_underlyings))}"
         )
 
     # Base split map used for non-ETF rows (spot/fallback attribution).
@@ -2892,6 +2941,17 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
 
         # Plan-aware B4 spot PnL: inject the structural B4 slice from plan
         # targets without clobbering FIFO B1/B2 lot attribution (inject_slice).
+        _ibkr_qty_pre = float(_spot_qty.get(_u, 0.0))
+        if abs(_ibkr_qty_pre) > 1e-9:
+            _orphan_frac_pre = abs(_ibkr_qty_pre - _qty_total) / abs(_ibkr_qty_pre)
+        else:
+            _orphan_frac_pre = 0.0
+        _split_r_b1 = (
+            _ru1 if _orphan_frac_pre <= ledger_orphan_split_threshold else _r1
+        )
+        _split_r_b2 = (
+            _ru2 if _orphan_frac_pre <= ledger_orphan_split_threshold else _r2
+        )
         if _u in _plan_ratio_b4:
             apply_plan_b4_spot_pnl_override(
                 lot_components=_lot_components,
@@ -2901,8 +2961,18 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 spot_carry_cols=_spot_carry_cols,
                 etf_to_delta_map=etf_to_delta_map,
                 mode=plan_b4_pnl_mode,
-                ledger_r_b1=_ru1,
-                ledger_r_b2=_ru2,
+                ledger_r_b1=_split_r_b1,
+                ledger_r_b2=_split_r_b2,
+            )
+        elif _u in yieldboost_spot_b2_underlyings:
+            apply_yieldboost_spot_b2_override(
+                lot_components=_lot_components,
+                underlying=_u,
+                df=df,
+                spot_carry_cols=_spot_carry_cols,
+                r_b1=_split_r_b1,
+                r_b2=_split_r_b2,
+                r_b4=_r4,
             )
 
         _ibkr_qty = float(_spot_qty.get(_u, 0.0))

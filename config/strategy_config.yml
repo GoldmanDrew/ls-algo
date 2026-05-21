@@ -12,6 +12,11 @@ accounting:
   plan_sleeve_bucketing: sleeve_first  # sleeve_first | delta_first
   ledger_full_replay_underlyings:
     - MSTR   # stale FIFO seed → full trade replay; other names stay incremental
+  # Explicit yieldboost pairs: move IBKR spot PnL into bucket 2 (no auto-replay).
+  yieldboost_spot_b2_underlyings:
+    - SMCI
+    - IONQ
+    - IBIT
 
 strategy:
   tag: ETF_LS

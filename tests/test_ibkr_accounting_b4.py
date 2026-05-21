@@ -7,6 +7,7 @@ from ibkr_accounting import (
     _is_etf_leg,
     _normalize_bucket_triple,
     apply_plan_b4_spot_pnl_override,
+    apply_yieldboost_spot_b2_override,
     build_bucket4_pair_registry,
     build_underlying_realized_bucket_ratio_map,
     compute_bucket4_pair_exposure,
@@ -255,6 +256,40 @@ def test_inject_slice_pure_b4_goes_to_bucket_4() -> None:
     assert lot["APLD"]["bucket_4"]["unrealized_pnl"] == pytest.approx(500.0)
     assert lot["APLD"]["bucket_1"]["unrealized_pnl"] == pytest.approx(0.0)
     assert lot["APLD"]["bucket_2"]["unrealized_pnl"] == pytest.approx(0.0)
+
+
+def test_yieldboost_spot_b2_override_uses_held_ratios() -> None:
+    """Yieldboost spot PnL should roll into bucket 2 using held-exposure split."""
+    df = pd.DataFrame(
+        [
+            {
+                "symbol": "SMCI",
+                "underlying": "SMCI",
+                "realized_pnl": -100.0,
+                "unrealized_pnl": 1000.0,
+                "borrow_fees": -10.0,
+            }
+        ]
+    )
+    lot: dict = {
+        "SMCI": {
+            "bucket_1": {"realized_pnl": -100.0, "unrealized_pnl": 1000.0, "borrow_fees": -10.0},
+            "bucket_2": {"realized_pnl": 0.0, "unrealized_pnl": 0.0, "borrow_fees": 0.0},
+            "bucket_4": {"realized_pnl": 0.0, "unrealized_pnl": 0.0, "borrow_fees": 0.0},
+        }
+    }
+    apply_yieldboost_spot_b2_override(
+        lot_components=lot,
+        underlying="SMCI",
+        df=df,
+        spot_carry_cols={"borrow_fees"},
+        r_b1=0.04,
+        r_b2=0.96,
+    )
+    assert lot["SMCI"]["bucket_2"]["unrealized_pnl"] == pytest.approx(960.0)
+    assert lot["SMCI"]["bucket_1"]["unrealized_pnl"] == pytest.approx(40.0)
+    assert lot["SMCI"]["bucket_2"]["borrow_fees"] == pytest.approx(-9.6)
+    assert lot["SMCI"]["bucket_1"]["borrow_fees"] == pytest.approx(-0.4)
 
 
 def test_pair_exposure_emits_underlying_once_per_underlying() -> None:
