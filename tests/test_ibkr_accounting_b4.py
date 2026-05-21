@@ -7,9 +7,12 @@ from ibkr_accounting import (
     _is_etf_leg,
     _normalize_bucket_triple,
     apply_plan_b4_spot_pnl_override,
+    apply_yieldboost_spot_b2_override,
     build_bucket4_pair_registry,
     build_underlying_realized_bucket_ratio_map,
+    build_yieldboost_b2_underlyings,
     compute_bucket4_pair_exposure,
+    compute_stale_ledger_replay_underlyings,
     held_exposure_bucket124_weights,
     load_plan_sleeve_bucket_usd,
     merge_plan_etf_metadata,
@@ -307,3 +310,62 @@ def test_ledger_full_replay_trade_filter() -> None:
     ]
     assert set(kept["symbol"].tolist()) == {"MSTR", "RCAT"}
     assert len(kept) == 2
+
+
+def test_compute_stale_ledger_replay_underlyings() -> None:
+    prev = pd.DataFrame(
+        [
+            {
+                "underlying": "SMCI",
+                "qty_b1": 100.0,
+                "qty_b2": 40.0,
+                "qty_b4": 0.0,
+            },
+            {
+                "underlying": "GDX",
+                "qty_b1": 30.0,
+                "qty_b2": 20.0,
+                "qty_b4": 0.0,
+            },
+        ]
+    ).set_index("underlying")
+    replay = compute_stale_ledger_replay_underlyings(
+        prev,
+        {"SMCI": 1000.0, "GDX": 50.0},
+        threshold=0.10,
+        explicit={"MSTR"},
+    )
+    assert "MSTR" in replay
+    assert "SMCI" in replay
+    assert "GDX" not in replay
+
+
+def test_apply_yieldboost_spot_b2_override_splits_spot_to_b2() -> None:
+    lot = {
+        "SMCI": {
+            "bucket_1": {"realized_pnl": 100.0, "unrealized_pnl": 0.0},
+            "bucket_2": {"realized_pnl": 0.0, "unrealized_pnl": 0.0},
+            "bucket_4": {"realized_pnl": 0.0, "unrealized_pnl": 0.0},
+        }
+    }
+    df = pd.DataFrame(
+        [
+            {
+                "symbol": "SMCI",
+                "underlying": "SMCI",
+                "realized_pnl": 100.0,
+                "unrealized_pnl": 900.0,
+            }
+        ]
+    )
+    apply_yieldboost_spot_b2_override(
+        lot_components=lot,
+        underlying="SMCI",
+        df=df,
+        spot_carry_cols=set(),
+        r_b1=0.04,
+        r_b2=0.96,
+    )
+    assert lot["SMCI"]["bucket_2"]["realized_pnl"] == pytest.approx(96.0)
+    assert lot["SMCI"]["bucket_1"]["realized_pnl"] == pytest.approx(4.0)
+    assert lot["SMCI"]["bucket_2"]["unrealized_pnl"] == pytest.approx(864.0)

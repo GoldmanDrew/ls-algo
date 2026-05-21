@@ -10,8 +10,9 @@ accounting:
   bucket_split_method: held_exposure  # held_exposure | universe_beta
   plan_b4_pnl_mode: inject_slice    # inject_slice | full_override (legacy)
   plan_sleeve_bucketing: sleeve_first  # sleeve_first | delta_first
-  ledger_full_replay_underlyings:
-    - MSTR   # stale FIFO seed → full trade replay; other names stay incremental
+  ledger_orphan_replay_threshold: 0.10  # auto full trade replay when |orphan|/ibkr exceeds
+  yieldboost_spot_b2_mode: inject_slice   # inject_slice | off
+  ledger_full_replay_underlyings: []      # optional explicit additions to auto-detect
 
 strategy:
   tag: ETF_LS

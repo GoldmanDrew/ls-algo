@@ -1,1 +1,10 @@
-symbol,net_notional_usd,gross_notional_usd,n_legs
+underlying,symbols,net_notional_usd,gross_notional_usd,n_legs
+SOEZ,"SOEZ, SOLT",19815.36318865408,19815.36318865408,2
+CRWV,CRWV,0.0,0.0,1
+IBIT,IBIT,0.0,0.0,1
+IREN,IREN,0.0,0.0,1
+MSTR,MSTR,0.0,0.0,1
+NBIS,NBIS,0.0,0.0,1
+NVDA,NVDA,0.0,0.0,1
+SOXX,SOXX,0.0,0.0,1
+XRPZ,XRPZ,0.0,0.0,1
