@@ -340,6 +340,21 @@ class _EstablishEtfShortOutcome(NamedTuple):
     fill_record: dict
 
 
+def _aggregate_establish_etf_short_outcomes(
+    outcomes: Iterable[_EstablishEtfShortOutcome],
+) -> Tuple[int, int, bool]:
+    """Sum requested/filled ETF short shares across parallel leg outcomes."""
+    total_requested = 0
+    total_filled = 0
+    any_succeeded = False
+    for outcome in outcomes:
+        total_requested += int(outcome.qty)
+        if outcome.res is not None and int(outcome.res.filled) > 0:
+            total_filled += int(abs(outcome.res.filled))
+            any_succeeded = True
+    return total_requested, total_filled, any_succeeded
+
+
 def _establish_etf_short_one(
     *,
     leg_idx: int,
@@ -733,12 +748,11 @@ def _establish_worker(
                         f"{len(etf_outcomes)}/{len(pending_legs)} leg result(s)."
                     )
 
+            total_short_requested_sh, total_short_filled_sh, any_short_succeeded = (
+                _aggregate_establish_etf_short_outcomes(etf_outcomes)
+            )
             for outcome in etf_outcomes:
                 local_fills.append(outcome.fill_record)
-                total_short_requested_sh += int(outcome.qty)
-                if outcome.res is not None and int(outcome.res.filled) > 0:
-                    total_short_filled_sh += int(abs(outcome.res.filled))
-                    any_short_succeeded = True
                 if outcome.res is not None:
                     filled_signed = -int(outcome.res.filled)
                     log_exposure_event(
