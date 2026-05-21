@@ -118,7 +118,7 @@ execution:
   # out *order submission* in establish/hedge pools so 25 orders don't all
   # hit TWS in the same tick.
   worker_connect_stagger_sec: 0.25
-  worker_submit_stagger_sec: 1.5
+  worker_submit_stagger_sec: 1.0
   auto_approve: true
   # ``execute_trade_plan.execute_leg`` only honors ``ADAPTIVE_MKT``; other styles
   # fall through to the limit-order path with ``limit_bps`` offset.
@@ -129,7 +129,7 @@ execution:
   max_retries: 3
   timeout_sec: 90
   market_accept_timeout_sec: 90        # accept-timeout for ADAPTIVE_MKT legs
-  market_done_timeout_sec: 180         # terminal-state timeout for ADAPTIVE_MKT legs
+  market_done_timeout_sec: 120         # terminal-state timeout for ADAPTIVE_MKT legs
 
 screener:
   # Authoritative net-edge soft-purgatory band (read by ``recompute_purgatory_by_bucket``).

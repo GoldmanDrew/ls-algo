@@ -35,7 +35,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Callable, Dict, Iterable, List, NamedTuple, Optional, Set, Tuple
 
 import pandas as pd
 from ib_insync import IB, Trade
@@ -290,6 +290,137 @@ def load_plan(
     return plan, hedgeable_df, resize_df
 
 
+# Cap concurrent per-bucket ETF-short IB connections (on top of establish workers).
+_ESTABLISH_ETF_SHORT_CONN_SEM = threading.Semaphore(10)
+
+
+class _EstablishEtfShortOutcome(NamedTuple):
+    etf: str
+    qty: int
+    px_etf: float
+    short_usd: float
+    blocked: bool
+    why: str
+    res: Optional[ExecResult]
+    fill_record: dict
+
+
+def _establish_etf_short_one(
+    *,
+    leg_idx: int,
+    etf: str,
+    qty: int,
+    px_etf: float,
+    short_usd: float,
+    host: str,
+    port: int,
+    client_id: int,
+    worker_idx: int,
+    under: str,
+    px_under: float,
+    target_under_abs_sh: int,
+    strategy_tag: str,
+    run_date: str,
+    now: str,
+    exec_cfg: dict,
+    limit_bps: float,
+    timeout: float,
+    max_retries: int,
+    dry_run: bool,
+    short_map: Dict[str, dict],
+    screener_avail_map: Dict[str, int],
+    cancel_service: CoordinatorCancelService,
+    log_exposure_event,
+) -> _EstablishEtfShortOutcome:
+    """Open one ETF short leg (own IB connection, semaphore-limited)."""
+    blocked, why = is_short_unavailable_now(
+        etf, short_map=short_map, screener_avail_map=screener_avail_map,
+    )
+    if blocked:
+        src = "FTP available=0" if why == "ftp_avail0" else "screener shares_available<=0"
+        tprint(f"[ESTABLISH][{under}] SKIP {etf}: {src}.")
+        return _EstablishEtfShortOutcome(
+            etf=etf, qty=qty, px_etf=px_etf, short_usd=short_usd,
+            blocked=True, why=why, res=None,
+            fill_record={
+                "filled_at": now, "run_date": run_date,
+                "strategy_tag": strategy_tag,
+                "pair_id": f"{under}__ESTABLISH",
+                "underlying": under, "etf": etf,
+                "px_under": px_under, "px_etf": px_etf,
+                "target_sh_under": target_under_abs_sh,
+                "target_sh_etf": qty,
+                "delta_sh_under": 0, "delta_sh_etf": -qty,
+                "filled_sh_under": 0, "filled_sh_etf": 0,
+                "notes": f"SKIP_NO_LOCATE_{why.upper()} wants_short={qty}",
+            },
+        )
+
+    ensure_thread_event_loop()
+    leg_client_id = client_id + 210 + worker_idx * 8 + leg_idx
+    with _ESTABLISH_ETF_SHORT_CONN_SEM:
+        try:
+            ib_leg = connect_ib(host, port, leg_client_id)
+        except Exception as e:
+            tprint(f"[ESTABLISH][{under}] ETF {etf} connect failed: {e}")
+            return _EstablishEtfShortOutcome(
+                etf=etf, qty=qty, px_etf=px_etf, short_usd=short_usd,
+                blocked=False, why="", res=None,
+                fill_record={
+                    "filled_at": now, "run_date": run_date,
+                    "strategy_tag": strategy_tag,
+                    "pair_id": f"{under}__ESTABLISH",
+                    "underlying": under, "etf": etf,
+                    "px_under": px_under, "px_etf": px_etf,
+                    "target_sh_under": target_under_abs_sh,
+                    "target_sh_etf": qty,
+                    "delta_sh_under": 0, "delta_sh_etf": -qty,
+                    "filled_sh_under": 0, "filled_sh_etf": 0,
+                    "notes": f"ESTABLISH_ETF_CONNECT_FAIL: {e}",
+                },
+            )
+        try:
+            order_ref = f"{strategy_tag}|{under}__ESTABLISH|{etf}|ETF"
+            res = execute_leg(
+                ib=ib_leg, symbol=etf, action="SELL", qty=qty,
+                ref_price=px_etf, bps=limit_bps, order_ref=order_ref,
+                exec_cfg=exec_cfg, timeout=timeout, max_retries=max_retries,
+                dry_run=dry_run, context=f"{under}|ESTABLISH",
+                cancel_service=cancel_service,
+            )
+        finally:
+            try:
+                ib_leg.disconnect()
+            except Exception:
+                pass
+
+    filled_signed = -int(res.filled) if res is not None else 0
+    log_exposure_event(
+        stage="POST_ETF", pair_id=f"{under}__ESTABLISH",
+        underlying=under, etf=etf, symbol=etf,
+        delta_sh=-qty, filled_sh=filled_signed, trade=res.trade if res else None,
+    )
+    status = res.status if res is not None else "FAILED"
+    return _EstablishEtfShortOutcome(
+        etf=etf, qty=qty, px_etf=px_etf, short_usd=short_usd,
+        blocked=False, why="", res=res,
+        fill_record={
+            "filled_at": now, "run_date": run_date,
+            "strategy_tag": strategy_tag,
+            "pair_id": f"{under}__ESTABLISH",
+            "underlying": under, "etf": etf,
+            "px_under": px_under, "px_etf": px_etf,
+            "target_sh_under": target_under_abs_sh,
+            "target_sh_etf": qty,
+            "delta_sh_under": 0,
+            "delta_sh_etf": filled_signed,
+            "filled_sh_under": 0,
+            "filled_sh_etf": filled_signed,
+            "notes": f"ESTABLISH_ETF status={status}",
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Phase 2 — Establish new positions
 # ---------------------------------------------------------------------------
@@ -484,62 +615,57 @@ def _establish_worker(
         any_short_succeeded      = False
 
         # ------------------------------------------------------------------
-        # Step 1: open all ETF SHORT legs (in this worker, sequentially).
-        # Workers are themselves run in parallel across underlyings.
+        # Step 1: open all ETF SHORT legs in parallel within this bucket.
+        # Each leg uses its own IB connection (semaphore-limited globally).
+        # Underlying buckets still run in parallel across workers.
         # ------------------------------------------------------------------
-        for etf, qty, px_etf, short_usd in leg_plan:
-            if stop_requested():
-                break
-
-            blocked, why = is_short_unavailable_now(
-                etf, short_map=short_map, screener_avail_map=screener_avail_map,
-            )
-            if blocked:
-                src = "FTP available=0" if why == "ftp_avail0" else "screener shares_available<=0"
-                tprint(f"[ESTABLISH][{under}] SKIP {etf}: {src}.")
-                total_short_requested_sh += int(qty)
-                local_fills.append({
-                    "filled_at": now, "run_date": run_date,
-                    "strategy_tag": strategy_tag,
-                    "pair_id": f"{under}__ESTABLISH",
-                    "underlying": under, "etf": etf,
-                    "px_under": px_under, "px_etf": px_etf,
-                    "target_sh_under": target_under_abs_sh,
-                    "target_sh_etf":   qty,
-                    "delta_sh_under": 0, "delta_sh_etf": -qty,
-                    "filled_sh_under": 0, "filled_sh_etf": 0,
-                    "notes": f"SKIP_NO_LOCATE_{why.upper()} wants_short={qty}",
-                })
-                continue
-
-            order_ref = f"{strategy_tag}|{under}__ESTABLISH|{etf}|ETF"
-            res = exec_leg_local(etf, "SELL", qty, px_etf, order_ref)
-            filled_signed = -int(res.filled)
-            total_short_requested_sh += int(qty)
-            total_short_filled_sh    += int(abs(res.filled))
-            if int(res.filled) > 0:
-                any_short_succeeded = True
-
-            log_exposure_event(
-                stage="POST_ETF", pair_id=f"{under}__ESTABLISH",
-                underlying=under, etf=etf, symbol=etf,
-                delta_sh=-qty, filled_sh=filled_signed, trade=res.trade,
-            )
-
-            local_fills.append({
-                "filled_at": now, "run_date": run_date,
-                "strategy_tag": strategy_tag,
-                "pair_id": f"{under}__ESTABLISH",
-                "underlying": under, "etf": etf,
-                "px_under": px_under, "px_etf": px_etf,
-                "target_sh_under": target_under_abs_sh,
-                "target_sh_etf":   qty,
-                "delta_sh_under": 0,
-                "delta_sh_etf":   filled_signed,
-                "filled_sh_under": 0,
-                "filled_sh_etf":   filled_signed,
-                "notes": f"ESTABLISH_ETF status={res.status}",
-            })
+        if leg_plan and not stop_requested():
+            n_etf_workers = max(1, len(leg_plan))
+            with ThreadPoolExecutor(max_workers=n_etf_workers) as etf_pool:
+                etf_futs = []
+                for leg_idx, (etf, qty, px_etf, short_usd) in enumerate(leg_plan):
+                    etf_futs.append(etf_pool.submit(
+                        _establish_etf_short_one,
+                        leg_idx=leg_idx,
+                        etf=etf,
+                        qty=qty,
+                        px_etf=px_etf,
+                        short_usd=short_usd,
+                        host=host,
+                        port=port,
+                        client_id=client_id,
+                        worker_idx=worker_idx,
+                        under=under,
+                        px_under=px_under,
+                        target_under_abs_sh=target_under_abs_sh,
+                        strategy_tag=strategy_tag,
+                        run_date=run_date,
+                        now=now,
+                        exec_cfg=exec_cfg,
+                        limit_bps=limit_bps,
+                        timeout=timeout,
+                        max_retries=max_retries,
+                        dry_run=dry_run,
+                        short_map=short_map,
+                        screener_avail_map=screener_avail_map,
+                        cancel_service=cancel_service,
+                        log_exposure_event=log_exposure_event,
+                    ))
+                for fut in as_completed(etf_futs):
+                    if stop_requested():
+                        break
+                    try:
+                        outcome = fut.result()
+                    except Exception as ex:
+                        tprint(f"[ESTABLISH][{under}] ETF short worker raised: {ex}")
+                        continue
+                    local_fills.append(outcome.fill_record)
+                    total_short_requested_sh += int(outcome.qty)
+                    if outcome.blocked or outcome.res is None:
+                        continue
+                    total_short_filled_sh += int(abs(outcome.res.filled))
+                    if int(outcome.res.filled) > 0:
+                        any_short_succeeded = True
 
         # ------------------------------------------------------------------
         # Step 2: open the underlying as ONE signed order.
