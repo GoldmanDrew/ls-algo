@@ -406,6 +406,15 @@ def load_etf_delta_map(screened_csv: Path) -> tuple[dict[str, str], dict[str, fl
     return etf_to_under, etf_to_delta
 
 
+def _is_etf_leg(symbol: str, underlying: str, etf_to_under: dict[str, str]) -> bool:
+    """True when ``symbol`` is a packaged ETF, not the spot underlying row."""
+    sym = canonical_symbol(symbol)
+    if sym not in etf_to_under:
+        return False
+    und = canonical_symbol(underlying or sym)
+    return sym != und
+
+
 def complete_etf_maps_from_positions(
     pos: pd.DataFrame,
     etf_to_under: dict[str, str],
@@ -580,18 +589,163 @@ def build_bucket4_pair_registry(
     return out[cols].reset_index(drop=True)
 
 
+_PLAN_SLEEVE_TO_BUCKET: dict[str, str] = {
+    "core_leveraged": "b1",
+    "yieldboost": "b2",
+    "inverse_decay_bucket4": "b4",
+}
+
+
+def _plan_row_is_yieldboost(row: pd.Series) -> bool:
+    val = row.get("is_yieldboost", False)
+    if isinstance(val, str):
+        return val.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(val)
+
+
+def _resolve_plan_row_beta(row: pd.Series, etf_to_delta: dict[str, float]) -> float:
+    etf = canonical_symbol(str(row.get("ETF", "") or ""))
+    for col in ("Delta", "delta"):
+        if col in row.index:
+            raw = row.get(col)
+            if raw is not None and not (isinstance(raw, float) and pd.isna(raw)):
+                try:
+                    beta = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                if abs(beta) > 1e-12:
+                    return beta
+    return float(etf_to_delta.get(etf, 0.0))
+
+
+def _plan_row_bucket_key(
+    row: pd.Series,
+    etf_to_delta: dict[str, float],
+    *,
+    sleeve_first: bool,
+) -> str | None:
+    if sleeve_first and "sleeve" in row.index:
+        sleeve = str(row.get("sleeve", "") or "").strip()
+        bucket = _PLAN_SLEEVE_TO_BUCKET.get(sleeve)
+        if bucket:
+            return bucket
+    beta = _resolve_plan_row_beta(row, etf_to_delta)
+    if beta < 0:
+        return "b4"
+    if beta > 1.5:
+        return "b1"
+    if beta > 0:
+        return "b2"
+    if _plan_row_is_yieldboost(row):
+        return "b2"
+    return None
+
+
+def merge_plan_etf_metadata(
+    plan_csv: Path | None,
+    etf_to_under: dict[str, str],
+    etf_to_delta: dict[str, float],
+) -> tuple[dict[str, str], dict[str, float]]:
+    """Fill ETF→underlying and ETF→delta gaps from the latest trade plan."""
+    out_under = dict(etf_to_under)
+    out_delta = dict(etf_to_delta)
+    if plan_csv is None or not Path(plan_csv).exists():
+        return out_under, out_delta
+    try:
+        df = pd.read_csv(plan_csv)
+    except Exception:
+        return out_under, out_delta
+    if df.empty:
+        return out_under, out_delta
+    cols_lc = {c.lower(): c for c in df.columns}
+    etf_col = _find_col(cols_lc, ["etf", "symbol", "ticker"])
+    under_col = _find_col(
+        cols_lc, ["underlying", "underlyingsymbol", "underlying_symbol", "root"]
+    )
+    if not etf_col or not under_col:
+        return out_under, out_delta
+    for _, row in df.iterrows():
+        etf = canonical_symbol(str(row.get(etf_col, "") or ""))
+        under = canonical_symbol(str(row.get(under_col, "") or ""))
+        if not etf or not under:
+            continue
+        out_under.setdefault(etf, under)
+        if etf not in out_delta:
+            beta = _resolve_plan_row_beta(row, out_delta)
+            if abs(beta) > 1e-12:
+                out_delta[etf] = beta
+    return out_under, out_delta
+
+
+def _normalize_b1_b2_pair(r_b1: float, r_b2: float) -> tuple[float, float]:
+    s = abs(float(r_b1)) + abs(float(r_b2))
+    if s <= 1e-12:
+        return 1.0, 0.0
+    return abs(float(r_b1)) / s, abs(float(r_b2)) / s
+
+
+def apply_plan_b4_spot_pnl_override(
+    *,
+    lot_components: dict[str, dict[str, dict[str, float]]],
+    underlying: str,
+    df: pd.DataFrame,
+    plan_ratio: dict[str, float],
+    spot_carry_cols: set[str],
+    etf_to_delta_map: dict[str, float],
+    mode: str,
+    ledger_r_b1: float,
+    ledger_r_b2: float,
+) -> None:
+    """Redistribute IBKR spot PnL across buckets using plan B4 ratios."""
+    u_rows = df[
+        (df["underlying"] == underlying)
+        & (df["symbol"].astype(str) == df["underlying"].astype(str))
+    ]
+    if u_rows.empty:
+        return
+    override_cols = {"realized_pnl", "unrealized_pnl"} | set(spot_carry_cols)
+    bucket_keys = ("bucket_1", "bucket_2", "bucket_4")
+    b1_norm, b2_norm = _normalize_b1_b2_pair(ledger_r_b1, ledger_r_b2)
+    b4_frac = float(plan_ratio.get("b4", 0.0))
+
+    for col in override_cols:
+        if col not in u_rows.columns:
+            continue
+        total = float(u_rows[col].sum())
+        if abs(total) <= 1e-9:
+            for bk in bucket_keys:
+                lot_components[underlying][bk][col] = 0.0
+            continue
+        if mode == "full_override":
+            for bk, rk in (
+                ("bucket_1", "b1"),
+                ("bucket_2", "b2"),
+                ("bucket_4", "b4"),
+            ):
+                lot_components[underlying][bk][col] = total * float(plan_ratio.get(rk, 0.0))
+        else:
+            b4_part = total * b4_frac
+            remainder = total - b4_part
+            lot_components[underlying]["bucket_4"][col] = b4_part
+            lot_components[underlying]["bucket_1"][col] = remainder * b1_norm
+            lot_components[underlying]["bucket_2"][col] = remainder * b2_norm
+
+
 def load_plan_sleeve_bucket_usd(
     plan_csv: Path,
     etf_to_delta: dict[str, float],
+    *,
+    sleeve_first: bool = True,
 ) -> dict[str, dict[str, float]]:
     """For each underlying, signed ``long_usd`` per accounting bucket from the latest plan.
 
-    Aggregates ``data/proposed_trades.csv`` (or a per-run override) rows by the
-    ETF's beta sign:
+    Bucketing priority (when ``sleeve_first=True``):
 
-      * ``beta < 0`` → ``b4`` (inverse-decay sleeve — short underlying target).
-      * ``beta > 1.5`` → ``b1`` (high-leverage long).
-      * ``0 < beta <= 1.5`` → ``b2`` (low-leverage / yieldboost long).
+      * ``sleeve`` column: ``yieldboost`` → b2, ``core_leveraged`` → b1,
+        ``inverse_decay_bucket4`` → b4.
+      * else ETF delta (plan ``Delta`` column, then ``etf_to_delta`` map):
+        ``beta < 0`` → b4, ``beta > 1.5`` → b1, ``0 < beta <= 1.5`` → b2.
+      * else ``is_yieldboost`` → b2.
 
     The returned values are the SIGNED ``long_usd`` contributions per bucket
     (B4 is typically negative because ``inverse_decay_bucket4`` rows carry a
@@ -623,15 +777,18 @@ def load_plan_sleeve_bucket_usd(
     else:
         df["ETF"] = ""
     df["long_usd"] = pd.to_numeric(df["long_usd"], errors="coerce").fillna(0.0)
-    df["_beta"] = df["ETF"].map(lambda s: float(etf_to_delta.get(s, 0.0)))
+    df["_bucket"] = df.apply(
+        lambda row: _plan_row_bucket_key(row, etf_to_delta, sleeve_first=sleeve_first),
+        axis=1,
+    )
     out: dict[str, dict[str, float]] = {}
     for u, grp in df.groupby("Underlying"):
         u_str = str(u or "")
         if not u_str:
             continue
-        b1 = float(grp.loc[grp["_beta"] > 1.5, "long_usd"].sum())
-        b2 = float(grp.loc[(grp["_beta"] > 0) & (grp["_beta"] <= 1.5), "long_usd"].sum())
-        b4 = float(grp.loc[grp["_beta"] < 0, "long_usd"].sum())
+        b1 = float(grp.loc[grp["_bucket"] == "b1", "long_usd"].sum())
+        b2 = float(grp.loc[grp["_bucket"] == "b2", "long_usd"].sum())
+        b4 = float(grp.loc[grp["_bucket"] == "b4", "long_usd"].sum())
         if abs(b1) + abs(b2) + abs(b4) <= 1e-9:
             continue
         out[u_str] = {"b1": b1, "b2": b2, "b4": b4}
@@ -967,17 +1124,17 @@ def build_underlying_realized_bucket_ratio_map(
         qty = float(row.get("quantity", 0.0) or 0.0)
         realized = float(row.get("fifoPnlRealized_base", 0.0) or 0.0)
 
-        is_etf = sym in etf_to_under
+        under = str(row.get("underlyingSymbol", "") or "")
+        if not under:
+            under = sym
+        under = canonical_symbol(under)
+
+        is_etf = _is_etf_leg(sym, under, etf_to_under)
         if is_etf:
             etf_pos_qty[sym] += qty
 
         if is_etf or abs(realized) <= 1e-12:
             continue
-
-        under = str(row.get("underlyingSymbol", "") or "")
-        if not under:
-            under = sym
-        under = canonical_symbol(under)
 
         b_hint = _bucket_hint_from_order_reference(
             str(row.get("orderReference", "")),
@@ -1397,11 +1554,10 @@ def compute_net_exposure(
     etf_to_under, etf_to_delta = load_etf_delta_map(screened_csv)
 
     # Map each position to its underlying and beta
-    pos["is_etf"] = pos["symbol"].isin(etf_to_under)
-    pos["underlying"] = np.where(
-        pos["is_etf"],
-        pos["symbol"].map(etf_to_under),
-        pos["symbol"],
+    pos["underlying"] = pos["symbol"].map(etf_to_under).fillna(pos["symbol"])
+    pos["is_etf"] = pos.apply(
+        lambda r: _is_etf_leg(str(r["symbol"]), str(r["underlying"]), etf_to_under),
+        axis=1,
     )
     pos["delta"] = np.where(
         pos["is_etf"],
@@ -1582,6 +1738,16 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             "defaulting to 'lot_timed'"
         )
         component_split_method = "lot_timed"
+    _acct_cfg = cfg.get("accounting", {}) or {}
+    plan_b4_pnl_mode = str(_acct_cfg.get("plan_b4_pnl_mode", "inject_slice")).strip().lower()
+    if plan_b4_pnl_mode not in {"inject_slice", "full_override"}:
+        print(
+            f"[ACCOUNTING] WARNING: unknown accounting.plan_b4_pnl_mode={plan_b4_pnl_mode!r}; "
+            "defaulting to 'inject_slice'"
+        )
+        plan_b4_pnl_mode = "inject_slice"
+    plan_sleeve_bucketing = str(_acct_cfg.get("plan_sleeve_bucketing", "sleeve_first")).strip().lower()
+    plan_sleeve_first = plan_sleeve_bucketing != "delta_first"
     bucket_state_path = PROJECT_ROOT / "data" / "accounting" / "underlying_bucket_state.csv"
     b4_partial_hedge_ratio = float(
         ((sleeves_cfg.get("inverse_decay_bucket4") or {}).get("rules") or {}).get(
@@ -1939,6 +2105,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     # Spot positions (not in etf_to_under) are split pro-rata by the
     # absolute deltas of the ETFs sharing their underlying.
     etf_to_under, etf_to_delta_map = load_etf_delta_map(etf_screened_path)
+    etf_to_under, etf_to_delta_map = merge_plan_etf_metadata(
+        proposed_trades_path, etf_to_under, etf_to_delta_map
+    )
     etf_to_under, etf_to_delta_map = complete_etf_maps_from_positions(
         pos, etf_to_under, etf_to_delta_map
     )
@@ -1948,7 +2117,10 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     neg_beta_syms = {s for s, b in etf_to_delta_map.items() if b < 0}
     bucket3_etf_syms = set(neg_beta_syms) | set(flow_low_delta_bucket3_syms)
 
-    is_etf = df["symbol"].isin(etf_to_under)
+    is_etf = df.apply(
+        lambda r: _is_etf_leg(str(r["symbol"]), str(r["underlying"]), etf_to_under),
+        axis=1,
+    )
     sym_beta = df["symbol"].map(etf_to_delta_map).fillna(1.0)
 
     # Assign buckets for ETF positions
@@ -2091,7 +2263,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     _plan_ratio_b4: dict[str, dict[str, float]] = {}
     if _plan_aware_b4:
         _plan_sleeve_usd = load_plan_sleeve_bucket_usd(
-            proposed_trades_path, etf_to_delta_map
+            proposed_trades_path,
+            etf_to_delta_map,
+            sleeve_first=plan_sleeve_first,
         )
         for _u_p, _w_p in _plan_sleeve_usd.items():
             if _u_p not in b4_underlyings:
@@ -2102,11 +2276,18 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             _pr1, _pr2, _pr4 = _normalize_bucket_triple(_a1, _a2, _a4)
             _plan_ratio_b4[_u_p] = {"b1": _pr1, "b2": _pr2, "b4": _pr4}
             _held_ratio_map[_u_p] = {"b1": _pr1, "b2": _pr2, "b4": _pr4}
+            if abs(_w_p["b2"]) > 1e-9 and _pr2 <= 1e-9:
+                print(
+                    f"[ACCOUNTING] WARNING: {_u_p} plan b2 sleeve "
+                    f"${abs(_w_p['b2']):,.0f} but normalized ratio_b2=0 "
+                    f"(check plan_sleeve_bucketing / ETF deltas)"
+                )
         if _plan_ratio_b4:
             print(
                 f"[ACCOUNTING] plan-aware B4 attribution active for "
                 f"{len(_plan_ratio_b4)} underlying(s) "
-                f"(e.g. {', '.join(sorted(_plan_ratio_b4)[:6])})"
+                f"(e.g. {', '.join(sorted(_plan_ratio_b4)[:6])}); "
+                f"spot PnL mode={plan_b4_pnl_mode}"
             )
 
     # Base split map used for non-ETF rows (spot/fallback attribution).
@@ -2224,9 +2405,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     if not trade_events.empty:
         for _, _tr in trade_events.iterrows():
             _tsym = str(_tr.get("symbol", "") or "")
-            if _tsym in etf_to_under:
-                continue
             _tu = canonical_symbol(str(_tr.get("underlyingSymbol", "") or _tsym))
+            if _is_etf_leg(_tsym, _tu, etf_to_under):
+                continue
             if _tu:
                 _trade_underlyings.add(_tu)
     _prev_underlyings = (
@@ -2520,13 +2701,13 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             _oref = str(_r.get("orderReference", "") or "")
             _dt = str(_r.get("dateTime", "") or "")
 
-            if _sym in etf_to_under:
-                _etf_pos_qty[_sym] += _qty
-                continue
-
             _u = canonical_symbol(str(_r.get("underlyingSymbol", "") or _sym))
             if not _u:
                 _u = _sym
+            if _is_etf_leg(_sym, _u, etf_to_under):
+                _etf_pos_qty[_sym] += _qty
+                continue
+
             _w1, _w2, _w4 = _weights_for_underlying_trade(_u, _oref, _dt)
             _touched.add(_u)
             _apply_trade_to_buckets(_u, _qty, _px, _w1, _w2, _w4, _real)
@@ -2662,12 +2843,10 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
 
         # Plan-aware B4 override: when the latest plan carries an explicit
         # ``inverse_decay_bucket4`` short underlying target for ``_u`` we
-        # discard the FIFO/held-derived ratios above and use the sleeve
-        # magnitude mix instead. This is the only way to attribute the B4
-        # structural short on names whose B1/yieldboost long overwhelms it
-        # at the broker (e.g. MSTR: net IBKR long stock + plan B4 short).
-        # See ``load_plan_sleeve_bucket_usd`` for the source of truth.
-        if _u in _plan_ratio_b4:
+        # inject the B4 structural slice into spot PnL. In ``inject_slice``
+        # mode (default) the FIFO lot-ledger split for B1/B2 is preserved;
+        # ``full_override`` replaces all bucket ratios with plan magnitudes.
+        if _u in _plan_ratio_b4 and plan_b4_pnl_mode == "full_override":
             _pr = _plan_ratio_b4[_u]
             _ratio_realized_map[_u] = dict(_pr)
             _ratio_unrealized_map[_u] = dict(_pr)
@@ -2688,37 +2867,20 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                     _carry_by_col.get(_u, {}).get(_cc, {}).get(_bk, 0.0)
                 )
 
-        # Plan-aware B4 override for lot-timed components: when plan signal
-        # is present, redistribute the IBKR-reported stock PnL across the
-        # three buckets by ``_plan_ratio_b4`` magnitudes. Without this the
-        # lot-timed split (``bucket_component_split_method: lot_timed``)
-        # would leave realized/unrealized/carry on the spot row in
-        # whatever bucket FIFO recorded (usually 100% B1/B2 for shared
-        # names) and the B4 sleeve attribution above would be silently
-        # ignored for PnL — only exposure would shift.
+        # Plan-aware B4 spot PnL: inject the structural B4 slice from plan
+        # targets without clobbering FIFO B1/B2 lot attribution (inject_slice).
         if _u in _plan_ratio_b4:
-            _u_rows_df = df[
-                (df["underlying"] == _u)
-                & (~df["symbol"].isin(etf_to_delta_map))
-            ]
-            if not _u_rows_df.empty:
-                _override_cols = ({"realized_pnl", "unrealized_pnl"}
-                                  | set(_spot_carry_cols))
-                for _col in _override_cols:
-                    if _col not in _u_rows_df.columns:
-                        continue
-                    _u_total = float(_u_rows_df[_col].sum())
-                    if abs(_u_total) <= 1e-9:
-                        for _bk in _BUCKET_KEYS:
-                            _lot_components[_u][_bk][_col] = 0.0
-                        continue
-                    _bk_to_r = {
-                        "bucket_1": _plan_ratio_b4[_u]["b1"],
-                        "bucket_2": _plan_ratio_b4[_u]["b2"],
-                        "bucket_4": _plan_ratio_b4[_u]["b4"],
-                    }
-                    for _bk, _r_bk in _bk_to_r.items():
-                        _lot_components[_u][_bk][_col] = _u_total * _r_bk
+            apply_plan_b4_spot_pnl_override(
+                lot_components=_lot_components,
+                underlying=_u,
+                df=df,
+                plan_ratio=_plan_ratio_b4[_u],
+                spot_carry_cols=_spot_carry_cols,
+                etf_to_delta_map=etf_to_delta_map,
+                mode=plan_b4_pnl_mode,
+                ledger_r_b1=_ru1,
+                ledger_r_b2=_ru2,
+            )
 
         _ibkr_qty = float(_spot_qty.get(_u, 0.0))
         _orphan_qty = _ibkr_qty - _qty_total
@@ -2742,6 +2904,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 "split_method": split_method,
             }
         )
+        _plan_b2_usd = float((_plan_sleeve_usd.get(_u) or {}).get("b2", 0.0))
         _timing_rows.append(
             {
                 "run_date": run_date,
@@ -2767,8 +2930,22 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 "ratio_carry_b1": _rc1,
                 "ratio_carry_b2": _rc2,
                 "ratio_carry_b4": _rc4,
+                "plan_b4_frac": float((_plan_ratio_b4.get(_u) or {}).get("b4", 0.0)),
+                "ledger_b2_frac": _ru2,
+                "pnl_split_mode": plan_b4_pnl_mode if _u in _plan_ratio_b4 else "lot_timed",
+                "plan_b2_usd": _plan_b2_usd,
             }
         )
+        if _u in _plan_ratio_b4 and abs(_ru2 - _r2) > 0.25:
+            print(
+                f"[ACCOUNTING] NOTE: {_u} ledger unrealized b2={_ru2:.1%} vs "
+                f"held/plan current b2={_r2:.1%} (mode={plan_b4_pnl_mode})"
+            )
+        if abs(_ibkr_qty) > 1e-9 and abs(_orphan_qty) / abs(_ibkr_qty) > 0.10:
+            print(
+                f"[ACCOUNTING] NOTE: {_u} orphan_qty={_orphan_qty:.1f} "
+                f"({abs(_orphan_qty) / abs(_ibkr_qty):.1%} of ibkr_qty={_ibkr_qty:.1f})"
+            )
 
     _state_today_df = pd.DataFrame(_state_rows, columns=state_cols)
     _state_merged = pd.concat([_state_hist[state_cols], _state_today_df], ignore_index=True)
@@ -3263,7 +3440,10 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         _d = exposure_detail_df.copy()
         _d["symbol"] = _d["symbol"].astype(str)
         _d["underlying"] = _d["underlying"].astype(str)
-        _d["_is_etf"] = _d["symbol"].isin(etf_to_under)
+        _d["_is_etf"] = _d.apply(
+            lambda r: _is_etf_leg(str(r["symbol"]), str(r["underlying"]), etf_to_under),
+            axis=1,
+        )
         _d["_beta"] = pd.to_numeric(_d["symbol"].map(etf_to_delta_map), errors="coerce").fillna(1.0)
 
         def _spot_ratios_for_row(_row: pd.Series) -> tuple[float, float, float]:
@@ -3474,6 +3654,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "yfinance_symbols_overridden": len(yf_closes),
         "bucket_split_method": split_method,
         "bucket_component_split_method": component_split_method,
+        "plan_b4_pnl_mode": plan_b4_pnl_mode,
+        "plan_sleeve_bucketing": plan_sleeve_bucketing,
         "bucket3_flow_low_delta_symbols": sorted(flow_low_delta_bucket3_syms),
         "bucket_state_path": str(bucket_state_path),
         "bucket_realized_underlyings_from_trade_timing": int(len(_realized_ratio_from_trades)),

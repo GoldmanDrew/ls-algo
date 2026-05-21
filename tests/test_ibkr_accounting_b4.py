@@ -1,15 +1,32 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from ibkr_accounting import (
+    _is_etf_leg,
     _normalize_bucket_triple,
+    apply_plan_b4_spot_pnl_override,
     build_bucket4_pair_registry,
     build_underlying_realized_bucket_ratio_map,
     compute_bucket4_pair_exposure,
     held_exposure_bucket124_weights,
     load_plan_sleeve_bucket_usd,
+    merge_plan_etf_metadata,
 )
+
+
+def test_is_etf_leg_spot_underlying_not_etf() -> None:
+    """Spot rows (symbol == underlying) must update FIFO ledger, not ETF pos qty.
+
+    Regression: when complete_etf_maps adds MSTR->MSTR self-map, the old
+    ``symbol in etf_to_under`` check skipped all MSTR spot trades and froze
+    the share ledger while IBKR position kept growing (orphan shares).
+    """
+    etf_map = {"MSTR": "MSTR", "MTYY": "MSTR", "MSTU": "MSTR"}
+    assert _is_etf_leg("MSTR", "MSTR", etf_map) is False
+    assert _is_etf_leg("MTYY", "MSTR", etf_map) is True
+    assert _is_etf_leg("SPY", "SPY", {"SPY": "SPY"}) is False
 
 
 def test_normalize_bucket_triple() -> None:
@@ -145,6 +162,99 @@ def test_load_plan_sleeve_bucket_usd_buckets_by_delta(tmp_path) -> None:
 def test_load_plan_sleeve_bucket_usd_missing_file_returns_empty(tmp_path) -> None:
     out = load_plan_sleeve_bucket_usd(tmp_path / "missing.csv", {"APLZ": -2.0})
     assert out == {}
+
+
+def test_load_plan_sleeve_bucket_usd_sleeve_first_without_screened_delta(tmp_path) -> None:
+    """Yieldboost rows must count toward b2 even when absent from etf_to_delta map."""
+    plan = tmp_path / "proposed_trades.csv"
+    plan.write_text(
+        "ETF,Underlying,sleeve,long_usd,Delta,is_yieldboost\n"
+        "MSTU,MSTR,core_leveraged,500,2.0,False\n"
+        "MTYY,MSTR,yieldboost,15000,0.37,True\n"
+        "MSTZ,MSTR,inverse_decay_bucket4,-1700,-2.0,False\n",
+        encoding="utf-8",
+    )
+    out = load_plan_sleeve_bucket_usd(plan, {}, sleeve_first=True)
+    assert out["MSTR"]["b1"] == 500.0
+    assert out["MSTR"]["b2"] == 15000.0
+    assert out["MSTR"]["b4"] == -1700.0
+
+
+def test_merge_plan_etf_metadata_fills_missing_delta(tmp_path) -> None:
+    plan = tmp_path / "proposed_trades.csv"
+    plan.write_text(
+        "ETF,Underlying,Delta\n"
+        "MTYY,MSTR,0.37\n",
+        encoding="utf-8",
+    )
+    under, delta = merge_plan_etf_metadata(plan, {}, {})
+    assert under["MTYY"] == "MSTR"
+    assert delta["MTYY"] == pytest.approx(0.37)
+
+
+def test_inject_slice_preserves_b2_lot_share() -> None:
+    """B4 plan slice should not zero out FIFO bucket-2 spot PnL."""
+    df = pd.DataFrame(
+        [
+            {
+                "symbol": "MSTR",
+                "underlying": "MSTR",
+                "realized_pnl": 100.0,
+                "unrealized_pnl": 1000.0,
+            }
+        ]
+    )
+    lot: dict = {
+        "MSTR": {
+            "bucket_1": {"realized_pnl": 100.0, "unrealized_pnl": 490.0},
+            "bucket_2": {"realized_pnl": 0.0, "unrealized_pnl": 510.0},
+            "bucket_4": {"realized_pnl": 0.0, "unrealized_pnl": 0.0},
+        }
+    }
+    plan_ratio = {"b1": 0.08, "b2": 0.71, "b4": 0.21}
+    apply_plan_b4_spot_pnl_override(
+        lot_components=lot,
+        underlying="MSTR",
+        df=df,
+        plan_ratio=plan_ratio,
+        spot_carry_cols=set(),
+        etf_to_delta_map={"MTYY": 0.37},
+        mode="inject_slice",
+        ledger_r_b1=0.49,
+        ledger_r_b2=0.51,
+    )
+    assert lot["MSTR"]["bucket_4"]["unrealized_pnl"] == pytest.approx(210.0)
+    assert lot["MSTR"]["bucket_2"]["unrealized_pnl"] == pytest.approx(402.9)
+    assert lot["MSTR"]["bucket_1"]["unrealized_pnl"] == pytest.approx(387.1)
+    total = sum(lot["MSTR"][b]["unrealized_pnl"] for b in lot["MSTR"])
+    assert total == pytest.approx(1000.0)
+
+
+def test_inject_slice_pure_b4_goes_to_bucket_4() -> None:
+    df = pd.DataFrame(
+        [{"symbol": "APLD", "underlying": "APLD", "realized_pnl": 0.0, "unrealized_pnl": 500.0}]
+    )
+    lot: dict = {
+        "APLD": {
+            "bucket_1": {"realized_pnl": 0.0, "unrealized_pnl": 500.0},
+            "bucket_2": {"realized_pnl": 0.0, "unrealized_pnl": 0.0},
+            "bucket_4": {"realized_pnl": 0.0, "unrealized_pnl": 0.0},
+        }
+    }
+    apply_plan_b4_spot_pnl_override(
+        lot_components=lot,
+        underlying="APLD",
+        df=df,
+        plan_ratio={"b1": 0.0, "b2": 0.0, "b4": 1.0},
+        spot_carry_cols=set(),
+        etf_to_delta_map={"APLZ": -2.0},
+        mode="inject_slice",
+        ledger_r_b1=0.0,
+        ledger_r_b2=0.0,
+    )
+    assert lot["APLD"]["bucket_4"]["unrealized_pnl"] == pytest.approx(500.0)
+    assert lot["APLD"]["bucket_1"]["unrealized_pnl"] == pytest.approx(0.0)
+    assert lot["APLD"]["bucket_2"]["unrealized_pnl"] == pytest.approx(0.0)
 
 
 def test_pair_exposure_emits_underlying_once_per_underlying() -> None:
