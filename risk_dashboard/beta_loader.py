@@ -624,24 +624,22 @@ def compute_betas(
     refresh_max_age_hours: float = CACHE_MAX_AGE_HOURS,
     sectors: dict[str, str] | None = None,
     fetch_fn: Any | None = None,
+    apply_shrinkage: bool = False,
 ) -> dict[str, BetaResult]:
     """Compute beta-to-{SPY,QQQ,IWM} for each ``underlying``.
 
-    Two-pass shrinkage:
+    Default (``apply_shrinkage=False``): **pure price-action OLS** over
+    trailing ``window_days`` log returns vs SPY/QQQ/IWM. The displayed
+    beta is the raw OLS slope (``beta_to_spy_raw == beta_to_spy``).
 
-        1. OLS over the trailing ``window_days`` log returns for each
-           underlying against each index. Names with at least
-           ``MIN_OBS_FOR_TRUST`` paired observations are marked
-           ``computed``.
-        2. Per-sector median of pass-1 ``computed`` betas becomes the
-           prior for pass-2 shrinkage of every name in that sector. A
-           sector needs at least ``SECTOR_MIN_COMPUTED_NAMES`` reliable
-           names to be used as a prior; otherwise the caller falls
-           back to the curated ``BETA_TO_SPY`` value (or
-           DEFAULT_SINGLE_NAME_BETA / DEFAULT_BROAD_INDEX_BETA).
+    Optional (``apply_shrinkage=True``): two-pass shrinkage toward
+    per-sector median priors (legacy). Requires ``sectors`` from
+    ``sector_loader`` and falls back to curated map when a sector has
+    fewer than ``SECTOR_MIN_COMPUTED_NAMES`` reliable names.
 
-    Falls back to curated map / default constants when no price data
-    is available.
+    When no price data is available, falls back to
+    ``DEFAULT_SINGLE_NAME_BETA`` / ``DEFAULT_BROAD_INDEX_BETA`` only —
+    never the curated ``BETA_TO_SPY`` map unless ``apply_shrinkage=True``.
 
     Parameters
     ----------
@@ -654,6 +652,9 @@ def compute_betas(
     fetch_fn:
         Override the data-fetch callable for tests. Must match the
         signature of :func:`_fetch_closes`.
+    apply_shrinkage:
+        When False (default), return raw OLS betas with no sector or
+        curated priors. When True, run pass-2 shrinkage (legacy).
     """
     cache_dir = cache_dir or CACHE_DIR_DEFAULT
     symbols = sorted({str(u).strip().upper() for u in underlyings if str(u).strip()})
@@ -717,10 +718,32 @@ def compute_betas(
 
         pass1[sym] = res
 
+    if not apply_shrinkage:
+        results: dict[str, BetaResult] = {}
+        for sym, res in pass1.items():
+            sec = res.sector or "other"
+            if res.beta_to_spy is None:
+                res.beta_to_spy = (
+                    DEFAULT_BROAD_INDEX_BETA if sec == "broad" else DEFAULT_SINGLE_NAME_BETA
+                )
+                res.provenance = "default_fallback"
+                res.prior_source = "default"
+                res.prior_used_spy = res.beta_to_spy
+            elif res.n_obs >= MIN_OBS_FOR_TRUST:
+                res.provenance = "computed"
+            elif res.n_obs > 0:
+                res.provenance = "computed"
+            if res.beta_to_ndx is None and res.beta_to_spy is not None:
+                res.beta_to_ndx = res.beta_to_ndx_raw or res.beta_to_spy * 0.90
+            if res.beta_to_rut is None and res.beta_to_spy is not None:
+                res.beta_to_rut = res.beta_to_rut_raw or res.beta_to_spy * 0.85
+            results[sym] = res
+        return results
+
     # ----- Build sector-mean priors from reliable pass-1 results -----
     sector_means = _compute_sector_means(pass1)
 
-    # ----- Pass 2: shrink + fill fallbacks -----
+    # ----- Pass 2: shrink + fill fallbacks (legacy) -----
     results: dict[str, BetaResult] = {}
     for sym, res in pass1.items():
         sec = res.sector or "other"

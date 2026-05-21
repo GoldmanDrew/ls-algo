@@ -490,7 +490,7 @@
             : factorTotals.net_beta_to_spy.toFixed(2) + "x",
         sub: factorTotals.beta_coverage_gross_pct == null
           ? "coverage unknown"
-          : `${fmtPct(factorTotals.beta_coverage_gross_pct, 0)} curated`,
+          : `${fmtPct(factorTotals.beta_coverage_gross_pct, 0)} computed`,
         cls: signedClass(factorTotals.net_beta_to_spy),
         spark: sparklineSvg(series("net_beta_to_spy")),
         delta: deltaBadge(deltas.delta_net_beta_to_spy, { lowerIsBetter: false }),
@@ -817,7 +817,7 @@
       {
         label: "Beta coverage",
         value: fmtPct(t.beta_coverage_gross_pct, 0),
-        sub: "% of gross with curated beta",
+        sub: "% of gross with live OLS beta",
         cls: (t.beta_coverage_gross_pct ?? 0) >= 0.7 ? "pos" : "neg",
       },
     ];

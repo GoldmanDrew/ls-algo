@@ -169,7 +169,14 @@ def _try_override(symbol: str) -> dict[str, Any] | None:
 def _try_screener(screener_row: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if not screener_row:
         return None
-    for key in ("underlying_sector", "sector", "theme", "underlying_theme"):
+    for key in (
+        "underlying_sector",
+        "sector",
+        "theme",
+        "underlying_theme",
+        "product_class",
+        "Delta_product_class",
+    ):
         val = screener_row.get(key)
         if val is None:
             continue
@@ -215,6 +222,7 @@ def resolve_sector(
     *,
     screener_row: Mapping[str, Any] | None = None,
     vendor_info: Mapping[str, Any] | None = None,
+    use_override: bool = False,
 ) -> dict[str, Any]:
     """Resolve a single underlying through the 5-tier chain.
 
@@ -238,12 +246,17 @@ def resolve_sector(
     if not sym:
         return _result("other", "default")
 
-    for tier_fn, arg in (
-        (_try_override, sym),
-        (_try_screener, screener_row),
-        (_try_vendor, vendor_info),
-        (_try_heuristic, vendor_info),
-    ):
+    tiers: list[tuple[Any, Any]] = []
+    if use_override:
+        tiers.append((_try_override, sym))
+    tiers.extend(
+        [
+            (_try_screener, screener_row),
+            (_try_vendor, vendor_info),
+            (_try_heuristic, vendor_info),
+        ]
+    )
+    for tier_fn, arg in tiers:
         hit = tier_fn(arg)  # type: ignore[arg-type]
         if hit is not None:
             return hit
@@ -256,6 +269,7 @@ def batch_resolve(
     *,
     screener_rows: Mapping[str, Mapping[str, Any]] | None = None,
     vendor_info_by_symbol: Mapping[str, Mapping[str, Any]] | None = None,
+    use_override: bool = False,
 ) -> dict[str, dict[str, Any]]:
     """Convenience wrapper. Resolves a list of underlyings in one call."""
     out: dict[str, dict[str, Any]] = {}
@@ -269,5 +283,6 @@ def batch_resolve(
             sym,
             screener_row=s_rows.get(sym),
             vendor_info=v_info.get(sym),
+            use_override=use_override,
         )
     return out

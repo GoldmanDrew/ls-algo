@@ -87,30 +87,23 @@ def test_compute_betas_recovers_known_factor_loadings(tmp_path: Path):
     mid = results["MIDBETA"]
     lo = results["LOWBETA"]
 
-    # Provenance: all three should be 'computed' or 'shrunk'.
+    # Default path: pure OLS (no shrinkage).
     for r in (hi, mid, lo):
-        assert r.provenance in {"computed", "shrunk"}, r.provenance
+        assert r.provenance == "computed", r.provenance
         assert r.n_obs >= bl.MIN_OBS_FOR_TRUST
         assert r.beta_se is not None and r.beta_se < 0.05
         assert r.beta_to_spy is not None
         assert r.beta_to_spy_raw is not None
+        assert r.beta_to_spy == pytest.approx(r.beta_to_spy_raw)
         assert r.beta_to_ndx is not None
         assert r.beta_to_rut is not None
         assert r.regime_vol_pct is not None and r.regime_vol_pct > 0
-        assert r.shrinkage_weight is not None and 0 < r.shrinkage_weight < 1.0
+        assert r.shrinkage_applied is False or r.shrinkage_applied is None
 
-    # Raw OLS recovers true factor loadings within the noise floor that
-    # 252 daily returns + ~0.003 residual std implies (SE ~ 0.02 -> 4-sigma
-    # band ~ 0.08; we allow 0.15 to stay robust to deterministic-seed draws).
     assert hi.beta_to_spy_raw == pytest.approx(1.50, abs=0.15)
     assert mid.beta_to_spy_raw == pytest.approx(1.00, abs=0.15)
     assert lo.beta_to_spy_raw == pytest.approx(0.40, abs=0.15)
-
-    # Shrunk values are pulled toward the curated/default prior (1.2 for
-    # unknown single names) but still preserve the ordering.
     assert hi.beta_to_spy > mid.beta_to_spy > lo.beta_to_spy
-    assert mid.beta_to_spy == pytest.approx(1.05, abs=0.15)   # near prior; barely moves
-    assert lo.beta_to_spy < 0.80                                # pulled toward 1.2 but stays low
 
     # NDX / RUT betas track the SPY beta (QQQ ~ 1.1*SPY, IWM ~ 1.05*SPY
     # so the implied per-index slope is ~ beta_spy / 1.1, /1.05).
@@ -132,6 +125,7 @@ def test_compute_betas_uses_sector_mean_prior_when_available(tmp_path: Path):
         cache_dir=tmp_path,
         sectors=sectors,
         fetch_fn=fake_fetch,
+        apply_shrinkage=True,
     )
     for r in results.values():
         assert r.sector == "test_sector_a"
@@ -147,23 +141,38 @@ def test_compute_betas_uses_sector_mean_prior_when_available(tmp_path: Path):
 
 
 def test_compute_betas_falls_back_when_fetch_returns_nothing(tmp_path: Path):
-    """No price data -> curated_fallback (or default_fallback) provenance."""
+    """No price data -> default_fallback (not curated map) by default."""
 
     def empty_fetch(symbols, **kwargs):  # noqa: ARG001
         return {}
 
-    # NVDA is in the curated BETA_TO_SPY map; UNKNOWN_TKR_42 is not.
     results = bl.compute_betas(
         ["NVDA", "UNKNOWN_TKR_42"],
         cache_dir=tmp_path,
         fetch_fn=empty_fetch,
     )
-    assert results["NVDA"].provenance == "curated_fallback"
-    assert results["NVDA"].beta_to_spy == pytest.approx(bl.BETA_TO_SPY["NVDA"])
+    assert results["NVDA"].provenance == "default_fallback"
+    assert results["NVDA"].beta_to_spy == pytest.approx(bl.DEFAULT_SINGLE_NAME_BETA)
     assert results["UNKNOWN_TKR_42"].provenance == "default_fallback"
     assert results["UNKNOWN_TKR_42"].beta_to_spy == pytest.approx(
         bl.DEFAULT_SINGLE_NAME_BETA
     )
+
+
+def test_compute_betas_curated_fallback_when_shrinkage_enabled(tmp_path: Path):
+    """Legacy shrinkage path still uses curated map when fetch is empty."""
+
+    def empty_fetch(symbols, **kwargs):  # noqa: ARG001
+        return {}
+
+    results = bl.compute_betas(
+        ["NVDA", "UNKNOWN_TKR_42"],
+        cache_dir=tmp_path,
+        fetch_fn=empty_fetch,
+        apply_shrinkage=True,
+    )
+    assert results["NVDA"].provenance == "curated_fallback"
+    assert results["NVDA"].beta_to_spy == pytest.approx(bl.BETA_TO_SPY["NVDA"])
 
 
 # ---------------------------------------------------------------------------

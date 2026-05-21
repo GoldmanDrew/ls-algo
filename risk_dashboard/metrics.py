@@ -1616,12 +1616,42 @@ def _load_screener_vol_map(screener_csv: Path | None) -> dict[str, float]:
     return out
 
 
+def _load_screener_underlying_rows(
+    screener_csv: Path | None,
+) -> dict[str, dict[str, Any]]:
+    """Underlying -> screener metadata for sector_loader (no override map)."""
+    if screener_csv is None or not screener_csv.is_file():
+        return {}
+    try:
+        df = pd.read_csv(
+            screener_csv,
+            usecols=["Underlying", "product_class", "Delta_product_class"],
+        )
+    except Exception:
+        try:
+            df = pd.read_csv(screener_csv, usecols=["Underlying", "product_class"])
+        except Exception:
+            return {}
+    out: dict[str, dict[str, Any]] = {}
+    for _, r in df.iterrows():
+        u = _clean_str(r.get("Underlying")).upper()
+        if not u or u in out:
+            continue
+        pc = _clean_str(r.get("product_class")) or _clean_str(r.get("Delta_product_class"))
+        row: dict[str, Any] = {}
+        if pc:
+            row["product_class"] = pc.lower()
+        out[u] = row
+    return out
+
+
 def compute_factor_panel(
     underlying_exposure_csv: Path,
     nav_usd: float,
     *,
     beta_results: dict[str, Any] | None = None,
     screener_vol_map: dict[str, float] | None = None,
+    screener_underlying_rows: dict[str, dict[str, Any]] | None = None,
     blocked_exposure_keys: set[str] | None = None,
 ) -> dict[str, Any]:
     """Compute beta-weighted net exposure, sector groupings and top names.
@@ -1658,13 +1688,13 @@ def compute_factor_panel(
         net = float(raw.get("net_notional_usd", 0.0) or 0.0)
         gross = float(raw.get("gross_notional_usd", 0.0) or 0.0)
         legs = int(raw.get("n_legs", 0) or 0)
-        # Sector via tiered resolver. The override / heuristic tiers
-        # are pure functions; the vendor tier is left empty here because
-        # build_snapshot does not call yfinance.Ticker(...).info today.
-        # If beta_results carries a `sector` (sector_loader was wired
-        # upstream) prefer that so the panel matches whatever was used
-        # to compute betas.
-        sector_meta = resolve_sector(underlying)
+        # Sector via screener / vendor / heuristic tiers (override map off).
+        u_key = (underlying or "").strip().upper()
+        sector_meta = resolve_sector(
+            underlying,
+            screener_row=(screener_underlying_rows or {}).get(u_key),
+            use_override=False,
+        )
         sector = sector_meta["sector"]
         sector_source = sector_meta["sector_source"]
         sector_confidence: float | None = sector_meta.get("sector_confidence")
@@ -1710,10 +1740,6 @@ def compute_factor_panel(
                 shrinkage_weight = br.get("shrinkage_weight")
                 prior_used_spy = br.get("prior_used_spy")
                 prior_source = br.get("prior_source")
-                sec_from_loader = br.get("sector")
-                if sec_from_loader:
-                    sector = str(sec_from_loader).lower()
-                    sector_source = "computed_with_sector_loader"
         if regime_vol_pct is None and screener_vol_map:
             regime_vol_pct = screener_vol_map.get((underlying or "").strip().upper())
         beta_net = net * beta_to_spy
@@ -3585,19 +3611,9 @@ def build_snapshot(
                 underlyings = []
         if underlyings:
             try:
-                # Resolve sectors first so compute_betas can build a
-                # per-sector mean prior and shrink toward it.
-                from .sector_loader import batch_resolve as _batch_resolve_sectors
-
-                sector_pack = _batch_resolve_sectors(underlyings)
-                sectors_for_betas = {
-                    sym: meta.get("sector", "other")
-                    for sym, meta in sector_pack.items()
-                }
                 _br = compute_betas(
                     underlyings,
                     cache_dir=beta_cache_dir,
-                    sectors=sectors_for_betas,
                 )
                 beta_results_dicts = {k: v.to_dict() for k, v in _br.items()}
                 if write_summary_cache is not None and _br:
@@ -3610,11 +3626,13 @@ def build_snapshot(
                 beta_results_dicts = {}
 
     screener_vol_map = _load_screener_vol_map(screener_csv)
+    screener_underlying_rows = _load_screener_underlying_rows(screener_csv)
     factor_panel = compute_factor_panel(
         underlying_exposure_csv=accounting / "net_exposure_by_underlying.csv",
         nav_usd=nav_usd,
         beta_results=beta_results_dicts or None,
         screener_vol_map=screener_vol_map or None,
+        screener_underlying_rows=screener_underlying_rows or None,
         blocked_exposure_keys=blocked_exposure_keys,
     )
     concentration_panel = compute_concentration_panel(

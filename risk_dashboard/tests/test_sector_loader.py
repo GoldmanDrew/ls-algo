@@ -23,6 +23,7 @@ def test_override_tier_wins_first():
         "QBTS",
         screener_row={"sector": "noise-should-not-win"},
         vendor_info={"sector": "Technology", "industry": "Software"},
+        use_override=True,
     )
     assert out["sector"] == "quantum"
     assert out["sector_source"] == "override"
@@ -30,7 +31,7 @@ def test_override_tier_wins_first():
 
 
 def test_override_handles_case_and_whitespace():
-    out = resolve_sector(" qbts ")
+    out = resolve_sector(" qbts ", use_override=True)
     assert out["sector"] == "quantum"
     assert out["sector_source"] == "override"
 
@@ -40,7 +41,10 @@ def test_override_handles_case_and_whitespace():
 # ---------------------------------------------------------------------------
 
 
-def test_screener_tier_used_when_override_misses():
+def test_override_off_by_default():
+    out = resolve_sector("QBTS")
+    assert out["sector_source"] != "override"
+    assert out["sector"] == "other"
     out = resolve_sector(
         "NOT_IN_ANY_MAP",
         screener_row={"theme": "ai-infrastructure"},
@@ -171,6 +175,7 @@ def test_batch_resolve_routes_per_symbol_inputs():
         ["QBTS", "FAKE_SEMI", "ZZZ_BLANK"],
         screener_rows={"ZZZ_BLANK": {"sector": "consumer"}},
         vendor_info_by_symbol={"FAKE_SEMI": {"industry": "Semiconductors"}},
+        use_override=True,
     )
     assert out["QBTS"]["sector_source"] == "override"
     assert out["FAKE_SEMI"]["sector"] == "semis"
@@ -180,7 +185,7 @@ def test_batch_resolve_routes_per_symbol_inputs():
 
 
 def test_batch_resolve_normalizes_keys_to_upper():
-    out = batch_resolve(["qbts", " ionq "])
+    out = batch_resolve(["qbts", " ionq "], use_override=True)
     assert "QBTS" in out
     assert "IONQ" in out
     assert out["QBTS"]["sector"] == "quantum"
