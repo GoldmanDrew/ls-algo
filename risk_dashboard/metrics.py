@@ -34,7 +34,13 @@ from .scenario_engine import (
     horizon_to_years,
     resolve_sigma_annual,
 )
-from .vol_vix_beta import compute_vol_vix_betas, leg_sigma_for_vix_shock
+from .vol_vix_model import (
+    beta_summary_dict,
+    compute_vol_vix_pack,
+    leg_sigma_for_vix_scenario,
+    load_vol_vix_config,
+)
+from .vix_scenario import HISTORICAL_VIX_SCENARIOS, ScenarioMode, historical_scenario_specs
 
 try:
     from .beta_loader import compute_betas, write_summary_cache  # noqa: F401
@@ -2810,6 +2816,44 @@ def _slide_scenario_legs_for_row(
     ]
 
 
+def _sigma_and_borrow_overrides_for_vix_scenario(
+    legs: list[dict[str, Any]],
+    *,
+    underlying: str,
+    underlying_sigma: float | None,
+    vol_vix_pack: dict[str, Any],
+    vix_shock_pts: float = 0.0,
+    vix_new_pts: float | None = None,
+    mode: ScenarioMode | None = None,
+    corr_lift_override: float | None = None,
+    borrow_lift: float = 1.0,
+) -> tuple[dict[str, float], dict[str, float]]:
+    sigma_out: dict[str, float] = {}
+    borrow_out: dict[str, float] = {}
+    vix_current = float(vol_vix_pack.get("vix_current_pts") or 20.0)
+    v_new = vix_new_pts if vix_new_pts is not None else vix_current + float(vix_shock_pts)
+    for leg in legs:
+        sym = str(leg.get("symbol") or "").upper()
+        if not sym:
+            continue
+        sigma, borrow = leg_sigma_for_vix_scenario(
+            leg,
+            underlying=underlying,
+            underlying_sigma=underlying_sigma,
+            vol_vix_pack=vol_vix_pack,
+            vix_new_pts=v_new,
+            vix_shock_pts=vix_shock_pts,
+            mode=mode,
+            corr_lift_override=corr_lift_override,
+            borrow_lift=borrow_lift,
+        )
+        if sigma is not None:
+            sigma_out[sym] = sigma
+        if borrow is not None and borrow > 0:
+            borrow_out[sym] = borrow
+    return sigma_out, borrow_out
+
+
 def _sigma_overrides_for_vix_shock(
     legs: list[dict[str, Any]],
     *,
@@ -2817,22 +2861,17 @@ def _sigma_overrides_for_vix_shock(
     underlying_sigma: float | None,
     vol_vix_pack: dict[str, Any],
     vix_shock_pts: float,
+    **kwargs: Any,
 ) -> dict[str, float]:
-    out: dict[str, float] = {}
-    for leg in legs:
-        sym = str(leg.get("symbol") or "").upper()
-        if not sym:
-            continue
-        sigma = leg_sigma_for_vix_shock(
-            leg,
-            underlying=underlying,
-            underlying_sigma=underlying_sigma,
-            vol_vix_pack=vol_vix_pack,
-            vix_shock_pts=vix_shock_pts,
-        )
-        if sigma is not None:
-            out[sym] = sigma
-    return out
+    sigma, _ = _sigma_and_borrow_overrides_for_vix_scenario(
+        legs,
+        underlying=underlying,
+        underlying_sigma=underlying_sigma,
+        vol_vix_pack=vol_vix_pack,
+        vix_shock_pts=vix_shock_pts,
+        **kwargs,
+    )
+    return sigma
 
 
 def _slide_horizon_scenario_totals(
@@ -2845,6 +2884,10 @@ def _slide_horizon_scenario_totals(
     require_beta: bool = True,
     vol_vix_pack: dict[str, Any] | None = None,
     vix_shock_pts: float = 0.0,
+    vix_new_pts: float | None = None,
+    vix_scenario_mode: ScenarioMode | None = None,
+    corr_lift_override: float | None = None,
+    borrow_lift: float = 1.0,
 ) -> dict[str, Any]:
     totals = {
         "beta_pnl_usd": 0.0,
@@ -2865,17 +2908,24 @@ def _slide_horizon_scenario_totals(
         else:
             underlying_return = 0.0
         legs = _slide_scenario_legs_for_row(e, etf_meta=etf_meta)
-        sigma_overrides = (
-            _sigma_overrides_for_vix_shock(
+        sigma_overrides: dict[str, float] | None = None
+        borrow_overrides: dict[str, float] | None = None
+        if vol_vix_pack:
+            sigma_overrides, borrow_overrides = _sigma_and_borrow_overrides_for_vix_scenario(
                 legs,
                 underlying=str(e.get("underlying") or ""),
                 underlying_sigma=e.get("sigma"),
                 vol_vix_pack=vol_vix_pack,
                 vix_shock_pts=vix_shock_pts,
+                vix_new_pts=vix_new_pts,
+                mode=vix_scenario_mode,
+                corr_lift_override=corr_lift_override,
+                borrow_lift=borrow_lift,
             )
-            if vol_vix_pack
-            else None
-        )
+            if not sigma_overrides:
+                sigma_overrides = None
+            if not borrow_overrides:
+                borrow_overrides = None
         agg = aggregate_leg_scenario_pnl(
             legs,
             underlying_return=underlying_return,
@@ -2883,6 +2933,7 @@ def _slide_horizon_scenario_totals(
             vol_multiplier=vol_multiplier,
             underlying_sigma=e.get("sigma"),
             sigma_overrides=sigma_overrides,
+            borrow_overrides=borrow_overrides,
         )
         for key in (
             "beta_pnl_usd",
@@ -2912,6 +2963,51 @@ def _slide_horizon_scenario_totals(
     return totals
 
 
+def _run_vix_scenario_cell(
+    enriched: list[dict[str, Any]],
+    *,
+    etf_meta: dict[str, dict[str, Any]],
+    nav_usd: float,
+    vol_vix_pack: dict[str, Any],
+    horizon_key: str,
+    label: str,
+    vix_new_pts: float,
+    vix_shock_pts: float = 0.0,
+    mode: ScenarioMode | None = None,
+    corr_lift_override: float | None = None,
+    borrow_lift: float = 1.0,
+    scenario_key: str = "",
+) -> dict[str, Any]:
+    totals = _slide_horizon_scenario_totals(
+        enriched,
+        etf_meta=etf_meta,
+        shock_pct=0.0,
+        horizon_key=horizon_key,
+        require_beta=False,
+        vol_vix_pack=vol_vix_pack,
+        vix_shock_pts=vix_shock_pts,
+        vix_new_pts=vix_new_pts,
+        vix_scenario_mode=mode,
+        corr_lift_override=corr_lift_override,
+        borrow_lift=borrow_lift,
+    )
+    return {
+        "scenario_key": scenario_key,
+        "label": label,
+        "vix_shock_pts": vix_shock_pts,
+        "vix_level_pts": vix_new_pts,
+        "scenario_mode": mode or (vol_vix_pack.get("config") or {}).get("scenario_mode_default", "sustained"),
+        "sigma_annual_median": totals.get("sigma_annual_median"),
+        "beta_pnl_pct_nav": totals["beta_pnl_usd"] / nav_usd if nav_usd > 0 else None,
+        "decay_pnl_pct_nav": totals["decay_pnl_usd"] / nav_usd if nav_usd > 0 else None,
+        "borrow_pnl_pct_nav": totals["borrow_pnl_usd"] / nav_usd if nav_usd > 0 else None,
+        "total_pnl_pct_nav": totals["total_pnl_usd"] / nav_usd if nav_usd > 0 else None,
+        "total_pnl_usd": totals["total_pnl_usd"],
+        "decay_pnl_usd": totals["decay_pnl_usd"],
+        "borrow_pnl_usd": totals["borrow_pnl_usd"],
+    }
+
+
 def _build_vix_decay_matrix(
     enriched: list[dict[str, Any]],
     *,
@@ -2922,78 +3018,196 @@ def _build_vix_decay_matrix(
     horizon_key: str = VIX_DECAY_HORIZON,
 ) -> dict[str, Any]:
     """12M expected book carry at SPX 0% under VIX-shocked forecast vol."""
-    shock_list = (0,) + tuple(sorted({int(x) for x in vix_shocks}))
-    vix_pts = vol_vix_pack.get("vix_current_pts")
-    cells: list[dict[str, Any]] = []
-    baseline_total_usd: float | None = None
+    vix_pts = float(vol_vix_pack.get("vix_current_pts") or 20.0)
+    cfg = vol_vix_pack.get("config") or {}
+    sustained_mode: ScenarioMode = "sustained"
+    spike_mode: ScenarioMode = "spike_revert"
 
+    def _finalize_cells(raw_cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        baseline = next((c["total_pnl_usd"] for c in raw_cells if c.get("vix_shock_pts") == 0), None)
+        out: list[dict[str, Any]] = []
+        for c in raw_cells:
+            delta_pct = None
+            if baseline is not None and nav_usd > 0:
+                if c.get("vix_shock_pts") == 0:
+                    delta_pct = 0.0
+                else:
+                    delta_pct = (float(c["total_pnl_usd"]) - float(baseline)) / nav_usd
+            out.append({**c, "delta_vs_current_pct_nav": delta_pct})
+        return out
+
+    cells_sustained: list[dict[str, Any]] = []
+    shock_list = (0,) + tuple(sorted({int(x) for x in vix_shocks}))
     for pts in shock_list:
+        vix_new = vix_pts + float(pts)
         if pts == 0:
-            label = (
-                f"Current VIX ({vix_pts:.1f})"
-                if isinstance(vix_pts, (int, float)) and vix_pts == vix_pts
-                else "Current VIX"
-            )
+            label = f"Current VIX ({vix_pts:.1f})"
         else:
             label = f"VIX {pts:+d} pts"
-        vix_level = (
-            float(vix_pts) + float(pts)
-            if isinstance(vix_pts, (int, float)) and vix_pts == vix_pts
-            else None
+        cells_sustained.append(
+            _run_vix_scenario_cell(
+                enriched,
+                etf_meta=etf_meta,
+                nav_usd=nav_usd,
+                vol_vix_pack=vol_vix_pack,
+                horizon_key=horizon_key,
+                label=label,
+                vix_new_pts=vix_new,
+                vix_shock_pts=float(pts),
+                mode=sustained_mode,
+                scenario_key=f"sustained_{pts:+d}",
+            )
         )
-        totals = _slide_horizon_scenario_totals(
+    cells_sustained = _finalize_cells(cells_sustained)
+
+    cells_spike: list[dict[str, Any]] = []
+    for pts in shock_list:
+        if pts == 0:
+            continue
+        vix_new = vix_pts + float(pts)
+        cells_spike.append(
+            _run_vix_scenario_cell(
+                enriched,
+                etf_meta=etf_meta,
+                nav_usd=nav_usd,
+                vol_vix_pack=vol_vix_pack,
+                horizon_key=horizon_key,
+                label=f"VIX {pts:+d} pts (spike & revert)",
+                vix_new_pts=vix_new,
+                vix_shock_pts=float(pts),
+                mode=spike_mode,
+                scenario_key=f"spike_{pts:+d}",
+            )
+        )
+    if cells_sustained:
+        baseline = cells_sustained[0]
+        cells_spike.insert(
+            0,
+            {**baseline, "label": f"Current VIX ({vix_pts:.1f})", "scenario_mode": spike_mode},
+        )
+    cells_spike = _finalize_cells(cells_spike)
+
+    historical: list[dict[str, Any]] = []
+    for spec in historical_scenario_specs():
+        peak = float(spec.vix_peak_pts or spec.vix_new_pts)
+        cell = _run_vix_scenario_cell(
             enriched,
+            etf_meta=etf_meta,
+            nav_usd=nav_usd,
+            vol_vix_pack=vol_vix_pack,
+            horizon_key=horizon_key,
+            label=spec.label,
+            vix_new_pts=peak,
+            mode=spike_mode,
+            corr_lift_override=spec.corr_lift,
+            borrow_lift=spec.borrow_lift,
+            scenario_key=spec.key,
+        )
+        cell["vix_peak_pts"] = peak
+        cell["vix_end_pts"] = spec.vix_end_pts
+        cell["peak_days"] = spec.peak_days
+        cell["corr_lift"] = spec.corr_lift
+        cell["borrow_lift"] = spec.borrow_lift
+        if cells_sustained and nav_usd > 0:
+            cell["delta_vs_current_pct_nav"] = (
+                float(cell["total_pnl_usd"]) - float(cells_sustained[0]["total_pnl_usd"])
+            ) / nav_usd
+        historical.append(cell)
+
+    per_name: list[dict[str, Any]] = []
+    vix_plus_20 = vix_pts + 20.0
+    for e in enriched:
+        underlying = str(e.get("underlying") or "").upper()
+        if not underlying:
+            continue
+        legs = _slide_scenario_legs_for_row(e, etf_meta=etf_meta)
+        sigma_base = e.get("sigma")
+        betas = vol_vix_pack.get("betas") or {}
+        beta_res = betas.get(underlying)
+        beta_vol = None
+        if beta_res is not None:
+            beta_vol = getattr(beta_res, "beta_vol_vix", None) or (
+                beta_res.get("beta_vol_vix") if isinstance(beta_res, dict) else None
+            )
+        sigma_shocked = None
+        if sigma_base is not None:
+            sigmas, _ = _sigma_and_borrow_overrides_for_vix_scenario(
+                legs,
+                underlying=underlying,
+                underlying_sigma=sigma_base,
+                vol_vix_pack=vol_vix_pack,
+                vix_new_pts=vix_plus_20,
+                mode=sustained_mode,
+            )
+            if sigmas:
+                sigma_shocked = float(sorted(sigmas.values())[len(sigmas) // 2])
+        totals = _slide_horizon_scenario_totals(
+            [e],
             etf_meta=etf_meta,
             shock_pct=0.0,
             horizon_key=horizon_key,
             require_beta=False,
             vol_vix_pack=vol_vix_pack,
-            vix_shock_pts=float(pts),
+            vix_new_pts=vix_plus_20,
+            vix_scenario_mode=sustained_mode,
         )
-        if pts == 0:
-            baseline_total_usd = float(totals["total_pnl_usd"])
-        total_pct = totals["total_pnl_usd"] / nav_usd if nav_usd > 0 else None
-        delta_pct = None
-        if baseline_total_usd is not None and pts != 0 and nav_usd > 0:
-            delta_pct = (float(totals["total_pnl_usd"]) - baseline_total_usd) / nav_usd
-        elif pts == 0:
-            delta_pct = 0.0
-        cells.append(
+        per_name.append(
             {
-                "vix_shock_pts": pts,
-                "label": label,
-                "vix_level_pts": vix_level,
-                "sigma_annual_median": totals.get("sigma_annual_median"),
-                "beta_pnl_pct_nav": totals["beta_pnl_usd"] / nav_usd if nav_usd > 0 else None,
-                "decay_pnl_pct_nav": totals["decay_pnl_usd"] / nav_usd if nav_usd > 0 else None,
-                "borrow_pnl_pct_nav": totals["borrow_pnl_usd"] / nav_usd if nav_usd > 0 else None,
-                "total_pnl_pct_nav": total_pct,
-                "total_pnl_usd": totals["total_pnl_usd"],
+                "underlying": underlying,
+                "symbols": e.get("symbols"),
+                "beta_vol_vix": beta_vol,
+                "sigma_base": sigma_base,
+                "sigma_shocked_plus_20": sigma_shocked,
                 "decay_pnl_usd": totals["decay_pnl_usd"],
-                "borrow_pnl_usd": totals["borrow_pnl_usd"],
-                "delta_vs_current_pct_nav": delta_pct,
+                "net_notional_usd": e.get("net_notional_usd"),
             }
         )
+    per_name.sort(key=lambda r: abs(float(r.get("decay_pnl_usd") or 0.0)), reverse=True)
 
-    beta_summary = {
-        sym: res.to_dict()
-        for sym, res in (vol_vix_pack.get("betas") or {}).items()
+    term = vol_vix_pack.get("term_structure") or {}
+    current_cell = next((c for c in cells_sustained if c.get("vix_shock_pts") == 0), cells_sustained[0] if cells_sustained else None)
+    headline = {
+        "sigma_book_median": (current_cell or {}).get("sigma_annual_median"),
+        "vix_spot_pts": vix_pts,
+        "vix9d_pts": term.get("vix9d_pts"),
+        "vix3m_pts": term.get("vix3m_pts"),
+        "vvix_pts": term.get("vvix_pts"),
+        "term_structure": term.get("term_structure"),
+        "carry_12m_pct_nav": cells_sustained[0]["total_pnl_pct_nav"] if cells_sustained else None,
     }
+
+    beta_summary = beta_summary_dict(vol_vix_pack)
+    decomp = vol_vix_pack.get("variance_decomp") or {}
+    est_ver = vol_vix_pack.get("estimator_version", "unknown")
     return {
         "spx_shock_pct": 0.0,
         "horizon_key": horizon_key,
         "horizon_label": f"{horizon_key} expected decay (SPX 0%)",
         "description": (
             "Expected book carry over the next 12 months at SPX 0%, "
-            "with each name's forecast vol adjusted by its historical vol→VIX β."
+            "with forecast vol adjusted by vol elasticity (v3 log-log), "
+            "variance decomposition, and optional spike-revert path integral."
         ),
-        "vix_current_pts": vol_vix_pack.get("vix_current_pts"),
+        "vix_current_pts": vix_pts,
         "vix_current": vol_vix_pack.get("vix_current"),
-        "cells": cells,
+        "cells": cells_sustained,
+        "cells_spike_revert": cells_spike,
+        "historical_scenarios": historical,
+        "headline": headline,
+        "per_name_contributions": per_name[:50],
         "vol_vix_betas": beta_summary,
+        "variance_decomp_summary": {
+            "n_decomp": decomp.get("n_decomp"),
+            "n_total": decomp.get("n_total"),
+            "sigma_spx": decomp.get("sigma_spx"),
+            "vrp_factor": decomp.get("vrp_factor"),
+        },
         "n_vol_betas_computed": vol_vix_pack.get("n_computed"),
         "n_vol_betas_shrunk": vol_vix_pack.get("n_shrunk"),
-        "vol_vix_estimator_version": vol_vix_pack.get("estimator_version"),
+        "vol_vix_estimator_version": est_ver,
+        "ewma_lambda": vol_vix_pack.get("ewma_lambda"),
+        "scenario_mode_default": cfg.get("scenario_mode_default", "sustained"),
+        "historical_catalog": list(HISTORICAL_VIX_SCENARIOS),
     }
 
 
@@ -3153,6 +3367,8 @@ def compute_slide_risk_panel(
     limits: dict[str, dict[str, Any]] | None = None,
     beta_cache_dir: Path | None = None,
     vol_vix_pack: dict[str, Any] | None = None,
+    beta_results: dict[str, dict[str, Any]] | None = None,
+    repo_root: Path | None = None,
 ) -> dict[str, Any]:
     """Slide risk strips for SPX (beta-adjusted) and VIX (vega + vol-beta decay)."""
     limits = limits or DEFAULT_LIMITS
@@ -3187,11 +3403,14 @@ def compute_slide_risk_panel(
                 "product_class": str(e.get("vega_product_class") or ""),
                 "sector": str(sec),
             }
+        vol_cfg = load_vol_vix_config(repo_root)
         try:
-            vol_vix_pack = compute_vol_vix_betas(
+            vol_vix_pack = compute_vol_vix_pack(
                 underlyings,
                 cache_dir=beta_cache_dir,
                 underlying_meta=vol_meta,
+                beta_results=beta_results,
+                config=vol_cfg,
             )
         except Exception:
             vol_vix_pack = {
@@ -3200,6 +3419,7 @@ def compute_slide_risk_panel(
                 "betas": {},
                 "n_computed": 0,
                 "n_total": 0,
+                "estimator_version": "error",
             }
 
     indices_out: list[dict[str, Any]] = []
@@ -3974,6 +4194,8 @@ def build_snapshot(
         flex_positions_xml=flex / "flex_positions.xml",
         limits=limits,
         beta_cache_dir=beta_cache_dir,
+        beta_results=beta_results_dicts or None,
+        repo_root=repo_root,
     )
     borrow_shock_panel = compute_borrow_shock_panel(
         borrow_panel=borrow_panel,

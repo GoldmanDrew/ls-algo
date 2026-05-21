@@ -380,6 +380,7 @@ def aggregate_leg_scenario_pnl(
     vol_multiplier: float = 1.0,
     underlying_sigma: float | None = None,
     sigma_overrides: dict[str, float] | None = None,
+    borrow_overrides: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Sum scenario P&L components across legs (USD, not %)."""
     totals = {
@@ -399,8 +400,14 @@ def aggregate_leg_scenario_pnl(
             continue
         sym = str(leg.get("symbol") or "").upper()
         sigma_override = (sigma_overrides or {}).get(sym)
+        borrow = float(leg.get("borrow_fee_annual") or 0.0)
+        if borrow_overrides and sym in borrow_overrides:
+            borrow = float(borrow_overrides[sym])
+        leg_for_model = leg
+        if borrow_overrides and sym in borrow_overrides:
+            leg_for_model = {**leg, "borrow_fee_annual": borrow}
         result = model_leg_return(
-            leg=leg,
+            leg=leg_for_model,
             underlying_return=underlying_return,
             horizon_key=horizon_key,
             vol_multiplier=vol_multiplier,

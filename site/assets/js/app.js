@@ -1120,51 +1120,126 @@
       .map((idx) => {
         if (idx.strip_type === "vix_pts" || idx.strip_type === "vix_decay") {
           const vixMatrix = idx.vix_decay_matrix || null;
-          const decayCells = vixMatrix?.cells || [];
-          const decayHeader = decayCells
-            .map((c) => `<th class="slide-shock">${safeText(c.label)}</th>`)
-            .join("");
-          const decayRow = decayCells
-            .map((cell) => {
-              const tip = [
-                cell.sigma_annual_median != null
-                  ? `σ med ${(Number(cell.sigma_annual_median) * 100).toFixed(0)}%`
-                  : null,
-                cell.decay_pnl_pct_nav != null
-                  ? `Decay ${fmtPct(cell.decay_pnl_pct_nav, 2)}`
-                  : null,
-                cell.borrow_pnl_pct_nav != null
-                  ? `Borrow ${fmtPct(cell.borrow_pnl_pct_nav, 2)}`
-                  : null,
-                cell.delta_vs_current_pct_nav != null
-                  ? `Δ vs current ${fmtPct(cell.delta_vs_current_pct_nav, 2)}`
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(" · ");
-              return `<td class="num ${signedClass(cell.total_pnl_pct_nav)} ${scenarioHeatClass(
-                cell.total_pnl_pct_nav
-              )}" title="${safeText(tip)}">${fmtPct(cell.total_pnl_pct_nav, 1)}</td>`;
-            })
-            .join("");
-          const decayMeta = vixMatrix
-            ? `<p class="dim small">${safeText(
-                vixMatrix.description,
-                "Expected 12M book carry at SPX 0% under VIX-shocked vol."
-              )} Vol→VIX β (v2 diff-OLS): ${vixMatrix.n_vol_betas_computed ?? "?"}/${Object.keys(vixMatrix.vol_vix_betas || {}).length} computed${
-                vixMatrix.n_vol_betas_shrunk != null ? `, ${vixMatrix.n_vol_betas_shrunk} shrunk` : ""
-              }.</p>`
-            : "";
-          if (!decayCells.length) {
+          if (!vixMatrix) {
             return `<div class="slide-strip"><p class="dim small">12M VIX decay projection unavailable.</p></div>`;
           }
+
+          function renderVixMatrixTable(cells, title, subtitle) {
+            if (!cells || !cells.length) return "";
+            const header = cells
+              .map((c) => `<th class="slide-shock">${safeText(c.label)}</th>`)
+              .join("");
+            const row = cells
+              .map((cell) => {
+                const tip = [
+                  cell.sigma_annual_median != null
+                    ? `σ med ${(Number(cell.sigma_annual_median) * 100).toFixed(0)}%`
+                    : null,
+                  cell.decay_pnl_pct_nav != null
+                    ? `Decay ${fmtPct(cell.decay_pnl_pct_nav, 2)}`
+                    : null,
+                  cell.borrow_pnl_pct_nav != null
+                    ? `Borrow ${fmtPct(cell.borrow_pnl_pct_nav, 2)}`
+                    : null,
+                  cell.delta_vs_current_pct_nav != null
+                    ? `Δ vs current ${fmtPct(cell.delta_vs_current_pct_nav, 2)}`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
+                return `<td class="num ${signedClass(cell.total_pnl_pct_nav)} ${scenarioHeatClass(
+                  cell.total_pnl_pct_nav
+                )}" title="${safeText(tip)}">${fmtPct(cell.total_pnl_pct_nav, 1)}</td>`;
+              })
+              .join("");
+            return `<div class="slide-strip" style="margin-top:12px;">
+              <h4>${title}</h4>
+              ${subtitle ? `<p class="dim small">${subtitle}</p>` : ""}
+              <div class="slide-strip-scroll">
+                <table class="tight slide-table"><thead><tr><th class="row-label">Horizon</th>${header}</tr></thead>
+                <tbody><tr><th class="row-label">12M <span class="dim small">SPX 0%</span></th>${row}</tr></tbody></table>
+              </div>
+            </div>`;
+          }
+
+          const hl = vixMatrix.headline || {};
+          const headlineStrip = `<div class="strip" style="margin-bottom:8px;">
+            <div class="stat"><div class="label">VIX spot</div><div class="value">${hl.vix_spot_pts != null ? Number(hl.vix_spot_pts).toFixed(1) : "-"}</div></div>
+            <div class="stat"><div class="label">VIX 9D / 3M</div><div class="value">${hl.vix9d_pts != null ? Number(hl.vix9d_pts).toFixed(1) : "-"} / ${hl.vix3m_pts != null ? Number(hl.vix3m_pts).toFixed(1) : "-"}</div><div class="sub">${safeText(hl.term_structure, "")}</div></div>
+            <div class="stat"><div class="label">VVIX</div><div class="value">${hl.vvix_pts != null ? Number(hl.vvix_pts).toFixed(1) : "-"}</div></div>
+            <div class="stat"><div class="label">σ book (med)</div><div class="value">${hl.sigma_book_median != null ? (Number(hl.sigma_book_median) * 100).toFixed(0) + "%" : "-"}</div></div>
+            <div class="stat"><div class="label">12M carry</div><div class="value ${signedClass(hl.carry_12m_pct_nav)}">${hl.carry_12m_pct_nav != null ? fmtPct(hl.carry_12m_pct_nav, 1) : "-"}</div></div>
+          </div>`;
+
+          const estVer = vixMatrix.vol_vix_estimator_version || "unknown";
+          const decomp = vixMatrix.variance_decomp_summary || {};
+          const decayMeta = `<p class="dim small">${safeText(
+            vixMatrix.description,
+            "Expected 12M book carry at SPX 0% under VIX-shocked vol."
+          )} Estimator: <strong>${safeText(estVer)}</strong> · ${vixMatrix.n_vol_betas_computed ?? "?"}/${Object.keys(vixMatrix.vol_vix_betas || {}).length} computed${
+            vixMatrix.n_vol_betas_shrunk != null ? `, ${vixMatrix.n_vol_betas_shrunk} shrunk` : ""
+          } · variance decomp ${decomp.n_decomp ?? 0}/${decomp.n_total ?? 0} names · VRP k=${decomp.vrp_factor ?? "?"}.</p>`;
+
+          const sustainedTbl = renderVixMatrixTable(
+            vixMatrix.cells,
+            "Sustained VIX (parallel shifts)",
+            "VIX shifts to new level and stays for 12M."
+          );
+          const spikeTbl = renderVixMatrixTable(
+            vixMatrix.cells_spike_revert,
+            "Spike & revert (parallel shifts)",
+            "VIX jumps then mean-reverts (κ≈5, θ≈18)."
+          );
+
+          const hist = vixMatrix.historical_scenarios || [];
+          const histTbl = hist.length
+            ? `<div class="slide-strip" style="margin-top:12px;">
+              <h4>Historical analog scenarios</h4>
+              <table class="tight"><thead><tr>
+                <th>Scenario</th><th>VIX peak</th><th>12M total</th><th>Decay</th><th>Borrow</th><th>Δ vs current</th>
+              </tr></thead><tbody>${hist
+                .map(
+                  (h) => `<tr>
+                    <td><strong>${safeText(h.label)}</strong></td>
+                    <td class="num">${h.vix_peak_pts != null ? Number(h.vix_peak_pts).toFixed(0) : "-"}</td>
+                    <td class="num ${signedClass(h.total_pnl_pct_nav)}">${fmtPct(h.total_pnl_pct_nav, 1)}</td>
+                    <td class="num">${fmtPct(h.decay_pnl_pct_nav, 1)}</td>
+                    <td class="num">${fmtPct(h.borrow_pnl_pct_nav, 1)}</td>
+                    <td class="num ${signedClass(h.delta_vs_current_pct_nav)}">${fmtPct(h.delta_vs_current_pct_nav, 1)}</td>
+                  </tr>`
+                )
+                .join("")}</tbody></table>
+            </div>`
+            : "";
+
+          const perName = vixMatrix.per_name_contributions || [];
+          const perNameTbl = perName.length
+            ? `<details style="margin-top:12px;"><summary><strong>Per-name vol sensitivity (top ${Math.min(perName.length, 25)})</strong></summary>
+              <table class="tight"><thead><tr>
+                <th>Underlying</th><th>β vol</th><th>σ base</th><th>σ @ VIX+20</th><th>12M decay $</th><th>Net $</th>
+              </tr></thead><tbody>${perName
+                .slice(0, 25)
+                .map(
+                  (r) => `<tr>
+                    <td><strong>${safeText(r.underlying)}</strong> <span class="dim small">${safeText(r.symbols, "")}</span></td>
+                    <td class="num">${r.beta_vol_vix == null ? "-" : Number(r.beta_vol_vix).toFixed(2)}</td>
+                    <td class="num">${r.sigma_base == null ? "-" : (Number(r.sigma_base) * 100).toFixed(0) + "%"}</td>
+                    <td class="num">${r.sigma_shocked_plus_20 == null ? "-" : (Number(r.sigma_shocked_plus_20) * 100).toFixed(0) + "%"}</td>
+                    <td class="num ${signedClass(r.decay_pnl_usd)}">${fmtUsdSigned(r.decay_pnl_usd)}</td>
+                    <td class="num ${signedClass(r.net_notional_usd)}">${fmtUsdSigned(r.net_notional_usd)}</td>
+                  </tr>`
+                )
+                .join("")}</tbody></table></details>`
+            : "";
+
           return `<div class="slide-strip">
             <div class="slide-strip-head"><h3>12M expected decay vs VIX (SPX 0%)</h3></div>
+            ${headlineStrip}
             ${decayMeta}
-            <div class="slide-strip-scroll">
-              <table class="tight slide-table"><thead><tr><th class="row-label">Horizon</th>${decayHeader}</tr></thead>
-              <tbody><tr><th class="row-label">12M <span class="dim small">SPX 0%</span></th>${decayRow}</tr></tbody></table>
-            </div>
+            ${sustainedTbl}
+            ${spikeTbl}
+            ${histTbl}
+            ${perNameTbl}
           </div>`;
         }
         const rows = idx.shock_rows || [];
