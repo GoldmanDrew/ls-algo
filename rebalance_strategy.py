@@ -697,9 +697,10 @@ def _establish_worker(
                     )
                     pending_legs[fut] = (etf, qty, px_etf)
 
+                shutdown_during_etf = False
                 for fut in as_completed(pending_legs):
                     if stop_requested():
-                        break
+                        shutdown_during_etf = True
                     etf, qty, px_etf = pending_legs[fut]
                     try:
                         outcome = fut.result()
@@ -725,6 +726,12 @@ def _establish_worker(
                             },
                         )
                     etf_outcomes.append(outcome)
+
+                if shutdown_during_etf:
+                    tprint(
+                        f"[ESTABLISH][{under}] Shutdown during ETF pool; drained "
+                        f"{len(etf_outcomes)}/{len(pending_legs)} leg result(s)."
+                    )
 
             for outcome in etf_outcomes:
                 local_fills.append(outcome.fill_record)
