@@ -888,8 +888,15 @@ def execute_establish_parallel(
     # default 25) and the global TWS-clients hard cap. Workers connect
     # lazily inside ``_establish_worker``; the stagger below spaces out
     # *order submission*, not connection setup.
-    establish_cap = int(exec_cfg.get("establish_max_workers", parallel_n) or parallel_n)
-    establish_cap = _establish_parallel_worker_cap(establish_cap)
+    establish_cap_cfg = int(exec_cfg.get("establish_max_workers", parallel_n) or parallel_n)
+    establish_cap = _establish_parallel_worker_cap(establish_cap_cfg)
+    if establish_cap < establish_cap_cfg:
+        tprint(
+            f"[ESTABLISH] effective_worker_cap={establish_cap} "
+            f"(configured={establish_cap_cfg}; reserved "
+            f"{_ESTABLISH_ETF_LEG_CONN_SLOTS} ETF-leg slots + "
+            f"{_ESTABLISH_TWS_HEADROOM} TWS headroom; tws_max={MAX_TWS_CLIENTS})"
+        )
     n_workers = pick_worker_count(
         n_trades=len(establish_trades),
         parallel_n_cfg=parallel_n,
