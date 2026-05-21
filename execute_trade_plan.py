@@ -671,6 +671,34 @@ class ExecResult:
     error_msg: Optional[str] = None
 
 
+def _trade_filled_sh(trade: Optional[Trade]) -> int:
+    if trade is None:
+        return 0
+    try:
+        return max(0, int(trade.orderStatus.filled or 0))
+    except Exception:
+        return 0
+
+
+def exec_result_on_exception(
+    *,
+    qty: int,
+    filled_total: int,
+    last_trade: Optional[Trade],
+    exc: BaseException,
+) -> ExecResult:
+    """Preserve partial fills when ``execute_leg`` aborts mid-leg."""
+    filled = min(qty, max(int(filled_total), _trade_filled_sh(last_trade)))
+    if filled > 0:
+        return ExecResult(
+            filled=int(filled),
+            trade=last_trade,
+            status="PARTIAL",
+            error_msg=f"{type(exc).__name__}: {exc}",
+        )
+    raise exc
+
+
 # =============================================================================
 # Global cancellation coordinator (clientId=0)
 # =============================================================================
@@ -933,79 +961,139 @@ def execute_leg(
         last_trade_local = trade2
         return int(trade2.orderStatus.filled or 0)
 
-    for attempt in range(1, max_retries + 1):
-        if stop_requested():
-            break
+    def _run_order_attempts() -> ExecResult:
+        nonlocal filled_total, last_trade_local, mktdata_force_lmt
+        for attempt in range(1, max_retries + 1):
+            if stop_requested():
+                break
 
-        remain = qty - filled_total
-        if remain <= 0:
-            break
+            remain = qty - filled_total
+            if remain <= 0:
+                break
 
-        # Cancel any stale orders for this symbol and WAIT for them to
-        # reach terminal state.  This is critical: without confirmation,
-        # the old order can still fill while the new one is also live,
-        # causing double/triple fills (the root cause of the BUY-SELL-BUY
-        # cleanup bug).
-        n_cancel = cancel_global()
-        if n_cancel:
-            ctx0 = f"[{context}]" if context else ""
-            tprint(f"{ctx0}[CANCEL] {symbol_u}: cancelled {n_cancel} stale orders (global, confirmed terminal)")
-            # Extra settle time: even after terminal confirmation, TWS may
-            # still be processing internal state.  Give it a moment.
-            ib.sleep(1.0)
+            # Cancel any stale orders for this symbol and WAIT for them to
+            # reach terminal state.  This is critical: without confirmation,
+            # the old order can still fill while the new one is also live,
+            # causing double/triple fills (the root cause of the BUY-SELL-BUY
+            # cleanup bug).
+            n_cancel = cancel_global()
+            if n_cancel:
+                ctx0 = f"[{context}]" if context else ""
+                tprint(f"{ctx0}[CANCEL] {symbol_u}: cancelled {n_cancel} stale orders (global, confirmed terminal)")
+                # Extra settle time: even after terminal confirmation, TWS may
+                # still be processing internal state.  Give it a moment.
+                ib.sleep(1.0)
 
-        ctx = f"[{context}]" if context else ""
+            ctx = f"[{context}]" if context else ""
 
-        # IB precautionary 354 path — only discretionary limits are accepted.
-        if mktdata_force_lmt and order_style == "ADAPTIVE_MKT":
-            base = refresh_limit_reference_px()
-            filled2 = submit_limit_fallback(
-                base_px=base, attempt=attempt, tag="LMT_ONLY", ctx=ctx,
-            )
-            filled_total = min(qty, filled_total + max(0, filled2))
-            if attempt < max_retries and filled_total < qty:
-                ib.sleep(1.5)
-            continue
+            # IB precautionary 354 path — only discretionary limits are accepted.
+            if mktdata_force_lmt and order_style == "ADAPTIVE_MKT":
+                base = refresh_limit_reference_px()
+                filled2 = submit_limit_fallback(
+                    base_px=base, attempt=attempt, tag="LMT_ONLY", ctx=ctx,
+                )
+                filled_total = min(qty, filled_total + max(0, filled2))
+                if attempt < max_retries and filled_total < qty:
+                    ib.sleep(1.5)
+                continue
 
-        if order_style == "ADAPTIVE_MKT":
-            if "|UNDER_DELTA" in order_ref:
-                priority = "Urgent"
+            if order_style == "ADAPTIVE_MKT":
+                if "|UNDER_DELTA" in order_ref:
+                    priority = "Urgent"
+                else:
+                    priority = "Patient" if attempt == 1 else ("Normal" if attempt == 2 else "Urgent")
+
+                o = build_adaptive_market_order(
+                    action=action,
+                    qty=remain,
+                    order_ref=f"{order_ref}|att{attempt}|ADAPTIVE_MKT",
+                    priority=priority,
+                )
+                px_str = f"ADAPTIVE_MKT({priority})"
             else:
-                priority = "Patient" if attempt == 1 else ("Normal" if attempt == 2 else "Urgent")
+                o = build_market_order(
+                    action=action,
+                    qty=remain,
+                    order_ref=f"{order_ref}|att{attempt}|MKT",
+                )
+                px_str = "MKT"
 
-            o = build_adaptive_market_order(
-                action=action,
-                qty=remain,
-                order_ref=f"{order_ref}|att{attempt}|ADAPTIVE_MKT",
-                priority=priority,
-            )
-            px_str = f"ADAPTIVE_MKT({priority})"
-        else:
-            o = build_market_order(
-                action=action,
-                qty=remain,
-                order_ref=f"{order_ref}|att{attempt}|MKT",
-            )
-            px_str = "MKT"
+            tprint(f"{ctx}[LEG] {symbol_u} {action} qty={remain} px={px_str} refTag={o.orderRef} clientId={ib.client.clientId}")
 
-        tprint(f"{ctx}[LEG] {symbol_u} {action} qty={remain} px={px_str} refTag={o.orderRef} clientId={ib.client.clientId}")
+            if dry_run:
+                filled_total += remain
+                continue
 
-        if dry_run:
-            filled_total += remain
-            continue
+            trade = ib.placeOrder(contract, o)
+            last_trade_local = trade
 
-        trade = ib.placeOrder(contract, o)
-        last_trade_local = trade
+            accepted, trade = wait_for_trade_accepted(ib, trade, timeout=accept_timeout)
 
-        accepted, trade = wait_for_trade_accepted(ib, trade, timeout=accept_timeout)
+            if not accepted:
+                st = (trade.orderStatus.status or "").strip()
+                code, msg = last_ib_error(trade)
 
-        if not accepted:
-            st = (trade.orderStatus.status or "").strip()
+                # HARD-GRACEFUL: short not available -> do not retry/spam
+                if is_short_not_available(code, msg):
+                    tprint(f"{ctx}[LEG] {symbol_u} SHORT_BLOCKED (201): cannot increase short now. status={st}")
+                    return ExecResult(
+                        filled=int(filled_total),
+                        trade=trade,
+                        status="SHORT_BLOCKED",
+                        error_code=code,
+                        error_msg=msg,
+                    )
+
+                # Before retrying, ensure this rejected order is truly dead.
+                # Cancel it explicitly and wait for terminal, then collect any
+                # partial fills it may have accumulated before rejection.
+                try:
+                    ib.cancelOrder(trade.order)
+                except Exception:
+                    pass
+                trade = wait_for_trade_terminal(ib, trade, timeout=15.0)
+                last_trade_local = trade
+                rejected_filled = int(trade.orderStatus.filled or 0)
+                if rejected_filled > 0:
+                    filled_total = min(qty, filled_total + rejected_filled)
+                    tprint(
+                        f"{ctx}[LEG] {symbol_u} NOT_ACK but had {rejected_filled} partial fills "
+                        f"before rejection; filled_total={filled_total}"
+                    )
+
+                # Precautionary 354 can arrive before adaptive is "accepted" — do not
+                # burn retries on another ADAPTIVE; go straight to LMT.
+                if is_mktdata_block(code, msg) and order_style == "ADAPTIVE_MKT":
+                    mktdata_force_lmt = True
+                    base = refresh_limit_reference_px()
+                    tprint(
+                        f"{ctx}[LEG] {symbol_u} NOT_ACK mktdata block (code={code}); "
+                        f"LMT-only ref={base:.4f}"
+                    )
+                    filled2 = submit_limit_fallback(
+                        base_px=base, attempt=attempt, tag="LMT_FALLBACK", ctx=ctx,
+                    )
+                    filled_total = min(qty, filled_total + max(0, filled2))
+                    if attempt < max_retries and filled_total < qty:
+                        ib.sleep(1.5)
+                    continue
+
+                tprint(f"{ctx}[LEG] {symbol_u} NOT_ACK (status={st} code={code} msg={msg}); retrying.")
+                ib.sleep(1.0)
+                continue
+
+            trade = wait_for_trade_terminal(ib, trade, timeout=done_timeout)
+            last_trade_local = trade
+
+            status = (trade.orderStatus.status or "").strip().lower()
+            filled = int(trade.orderStatus.filled or 0)
+
             code, msg = last_ib_error(trade)
 
-            # HARD-GRACEFUL: short not available -> do not retry/spam
-            if is_short_not_available(code, msg):
-                tprint(f"{ctx}[LEG] {symbol_u} SHORT_BLOCKED (201): cannot increase short now. status={st}")
+            # If it terminal-cancelled due to short block, do not retry.
+            if status in ("cancelled", "inactive") and is_short_not_available(code, msg):
+                tprint(f"{ctx}[LEG] {symbol_u} SHORT_BLOCKED (201) after submit: cannot increase short now. status={status}")
+                filled_total = min(qty, filled_total + max(0, filled))
                 return ExecResult(
                     filled=int(filled_total),
                     trade=trade,
@@ -1014,114 +1102,66 @@ def execute_leg(
                     error_msg=msg,
                 )
 
-            # Before retrying, ensure this rejected order is truly dead.
-            # Cancel it explicitly and wait for terminal, then collect any
-            # partial fills it may have accumulated before rejection.
-            try:
-                ib.cancelOrder(trade.order)
-            except Exception:
-                pass
-            trade = wait_for_trade_terminal(ib, trade, timeout=15.0)
-            last_trade_local = trade
-            rejected_filled = int(trade.orderStatus.filled or 0)
-            if rejected_filled > 0:
-                filled_total = min(qty, filled_total + rejected_filled)
-                tprint(
-                    f"{ctx}[LEG] {symbol_u} NOT_ACK but had {rejected_filled} partial fills "
-                    f"before rejection; filled_total={filled_total}"
-                )
-
-            # Precautionary 354 can arrive before adaptive is "accepted" — do not
-            # burn retries on another ADAPTIVE; go straight to LMT.
-            if is_mktdata_block(code, msg) and order_style == "ADAPTIVE_MKT":
+            # Market-data subscription block -> fallback LMT (existing behavior)
+            if status == "cancelled" and is_mktdata_block(code, msg):
+                # Collect any partial fills from the cancelled adaptive order
+                filled_total = min(qty, filled_total + max(0, filled))
+                cancel_global()
                 mktdata_force_lmt = True
+                # Refresh anchor — stale plan ref_price is a common reason LMT sits
+                # far from the touch after a 354.
                 base = refresh_limit_reference_px()
-                tprint(
-                    f"{ctx}[LEG] {symbol_u} NOT_ACK mktdata block (code={code}); "
-                    f"LMT-only ref={base:.4f}"
-                )
+                tprint(f"{ctx}[LEG] {symbol_u} mktdata cancelled (code={code}); LMT fallback ref={base:.4f}")
                 filled2 = submit_limit_fallback(
                     base_px=base, attempt=attempt, tag="LMT_FALLBACK", ctx=ctx,
                 )
                 filled_total = min(qty, filled_total + max(0, filled2))
-                if attempt < max_retries and filled_total < qty:
-                    ib.sleep(1.5)
                 continue
 
-            tprint(f"{ctx}[LEG] {symbol_u} NOT_ACK (status={st} code={code} msg={msg}); retrying.")
-            ib.sleep(1.0)
-            continue
-
-        trade = wait_for_trade_terminal(ib, trade, timeout=done_timeout)
-        last_trade_local = trade
-
-        status = (trade.orderStatus.status or "").strip().lower()
-        filled = int(trade.orderStatus.filled or 0)
-
-        code, msg = last_ib_error(trade)
-
-        # If it terminal-cancelled due to short block, do not retry.
-        if status in ("cancelled", "inactive") and is_short_not_available(code, msg):
-            tprint(f"{ctx}[LEG] {symbol_u} SHORT_BLOCKED (201) after submit: cannot increase short now. status={status}")
             filled_total = min(qty, filled_total + max(0, filled))
-            return ExecResult(
-                filled=int(filled_total),
-                trade=trade,
-                status="SHORT_BLOCKED",
-                error_code=code,
-                error_msg=msg,
-            )
 
-        # Market-data subscription block -> fallback LMT (existing behavior)
-        if status == "cancelled" and is_mktdata_block(code, msg):
-            # Collect any partial fills from the cancelled adaptive order
-            filled_total = min(qty, filled_total + max(0, filled))
-            cancel_global()
-            mktdata_force_lmt = True
-            # Refresh anchor — stale plan ref_price is a common reason LMT sits
-            # far from the touch after a 354.
-            base = refresh_limit_reference_px()
-            tprint(f"{ctx}[LEG] {symbol_u} mktdata cancelled (code={code}); LMT fallback ref={base:.4f}")
-            filled2 = submit_limit_fallback(
-                base_px=base, attempt=attempt, tag="LMT_FALLBACK", ctx=ctx,
-            )
-            filled_total = min(qty, filled_total + max(0, filled2))
-            continue
+            if status not in TERMINAL:
+                # Order didn't reach terminal within timeout — force cancel and
+                # wait for confirmation before potentially retrying.
+                try:
+                    ib.cancelOrder(trade.order)
+                except Exception:
+                    pass
+                trade = wait_for_trade_terminal(ib, trade, timeout=15.0)
+                last_trade_local = trade
+                # Re-read filled in case it filled during the cancel
+                post_cancel_filled = int(trade.orderStatus.filled or 0)
+                if post_cancel_filled > filled:
+                    extra = post_cancel_filled - filled
+                    filled_total = min(qty, filled_total + extra)
+                    tprint(
+                        f"{ctx}[LEG] {symbol_u} picked up {extra} extra fills during cancel; "
+                        f"filled_total={filled_total}"
+                    )
 
-        filled_total = min(qty, filled_total + max(0, filled))
+            # Settle between attempts: let TWS propagate state before next order
+            if attempt < max_retries and filled_total < qty:
+                ib.sleep(1.5)
 
-        if status not in TERMINAL:
-            # Order didn't reach terminal within timeout — force cancel and
-            # wait for confirmation before potentially retrying.
-            try:
-                ib.cancelOrder(trade.order)
-            except Exception:
-                pass
-            trade = wait_for_trade_terminal(ib, trade, timeout=15.0)
-            last_trade_local = trade
-            # Re-read filled in case it filled during the cancel
-            post_cancel_filled = int(trade.orderStatus.filled or 0)
-            if post_cancel_filled > filled:
-                extra = post_cancel_filled - filled
-                filled_total = min(qty, filled_total + extra)
-                tprint(
-                    f"{ctx}[LEG] {symbol_u} picked up {extra} extra fills during cancel; "
-                    f"filled_total={filled_total}"
-                )
-
-        # Settle between attempts: let TWS propagate state before next order
-        if attempt < max_retries and filled_total < qty:
-            ib.sleep(1.5)
-
-    # Final status
-    if dry_run:
+        # Final status
+        if dry_run:
+            return ExecResult(filled=int(filled_total), trade=last_trade_local, status="FILLED")
+        if filled_total <= 0:
+            code, msg = last_ib_error(last_trade_local)
+            return ExecResult(filled=0, trade=last_trade_local, status="FAILED", error_code=code, error_msg=msg)
+        if filled_total < qty:
+            return ExecResult(filled=int(filled_total), trade=last_trade_local, status="PARTIAL")
         return ExecResult(filled=int(filled_total), trade=last_trade_local, status="FILLED")
-    if filled_total <= 0:
-        code, msg = last_ib_error(last_trade_local)
-        return ExecResult(filled=0, trade=last_trade_local, status="FAILED", error_code=code, error_msg=msg)
-    if filled_total < qty:
-        return ExecResult(filled=int(filled_total), trade=last_trade_local, status="PARTIAL")
-    return ExecResult(filled=int(filled_total), trade=last_trade_local, status="FILLED")
+
+    try:
+        return _run_order_attempts()
+    except Exception as e:
+        return exec_result_on_exception(
+            qty=qty,
+            filled_total=filled_total,
+            last_trade=last_trade_local,
+            exc=e,
+        )
 
 
 # =============================================================================
