@@ -1748,6 +1748,11 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         plan_b4_pnl_mode = "inject_slice"
     plan_sleeve_bucketing = str(_acct_cfg.get("plan_sleeve_bucketing", "sleeve_first")).strip().lower()
     plan_sleeve_first = plan_sleeve_bucketing != "delta_first"
+    ledger_full_replay_underlyings = {
+        canonical_symbol(str(x))
+        for x in (_acct_cfg.get("ledger_full_replay_underlyings") or [])
+        if str(x).strip()
+    }
     bucket_state_path = PROJECT_ROOT / "data" / "accounting" / "underlying_bucket_state.csv"
     b4_partial_hedge_ratio = float(
         ((sleeves_cfg.get("inverse_decay_bucket4") or {}).get("rules") or {}).get(
@@ -2289,6 +2294,12 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 f"(e.g. {', '.join(sorted(_plan_ratio_b4)[:6])}); "
                 f"spot PnL mode={plan_b4_pnl_mode}"
             )
+    if ledger_full_replay_underlyings:
+        print(
+            f"[ACCOUNTING] ledger full replay for "
+            f"{len(ledger_full_replay_underlyings)} underlying(s): "
+            f"{', '.join(sorted(ledger_full_replay_underlyings))}"
+        )
 
     # Base split map used for non-ETF rows (spot/fallback attribution).
     # - universe_beta: use ETF beta mix from screened universe
@@ -2387,6 +2398,11 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         .tail(1)
         .set_index("underlying")
     ) if not _state_hist.empty else pd.DataFrame(columns=state_cols).set_index(pd.Index([], dtype=str))
+    if ledger_full_replay_underlyings and not _prev_state.empty:
+        _prev_state = _prev_state.drop(
+            index=[u for u in ledger_full_replay_underlyings if u in _prev_state.index],
+            errors="ignore",
+        )
 
     _spot_qty = (
         pos.groupby("symbol", as_index=False)["position"].sum()
@@ -2587,10 +2603,17 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     _ev = trade_events.copy()
     if not _ev.empty:
         _ev["date"] = _ev["dateTime"].astype(str).str.slice(0, 8)
+        _ev["_ledger_u"] = _ev.apply(
+            lambda r: canonical_symbol(
+                str(r.get("underlyingSymbol", "") or r.get("symbol", "") or "")
+            ),
+            axis=1,
+        )
         _target = yyyymmdd_from_run_date(run_date)
         _ev = _ev[_ev["date"] <= _target].copy()
         if _prev_cutoff_ymd:
-            _ev = _ev[_ev["date"] > _prev_cutoff_ymd].copy()
+            _full_replay_mask = _ev["_ledger_u"].isin(ledger_full_replay_underlyings)
+            _ev = _ev[(_ev["date"] > _prev_cutoff_ymd) | _full_replay_mask].copy()
         _ev = _ev.sort_values("dateTime").reset_index(drop=True)
 
     _minute_demand: dict[tuple[str, str], tuple[float, float, float]] = {}

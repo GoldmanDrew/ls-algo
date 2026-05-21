@@ -281,3 +281,29 @@ def test_pair_exposure_emits_underlying_once_per_underlying() -> None:
     ]
     assert len(under_rows) == 1
     assert float(under_rows["net_notional_usd"].iloc[0]) == -1000.0
+
+
+def test_ledger_full_replay_trade_filter() -> None:
+    """Full-replay underlyings keep pre-cutoff trades; others stay incremental."""
+    from ibkr_accounting import canonical_symbol
+
+    trades = pd.DataFrame(
+        {
+            "dateTime": ["20260515000000", "20260519000000", "20260521000000"],
+            "symbol": ["MSTR", "RCAT", "RCAT"],
+            "underlyingSymbol": ["MSTR", "RCAT", "RCAT"],
+            "quantity": [100.0, 50.0, 10.0],
+        }
+    )
+    trades["date"] = trades["dateTime"].astype(str).str.slice(0, 8)
+    trades["_ledger_u"] = trades.apply(
+        lambda r: canonical_symbol(str(r.get("underlyingSymbol") or r.get("symbol") or "")),
+        axis=1,
+    )
+    prev_cutoff_ymd = "20260520"
+    full_replay = {"MSTR"}
+    kept = trades[
+        (trades["date"] > prev_cutoff_ymd) | trades["_ledger_u"].isin(full_replay)
+    ]
+    assert set(kept["symbol"].tolist()) == {"MSTR", "RCAT"}
+    assert len(kept) == 2

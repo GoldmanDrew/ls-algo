@@ -31,6 +31,16 @@ def test_frozen_2026_05_19_b1_leaderboard() -> None:
     assert float(rcat.iloc[0]) == pytest.approx(53.0, rel=0.05)
 
 
+def test_2026_05_21_b1_leaderboard_incremental() -> None:
+    """05-21 B1 stays on incremental chain (GDX #1, RCAT small) — not full-replay RCAT spike."""
+    pnl = pd.read_csv(_require(RUNS / "2026-05-21" / "accounting" / "pnl_bucket_1.csv"))
+    top = pnl.sort_values("total_pnl", ascending=False).iloc[0]
+    assert top["underlying"] == "GDX"
+    assert float(top["total_pnl"]) == pytest.approx(4282.25, rel=1e-3)
+    rcat = float(pnl.loc[pnl["underlying"] == "RCAT", "total_pnl"].iloc[0])
+    assert rcat == pytest.approx(152.11, rel=0.01)
+
+
 def test_2026_05_21_mstr_spot_in_bucket2() -> None:
     """05-21 forward fix: MSTR spot rolls up with yieldboost ETFs in bucket 2."""
     pnl = pd.read_csv(_require(RUNS / "2026-05-21" / "accounting" / "pnl_bucket_2.csv"))
