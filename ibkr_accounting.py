@@ -684,115 +684,6 @@ def _normalize_b1_b2_pair(r_b1: float, r_b2: float) -> tuple[float, float]:
     return abs(float(r_b1)) / s, abs(float(r_b2)) / s
 
 
-def build_yieldboost_b2_underlyings(
-    *,
-    etf_to_under: dict[str, str],
-    etf_to_delta: dict[str, float],
-    screened_path: Path,
-    plan_sleeve_usd: dict[str, dict[str, float]],
-) -> set[str]:
-    """Underlyings with an active yieldboost / bucket-2 income sleeve."""
-    out: set[str] = set()
-    for u, weights in plan_sleeve_usd.items():
-        if abs(float(weights.get("b2", 0.0))) > 1e-9:
-            out.add(canonical_symbol(str(u)))
-    if not screened_path.exists():
-        return out
-    try:
-        sdf = pd.read_csv(screened_path)
-    except Exception:
-        return out
-    if sdf.empty:
-        return out
-    cols = {c.lower(): c for c in sdf.columns}
-    etf_col = cols.get("etf") or cols.get("symbol")
-    under_col = cols.get("underlying")
-    yb_col = cols.get("is_yieldboost")
-    for _, row in sdf.iterrows():
-        etf = canonical_symbol(str(row.get(etf_col, "") or "")) if etf_col else ""
-        under = (
-            canonical_symbol(str(row.get(under_col, "") or ""))
-            if under_col
-            else etf_to_under.get(etf, "")
-        )
-        if not under and etf:
-            under = etf_to_under.get(etf, "")
-        if not under:
-            continue
-        is_yb = False
-        if yb_col:
-            raw = row.get(yb_col)
-            if raw is not None and not (isinstance(raw, float) and pd.isna(raw)):
-                is_yb = str(raw).strip().lower() in {"1", "true", "yes", "y"}
-        beta = float(etf_to_delta.get(etf, 0.0))
-        if is_yb or _plan_row_is_yieldboost(row) or (0.0 < beta <= 1.5):
-            out.add(under)
-    return out
-
-
-def compute_stale_ledger_replay_underlyings(
-    prev_state: pd.DataFrame,
-    spot_qty: dict[str, float],
-    *,
-    threshold: float,
-    explicit: set[str],
-) -> set[str]:
-    """Names whose seeded FIFO ledger diverges from IBKR spot (needs full trade replay)."""
-    out = {canonical_symbol(str(u)) for u in explicit if str(u).strip()}
-    for sym, qty in spot_qty.items():
-        u = canonical_symbol(str(sym))
-        ibkr = float(qty or 0.0)
-        if abs(ibkr) <= 1e-9:
-            continue
-        if not prev_state.empty and u in prev_state.index:
-            row = prev_state.loc[u]
-            ledger = (
-                float(row.get("qty_b1", 0.0))
-                + float(row.get("qty_b2", 0.0))
-                + float(row.get("qty_b4", 0.0))
-            )
-        else:
-            ledger = 0.0
-        if abs(ibkr - ledger) / abs(ibkr) > threshold:
-            out.add(u)
-    return out
-
-
-def apply_yieldboost_spot_b2_override(
-    *,
-    lot_components: dict[str, dict[str, dict[str, float]]],
-    underlying: str,
-    df: pd.DataFrame,
-    spot_carry_cols: set[str],
-    r_b1: float,
-    r_b2: float,
-    r_b4: float = 0.0,
-) -> None:
-    """Attribute IBKR spot PnL to bucket 2 for yieldboost pairs (no B4 plan slice)."""
-    u_rows = df[
-        (df["underlying"] == underlying)
-        & (df["symbol"].astype(str) == df["underlying"].astype(str))
-    ]
-    if u_rows.empty:
-        return
-    override_cols = {"realized_pnl", "unrealized_pnl"} | set(spot_carry_cols)
-    b1_norm, b2_norm = _normalize_b1_b2_pair(r_b1, r_b2)
-    b4_frac = max(float(r_b4), 0.0)
-    for col in override_cols:
-        if col not in u_rows.columns:
-            continue
-        total = float(u_rows[col].sum())
-        if abs(total) <= 1e-9:
-            for bk in ("bucket_1", "bucket_2", "bucket_4"):
-                lot_components[underlying][bk][col] = 0.0
-            continue
-        b4_part = total * b4_frac
-        remainder = total - b4_part
-        lot_components[underlying]["bucket_4"][col] = b4_part
-        lot_components[underlying]["bucket_1"][col] = remainder * b1_norm
-        lot_components[underlying]["bucket_2"][col] = remainder * b2_norm
-
-
 def apply_plan_b4_spot_pnl_override(
     *,
     lot_components: dict[str, dict[str, dict[str, float]]],
@@ -1862,18 +1753,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         for x in (_acct_cfg.get("ledger_full_replay_underlyings") or [])
         if str(x).strip()
     }
-    ledger_orphan_replay_threshold = float(
-        _acct_cfg.get("ledger_orphan_replay_threshold", 0.10)
-    )
-    yieldboost_spot_b2_mode = str(
-        _acct_cfg.get("yieldboost_spot_b2_mode", "inject_slice")
-    ).strip().lower()
-    if yieldboost_spot_b2_mode not in {"inject_slice", "off"}:
-        print(
-            f"[ACCOUNTING] WARNING: unknown accounting.yieldboost_spot_b2_mode="
-            f"{yieldboost_spot_b2_mode!r}; defaulting to 'inject_slice'"
-        )
-        yieldboost_spot_b2_mode = "inject_slice"
     bucket_state_path = PROJECT_ROOT / "data" / "accounting" / "underlying_bucket_state.csv"
     b4_partial_hedge_ratio = float(
         ((sleeves_cfg.get("inverse_decay_bucket4") or {}).get("rules") or {}).get(
@@ -2421,12 +2300,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             f"{len(ledger_full_replay_underlyings)} underlying(s): "
             f"{', '.join(sorted(ledger_full_replay_underlyings))}"
         )
-    _yieldboost_b2_underlyings = build_yieldboost_b2_underlyings(
-        etf_to_under=etf_to_under,
-        etf_to_delta=etf_to_delta_map,
-        screened_path=etf_screened_path,
-        plan_sleeve_usd=_plan_sleeve_usd,
-    )
 
     # Base split map used for non-ETF rows (spot/fallback attribution).
     # - universe_beta: use ETF beta mix from screened universe
@@ -2525,34 +2398,17 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         .tail(1)
         .set_index("underlying")
     ) if not _state_hist.empty else pd.DataFrame(columns=state_cols).set_index(pd.Index([], dtype=str))
+    if ledger_full_replay_underlyings and not _prev_state.empty:
+        _prev_state = _prev_state.drop(
+            index=[u for u in ledger_full_replay_underlyings if u in _prev_state.index],
+            errors="ignore",
+        )
 
     _spot_qty = (
         pos.groupby("symbol", as_index=False)["position"].sum()
         .set_index("symbol")["position"]
         .to_dict()
     ) if not pos.empty else {}
-
-    _auto_replay = compute_stale_ledger_replay_underlyings(
-        _prev_state,
-        _spot_qty,
-        threshold=ledger_orphan_replay_threshold,
-        explicit=ledger_full_replay_underlyings,
-    )
-    if _auto_replay - ledger_full_replay_underlyings:
-        _new_auto = sorted(_auto_replay - ledger_full_replay_underlyings)
-        print(
-            f"[ACCOUNTING] auto ledger full replay for {len(_new_auto)} stale "
-            f"underlying(s) (orphan > {ledger_orphan_replay_threshold:.0%}): "
-            f"{', '.join(_new_auto[:12])}"
-            + (" ..." if len(_new_auto) > 12 else "")
-        )
-    ledger_full_replay_underlyings = set(_auto_replay)
-    _stale_carry_underlyings = set(_auto_replay)
-    if ledger_full_replay_underlyings and not _prev_state.empty:
-        _prev_state = _prev_state.drop(
-            index=[u for u in ledger_full_replay_underlyings if u in _prev_state.index],
-            errors="ignore",
-        )
 
     _state_rows: list[dict] = []
     _timing_rows: list[dict] = []
@@ -2890,33 +2746,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                     )
                 )
 
-    _post_replay_orphan_frac: dict[str, float] = {}
-    _orphan_frac_by_u: dict[str, float] = {}
-    for _u in _all_underlyings:
-        _ibkr_u = float(_spot_qty.get(_u, 0.0))
-        _ledger_u = (
-            _sum_bucket_qty(_u, "bucket_1")
-            + _sum_bucket_qty(_u, "bucket_2")
-            + _sum_bucket_qty(_u, "bucket_4")
-        )
-        if abs(_ibkr_u) > 1e-9:
-            _frac = abs(_ibkr_u - _ledger_u) / abs(_ibkr_u)
-        else:
-            _frac = 0.0
-        _post_replay_orphan_frac[_u] = _frac
-        _orphan_frac_by_u[_u] = _frac
-        if _frac > ledger_orphan_replay_threshold:
-            _stale_carry_underlyings.add(_u)
-
     def _ratio_at_date(_u: str, _d: str) -> tuple[float, float, float]:
-        if (
-            _u in _stale_carry_underlyings
-            or _post_replay_orphan_frac.get(_u, 0.0) > ledger_orphan_replay_threshold
-        ):
-            _r, _ = _bucket_ratio_entry(_u)
-            return _normalize_bucket_triple(
-                _r.get("b1", 1.0), _r.get("b2", 0.0), _r.get("b4", 0.0)
-            )
         _series = _state_series.get(_u, [])
         for _entry in reversed(_series):
             if len(_entry) >= 4:
@@ -3062,9 +2892,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
 
         # Plan-aware B4 spot PnL: inject the structural B4 slice from plan
         # targets without clobbering FIFO B1/B2 lot attribution (inject_slice).
-        _orphan_frac = float(_orphan_frac_by_u.get(_u, 0.0))
-        _split_r_b1 = _ru1 if _orphan_frac <= ledger_orphan_replay_threshold else _r1
-        _split_r_b2 = _ru2 if _orphan_frac <= ledger_orphan_replay_threshold else _r2
         if _u in _plan_ratio_b4:
             apply_plan_b4_spot_pnl_override(
                 lot_components=_lot_components,
@@ -3074,21 +2901,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 spot_carry_cols=_spot_carry_cols,
                 etf_to_delta_map=etf_to_delta_map,
                 mode=plan_b4_pnl_mode,
-                ledger_r_b1=_split_r_b1,
-                ledger_r_b2=_split_r_b2,
-            )
-        elif (
-            yieldboost_spot_b2_mode == "inject_slice"
-            and _u in _yieldboost_b2_underlyings
-        ):
-            apply_yieldboost_spot_b2_override(
-                lot_components=_lot_components,
-                underlying=_u,
-                df=df,
-                spot_carry_cols=_spot_carry_cols,
-                r_b1=_split_r_b1,
-                r_b2=_split_r_b2,
-                r_b4=_r4,
+                ledger_r_b1=_ru1,
+                ledger_r_b2=_ru2,
             )
 
         _ibkr_qty = float(_spot_qty.get(_u, 0.0))
@@ -3143,11 +2957,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 "ledger_b2_frac": _ru2,
                 "pnl_split_mode": plan_b4_pnl_mode if _u in _plan_ratio_b4 else "lot_timed",
                 "plan_b2_usd": _plan_b2_usd,
-                "yieldboost_b2_override": (
-                    _u in _yieldboost_b2_underlyings
-                    and yieldboost_spot_b2_mode == "inject_slice"
-                    and _u not in _plan_ratio_b4
-                ),
             }
         )
         if _u in _plan_ratio_b4 and abs(_ru2 - _r2) > 0.25:
@@ -3385,37 +3194,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 _ibkr_val = float(_u_rows[_col].sum())
                 _resid = _ibkr_val - _lot_sum
                 if abs(_resid) <= 1e-6:
-                    continue
-                _orph_frac = float(_orphan_frac_by_u.get(_u, 0.0))
-                if _orph_frac > ledger_orphan_replay_threshold:
-                    _res_ratio, _ = _bucket_ratio_entry(_u)
-                    _rw1, _rw2, _rw4 = _normalize_bucket_triple(
-                        _res_ratio.get("b1", 0.0),
-                        _res_ratio.get("b2", 0.0),
-                        _res_ratio.get("b4", 0.0),
-                    )
-                    for _part in split_parts:
-                        if _part.empty:
-                            continue
-                        for _bk, _w in (
-                            ("bucket_1", _rw1),
-                            ("bucket_2", _rw2),
-                            ("bucket_4", _rw4),
-                        ):
-                            if abs(_w) <= 1e-12:
-                                continue
-                            _mask = (_part["bucket"] == _bk) & (
-                                _part["underlying"].astype(str) == _u
-                            )
-                            if not _mask.any():
-                                continue
-                            _first_idx = _part.index[_mask][0]
-                            _part.at[_first_idx, _col] = (
-                                float(_part.at[_first_idx, _col]) + _resid * _w
-                            )
-                            _part.at[_first_idx, "total_pnl"] = float(
-                                _part.loc[_first_idx, component_cols].sum()
-                            )
                     continue
                 for _part in split_parts:
                     if _part.empty:

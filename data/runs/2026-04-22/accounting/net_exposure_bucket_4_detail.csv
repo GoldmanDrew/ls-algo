@@ -16,6 +16,7 @@ IBIT,IBIT,underlying,0.0,0.0
 IONQ,IONQ,underlying,0.0,0.0
 IREN,IREN,underlying,0.0,0.0
 IWM,IWM,underlying,0.0,0.0
+LITE,LITE,underlying,0.0,0.0
 MSTR,MSTR,underlying,0.0,0.0
 NBIS,NBIS,underlying,0.0,0.0
 NEM,NEM,underlying,0.0,0.0
@@ -27,8 +28,10 @@ PLTR,PLTR,underlying,0.0,0.0
 QBTS,QBTS,underlying,0.0,0.0
 QQQ,QQQ,underlying,0.0,0.0
 SLV,SLV,underlying,0.0,0.0
-SLV,ZSL,etf,10242.1629765,10242.1629765
+SLV,ZSL,etf,10242.810838259998,10242.810838259998
 SMCI,SMCI,underlying,0.0,0.0
+SMR,SMR,underlying,0.0,0.0
+SNDK,SNDK,underlying,0.0,0.0
 SPY,SPY,underlying,0.0,0.0
 TSLA,TSLA,underlying,0.0,0.0
 TSM,TSM,underlying,0.0,0.0

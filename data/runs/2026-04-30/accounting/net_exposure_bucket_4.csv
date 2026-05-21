@@ -1,10 +1,2 @@
-underlying,symbols,net_notional_usd,gross_notional_usd,n_legs
-AXON,AXON,0.0,0.0,1
-BLSH,BLSH,0.0,0.0,1
-DKNG,DKNG,0.0,0.0,1
-KEEL,KEEL,0.0,0.0,1
-NEM,NEM,0.0,0.0,1
-NET,NET,0.0,0.0,1
-OKTA,OKTA,0.0,0.0,1
-QS,QS,0.0,0.0,1
-XRPZ,XRPZ,0.0,0.0,1
+symbol,net_notional_usd,gross_notional_usd,n_legs
+APLZ,615105.6996,615105.6996,1

@@ -10,9 +10,8 @@ accounting:
   bucket_split_method: held_exposure  # held_exposure | universe_beta
   plan_b4_pnl_mode: inject_slice    # inject_slice | full_override (legacy)
   plan_sleeve_bucketing: sleeve_first  # sleeve_first | delta_first
-  ledger_orphan_replay_threshold: 0.10  # auto full trade replay when |orphan|/ibkr exceeds
-  yieldboost_spot_b2_mode: inject_slice   # inject_slice | off
-  ledger_full_replay_underlyings: []      # optional explicit additions to auto-detect
+  ledger_full_replay_underlyings:
+    - MSTR   # stale FIFO seed → full trade replay; other names stay incremental
 
 strategy:
   tag: ETF_LS
@@ -407,15 +406,3 @@ portfolio:
           PLTZ: 0.0034
           PLYY: 0.0034
 
-vol_vix_beta:
-  estimator: v3_log_elasticity   # v2_diff_ols | v3_log_elasticity
-  ewma_lambda: 0.94
-  history_days: 504
-  shrink_k: 30
-  vix_mean_reversion_kappa: 5.0
-  vix_long_run_theta_pts: 18.0
-  vrp_realized_factor: 0.80
-  scenario_mode_default: sustained   # sustained | spike_revert
-  borrow_vix_gamma_broad: 0.05
-  borrow_vix_gamma_htb: 0.30
-  htb_borrow_rate_threshold_pct: 5.0
