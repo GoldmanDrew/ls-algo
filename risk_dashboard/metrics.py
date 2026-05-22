@@ -33,7 +33,15 @@ from .scenario_engine import (
     aggregate_leg_scenario_pnl,
     horizon_to_years,
     resolve_sigma_annual,
+    scale_spx_shock_for_horizon,
 )
+from .spx_scenario import (
+    HISTORICAL_SPX_SCENARIOS,
+    aggregate_path_scenario_pnl,
+    historical_scenario_specs as historical_spx_scenario_specs,
+)
+from .spx_shock_config import load_spx_shock_config
+from .spx_stress_beta import underlying_return_for_leg
 from .vol_vix_model import (
     beta_summary_dict,
     compute_vol_vix_pack,
@@ -2353,6 +2361,9 @@ def compute_concentration_panel(
     }
 
 
+ACTION_QUEUE_CAP: int = 5
+
+
 def compute_action_queue(
     *,
     book: BookSummary,
@@ -2816,7 +2827,7 @@ def _slide_scenario_legs_for_row(
     ]
 
 
-def _sigma_and_borrow_overrides_for_vix_scenario(
+def _sigma_overrides_for_vix_shock(
     legs: list[dict[str, Any]],
     *,
     underlying: str,
@@ -2826,17 +2837,15 @@ def _sigma_and_borrow_overrides_for_vix_scenario(
     vix_new_pts: float | None = None,
     mode: ScenarioMode | None = None,
     corr_lift_override: float | None = None,
-    borrow_lift: float = 1.0,
-) -> tuple[dict[str, float], dict[str, float]]:
+) -> dict[str, float]:
     sigma_out: dict[str, float] = {}
-    borrow_out: dict[str, float] = {}
     vix_current = float(vol_vix_pack.get("vix_current_pts") or 20.0)
     v_new = vix_new_pts if vix_new_pts is not None else vix_current + float(vix_shock_pts)
     for leg in legs:
         sym = str(leg.get("symbol") or "").upper()
         if not sym:
             continue
-        sigma, borrow = leg_sigma_for_vix_scenario(
+        sigma = leg_sigma_for_vix_scenario(
             leg,
             underlying=underlying,
             underlying_sigma=underlying_sigma,
@@ -2845,33 +2854,37 @@ def _sigma_and_borrow_overrides_for_vix_scenario(
             vix_shock_pts=vix_shock_pts,
             mode=mode,
             corr_lift_override=corr_lift_override,
-            borrow_lift=borrow_lift,
         )
         if sigma is not None:
             sigma_out[sym] = sigma
-        if borrow is not None and borrow > 0:
-            borrow_out[sym] = borrow
-    return sigma_out, borrow_out
+    return sigma_out
 
 
-def _sigma_overrides_for_vix_shock(
-    legs: list[dict[str, Any]],
-    *,
+def _beta_spy_decomp_for_underlying(
     underlying: str,
-    underlying_sigma: float | None,
-    vol_vix_pack: dict[str, Any],
-    vix_shock_pts: float,
-    **kwargs: Any,
-) -> dict[str, float]:
-    sigma, _ = _sigma_and_borrow_overrides_for_vix_scenario(
-        legs,
-        underlying=underlying,
-        underlying_sigma=underlying_sigma,
-        vol_vix_pack=vol_vix_pack,
-        vix_shock_pts=vix_shock_pts,
-        **kwargs,
+    *,
+    variance_decomp: dict[str, Any] | None,
+) -> float | None:
+    """SPY β from variance decomposition when trusted."""
+    rows = (variance_decomp or {}).get("rows") or {}
+    row = rows.get(str(underlying).upper()) or {}
+    if row.get("use_variance_decomp") and row.get("beta_spy") is not None:
+        return float(row["beta_spy"])
+    return None
+
+
+def _effective_spx_shock(
+    shock_pct: float,
+    horizon_key: str,
+    *,
+    horizon_shock_mode: str = "rms",
+    shock_scale_override: float | None = None,
+) -> float:
+    if shock_scale_override is not None:
+        return float(shock_pct) * float(shock_scale_override)
+    return scale_spx_shock_for_horizon(
+        shock_pct, horizon_key, mode=horizon_shock_mode  # type: ignore[arg-type]
     )
-    return sigma
 
 
 def _slide_horizon_scenario_totals(
@@ -2887,7 +2900,12 @@ def _slide_horizon_scenario_totals(
     vix_new_pts: float | None = None,
     vix_scenario_mode: ScenarioMode | None = None,
     corr_lift_override: float | None = None,
-    borrow_lift: float = 1.0,
+    zero_borrow: bool = False,
+    spx_shock_cfg: dict[str, Any] | None = None,
+    horizon_shock_mode: str = "rms",
+    shock_scale_override: float | None = None,
+    variance_decomp: dict[str, Any] | None = None,
+    per_leg_beta: bool = True,
 ) -> dict[str, Any]:
     totals = {
         "beta_pnl_usd": 0.0,
@@ -2899,53 +2917,70 @@ def _slide_horizon_scenario_totals(
         "n_legs_fallback": 0,
     }
     sigma_samples: list[float] = []
+    stress_cfg = (spx_shock_cfg or {}).get("stress_beta") or {}
+    spx_effective = _effective_spx_shock(
+        shock_pct,
+        horizon_key,
+        horizon_shock_mode=horizon_shock_mode,
+        shock_scale_override=shock_scale_override,
+    )
     for e in enriched:
-        if require_beta:
-            beta = e.get("beta_to_spy")
-            if beta is None:
-                continue
-            underlying_return = float(shock_pct) * float(beta)
-        else:
-            underlying_return = 0.0
+        if require_beta and e.get("beta_to_spy") is None:
+            continue
+        underlying = str(e.get("underlying") or "").upper()
+        beta_decomp = _beta_spy_decomp_for_underlying(
+            underlying, variance_decomp=variance_decomp
+        )
         legs = _slide_scenario_legs_for_row(e, etf_meta=etf_meta)
         sigma_overrides: dict[str, float] | None = None
-        borrow_overrides: dict[str, float] | None = None
         if vol_vix_pack:
-            sigma_overrides, borrow_overrides = _sigma_and_borrow_overrides_for_vix_scenario(
+            sigma_overrides = _sigma_overrides_for_vix_shock(
                 legs,
-                underlying=str(e.get("underlying") or ""),
+                underlying=underlying,
                 underlying_sigma=e.get("sigma"),
                 vol_vix_pack=vol_vix_pack,
                 vix_shock_pts=vix_shock_pts,
                 vix_new_pts=vix_new_pts,
                 mode=vix_scenario_mode,
                 corr_lift_override=corr_lift_override,
-                borrow_lift=borrow_lift,
             )
             if not sigma_overrides:
                 sigma_overrides = None
-            if not borrow_overrides:
-                borrow_overrides = None
-        agg = aggregate_leg_scenario_pnl(
-            legs,
-            underlying_return=underlying_return,
-            horizon_key=horizon_key,
-            vol_multiplier=vol_multiplier,
-            underlying_sigma=e.get("sigma"),
-            sigma_overrides=sigma_overrides,
-            borrow_overrides=borrow_overrides,
-        )
-        for key in (
-            "beta_pnl_usd",
-            "decay_pnl_usd",
-            "borrow_pnl_usd",
-            "distribution_pnl_usd",
-            "total_pnl_usd",
-        ):
-            totals[key] += float(agg.get(key) or 0.0)
-        totals["n_legs_modeled"] += int(agg.get("n_legs_modeled") or 0)
-        totals["n_legs_fallback"] += int(agg.get("n_legs_fallback") or 0)
         for leg in legs:
+            if require_beta:
+                if per_leg_beta and spx_shock_cfg is not None:
+                    underlying_return = underlying_return_for_leg(
+                        e,
+                        leg,
+                        float(shock_pct),
+                        spx_effective,
+                        stress_cfg=stress_cfg,
+                        beta_spy_decomp=beta_decomp,
+                    )
+                else:
+                    beta = float(e.get("beta_to_spy") or 0.0)
+                    underlying_return = beta * spx_effective
+            else:
+                underlying_return = 0.0
+            agg = aggregate_leg_scenario_pnl(
+                [leg],
+                underlying_return=underlying_return,
+                horizon_key=horizon_key,
+                vol_multiplier=vol_multiplier,
+                underlying_sigma=e.get("sigma"),
+                sigma_overrides=sigma_overrides,
+                zero_borrow=zero_borrow,
+            )
+            for key in (
+                "beta_pnl_usd",
+                "decay_pnl_usd",
+                "borrow_pnl_usd",
+                "distribution_pnl_usd",
+                "total_pnl_usd",
+            ):
+                totals[key] += float(agg.get(key) or 0.0)
+            totals["n_legs_modeled"] += int(agg.get("n_legs_modeled") or 0)
+            totals["n_legs_fallback"] += int(agg.get("n_legs_fallback") or 0)
             sym = str(leg.get("symbol") or "").upper()
             if sigma_overrides and sym in sigma_overrides:
                 sigma_samples.append(sigma_overrides[sym])
@@ -2960,7 +2995,79 @@ def _slide_horizon_scenario_totals(
     totals["horizon_years"] = horizon_to_years(horizon_key)
     totals["vol_multiplier"] = vol_multiplier
     totals["vix_shock_pts"] = vix_shock_pts
+    totals["spx_shock_effective_pct"] = spx_effective
+    totals["horizon_shock_mode"] = horizon_shock_mode
     return totals
+
+
+def _build_historical_spx_scenarios(
+    enriched: list[dict[str, Any]],
+    *,
+    etf_meta: dict[str, dict[str, Any]],
+    nav_usd: float,
+    spx_shock_cfg: dict[str, Any],
+    variance_decomp: dict[str, Any] | None,
+    horizon_key: str = "12M",
+    zero_borrow: bool = False,
+) -> list[dict[str, Any]]:
+    """Phase 5: path-integrated historical SPX analogs."""
+    if not spx_shock_cfg.get("path_scenarios_enabled", True):
+        return []
+    stress_cfg = spx_shock_cfg.get("stress_beta") or {}
+    out: list[dict[str, Any]] = []
+    for spec in historical_spx_scenario_specs(horizon_key=horizon_key):
+        totals = {
+            "beta_pnl_usd": 0.0,
+            "decay_pnl_usd": 0.0,
+            "borrow_pnl_usd": 0.0,
+            "distribution_pnl_usd": 0.0,
+            "total_pnl_usd": 0.0,
+        }
+        for e in enriched:
+            if e.get("beta_to_spy") is None:
+                continue
+            legs = _slide_scenario_legs_for_row(e, etf_meta=etf_meta)
+            beta_decomp = _beta_spy_decomp_for_underlying(
+                str(e.get("underlying") or ""),
+                variance_decomp=variance_decomp,
+            )
+            agg = aggregate_path_scenario_pnl(
+                legs,
+                spx_cumulative=spec.spx_cumulative,
+                horizon_key=horizon_key,
+                row=e,
+                stress_cfg=stress_cfg,
+                beta_spy_decomp=beta_decomp,
+                zero_borrow=zero_borrow,
+            )
+            for k in totals:
+                totals[k] += float(agg.get(k) or 0.0)
+        out.append(
+            {
+                "scenario_key": spec.key,
+                "label": spec.label,
+                "horizon_key": horizon_key,
+                "scenario_mode": "spx_path",
+                "spx_peak_pct": spec.spx_peak_pct,
+                "spx_end_pct": spec.spx_end_pct,
+                "peak_days": spec.peak_days,
+                "beta_pnl_pct_nav": totals["beta_pnl_usd"] / nav_usd if nav_usd > 0 else None,
+                "decay_pnl_pct_nav": totals["decay_pnl_usd"] / nav_usd if nav_usd > 0 else None,
+                "borrow_pnl_pct_nav": totals["borrow_pnl_usd"] / nav_usd if nav_usd > 0 else None,
+                "total_pnl_pct_nav": totals["total_pnl_usd"] / nav_usd if nav_usd > 0 else None,
+                "total_pnl_usd": totals["total_pnl_usd"],
+                "decay_pnl_usd": totals["decay_pnl_usd"],
+                "borrow_pnl_usd": totals["borrow_pnl_usd"],
+            }
+        )
+    baseline = next((c for c in out if c.get("scenario_key") == "aug_2015"), out[0] if out else None)
+    if baseline and nav_usd > 0:
+        base_decay = float(baseline.get("decay_pnl_usd") or 0.0)
+        for cell in out:
+            cell["delta_vs_rms_12m_pct_nav"] = (
+                float(cell["decay_pnl_usd"]) - base_decay
+            ) / nav_usd
+    return out
 
 
 def _run_vix_scenario_cell(
@@ -2975,7 +3082,6 @@ def _run_vix_scenario_cell(
     vix_shock_pts: float = 0.0,
     mode: ScenarioMode | None = None,
     corr_lift_override: float | None = None,
-    borrow_lift: float = 1.0,
     scenario_key: str = "",
 ) -> dict[str, Any]:
     totals = _slide_horizon_scenario_totals(
@@ -2989,7 +3095,7 @@ def _run_vix_scenario_cell(
         vix_new_pts=vix_new_pts,
         vix_scenario_mode=mode,
         corr_lift_override=corr_lift_override,
-        borrow_lift=borrow_lift,
+        zero_borrow=True,
     )
     return {
         "scenario_key": scenario_key,
@@ -3000,11 +3106,11 @@ def _run_vix_scenario_cell(
         "sigma_annual_median": totals.get("sigma_annual_median"),
         "beta_pnl_pct_nav": totals["beta_pnl_usd"] / nav_usd if nav_usd > 0 else None,
         "decay_pnl_pct_nav": totals["decay_pnl_usd"] / nav_usd if nav_usd > 0 else None,
-        "borrow_pnl_pct_nav": totals["borrow_pnl_usd"] / nav_usd if nav_usd > 0 else None,
+        "borrow_pnl_pct_nav": 0.0 if nav_usd > 0 else None,
         "total_pnl_pct_nav": totals["total_pnl_usd"] / nav_usd if nav_usd > 0 else None,
         "total_pnl_usd": totals["total_pnl_usd"],
         "decay_pnl_usd": totals["decay_pnl_usd"],
-        "borrow_pnl_usd": totals["borrow_pnl_usd"],
+        "borrow_pnl_usd": 0.0,
     }
 
 
@@ -3024,7 +3130,10 @@ def _build_vix_decay_matrix(
     spike_mode: ScenarioMode = "spike_revert"
 
     def _finalize_cells(raw_cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        baseline = next((c["total_pnl_usd"] for c in raw_cells if c.get("vix_shock_pts") == 0), None)
+        baseline = next(
+            (c["decay_pnl_usd"] for c in raw_cells if c.get("vix_shock_pts") == 0),
+            None,
+        )
         out: list[dict[str, Any]] = []
         for c in raw_cells:
             delta_pct = None
@@ -3032,7 +3141,7 @@ def _build_vix_decay_matrix(
                 if c.get("vix_shock_pts") == 0:
                     delta_pct = 0.0
                 else:
-                    delta_pct = (float(c["total_pnl_usd"]) - float(baseline)) / nav_usd
+                    delta_pct = (float(c["decay_pnl_usd"]) - float(baseline)) / nav_usd
             out.append({**c, "delta_vs_current_pct_nav": delta_pct})
         return out
 
@@ -3100,17 +3209,15 @@ def _build_vix_decay_matrix(
             vix_new_pts=peak,
             mode=spike_mode,
             corr_lift_override=spec.corr_lift,
-            borrow_lift=spec.borrow_lift,
             scenario_key=spec.key,
         )
         cell["vix_peak_pts"] = peak
         cell["vix_end_pts"] = spec.vix_end_pts
         cell["peak_days"] = spec.peak_days
         cell["corr_lift"] = spec.corr_lift
-        cell["borrow_lift"] = spec.borrow_lift
         if cells_sustained and nav_usd > 0:
             cell["delta_vs_current_pct_nav"] = (
-                float(cell["total_pnl_usd"]) - float(cells_sustained[0]["total_pnl_usd"])
+                float(cell["decay_pnl_usd"]) - float(cells_sustained[0]["decay_pnl_usd"])
             ) / nav_usd
         historical.append(cell)
 
@@ -3131,7 +3238,7 @@ def _build_vix_decay_matrix(
             )
         sigma_shocked = None
         if sigma_base is not None:
-            sigmas, _ = _sigma_and_borrow_overrides_for_vix_scenario(
+            sigmas = _sigma_overrides_for_vix_shock(
                 legs,
                 underlying=underlying,
                 underlying_sigma=sigma_base,
@@ -3150,6 +3257,7 @@ def _build_vix_decay_matrix(
             vol_vix_pack=vol_vix_pack,
             vix_new_pts=vix_plus_20,
             vix_scenario_mode=sustained_mode,
+            zero_borrow=True,
         )
         per_name.append(
             {
@@ -3173,7 +3281,8 @@ def _build_vix_decay_matrix(
         "vix3m_pts": term.get("vix3m_pts"),
         "vvix_pts": term.get("vvix_pts"),
         "term_structure": term.get("term_structure"),
-        "carry_12m_pct_nav": cells_sustained[0]["total_pnl_pct_nav"] if cells_sustained else None,
+        "decay_12m_pct_nav": cells_sustained[0]["decay_pnl_pct_nav"] if cells_sustained else None,
+        "carry_12m_pct_nav": cells_sustained[0]["decay_pnl_pct_nav"] if cells_sustained else None,
     }
 
     beta_summary = beta_summary_dict(vol_vix_pack)
@@ -3184,9 +3293,10 @@ def _build_vix_decay_matrix(
         "horizon_key": horizon_key,
         "horizon_label": f"{horizon_key} expected decay (SPX 0%)",
         "description": (
-            "Expected book carry over the next 12 months at SPX 0%, "
+            "Expected vol-driven decay over the next 12 months at SPX 0%, "
             "with forecast vol adjusted by vol elasticity (v3 log-log), "
-            "variance decomposition, and optional spike-revert path integral."
+            "variance decomposition, and optional spike-revert path integral. "
+            "Borrow excluded (assumed unchanged across scenarios)."
         ),
         "vix_current_pts": vix_pts,
         "vix_current": vol_vix_pack.get("vix_current"),
@@ -3262,53 +3372,6 @@ def _pnl_concentration_summary(
         "top_n": top_n,
         "top_n_share_of_scenario": share,
         "diversified": share < 0.70,
-    }
-
-
-def _borrow_cost_concentration(
-    victims: list[dict[str, Any]],
-    *,
-    top_n: int = 3,
-) -> dict[str, Any]:
-    """Share of incremental borrow cost explained by the largest names."""
-    positive = [
-        v
-        for v in victims
-        if float(v.get("annual_cost_delta_usd") or v.get("annual_delta_usd") or 0.0) > 0
-    ]
-    if not positive:
-        return {"top_victims": [], "top_n": top_n, "top_n_share": None, "diversified": True}
-    denom = sum(
-        float(v.get("annual_cost_delta_usd") or v.get("annual_delta_usd") or 0.0) for v in positive
-    )
-    ranked = sorted(
-        positive,
-        key=lambda v: float(v.get("annual_cost_delta_usd") or v.get("annual_delta_usd") or 0.0),
-        reverse=True,
-    )
-    top = ranked[:top_n]
-    top_sum = sum(
-        float(v.get("annual_cost_delta_usd") or v.get("annual_delta_usd") or 0.0) for v in top
-    )
-    share = top_sum / denom if denom > 0 else None
-    out_victims: list[dict[str, Any]] = []
-    for v in top:
-        delta = float(v.get("annual_cost_delta_usd") or v.get("annual_delta_usd") or 0.0)
-        out_victims.append(
-            {
-                "symbol": v.get("symbol"),
-                "annual_cost_delta_usd": delta,
-                "pct_of_shock": (delta / denom) if denom > 0 else None,
-                "borrow_rate_pct": v.get("borrow_rate_pct") or v.get("current_apr_pct"),
-                "stressed_borrow_rate_pct": v.get("stressed_borrow_rate_pct")
-                or v.get("new_apr_pct"),
-            }
-        )
-    return {
-        "top_victims": out_victims,
-        "top_n": top_n,
-        "top_n_share": share,
-        "diversified": share is not None and share < 0.70,
     }
 
 
@@ -3422,6 +3485,11 @@ def compute_slide_risk_panel(
                 "estimator_version": "error",
             }
 
+    spx_shock_cfg = load_spx_shock_config(repo_root)
+    horizon_shock_mode = str(spx_shock_cfg.get("horizon_shock_mode") or "rms")
+    variance_decomp = (vol_vix_pack or {}).get("variance_decomp")
+    factor_totals = (factor_panel or {}).get("totals") or {}
+
     indices_out: list[dict[str, Any]] = []
     breaches: list[dict[str, Any]] = []
     worst_shock: dict[str, Any] | None = None
@@ -3473,14 +3541,21 @@ def compute_slide_risk_panel(
                 shock_pct=float(shock_pct),
                 horizon_key=horizon_key,
                 vol_multiplier=1.0,
+                spx_shock_cfg=spx_shock_cfg,
+                horizon_shock_mode=horizon_shock_mode,
+                variance_decomp=variance_decomp,
+                per_leg_beta=True,
             )
             total = float(totals["total_pnl_usd"])
             horizon_rows.append(
                 {
                     "horizon_key": horizon_key,
+                    "horizon_label": f"{horizon_key} ({horizon_shock_mode})",
                     "horizon_years": totals["horizon_years"],
                     "vol_multiplier": 1.0,
                     "sigma_annual_median": totals.get("sigma_annual_median"),
+                    "spx_shock_effective_pct": totals.get("spx_shock_effective_pct"),
+                    "horizon_shock_mode": horizon_shock_mode,
                     "total_pnl_usd": total,
                     "total_pnl_pct_nav": (total / nav_usd) if nav_usd > 0 else None,
                     "beta_pnl_usd": totals["beta_pnl_usd"],
@@ -3490,6 +3565,40 @@ def compute_slide_risk_panel(
                     "decay_usd": totals["decay_pnl_usd"],
                     "n_legs_modeled": totals["n_legs_modeled"],
                     "n_legs_fallback": totals["n_legs_fallback"],
+                }
+            )
+        if spx_shock_cfg.get("show_terminal_12m_row") and "12M" in scenario_horizons:
+            totals_term = _slide_horizon_scenario_totals(
+                enriched,
+                etf_meta=etf_meta,
+                shock_pct=float(shock_pct),
+                horizon_key="12M",
+                vol_multiplier=1.0,
+                spx_shock_cfg=spx_shock_cfg,
+                horizon_shock_mode="terminal",
+                shock_scale_override=1.0,
+                variance_decomp=variance_decomp,
+                per_leg_beta=True,
+            )
+            total_term = float(totals_term["total_pnl_usd"])
+            horizon_rows.append(
+                {
+                    "horizon_key": "12M-terminal",
+                    "horizon_label": "12M terminal ΔSPX",
+                    "horizon_years": totals_term["horizon_years"],
+                    "vol_multiplier": 1.0,
+                    "sigma_annual_median": totals_term.get("sigma_annual_median"),
+                    "spx_shock_effective_pct": float(shock_pct),
+                    "horizon_shock_mode": "terminal",
+                    "total_pnl_usd": total_term,
+                    "total_pnl_pct_nav": (total_term / nav_usd) if nav_usd > 0 else None,
+                    "beta_pnl_usd": totals_term["beta_pnl_usd"],
+                    "decay_pnl_usd": totals_term["decay_pnl_usd"],
+                    "borrow_pnl_usd": totals_term["borrow_pnl_usd"],
+                    "distribution_pnl_usd": totals_term["distribution_pnl_usd"],
+                    "decay_usd": totals_term["decay_pnl_usd"],
+                    "n_legs_modeled": totals_term["n_legs_modeled"],
+                    "n_legs_fallback": totals_term["n_legs_fallback"],
                 }
             )
 
@@ -3542,6 +3651,10 @@ def compute_slide_risk_panel(
             shock_pct=0.0,
             horizon_key=horizon_key,
             vol_multiplier=1.0,
+            spx_shock_cfg=spx_shock_cfg,
+            horizon_shock_mode=horizon_shock_mode,
+            variance_decomp=variance_decomp,
+            per_leg_beta=True,
         )
         decay_reference[horizon_key] = {
             "horizon_years": totals["horizon_years"],
@@ -3563,6 +3676,15 @@ def compute_slide_risk_panel(
     down_rows = [r for r in spx_shock_rows if float(r.get("shock_pct") or 0.0) < 0]
     if down_rows:
         binding_shock = min(down_rows, key=lambda r: float(r.get("pnl_pct_nav") or 0.0))
+    historical_spx = _build_historical_spx_scenarios(
+        enriched,
+        etf_meta=etf_meta,
+        nav_usd=nav_usd,
+        spx_shock_cfg=spx_shock_cfg,
+        variance_decomp=variance_decomp,
+        horizon_key="12M",
+        zero_borrow=False,
+    )
     indices_out.append(
         {
             "index": "SPX",
@@ -3575,6 +3697,18 @@ def compute_slide_risk_panel(
             "coverage_pct": (coverage_gross / total_gross) if total_gross > 0 else 0.0,
             "n_names_covered": sum(1 for e in enriched if e.get("beta_to_spy") is not None),
             "n_names_total": len(enriched),
+            "net_beta_to_spy": factor_totals.get("net_beta_to_spy"),
+            "gross_beta_to_spy": factor_totals.get("gross_beta_to_spy"),
+            "horizon_shock_mode": horizon_shock_mode,
+            "spx_shock_config": spx_shock_cfg,
+            "historical_spx_scenarios": historical_spx,
+            "historical_spx_catalog": list(HISTORICAL_SPX_SCENARIOS),
+            "description": (
+                "T+0: instantaneous portfolio β×ΔSPX. "
+                f"1M–12M: horizon-scaled equity shock ({horizon_shock_mode}) + LETF decay/borrow. "
+                "12M-terminal row uses full labeled ΔSPX. "
+                "Historical rows integrate piecewise SPX paths."
+            ),
         }
     )
 
@@ -3611,173 +3745,9 @@ def compute_slide_risk_panel(
         "n_letf_names": n_letf,
         "n_names_with_vol": has_vol,
         "n_names_total": len(enriched),
-        "model": "etf_dashboard_scenarios_v2",
-    }
-
-
-# ---------------------------------------------------------------------------
-# Borrow shock sensitivity (Phase 3)
-
-
-BORROW_ABS_SHOCKS_BP: tuple[int, ...] = (25, 50, 100, 200, 500)
-BORROW_SHOCK_FOCUS_BP: tuple[int, ...] = (500,)
-ACTION_QUEUE_CAP: int = 5
-
-
-def compute_borrow_shock_panel(
-    *,
-    borrow_panel: dict[str, Any],
-    flex_positions_xml: Path,
-    nav_usd: float,
-    screener_csv: Path | None = None,
-    watchlist_symbols: set[str] | None = None,
-    abs_shocks_bp: tuple[int, ...] = BORROW_ABS_SHOCKS_BP,
-    persistence_days: int = 30,
-) -> dict[str, Any]:
-    """Per-symbol borrow cost sensitivity to rate shocks.
-
-    Inputs:
-        * ``flex_positions_xml`` -- short notional per symbol.
-        * ``screener_csv`` -- borrow rate (``borrow_current`` / ``borrow_fee_annual``),
-          same convention as etf-dashboard.
-
-    Output: absolute (+bp) ladder showing aggregate additional annual
-    borrow cost + per-name worst victims. The 30-day persistence column
-    converts daily delta to a stressed MTD impact.
-    """
-    positions = parse_positions(flex_positions_xml)
-    if not positions:
-        return {
-            "available": False,
-            "reason": f"missing or empty {flex_positions_xml.name}",
-            "abs_shocks_bp": list(abs_shocks_bp),
-            "abs_ladder": [],
-            "names": [],
-        }
-
-    short_notional: dict[str, float] = {}
-    for p in positions:
-        if getattr(p, "position_value", 0.0) < 0:
-            sym = (p.symbol or "").upper()
-            short_notional[sym] = short_notional.get(sym, 0.0) + abs(p.position_value)
-
-    screener_meta = _load_screener_borrow_meta(screener_csv)
-    watch = {s.upper() for s in (watchlist_symbols or set())}
-
-    name_rows: list[dict[str, Any]] = []
-    for sym, short_n in short_notional.items():
-        if watch and sym not in watch:
-            continue
-        rate = _screener_borrow_rate(sym, screener_meta)
-        eff = float(rate["borrow_rate_pct"] or 0.0)
-        current_annual_cost = short_n * (eff / 100.0) if rate["borrow_rate_known"] else 0.0
-        name_rows.append(
-            {
-                "symbol": sym,
-                "short_notional_usd": short_n,
-                "current_annual_cost_usd": current_annual_cost,
-                **rate,
-            }
-        )
-    name_rows.sort(key=lambda r: r["current_annual_cost_usd"], reverse=True)
-    total_current_annual = sum(r["current_annual_cost_usd"] for r in name_rows)
-
-    def _abs_shock_ladder(shocks: Iterable[int]) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = []
-        for shock in shocks:
-            shifted_aprs = {
-                r["symbol"]: float(r["borrow_rate_pct"] or 0.0) + (shock / 100.0)
-                for r in name_rows
-            }
-            label = f"+{int(shock)}bp"
-            per_name_delta = []
-            for r in name_rows:
-                new_apr = shifted_aprs[r["symbol"]]
-                new_cost = r["short_notional_usd"] * (new_apr / 100.0)
-                cost_delta_usd = new_cost - r["current_annual_cost_usd"]
-                per_name_delta.append(
-                    {
-                        "symbol": r["symbol"],
-                        "short_notional_usd": r["short_notional_usd"],
-                        "borrow_rate_pct": r.get("borrow_rate_pct"),
-                        "stressed_borrow_rate_pct": new_apr,
-                        "stressed_apr_pct": new_apr,
-                        "current_apr_pct": r.get("borrow_rate_pct"),
-                        "new_apr_pct": new_apr,
-                        "annual_cost_delta_usd": cost_delta_usd,
-                        "annual_delta_usd": cost_delta_usd,
-                        "daily_cost_delta_usd": cost_delta_usd / TRADING_DAYS_PER_YEAR_DAYS,
-                        "daily_delta_usd": cost_delta_usd / TRADING_DAYS_PER_YEAR_DAYS,
-                        "persistence_usd": (cost_delta_usd / TRADING_DAYS_PER_YEAR_DAYS)
-                        * persistence_days,
-                    }
-                )
-            per_name_delta.sort(key=lambda d: d["annual_cost_delta_usd"], reverse=True)
-            total_delta = sum(d["annual_cost_delta_usd"] for d in per_name_delta)
-            victim_conc = _borrow_cost_concentration(per_name_delta, top_n=3)
-            out.append(
-                {
-                    "shock": shock,
-                    "kind": "abs_bp",
-                    "label": label,
-                    "annual_delta_usd": total_delta,
-                    "annual_delta_pct_nav": (total_delta / nav_usd)
-                    if nav_usd > 0
-                    else None,
-                    "persistence_delta_usd": (total_delta / TRADING_DAYS_PER_YEAR_DAYS)
-                    * persistence_days,
-                    "worst_victims": per_name_delta[:5],
-                    "victim_concentration": victim_conc,
-                    "is_focus": False,
-                }
-            )
-        return out
-
-    focus_abs = [s for s in abs_shocks_bp if s in BORROW_SHOCK_FOCUS_BP] or list(BORROW_SHOCK_FOCUS_BP)
-    abs_ladder = _abs_shock_ladder(abs_shocks_bp)
-    for row in abs_ladder:
-        if row.get("shock") in focus_abs:
-            row["is_focus"] = True
-
-    current_conc = _borrow_cost_concentration(
-        [
-            {
-                "symbol": r["symbol"],
-                "annual_cost_delta_usd": r["current_annual_cost_usd"],
-            }
-            for r in name_rows
-            if float(r.get("current_annual_cost_usd") or 0.0) > 0
-        ],
-        top_n=3,
-    )
-
-    def _tile_from_ladder(ladder: list[dict[str, Any]], label_match: str) -> dict[str, Any] | None:
-        for row in ladder:
-            if row.get("label") == label_match:
-                return row
-        return None
-
-    focus_500 = _tile_from_ladder(abs_ladder, "+500bp")
-
-    return {
-        "available": True,
-        "sleeve": "short_etf",
-        "watchlist_n_symbols": len(watch),
-        "abs_shocks_bp": list(abs_shocks_bp),
-        "abs_ladder": abs_ladder,
-        "focus_abs_ladder": [r for r in abs_ladder if r.get("is_focus")],
-        "names": name_rows[:25],
-        "n_short_symbols": len(name_rows),
-        "current_annual_cost_usd": total_current_annual,
-        "current_annual_cost_pct_nav": (total_current_annual / nav_usd)
-        if nav_usd > 0
-        else None,
-        "persistence_days": persistence_days,
-        "current_borrow_concentration": current_conc,
-        "summary_tiles": {
-            "focus_abs_500bp": focus_500,
-            "top3_share_current_borrow": current_conc.get("top_n_share"),
-        },
+        "model": "etf_dashboard_scenarios_v3_spx",
+        "spx_shock_config": spx_shock_cfg,
+        "horizon_shock_mode": horizon_shock_mode,
     }
 
 
@@ -3964,7 +3934,6 @@ class RiskSnapshot:
     factor_panel: dict[str, Any] = field(default_factory=dict)
     concentration_panel: dict[str, Any] = field(default_factory=dict)
     slide_risk_panel: dict[str, Any] = field(default_factory=dict)
-    borrow_shock_panel: dict[str, Any] = field(default_factory=dict)
     action_queue: dict[str, Any] = field(default_factory=dict)
     alert_rows: list[dict[str, Any]] = field(default_factory=list)
     universe_counts: dict[str, Any] = field(default_factory=dict)
@@ -3996,7 +3965,6 @@ class RiskSnapshot:
             "factor_panel": self.factor_panel,
             "concentration_panel": self.concentration_panel,
             "slide_risk_panel": self.slide_risk_panel,
-            "borrow_shock_panel": self.borrow_shock_panel,
             "action_queue": self.action_queue,
             "worst_shock": (self.slide_risk_panel or {}).get("worst_shock"),
             "top_risk_contributors": [
@@ -4066,10 +4034,6 @@ def build_snapshot(
         run_date=run_date,
         limits_ctx=limits_ctx,
         repo_root=repo_root,
-    )
-    borrow_watchlist = _borrow_watchlist_symbols(
-        screener_csv=screener_csv,
-        flex_positions_xml=flex / "flex_positions.xml",
     )
     data_quality = compute_data_quality(
         accounting_dir=accounting,
@@ -4197,13 +4161,6 @@ def build_snapshot(
         beta_results=beta_results_dicts or None,
         repo_root=repo_root,
     )
-    borrow_shock_panel = compute_borrow_shock_panel(
-        borrow_panel=borrow_panel,
-        flex_positions_xml=flex / "flex_positions.xml",
-        nav_usd=nav_usd,
-        screener_csv=screener_csv,
-        watchlist_symbols=borrow_watchlist,
-    )
     action_queue = compute_action_queue(
         book=book,
         factor_panel=factor_panel,
@@ -4239,7 +4196,6 @@ def build_snapshot(
         factor_panel=factor_panel,
         concentration_panel=concentration_panel,
         slide_risk_panel=slide_risk_panel,
-        borrow_shock_panel=borrow_shock_panel,
         action_queue=action_queue,
         alert_rows=alert_rows,
         universe_counts=universe_counts,

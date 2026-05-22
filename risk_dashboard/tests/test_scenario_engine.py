@@ -97,6 +97,30 @@ def test_aggregate_leg_scenario_decomposition_sums():
     )
 
 
+def test_aggregate_zero_borrow_excludes_short_drag():
+    legs = [
+        {
+            "symbol": "APLX",
+            "net_notional_usd": -1_000_000.0,
+            "product_class": "letf_long",
+            "leverage_k": 2.0,
+            "vol_underlying_annual": 0.7,
+            "borrow_fee_annual": 0.48,
+        }
+    ]
+    with_borrow = aggregate_leg_scenario_pnl(
+        legs, underlying_return=0.0, horizon_key="12M"
+    )
+    zero_borrow = aggregate_leg_scenario_pnl(
+        legs, underlying_return=0.0, horizon_key="12M", zero_borrow=True
+    )
+    assert with_borrow["borrow_pnl_usd"] < 0
+    assert zero_borrow["borrow_pnl_usd"] == 0.0
+    assert zero_borrow["total_pnl_usd"] == pytest.approx(
+        zero_borrow["decay_pnl_usd"], rel=1e-6, abs=1.0
+    )
+
+
 def test_model_leg_yieldboost_when_income_present():
     leg = {
         "symbol": "FBYY",

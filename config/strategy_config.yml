@@ -411,3 +411,15 @@ portfolio:
           PLTZ: 0.0034
           PLYY: 0.0034
 
+# SPX slide-risk: horizon shock scaling, stress β, historical paths (risk_dashboard).
+spx_shock:
+  horizon_shock_mode: rms          # terminal | rms | drift
+  show_terminal_12m_row: true
+  path_scenarios_enabled: true
+  stress_beta:
+    enabled: true
+    down_delta: 0.15
+    down_threshold_pct: -0.05
+    use_variance_decomp_cap: true
+    decomp_cap_factor: 1.0
+

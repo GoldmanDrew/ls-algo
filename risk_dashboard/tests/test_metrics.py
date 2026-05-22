@@ -15,7 +15,6 @@ from risk_dashboard.metrics import (
     compute_action_queue,
     compute_book_summary,
     compute_borrow_panel,
-    compute_borrow_shock_panel,
     compute_bucket_detail,
     compute_concentration_panel,
     compute_data_quality,
@@ -662,6 +661,11 @@ def test_compute_slide_risk_vix_decay_matrix_with_mock_vol_beta():
     assert current["delta_vs_current_pct_nav"] == pytest.approx(0.0, abs=1e-12)
     assert shocked["vix_shock_pts"] == 10
     assert len(matrix["cells"]) >= 2
+    assert current["borrow_pnl_usd"] == 0.0
+    assert current["borrow_pnl_pct_nav"] == 0.0
+    assert current["total_pnl_pct_nav"] == pytest.approx(
+        current["decay_pnl_pct_nav"], abs=1e-9
+    )
 
 
 def test_compute_slide_risk_panel_letf_decay_uses_per_leg(tmp_path: Path):
@@ -735,7 +739,7 @@ def test_compute_slide_risk_panel_letf_decay_uses_per_leg(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Phase 3: borrow shock sensitivity
+# Borrow panel (actual rates + squeeze)
 # ---------------------------------------------------------------------------
 
 
@@ -778,37 +782,6 @@ def test_compute_borrow_panel_uses_screener_rate_not_ibkr_peak(tmp_path: Path):
     assert row["borrow_rate_source"] == "borrow_current"
     assert row["implied_annual_cost_usd"] == pytest.approx(193_040 * 0.44408, rel=1e-6)
     assert row["borrow_rate_pct"] != pytest.approx(56.3084, abs=0.1)
-
-
-def test_borrow_shock_panel_includes_victim_concentration(tmp_path: Path):
-    flex = tmp_path / "flex_positions.xml"
-    flex.write_text(
-        '<FlexQueryResponse>'
-        '<OpenPosition symbol="AAA" position="-1000" markPrice="10" '
-        'positionValue="-10000" underlyingSymbol="AAA" fxRateToBase="1" multiplier="1" />'
-        '<OpenPosition symbol="BBB" position="-2000" markPrice="10" '
-        'positionValue="-20000" underlyingSymbol="BBB" fxRateToBase="1" multiplier="1" />'
-        "</FlexQueryResponse>",
-        encoding="utf-8",
-    )
-    screener = tmp_path / "screener.csv"
-    pd.DataFrame(
-        [
-            {"ETF": "AAA", "borrow_current": 0.10},
-            {"ETF": "BBB", "borrow_current": 0.05},
-        ]
-    ).to_csv(screener, index=False)
-    panel = compute_borrow_shock_panel(
-        borrow_panel={"borrow": {}},
-        flex_positions_xml=flex,
-        nav_usd=100_000.0,
-        screener_csv=screener,
-    )
-    row = next(r for r in panel["abs_ladder"] if r["label"] == "+500bp")
-    conc = row["victim_concentration"]
-    assert conc["top_n_share"] is not None
-    assert len(conc["top_victims"]) >= 1
-    assert panel["summary_tiles"]["focus_abs_500bp"]["label"] == "+500bp"
 
 
 def test_squeeze_liquidity_loads_from_etf_metrics_daily(tmp_path: Path):
@@ -896,50 +869,6 @@ def test_squeeze_breach_identifies_binding_cap_and_shares(tmp_path: Path):
     assert "2,594 sh short" in breach["source"]
     assert "median vol" in breach["source"]
     assert "shares-out" in breach["source"]
-
-
-def test_compute_borrow_shock_panel_applies_abs_shocks(tmp_path: Path):
-    flex = tmp_path / "flex_positions.xml"
-    flex.write_text(
-        '<FlexQueryResponse>'
-        '<OpenPosition symbol="TSLZ" position="-5000" markPrice="20" '
-        'positionValue="-100000" underlyingSymbol="TSLA" fxRateToBase="1" multiplier="1" />'
-        '<OpenPosition symbol="MSTZ" position="-2000" markPrice="50" '
-        'positionValue="-100000" underlyingSymbol="MSTR" fxRateToBase="1" multiplier="1" />'
-        '</FlexQueryResponse>',
-        encoding="utf-8",
-    )
-    screener = tmp_path / "screener.csv"
-    pd.DataFrame(
-        [
-            {"ETF": "TSLZ", "borrow_fee_annual": 0.10},
-            {"ETF": "MSTZ", "borrow_fee_annual": 0.05},
-        ]
-    ).to_csv(screener, index=False)
-
-    borrow_panel = {
-        "borrow": {"fee_rate_by_symbol": {}},
-        "squeeze_rows": [],
-    }
-    panel = compute_borrow_shock_panel(
-        borrow_panel=borrow_panel,
-        flex_positions_xml=flex,
-        nav_usd=1_000_000.0,
-        screener_csv=screener,
-        abs_shocks_bp=(100, 500),
-    )
-    assert panel["available"] is True
-    assert panel["current_annual_cost_usd"] == pytest.approx(15_000.0)
-    abs_100 = next(r for r in panel["abs_ladder"] if r["shock"] == 100)
-    assert abs_100["annual_delta_usd"] == pytest.approx(2000.0, abs=1.0)
-    assert abs_100["persistence_delta_usd"] == pytest.approx(
-        abs_100["annual_delta_usd"] / 252.0 * 30.0, rel=1e-9
-    )
-    abs_500 = next(r for r in panel["abs_ladder"] if r["shock"] == 500)
-    assert abs_500["annual_delta_usd"] == pytest.approx(10_000.0, abs=1.0)
-    assert abs_500["is_focus"] is True
-    assert panel["summary_tiles"]["focus_abs_500bp"]["label"] == "+500bp"
-    assert abs_500["worst_victims"][0]["symbol"] == "TSLZ"
 
 
 # ---------------------------------------------------------------------------

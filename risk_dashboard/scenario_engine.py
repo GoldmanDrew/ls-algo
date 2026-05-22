@@ -296,6 +296,28 @@ def resolve_sigma_annual(
     return None, "missing"
 
 
+def scale_spx_shock_for_horizon(
+    spx_shock_pct: float,
+    horizon_key: str,
+    *,
+    mode: str = "rms",
+) -> float:
+    """Scale terminal SPX shock for modeled horizons (``terminal`` | ``rms`` | ``drift``)."""
+    import math as _math
+
+    if str(horizon_key).upper() in ("T+0", "T0", "0"):
+        return float(spx_shock_pct)
+    t = horizon_to_years(horizon_key)
+    m = str(mode).lower()
+    if m == "terminal":
+        scale = 1.0
+    elif m == "drift":
+        scale = t
+    else:
+        scale = _math.sqrt(max(t, 0.0))
+    return float(spx_shock_pct) * scale
+
+
 def model_leg_return(
     *,
     leg: dict[str, Any],
@@ -304,9 +326,14 @@ def model_leg_return(
     vol_multiplier: float = 1.0,
     underlying_sigma: float | None = None,
     sigma_annual_override: float | None = None,
+    horizon_years_override: float | None = None,
 ) -> ScenarioLegResult:
     """Route a position leg to the appropriate scenario model."""
-    t_years = horizon_to_years(horizon_key)
+    t_years = (
+        float(horizon_years_override)
+        if horizon_years_override is not None
+        else horizon_to_years(horizon_key)
+    )
     sigma_base, _ = resolve_sigma_annual(leg, underlying_sigma=underlying_sigma)
     if sigma_base is None and sigma_annual_override is None:
         beta = leg.get("leverage_k") or leg.get("beta_to_spy") or 1.0
@@ -381,6 +408,7 @@ def aggregate_leg_scenario_pnl(
     underlying_sigma: float | None = None,
     sigma_overrides: dict[str, float] | None = None,
     borrow_overrides: dict[str, float] | None = None,
+    zero_borrow: bool = False,
 ) -> dict[str, Any]:
     """Sum scenario P&L components across legs (USD, not %)."""
     totals = {
@@ -400,11 +428,11 @@ def aggregate_leg_scenario_pnl(
             continue
         sym = str(leg.get("symbol") or "").upper()
         sigma_override = (sigma_overrides or {}).get(sym)
-        borrow = float(leg.get("borrow_fee_annual") or 0.0)
+        borrow = 0.0 if zero_borrow else float(leg.get("borrow_fee_annual") or 0.0)
         if borrow_overrides and sym in borrow_overrides:
             borrow = float(borrow_overrides[sym])
         leg_for_model = leg
-        if borrow_overrides and sym in borrow_overrides:
+        if zero_borrow or (borrow_overrides and sym in borrow_overrides):
             leg_for_model = {**leg, "borrow_fee_annual": borrow}
         result = model_leg_return(
             leg=leg_for_model,
