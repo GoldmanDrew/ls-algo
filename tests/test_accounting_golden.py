@@ -83,6 +83,17 @@ def test_2026_05_21_b1_sum_after_yieldboost_fix() -> None:
     assert float(bb["total_pnl"].sum()) == pytest.approx(59320.58, rel=1e-3)
 
 
+def test_2026_05_21_b4_mstr_plan_structural_underlying_exposure() -> None:
+    """MSTR B4 pair view shows plan-implied short underlying (not $0)."""
+    detail_path = _require(RUNS / "2026-05-21" / "accounting" / "net_exposure_bucket_4_detail.csv")
+    detail = pd.read_csv(detail_path)
+    under = detail[
+        (detail["underlying"] == "MSTR") & (detail["leg_type"] == "underlying")
+    ]
+    assert len(under) == 1
+    assert float(under.iloc[0]["net_notional_usd"]) < -1000.0
+
+
 def test_snapshot_bucket2_mstr_matches_csv() -> None:
     """Dashboard snapshot must read the same 05-21 bucket-2 CSV totals."""
     run_dir = RUNS / "2026-05-21" / "accounting"

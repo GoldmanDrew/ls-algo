@@ -952,6 +952,7 @@ def compute_bucket_detail(
     net_exposure_csv: Path,
     *,
     blocked_exposure_keys: set[str] | None = None,
+    exposure_detail_csv: Path | None = None,
 ) -> dict[str, Any]:
     pnl = _read_csv_or_empty(pnl_csv)
     expo = _read_csv_or_empty(net_exposure_csv)
@@ -1000,12 +1001,35 @@ def compute_bucket_detail(
             )
     expo_rows.sort(key=lambda r: r["gross_notional_usd"], reverse=True)
 
+    exposure_leg_rows: list[dict[str, Any]] = []
+    if exposure_detail_csv is not None and exposure_detail_csv.is_file():
+        leg_df = _read_csv_or_empty(exposure_detail_csv)
+        if not leg_df.empty:
+            for _, row in leg_df.iterrows():
+                underlying = _first_nonblank(row.get("underlying"), row.get("symbol"))
+                symbol = _first_nonblank(row.get("symbol"), underlying)
+                leg_type = str(row.get("leg_type", "") or "")
+                exposure_leg_rows.append(
+                    {
+                        "underlying": underlying,
+                        "symbol": symbol,
+                        "leg_type": leg_type,
+                        "net_notional_usd": float(row.get("net_notional_usd", 0.0) or 0.0),
+                        "gross_notional_usd": float(row.get("gross_notional_usd", 0.0) or 0.0),
+                    }
+                )
+            exposure_leg_rows.sort(
+                key=lambda r: (str(r.get("underlying", "")), str(r.get("leg_type", "")))
+            )
+
     return {
         "bucket": bucket,
         "pnl_rows": rows,
         "exposure_rows": expo_rows,
+        "exposure_leg_rows": exposure_leg_rows,
         "n_pnl_rows": len(rows),
         "n_exposure_rows": len(expo_rows),
+        "n_exposure_leg_rows": len(exposure_leg_rows),
         "winners": rows[:5],
         "losers": list(reversed(rows[-5:])) if len(rows) >= 5 else list(reversed(rows)),
     }
@@ -4019,11 +4043,17 @@ def build_snapshot(
 
     buckets: dict[str, dict[str, Any]] = {}
     for bucket in ("bucket_1", "bucket_2", "bucket_3", "bucket_4"):
+        detail_csv = (
+            accounting / "net_exposure_bucket_4_detail.csv"
+            if bucket == "bucket_4"
+            else None
+        )
         buckets[bucket] = compute_bucket_detail(
             bucket=bucket,
             pnl_csv=accounting / f"pnl_{bucket}.csv",
             net_exposure_csv=accounting / f"net_exposure_{bucket}.csv",
             blocked_exposure_keys=blocked_exposure_keys,
+            exposure_detail_csv=detail_csv,
         )
 
     borrow_panel = compute_borrow_panel(

@@ -321,6 +321,62 @@ def format_bucket_4_pnl(
     return "\n".join(lines), total
 
 
+def format_bucket_4_exposure(
+    exposure_b4_csv: Path,
+    exposure_b4_detail_csv: Path,
+) -> tuple[str, float, float]:
+    """
+    Format Bucket 4 exposure rollup plus per-leg detail (underlying + inverse ETF).
+    Returns (table_str, net_total, gross_total).
+    """
+    if not exposure_b4_csv.exists():
+        return "(no bucket 4 exposure data)", 0.0, 0.0
+
+    rollup_df = pd.read_csv(exposure_b4_csv)
+    if rollup_df.empty or "net_notional_usd" not in rollup_df.columns:
+        return "(no bucket 4 exposure positions)", 0.0, 0.0
+
+    rollup_df["net_notional_usd"] = pd.to_numeric(
+        rollup_df["net_notional_usd"], errors="coerce"
+    ).fillna(0.0)
+    net_total = float(rollup_df["net_notional_usd"].sum())
+    gross_total = float(
+        pd.to_numeric(rollup_df.get("gross_notional_usd", rollup_df["net_notional_usd"]), errors="coerce")
+        .fillna(0.0)
+        .sum()
+    )
+
+    table_text, _ = _format_underlying_section(
+        rollup_df.sort_values("net_notional_usd", ascending=False),
+        pd.DataFrame(),
+    )
+
+    leg_df = pd.DataFrame()
+    if exposure_b4_detail_csv.exists():
+        try:
+            leg_df = pd.read_csv(exposure_b4_detail_csv)
+            leg_df["net_notional_usd"] = pd.to_numeric(
+                leg_df["net_notional_usd"], errors="coerce"
+            ).fillna(0.0)
+        except Exception:
+            leg_df = pd.DataFrame()
+
+    if leg_df.empty or "leg_type" not in leg_df.columns:
+        return table_text, net_total, gross_total
+
+    lines = [table_text, "", "--- B4 exposure legs (underlying + ETF) ---"]
+    for underlying in sorted(leg_df["underlying"].astype(str).unique()):
+        sub = leg_df[leg_df["underlying"].astype(str) == underlying].sort_values(
+            ["leg_type", "symbol"], ascending=[True, True]
+        )
+        for _, r in sub.iterrows():
+            sym = str(r.get("symbol", ""))
+            leg = str(r.get("leg_type", ""))
+            net_v = float(r.get("net_notional_usd", 0.0))
+            lines.append(f"  {underlying} / {sym} ({leg})  {net_v:,.2f}")
+    return "\n".join(lines), net_total, gross_total
+
+
 def format_bucket_table(pnl_bucket_csv: Path) -> str:
     """
     Returns a formatted plain-text table of PnL by bucket, with symbol lists.
@@ -2178,6 +2234,7 @@ def main() -> int:
     exposure_b2_csv_path = outdir / "net_exposure_bucket_2.csv"
     exposure_b3_csv_path = outdir / "net_exposure_bucket_3.csv"
     exposure_b4_csv_path = outdir / "net_exposure_bucket_4.csv"
+    exposure_b4_detail_csv_path = outdir / "net_exposure_bucket_4_detail.csv"
     blocked_symbols, blocked_underlyings = _blocked_exposure_sets(run_date)
     blocked_exposure_keys = blocked_symbols | blocked_underlyings
 
@@ -2243,8 +2300,9 @@ def main() -> int:
             if "underlying" not in exposure_b4_df.columns and "symbol" in exposure_b4_df.columns:
                 exposure_b4_df = exposure_b4_df.rename(columns={"symbol": "underlying"})
             exposure_b4_df = _filter_exposure_df(exposure_b4_df, blocked_exposure_keys)
-            b4_exposure_table_str, b4_net_tbl, b4_gross_tbl = format_exposure_table(
-                exposure_b4_df
+            b4_exposure_table_str, b4_net_tbl, b4_gross_tbl = format_bucket_4_exposure(
+                exposure_b4_csv_path,
+                exposure_b4_detail_csv_path,
             )
         except Exception as e:
             b4_exposure_table_str = f"(bucket 4 exposure error: {e})"

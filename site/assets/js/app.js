@@ -1717,6 +1717,35 @@
         </tr>`
       )
       .join("");
+    const legRows = bucket.exposure_leg_rows || [];
+    const legTbl =
+      bucketKey === "bucket_4" && legRows.length
+        ? legRows
+            .slice(0, 60)
+            .map(
+              (r) => `<tr>
+          <td><strong>${safeText(r.underlying)}</strong></td>
+          <td>${safeText(r.symbol)}</td>
+          <td class="dim">${safeText(r.leg_type)}</td>
+          <td class="num ${signedClass(r.net_notional_usd)}">${fmtUsdSigned(
+                r.net_notional_usd
+              )}</td>
+          <td class="num">${fmtUsd(r.gross_notional_usd)}</td>
+        </tr>`
+            )
+            .join("")
+        : "";
+    const legSection =
+      bucketKey === "bucket_4" && legRows.length
+        ? `<h3>Exposure legs (underlying + inverse ETF, top ${Math.min(
+            60,
+            legRows.length
+          )} of ${bucket.n_exposure_leg_rows || legRows.length})</h3>
+      <p class="dim">Structural B4 short underlying is plan-implied when IBKR nets spot with B1/B2.</p>
+      <table class="tight"><thead><tr>
+        <th>Underlying</th><th>Symbol</th><th>Leg</th><th>Net $</th><th>Gross $</th>
+      </tr></thead><tbody>${legTbl}</tbody></table>`
+        : "";
     els.bucketContent.innerHTML = `
       <div class="two-col">
         <div>
@@ -1736,6 +1765,7 @@
       <table class="tight"><thead><tr>
         <th>Underlying</th><th>Symbols</th><th>Legs</th><th>Net $</th><th>Gross $</th>
       </tr></thead><tbody>${expoTbl || "<tr><td colspan=5 class=dim>(none)</td></tr>"}</tbody></table>
+      ${legSection}
     `;
   }
 

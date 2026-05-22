@@ -830,6 +830,85 @@ def load_plan_sleeve_bucket_usd(
     return out
 
 
+def compute_plan_b4_structural_qty(
+    plan_sleeve_usd: dict[str, dict[str, float]],
+    underlying: str,
+    spot_mark_base: float,
+) -> float:
+    """Signed share qty for the B4 structural short from plan ``long_usd`` (typically negative)."""
+    weights = plan_sleeve_usd.get(canonical_symbol(str(underlying))) or {}
+    b4_usd = float(weights.get("b4", 0.0))
+    if abs(b4_usd) <= 1e-9 or abs(float(spot_mark_base)) <= 1e-12:
+        return 0.0
+    return b4_usd / float(spot_mark_base)
+
+
+def resolve_b4_plan_exposure_underlyings(
+    *,
+    mode: str,
+    explicit: set[str],
+    b4_underlyings: set[str],
+    plan_sleeve_usd: dict[str, dict[str, float]],
+    min_usd: float,
+) -> set[str]:
+    """Underlyings that receive plan-implied B4 structural short in pair exposure."""
+    if str(mode).strip().lower() != "plan_structural":
+        return set()
+    if explicit:
+        return {canonical_symbol(str(u)) for u in explicit if canonical_symbol(str(u)) in b4_underlyings}
+    out: set[str] = set()
+    for u in b4_underlyings:
+        u_str = canonical_symbol(str(u))
+        b4_usd = abs(float((plan_sleeve_usd.get(u_str) or {}).get("b4", 0.0)))
+        if b4_usd >= float(min_usd):
+            out.add(u_str)
+    return out
+
+
+def build_b4_plan_ledger_reconciliation(
+    *,
+    run_date: str,
+    b4_underlyings: set[str],
+    plan_sleeve_usd: dict[str, dict[str, float]],
+    spot_qty: dict[str, float],
+    ledger_qty_map: dict[str, dict[str, float]],
+    spot_marks: dict[str, float],
+    plan_exposure_underlyings: set[str],
+) -> pd.DataFrame:
+    """Compare plan B4 targets vs FIFO ledger and flag drift."""
+    rows: list[dict] = []
+    for u in sorted(b4_underlyings):
+        u_str = canonical_symbol(str(u))
+        plan_usd = float((plan_sleeve_usd.get(u_str) or {}).get("b4", 0.0))
+        mark = float(spot_marks.get(u_str, 0.0))
+        plan_qty = compute_plan_b4_structural_qty(plan_sleeve_usd, u_str, mark)
+        ledger = ledger_qty_map.get(u_str, {})
+        ledger_b4 = float(ledger.get("bucket_4", 0.0))
+        ibkr = float(spot_qty.get(u_str, 0.0))
+        orphan = ibkr - (
+            float(ledger.get("bucket_1", 0.0))
+            + float(ledger.get("bucket_2", 0.0))
+            + ledger_b4
+        )
+        orphan_frac = abs(orphan) / abs(ibkr) if abs(ibkr) > 1e-9 else 0.0
+        ledger_missing = abs(plan_usd) > 1e-9 and abs(ledger_b4) < 1.0
+        rows.append(
+            {
+                "run_date": run_date,
+                "underlying": u_str,
+                "plan_b4_usd": plan_usd,
+                "plan_b4_qty": plan_qty,
+                "ledger_qty_b4": ledger_b4,
+                "ibkr_qty": ibkr,
+                "orphan_qty": orphan,
+                "orphan_frac": orphan_frac,
+                "ledger_missing_b4": ledger_missing,
+                "plan_exposure_active": u_str in plan_exposure_underlyings,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def held_exposure_bucket124_weights(
     underlying: str,
     pos: pd.DataFrame,
@@ -1796,6 +1875,26 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     ledger_orphan_split_threshold = float(
         _acct_cfg.get("ledger_orphan_split_threshold", 0.10)
     )
+    b4_underlying_exposure_mode = str(
+        _acct_cfg.get("b4_underlying_exposure_mode", "ledger_fifo")
+    ).strip().lower()
+    if b4_underlying_exposure_mode not in {"ledger_fifo", "plan_structural"}:
+        print(
+            f"[ACCOUNTING] WARNING: unknown accounting.b4_underlying_exposure_mode="
+            f"{b4_underlying_exposure_mode!r}; defaulting to 'ledger_fifo'"
+        )
+        b4_underlying_exposure_mode = "ledger_fifo"
+    b4_plan_exposure_min_usd = float(_acct_cfg.get("b4_plan_exposure_min_usd", 500.0) or 500.0)
+    b4_plan_exposure_underlyings_cfg = {
+        canonical_symbol(str(x))
+        for x in (_acct_cfg.get("b4_plan_exposure_underlyings") or [])
+        if str(x).strip()
+    }
+    ledger_plan_seed_b4_underlyings = {
+        canonical_symbol(str(x))
+        for x in (_acct_cfg.get("ledger_plan_seed_b4_underlyings") or [])
+        if str(x).strip()
+    }
     bucket_state_path = PROJECT_ROOT / "data" / "accounting" / "underlying_bucket_state.csv"
     b4_partial_hedge_ratio = float(
         ((sleeves_cfg.get("inverse_decay_bucket4") or {}).get("rules") or {}).get(
@@ -2337,6 +2436,20 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 f"(e.g. {', '.join(sorted(_plan_ratio_b4)[:6])}); "
                 f"spot PnL mode={plan_b4_pnl_mode}"
             )
+    _b4_plan_exposure_underlyings = resolve_b4_plan_exposure_underlyings(
+        mode=b4_underlying_exposure_mode,
+        explicit=b4_plan_exposure_underlyings_cfg,
+        b4_underlyings=set(b4_underlyings),
+        plan_sleeve_usd=_plan_sleeve_usd,
+        min_usd=b4_plan_exposure_min_usd,
+    )
+    if _b4_plan_exposure_underlyings:
+        print(
+            f"[ACCOUNTING] plan-structural B4 exposure for "
+            f"{len(_b4_plan_exposure_underlyings)} underlying(s): "
+            f"{', '.join(sorted(_b4_plan_exposure_underlyings)[:8])}"
+            f"{'...' if len(_b4_plan_exposure_underlyings) > 8 else ''}"
+        )
     if ledger_full_replay_underlyings:
         print(
             f"[ACCOUNTING] ledger full replay for "
@@ -2398,6 +2511,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "qty_b1",
         "qty_b2",
         "qty_b4",
+        "qty_b4_plan",
+        "plan_b4_usd",
         "realized_b1",
         "realized_b2",
         "realized_b4",
@@ -2416,7 +2531,13 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         _state_hist = pd.DataFrame(columns=state_cols)
     for _c in state_cols:
         if _c not in _state_hist.columns:
-            _state_hist[_c] = 0.0 if _c.startswith("qty_") or _c.startswith("ratio_") else ""
+            _state_hist[_c] = (
+                0.0
+                if _c.startswith("qty_")
+                or _c.startswith("ratio_")
+                or _c in {"plan_b4_usd", "realized_b1", "realized_b2", "realized_b4"}
+                else ""
+            )
     _state_hist["run_date"] = _state_hist["run_date"].astype(str)
     _state_hist["underlying"] = _state_hist["underlying"].astype(str)
     for _c in [
@@ -2424,6 +2545,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "qty_b1",
         "qty_b2",
         "qty_b4",
+        "qty_b4_plan",
+        "plan_b4_usd",
         "realized_b1",
         "realized_b2",
         "realized_b4",
@@ -2858,6 +2981,41 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         _carry_by_col[_u][_col]["bucket_2"] += _amt * _cr2
         _carry_by_col[_u][_col]["bucket_4"] += _amt * _cr4
 
+    _spot_marks: dict[str, float] = {}
+    for _sym, _q in _spot_qty.items():
+        if abs(float(_q)) <= 1e-12:
+            continue
+        _px_rows = pos[pos["symbol"] == _sym]
+        if not _px_rows.empty:
+            _spot_marks[str(_sym)] = float(_px_rows.iloc[0]["markPrice"]) * float(
+                _px_rows.iloc[0]["fxRateToBase"]
+            )
+
+    _plan_b4_qty_by_u: dict[str, float] = {}
+    if ledger_plan_seed_b4_underlyings:
+        print(
+            f"[ACCOUNTING] plan-seed B1/B2 ledger for "
+            f"{len(ledger_plan_seed_b4_underlyings)} underlying(s): "
+            f"{', '.join(sorted(ledger_plan_seed_b4_underlyings))}"
+        )
+    for _u in _all_underlyings:
+        _u_str = str(_u)
+        _mark_u = float(_spot_marks.get(_u_str, 0.0))
+        _plan_b4_qty_by_u[_u_str] = compute_plan_b4_structural_qty(
+            _plan_sleeve_usd, _u_str, _mark_u
+        )
+        if _u_str not in ledger_plan_seed_b4_underlyings or _u_str not in _plan_ratio_b4:
+            continue
+        _ibkr_seed = float(_spot_qty.get(_u_str, 0.0))
+        _pr_seed = _plan_ratio_b4[_u_str]
+        _pb1 = float(_pr_seed.get("b1", 0.0))
+        _pb2 = float(_pr_seed.get("b2", 0.0))
+        _phys_sum = _pb1 + _pb2
+        if abs(_ibkr_seed) > 1e-9 and _phys_sum > 1e-12:
+            _bucket_qty[_u_str]["bucket_1"] = _ibkr_seed * _pb1 / _phys_sum
+            _bucket_qty[_u_str]["bucket_2"] = _ibkr_seed * _pb2 / _phys_sum
+            _bucket_qty[_u_str]["bucket_4"] = 0.0
+
     for _u in _all_underlyings:
         _ratio, _src = _bucket_ratio_entry(_u)
         _r1, _r2, _r4 = _normalize_bucket_triple(
@@ -2987,6 +3145,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 "qty_b1": _cur_b1,
                 "qty_b2": _cur_b2,
                 "qty_b4": _cur_b4,
+                "qty_b4_plan": float(_plan_b4_qty_by_u.get(str(_u), 0.0)),
+                "plan_b4_usd": float((_plan_sleeve_usd.get(str(_u)) or {}).get("b4", 0.0)),
                 "realized_b1": _rz_real,
                 "realized_b2": _rz_real2,
                 "realized_b4": _rz_real4,
@@ -2998,6 +3158,14 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             }
         )
         _plan_b2_usd = float((_plan_sleeve_usd.get(_u) or {}).get("b2", 0.0))
+        _plan_b4_usd_row = float((_plan_sleeve_usd.get(_u) or {}).get("b4", 0.0))
+        _plan_b4_qty_row = float(_plan_b4_qty_by_u.get(str(_u), 0.0))
+        if _u in _b4_plan_exposure_underlyings and abs(_plan_b4_qty_row) > 1e-9:
+            _expo_b4_src = "plan"
+        elif abs(_cur_b4) > 1e-9:
+            _expo_b4_src = "ledger"
+        else:
+            _expo_b4_src = "none"
         _timing_rows.append(
             {
                 "run_date": run_date,
@@ -3024,6 +3192,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 "ratio_carry_b2": _rc2,
                 "ratio_carry_b4": _rc4,
                 "plan_b4_frac": float((_plan_ratio_b4.get(_u) or {}).get("b4", 0.0)),
+                "plan_b4_usd": _plan_b4_usd_row,
+                "plan_b4_qty": _plan_b4_qty_row,
+                "exposure_b4_qty_source": _expo_b4_src,
                 "ledger_b2_frac": _ru2,
                 "pnl_split_mode": plan_b4_pnl_mode if _u in _plan_ratio_b4 else "lot_timed",
                 "plan_b2_usd": _plan_b2_usd,
@@ -3575,6 +3746,23 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         _d.loc[_d["symbol"].isin(b4_etf_syms), "_ratio_b1"] = 0.0
         _d.loc[_d["symbol"].isin(b4_etf_syms), "_ratio_b2"] = 0.0
         _d.loc[_d["symbol"].isin(b4_etf_syms), "_ratio_b4"] = 1.0
+        # Physical spot on plan-B4 names: B1/B2 share the IBKR line; B4 underlying
+        # is a separate synthetic short in the pair view (not a ratio of net spot).
+        _phys_plan_mask = (
+            (~_d["_is_etf"])
+            & (_d["symbol"] == _d["underlying"])
+            & (_d["underlying"].isin(_b4_plan_exposure_underlyings))
+        )
+        for _idx in _d.index[_phys_plan_mask]:
+            _u_ex = str(_d.at[_idx, "underlying"])
+            _pr_ex = _plan_ratio_b4.get(_u_ex) or {}
+            _pb1 = float(_pr_ex.get("b1", 0.0))
+            _pb2 = float(_pr_ex.get("b2", 0.0))
+            _psum = _pb1 + _pb2
+            if _psum > 1e-12:
+                _d.at[_idx, "_ratio_b1"] = _pb1 / _psum
+                _d.at[_idx, "_ratio_b2"] = _pb2 / _psum
+                _d.at[_idx, "_ratio_b4"] = 0.0
         _d = _normalize_exposure_bucket_ratios(
             _d,
             etf_to_delta_map=etf_to_delta_map,
@@ -3620,26 +3808,21 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         )
 
     # ── Pair-exposure underlying qty ─────────────────────────────────────
-    # CRITICAL: This dict is used ONLY by ``compute_bucket4_pair_exposure``
-    # to emit the underlying leg in ``net_exposure_bucket_4*.csv``. It must
-    # use the FIFO-tracked ``qty_b4`` slice so the per-bucket exposure
-    # files reconcile to ``net_exposure_by_underlying.csv``.
-    #
-    # The plan-aware B4 attribution (which would substitute a plan-derived
-    # structural-short quantity) is INTENTIONALLY disabled here. Using
-    # a plan-derived qty here caused the same spot leg to be counted at
-    # full in both ``net_exposure_bucket_1.csv`` (via ``_ledger_spot_ratio``
-    # which is FIFO-derived) AND ``net_exposure_bucket_4.csv`` (via the
-    # plan-derived ``_b4_under_qty``), inflating bucket gross by 30%+
-    # across multi-bucket underlyings. Plan-aware P&L attribution
-    # continues to work because it uses ``_plan_ratio_b4`` directly
-    # (see lines ~2520-2526), not this dict.
+    # Pair view: underlying leg uses plan structural short qty when
+    # ``b4_underlying_exposure_mode=plan_structural``; otherwise FIFO qty_b4.
     _b4_under_qty: dict[str, float] = {}
     for _u_b4 in b4_underlyings:
         _u_str = str(_u_b4)
-        _b4_under_qty[_u_str] = float(
-            _ledger_qty_map.get(_u_str, {}).get("bucket_4", 0.0)
-        )
+        _ledger_b4 = float(_ledger_qty_map.get(_u_str, {}).get("bucket_4", 0.0))
+        if (
+            b4_underlying_exposure_mode == "plan_structural"
+            and _u_str in _b4_plan_exposure_underlyings
+        ):
+            _plan_q = float(_plan_b4_qty_by_u.get(_u_str, 0.0))
+            if abs(_plan_q) > 1e-9:
+                _b4_under_qty[_u_str] = _plan_q
+                continue
+        _b4_under_qty[_u_str] = _ledger_b4
     exposure_b4_df, exposure_b4_detail_df = compute_bucket4_pair_exposure(
         _filter_positions_blacklist(pos, blocked_symbols, blocked_underlyings, etf_to_under),
         b4_registry,
@@ -3667,6 +3850,24 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     exposure_df.to_csv(outdir / "net_exposure_by_underlying.csv", index=False)
     if not exposure_b4_detail_df.empty:
         exposure_b4_detail_df.to_csv(outdir / "net_exposure_bucket_4_detail.csv", index=False)
+
+    _b4_plan_recon_df = build_b4_plan_ledger_reconciliation(
+        run_date=run_date,
+        b4_underlyings=set(b4_underlyings),
+        plan_sleeve_usd=_plan_sleeve_usd,
+        spot_qty=_spot_qty,
+        ledger_qty_map=_ledger_qty_map,
+        spot_marks=_spot_marks,
+        plan_exposure_underlyings=_b4_plan_exposure_underlyings,
+    )
+    if not _b4_plan_recon_df.empty:
+        _b4_plan_recon_df.to_csv(outdir / "b4_plan_ledger_reconciliation.csv", index=False)
+        _n_missing = int(_b4_plan_recon_df["ledger_missing_b4"].sum())
+        if _n_missing:
+            print(
+                f"[ACCOUNTING] B4 plan vs ledger: {_n_missing} name(s) with plan B4 "
+                f"but ledger qty_b4~=0 — see {outdir / 'b4_plan_ledger_reconciliation.csv'}"
+            )
 
     # Bucket 3 exposure (flow inverse / hedge)
     pos_neg = pos[pos["symbol"].isin(neg_beta_syms)].copy()
@@ -3749,6 +3950,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "bucket_component_split_method": component_split_method,
         "plan_b4_pnl_mode": plan_b4_pnl_mode,
         "plan_sleeve_bucketing": plan_sleeve_bucketing,
+        "b4_underlying_exposure_mode": b4_underlying_exposure_mode,
+        "b4_plan_exposure_underlyings": sorted(_b4_plan_exposure_underlyings),
         "bucket3_flow_low_delta_symbols": sorted(flow_low_delta_bucket3_syms),
         "bucket_state_path": str(bucket_state_path),
         "bucket_realized_underlyings_from_trade_timing": int(len(_realized_ratio_from_trades)),

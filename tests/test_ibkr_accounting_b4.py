@@ -11,9 +11,11 @@ from ibkr_accounting import (
     build_bucket4_pair_registry,
     build_underlying_realized_bucket_ratio_map,
     compute_bucket4_pair_exposure,
+    compute_plan_b4_structural_qty,
     held_exposure_bucket124_weights,
     load_plan_sleeve_bucket_usd,
     merge_plan_etf_metadata,
+    resolve_b4_plan_exposure_underlyings,
 )
 
 
@@ -231,33 +233,6 @@ def test_inject_slice_preserves_b2_lot_share() -> None:
     assert total == pytest.approx(1000.0)
 
 
-def test_inject_slice_pure_b4_goes_to_bucket_4() -> None:
-    df = pd.DataFrame(
-        [{"symbol": "APLD", "underlying": "APLD", "realized_pnl": 0.0, "unrealized_pnl": 500.0}]
-    )
-    lot: dict = {
-        "APLD": {
-            "bucket_1": {"realized_pnl": 0.0, "unrealized_pnl": 500.0},
-            "bucket_2": {"realized_pnl": 0.0, "unrealized_pnl": 0.0},
-            "bucket_4": {"realized_pnl": 0.0, "unrealized_pnl": 0.0},
-        }
-    }
-    apply_plan_b4_spot_pnl_override(
-        lot_components=lot,
-        underlying="APLD",
-        df=df,
-        plan_ratio={"b1": 0.0, "b2": 0.0, "b4": 1.0},
-        spot_carry_cols=set(),
-        etf_to_delta_map={"APLZ": -2.0},
-        mode="inject_slice",
-        ledger_r_b1=0.0,
-        ledger_r_b2=0.0,
-    )
-    assert lot["APLD"]["bucket_4"]["unrealized_pnl"] == pytest.approx(500.0)
-    assert lot["APLD"]["bucket_1"]["unrealized_pnl"] == pytest.approx(0.0)
-    assert lot["APLD"]["bucket_2"]["unrealized_pnl"] == pytest.approx(0.0)
-
-
 def test_yieldboost_spot_b2_override_uses_held_ratios() -> None:
     """Yieldboost spot PnL should roll into bucket 2 using held-exposure split."""
     df = pd.DataFrame(
@@ -290,6 +265,75 @@ def test_yieldboost_spot_b2_override_uses_held_ratios() -> None:
     assert lot["SMCI"]["bucket_1"]["unrealized_pnl"] == pytest.approx(40.0)
     assert lot["SMCI"]["bucket_2"]["borrow_fees"] == pytest.approx(-9.6)
     assert lot["SMCI"]["bucket_1"]["borrow_fees"] == pytest.approx(-0.4)
+
+
+def test_inject_slice_pure_b4_goes_to_bucket_4() -> None:
+    df = pd.DataFrame(
+        [{"symbol": "APLD", "underlying": "APLD", "realized_pnl": 0.0, "unrealized_pnl": 500.0}]
+    )
+    lot: dict = {
+        "APLD": {
+            "bucket_1": {"realized_pnl": 0.0, "unrealized_pnl": 500.0},
+            "bucket_2": {"realized_pnl": 0.0, "unrealized_pnl": 0.0},
+            "bucket_4": {"realized_pnl": 0.0, "unrealized_pnl": 0.0},
+        }
+    }
+    apply_plan_b4_spot_pnl_override(
+        lot_components=lot,
+        underlying="APLD",
+        df=df,
+        plan_ratio={"b1": 0.0, "b2": 0.0, "b4": 1.0},
+        spot_carry_cols=set(),
+        etf_to_delta_map={"APLZ": -2.0},
+        mode="inject_slice",
+        ledger_r_b1=0.0,
+        ledger_r_b2=0.0,
+    )
+    assert lot["APLD"]["bucket_4"]["unrealized_pnl"] == pytest.approx(500.0)
+    assert lot["APLD"]["bucket_1"]["unrealized_pnl"] == pytest.approx(0.0)
+    assert lot["APLD"]["bucket_2"]["unrealized_pnl"] == pytest.approx(0.0)
+
+
+def test_compute_plan_b4_structural_qty_signed_short() -> None:
+    plan = {"MSTR": {"b1": 1000.0, "b2": 2000.0, "b4": -3000.0}}
+    qty = compute_plan_b4_structural_qty(plan, "MSTR", 100.0)
+    assert qty == pytest.approx(-30.0)
+
+
+def test_plan_structural_underlying_short_on_net_long_spot() -> None:
+    """Plan-implied B4 qty is negative even when IBKR net spot is long."""
+    registry = pd.DataFrame(
+        [{"etf": "MSTZ", "underlying": "MSTR", "delta": -2.0, "partial_hedge_ratio": 1.0}]
+    )
+    pos = pd.DataFrame(
+        [
+            {"symbol": "MSTR", "position": 332, "markPrice": 400.0, "fxRateToBase": 1.0},
+            {"symbol": "MSTZ", "position": -100, "markPrice": 30.0, "fxRateToBase": 1.0},
+        ]
+    )
+    plan_qty = -5414.0 / 400.0
+    _, detail = compute_bucket4_pair_exposure(
+        pos, registry, underlying_b4_qty={"MSTR": plan_qty}
+    )
+    under = detail[(detail["underlying"] == "MSTR") & (detail["leg_type"] == "underlying")]
+    assert len(under) == 1
+    assert float(under["net_notional_usd"].iloc[0]) == pytest.approx(plan_qty * 400.0)
+    assert float(under["net_notional_usd"].iloc[0]) < 0
+
+
+def test_resolve_b4_plan_exposure_underlyings_auto() -> None:
+    plan = {
+        "MSTR": {"b1": 1.0, "b2": 2.0, "b4": -5.0},
+        "GDX": {"b1": 100.0, "b2": 0.0, "b4": 0.0},
+    }
+    out = resolve_b4_plan_exposure_underlyings(
+        mode="plan_structural",
+        explicit=set(),
+        b4_underlyings={"MSTR", "GDX", "NBIS"},
+        plan_sleeve_usd=plan,
+        min_usd=1.0,
+    )
+    assert out == {"MSTR"}
 
 
 def test_pair_exposure_emits_underlying_once_per_underlying() -> None:

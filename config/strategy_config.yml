@@ -17,6 +17,13 @@ accounting:
     - SMCI
     - IONQ
     - IBIT
+  plan_aware_b4_attribution: true
+  # B4 structural short underlying in pair exposure (plan-implied, not FIFO ledger).
+  b4_underlying_exposure_mode: plan_structural   # ledger_fifo | plan_structural
+  b4_plan_exposure_underlyings: []               # empty = all B4 registry names with plan b4 sleeve
+  b4_plan_exposure_min_usd: 500
+  # Re-seed physical B1/B2 ledger qty from plan ratios (qty_b4 stays 0 on net spot line).
+  ledger_plan_seed_b4_underlyings: []
 
 strategy:
   tag: ETF_LS
