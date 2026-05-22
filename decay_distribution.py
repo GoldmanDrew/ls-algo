@@ -48,7 +48,10 @@ The module imports only ``numpy`` and ``pandas`` to match the existing
 
 from __future__ import annotations
 
+import json
 import math
+import os
+from pathlib import Path
 from typing import Dict, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
@@ -59,6 +62,11 @@ from yieldboost_decay import (
     yieldboost_decay_point_estimate,
 )
 
+try:
+    from yieldboost_event_decay import event_aware_decay_distribution
+except ImportError:
+    event_aware_decay_distribution = None  # type: ignore[misc, assignment]
+
 
 # ─── module-level constants ────────────────────────────────────────────────
 
@@ -68,6 +76,60 @@ _MIN_DAYS_FOR_HAR = 220                      # need ≥1y of daily RV to fit HAR
 _MIN_DAYS_FOR_EMPIRICAL_SIGMA = 60           # rolling-IV samples after window
 _LOOKBACK_MAX_DAYS = 5 * TRADING_DAYS        # cap fit history at 5y
 _QUANTILES_DEFAULT = (0.10, 0.50, 0.90)
+_EVENT_CALENDAR_CANDIDATES = (
+    Path(os.environ.get("ETF_DASHBOARD_DATA", "")) / "event_calendar_combined.json",
+    Path(__file__).resolve().parents[1] / ".." / "etf-dashboard" / "data" / "event_calendar_combined.json",
+)
+
+
+def _load_event_calendar_combined() -> dict | None:
+    for path in _EVENT_CALENDAR_CANDIDATES:
+        if not path or not Path(path).exists():
+            continue
+        try:
+            return json.loads(Path(path).read_text(encoding="utf-8"))
+        except Exception:
+            continue
+    return None
+
+
+def _yieldboost_event_weeks(und: str, calendar: dict | None, *, weeks: int = 52) -> tuple[list[bool], list[float], bool]:
+    """Map combined calendar to weekly event flags + historical jump pool."""
+    if not calendar or not und:
+        return [False] * weeks, [], False
+    from datetime import date, timedelta
+
+    today = date.today()
+    end = today + timedelta(days=weeks * 7)
+    flags = [False] * weeks
+    jumps: list[float] = []
+    for row in calendar.get("items") or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("underlying") or "").upper() != str(und).upper():
+            continue
+        ev_date = row.get("event_date")
+        if not ev_date:
+            continue
+        try:
+            ed = date.fromisoformat(str(ev_date))
+        except ValueError:
+            continue
+        if ed < today or ed > end:
+            continue
+        week_idx = min(weeks - 1, max(0, (ed - today).days // 7))
+        flags[week_idx] = True
+        hist = row.get("historical_move_pct_mad")
+        if hist is not None:
+            try:
+                jumps.append(-abs(float(hist)))
+            except (TypeError, ValueError):
+                pass
+    if not any(flags):
+        return flags, jumps, False
+    if not jumps:
+        jumps = [-0.05, -0.03, 0.03, 0.05]
+    return flags, jumps, True
 _RV_FLOOR = 1e-10                            # avoid log(0) on quiet days
 _LOG_IV_SIGMA_CAP = 2.0                      # ≈ 7× span at p90, sane bound
 _DECAY_SIGN_POSITIVE = True                  # match expected_gross_decay sign
@@ -606,15 +668,26 @@ def enrich_with_decay_distribution(
         is_yb = bool(_yb_raw) if pd.notna(_yb_raw) else False
         if cache is not None and cache.get("model") is not None:
             if is_yb:
-                yb_out = yieldboost_decay_distribution(
-                    mu_log_iv_annual=cache["mu_log_iv"],
-                    sigma_log_iv_annual=cache["sigma_log_iv"],
-                )
+                event_cal = _load_event_calendar_combined()
+                week_flags, jump_pool, has_events = _yieldboost_event_weeks(und, event_cal)
+                if has_events and event_aware_decay_distribution is not None:
+                    yb_out = event_aware_decay_distribution(
+                        mu_log_iv_annual=cache["mu_log_iv"],
+                        sigma_log_iv_annual=cache["sigma_log_iv"],
+                        week_has_event=week_flags,
+                        event_jump_pool=jump_pool,
+                    )
+                    model = "yieldboost_put_spread_event"
+                else:
+                    yb_out = yieldboost_decay_distribution(
+                        mu_log_iv_annual=cache["mu_log_iv"],
+                        sigma_log_iv_annual=cache["sigma_log_iv"],
+                    )
+                    model = "yieldboost_put_spread"
                 if yb_out is None:
                     n_skip += 1
                     continue
                 mapped = yb_out
-                model = "yieldboost_put_spread"
                 n_obs = cache["n_obs"]
                 n_har += 1
             else:
