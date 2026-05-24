@@ -12,6 +12,7 @@ from run_eod_pnl_email import (
     compute_bucket_capital_snapshot,
     compute_period_pnl_deltas,
     format_bucket_return_table,
+    format_top_underlying_net_exposure,
     read_bucket_pnl_from_run,
     build_attribution_row,
     split_long_short_realized_unrealized,
@@ -398,3 +399,21 @@ def test_read_bucket_pnl_from_run_uses_pnl_by_bucket_csv(tmp_path, monkeypatch):
     b1, b2, b3, b4 = read_bucket_pnl_from_run("2026-05-18")
     assert b1 == pytest.approx(25426.75)
     assert b2 == pytest.approx(28552.10)
+
+
+def test_format_top_underlying_net_exposure_uses_book_rollup():
+    df = pd.DataFrame(
+        [
+            {"underlying": "AMD", "net_notional_usd": 3000.0, "gross_notional_usd": 10000.0},
+            {"underlying": "IBIT", "net_notional_usd": -2000.0, "gross_notional_usd": 8000.0},
+            {"underlying": "TINY", "net_notional_usd": 100.0, "gross_notional_usd": 500.0},
+        ]
+    )
+    text = format_top_underlying_net_exposure(df, min_abs_net_usd=500.0, max_rows=10)
+    assert "Book net: $+1,100" in text
+    assert "Book gross: $18,500" in text
+    assert "AMD" in text
+    assert "IBIT" in text
+    assert "TINY" not in text
+    assert "Buckets 1, 2 & 4 combined" in text
+

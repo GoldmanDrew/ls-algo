@@ -8,7 +8,7 @@ ibkr:
 accounting:
   use_yfinance: false           # override Flex markPrice with yfinance close
   bucket_split_method: held_exposure  # held_exposure | universe_beta
-  plan_b4_pnl_mode: inject_slice    # inject_slice | full_override (legacy)
+  plan_b4_pnl_mode: inject_slice    # inject_slice: FIFO realized + plan-split unrealized | full_override (legacy)
   plan_sleeve_bucketing: sleeve_first  # sleeve_first | delta_first
   ledger_full_replay_underlyings:
     - MSTR   # stale FIFO seed → full trade replay; other names stay incremental
@@ -22,8 +22,25 @@ accounting:
   b4_underlying_exposure_mode: plan_structural   # ledger_fifo | plan_structural
   b4_plan_exposure_underlyings: []               # empty = all B4 registry names with plan b4 sleeve
   b4_plan_exposure_min_usd: 500
+  # Canonical B4 underlying attribution rule. ``etf_implied`` (default) sources
+  # the structural short underlying leg from held inverse ETFs × β ×
+  # ``partial_hedge_ratio`` whenever the latest ``inverse_decay_bucket4`` plan
+  # row is missing — so names like BE / CLSK / CRCL that were already entered
+  # under the sleeve but no longer appear in proposed_trades.csv still get a
+  # negative-signed B4 underlying leg in net_exposure_bucket_4_detail.csv and
+  # their spot PnL reflects the short. ``plan_only`` reverts to the legacy
+  # "plan-row required" behaviour; ``ledger_fifo`` disables structural shorts
+  # entirely and trusts the share ledger only.
+  b4_underlying_attribution: etf_implied         # plan_only | etf_implied | ledger_fifo
+  b4_attribution_min_usd: 500                    # ignore implied shorts below this magnitude
+  b4_partial_hedge_ratio_default: 0.75           # fallback when registry row lacks partial_hedge_ratio
   # Re-seed physical B1/B2 ledger qty from plan ratios (qty_b4 stays 0 on net spot line).
   ledger_plan_seed_b4_underlyings: []
+  # Bucket 2: all ETFs with 0 < β ≤ 1.5 (yieldboost, income shorts, flow low-β) + pro-rata spot.
+  # Bucket 3: flow-program inverse ETFs only (β < 0, e.g. SDS, SQQQ).
+  spot_ratio_consistency_gate: true
+  exposure_reconciliation_tol_gross_pct: 0.005
+  exposure_reconciliation_tol_net_abs_usd: 10000
 
 strategy:
   tag: ETF_LS

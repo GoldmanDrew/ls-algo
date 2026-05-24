@@ -4,18 +4,24 @@ import pandas as pd
 import pytest
 
 from ibkr_accounting import (
+    SpotBucketRatios,
     _is_etf_leg,
     _normalize_bucket_triple,
     apply_plan_b4_spot_pnl_override,
     apply_yieldboost_spot_b2_override,
     build_bucket4_pair_registry,
+    build_bucket_ratio_reconciliation,
+    build_net_exposure_spot_by_underlying,
     build_underlying_realized_bucket_ratio_map,
+    classify_etf_leg_bucket,
     compute_bucket4_pair_exposure,
     compute_plan_b4_structural_qty,
     held_exposure_bucket124_weights,
     load_plan_sleeve_bucket_usd,
     merge_plan_etf_metadata,
     resolve_b4_plan_exposure_underlyings,
+    resolve_flow_inverse_bucket3_syms,
+    resolve_underlying_spot_ratios,
 )
 
 
@@ -267,6 +273,47 @@ def test_yieldboost_spot_b2_override_uses_held_ratios() -> None:
     assert lot["SMCI"]["bucket_1"]["borrow_fees"] == pytest.approx(-0.4)
 
 
+def test_inject_slice_preserves_fifo_realized() -> None:
+    """Plan B4 slice must not re-carve cumulative FIFO realized PnL."""
+    df = pd.DataFrame(
+        [
+            {
+                "symbol": "QBTS",
+                "underlying": "QBTS",
+                "realized_pnl": 16_012.08,
+                "unrealized_pnl": 1_300.0,
+            }
+        ]
+    )
+    lot: dict = {
+        "QBTS": {
+            "bucket_1": {"realized_pnl": 14_500.0, "unrealized_pnl": 800.0},
+            "bucket_2": {"realized_pnl": 1_512.08, "unrealized_pnl": 500.0},
+            "bucket_4": {"realized_pnl": 0.0, "unrealized_pnl": 0.0},
+        }
+    }
+    apply_plan_b4_spot_pnl_override(
+        lot_components=lot,
+        underlying="QBTS",
+        df=df,
+        plan_ratio={"b1": 0.08, "b2": 0.45, "b4": 0.47},
+        spot_carry_cols=set(),
+        etf_to_delta_map={"QBTZ": -2.0},
+        mode="inject_slice",
+        ledger_r_b1=0.49,
+        ledger_r_b2=0.51,
+        b4_frac_signed=-0.47,
+    )
+    assert lot["QBTS"]["bucket_1"]["realized_pnl"] == pytest.approx(14_500.0)
+    assert lot["QBTS"]["bucket_2"]["realized_pnl"] == pytest.approx(1_512.08)
+    assert lot["QBTS"]["bucket_4"]["realized_pnl"] == pytest.approx(0.0)
+    assert lot["QBTS"]["bucket_4"]["unrealized_pnl"] == pytest.approx(-611.0)
+    assert lot["QBTS"]["bucket_1"]["unrealized_pnl"] == pytest.approx(936.39, rel=1e-3)
+    assert lot["QBTS"]["bucket_2"]["unrealized_pnl"] == pytest.approx(974.61, rel=1e-3)
+    total_u = sum(lot["QBTS"][b]["unrealized_pnl"] for b in lot["QBTS"])
+    assert total_u == pytest.approx(1_300.0)
+
+
 def test_inject_slice_pure_b4_goes_to_bucket_4() -> None:
     df = pd.DataFrame(
         [{"symbol": "APLD", "underlying": "APLD", "realized_pnl": 0.0, "unrealized_pnl": 500.0}]
@@ -386,3 +433,144 @@ def test_ledger_full_replay_trade_filter() -> None:
     ]
     assert set(kept["symbol"].tolist()) == {"MSTR", "RCAT"}
     assert len(kept) == 2
+
+
+def test_exposure_spot_ratio_ignores_yieldboost_spot_b2_override() -> None:
+    """Exposure spot split uses share ledger, not PnL yieldboost_spot_b2 held weights."""
+    sr = resolve_underlying_spot_ratios(
+        underlying="SMCI",
+        ibkr_qty=1160.0,
+        ledger_qty={"bucket_1": 129.0, "bucket_2": 11.0, "bucket_4": 0.0},
+        yieldboost_spot_b2=False,
+        ledger_r_b1=None,
+        ledger_r_b2=None,
+    )
+    assert sr.b2 == pytest.approx(11.0 / 140.0, rel=1e-4)
+    assert sr.b1 == pytest.approx(129.0 / 140.0, rel=1e-4)
+    assert sr.source == "ledger"
+
+    sr_pnl = resolve_underlying_spot_ratios(
+        underlying="SMCI",
+        ibkr_qty=1160.0,
+        ledger_qty={"bucket_1": 129.0, "bucket_2": 11.0, "bucket_4": 0.0},
+        yieldboost_spot_b2=True,
+        ledger_r_b1=0.04,
+        ledger_r_b2=0.96,
+    )
+    assert sr_pnl.b2 > sr.b2
+
+
+def test_resolve_underlying_spot_ratios_inject_slice() -> None:
+    sr = resolve_underlying_spot_ratios(
+        underlying="QBTS",
+        ibkr_qty=1000.0,
+        ledger_qty={"bucket_1": 516.0, "bucket_2": 12.0, "bucket_4": 472.0},
+        plan_ratio={"b1": 0.08, "b2": 0.71, "b4": 0.21},
+        plan_b4_pnl_mode="inject_slice",
+        ledger_r_b1=0.516,
+        ledger_r_b2=0.012,
+    )
+    assert sr.b4 == pytest.approx(0.21)
+    b1_norm = 0.516 / (0.516 + 0.012)
+    b2_norm = 0.012 / (0.516 + 0.012)
+    assert sr.b1 == pytest.approx(0.79 * b1_norm, rel=1e-4)
+    assert sr.b2 == pytest.approx(0.79 * b2_norm, rel=1e-4)
+    assert sr.source == "plan_inject_slice"
+
+
+def test_flow_inverse_routes_to_bucket_3() -> None:
+    flow = {"SDS", "NVYY", "SQQQ"}
+    deltas = {"SDS": -3.0, "NVYY": 0.5, "SQQQ": -3.0}
+    b3 = resolve_flow_inverse_bucket3_syms(flow, deltas)
+    assert b3 == {"SDS", "SQQQ"}
+    bkt, leg = classify_etf_leg_bucket(
+        "SDS",
+        -3.0,
+        flow_short_set=flow,
+    )
+    assert bkt == "bucket_3"
+    assert leg == "flow_inverse"
+
+
+def test_flow_low_delta_routes_to_bucket_2() -> None:
+    bkt, leg = classify_etf_leg_bucket(
+        "NVYY",
+        0.5,
+        flow_short_set={"NVYY", "SDS"},
+    )
+    assert bkt == "bucket_2"
+    assert leg == "flow_low_delta"
+
+
+def test_yieldboost_income_short_routes_to_bucket_2() -> None:
+    bkt, leg = classify_etf_leg_bucket(
+        "IOYY",
+        0.26,
+        flow_short_set={"NVYY", "TSYY"},
+    )
+    assert bkt == "bucket_2"
+    assert leg == "yieldboost_etf"
+
+
+def test_levered_etf_routes_to_bucket_1() -> None:
+    bkt, leg = classify_etf_leg_bucket(
+        "TQQQ",
+        3.0,
+        flow_short_set=set(),
+    )
+    assert bkt == "bucket_1"
+    assert leg == "core_levered_etf"
+
+
+def test_spot_exposure_by_underlying_uses_canonical_ratios() -> None:
+    detail = pd.DataFrame(
+        [
+            {
+                "symbol": "QBTS",
+                "underlying": "QBTS",
+                "_is_etf": False,
+                "net_notional_usd": 1000.0,
+                "gross_notional_usd": 1000.0,
+            }
+        ]
+    )
+    ratio_map = {
+        "QBTS": SpotBucketRatios(0.516, 0.012, 0.472, "ledger"),
+    }
+    out = build_net_exposure_spot_by_underlying(detail, ratio_map)
+    assert len(out) == 1
+    assert out.iloc[0]["net_bucket_1"] == pytest.approx(516.0)
+    assert out.iloc[0]["net_bucket_2"] == pytest.approx(12.0)
+    assert out.iloc[0]["net_bucket_4"] == pytest.approx(472.0)
+
+
+def test_bucket_ratio_reconciliation_passes_when_aligned() -> None:
+    pnl = pd.DataFrame(
+        [
+            {"symbol": "QBTS", "underlying": "QBTS", "bucket": "bucket_1", "total_pnl": 516.0},
+            {"symbol": "QBTS", "underlying": "QBTS", "bucket": "bucket_2", "total_pnl": 12.0},
+            {"symbol": "QBTS", "underlying": "QBTS", "bucket": "bucket_4", "total_pnl": 472.0},
+        ]
+    )
+    spot_exp = build_net_exposure_spot_by_underlying(
+        pd.DataFrame(
+            [
+                {
+                    "symbol": "QBTS",
+                    "underlying": "QBTS",
+                    "_is_etf": False,
+                    "net_notional_usd": 1000.0,
+                    "gross_notional_usd": 1000.0,
+                }
+            ]
+        ),
+        {"QBTS": SpotBucketRatios(0.516, 0.012, 0.472, "ledger")},
+    )
+    _, max_diff_exp, _ = build_bucket_ratio_reconciliation(
+        pnl,
+        spot_exp,
+        {"QBTS": SpotBucketRatios(0.516, 0.012, 0.472, "ledger")},
+        min_abs_pnl_usd=0.0,
+        min_abs_net_usd=0.0,
+    )
+    assert max_diff_exp <= 0.001

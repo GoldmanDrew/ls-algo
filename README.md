@@ -212,7 +212,12 @@ Full operator playbook, edge-case table, and verification checklist live in [`SP
 
 - **Sleeves** (`core_leveraged`, `yieldboost`, `inverse_decay_bucket4`, `flow_program`) are **portfolio construction** labels written into **`proposed_trades.csv`** and used by execution / rebalancing.
 - **Accounting buckets** (`bucket_1` … `bucket_4`) in **`ibkr_accounting.py`** are **attribution / reporting** groupings (e.g. high-delta levered vs inverse decay). They are related concepts but **not identical** to YAML sleeve names. When interpreting `pnl_bucket_*.csv`, read the accounting script headers.
-- **Bucket 4 (inverse decay)** attributes PnL and exposure at the **pair** level: short inverse ETF plus short underlying (see `pnl_bucket_4_by_pair.csv`, `bucket4_pairs.csv`). Spot legs are split across buckets 1 / 2 / 4 using held exposure and trade-timed ratios (`qty_b4` in `underlying_bucket_state.csv`).
+- **Bucket 4 (inverse decay)** attributes PnL and exposure at the **pair** level: short inverse ETF **and** short underlying. The structural short underlying leg is sized at `held inverse ETF position × β × partial_hedge_ratio` (default `0.75`) and shows up as a **negative-signed** row in `net_exposure_bucket_4_detail.csv`, so `gross_exposure_bucket_4 > |net_exposure_bucket_4|`.
+- **B4 underlying attribution rule** (`accounting.b4_underlying_attribution`):
+  - **`etf_implied`** (default) — the latest `inverse_decay_bucket4` plan row wins when present; otherwise the structural short is derived from held inverse ETFs (`compute_implied_b4_short`). This recovers the short on names like BE / CLSK / CRCL even after the rebalancer nets the sleeve order into a single broker stock line and the FIFO `qty_b4` ledger loses the tag.
+  - **`plan_only`** — legacy behaviour: structural short only attributed when the latest plan still carries the sleeve row.
+  - **`ledger_fifo`** — disable structural shorts entirely; trust the FIFO share ledger only.
+  See `accounting.b4_attribution_min_usd` (ignore noise below threshold) and `accounting.b4_partial_hedge_ratio_default` (registry fallback). The `b4_source` column in `b4_plan_ledger_reconciliation.csv` reports which signal won per underlying.
 - **Combined stock-sleeve views** (`pnl_by_underlying.csv`, `net_exposure_by_underlying.csv`) sum **buckets 1 + 2 + 4** (flow inverse bucket 3 remains separate). Legacy bucket-1&2-only PnL is still written to `pnl_by_underlying_b12.csv`.
 
 ---

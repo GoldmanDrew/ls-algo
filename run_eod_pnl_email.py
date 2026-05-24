@@ -71,7 +71,8 @@ PLOT_PNG = LEDGER_DIR / "pnl_since_2026-02-27.png"
 ATTRIBUTION_HISTORY_CSV = LEDGER_DIR / "pnl_attribution_history.csv"
 PLOT_ATTRIBUTION_PNG = LEDGER_DIR / "pnl_attribution_timeseries.png"
 START_DATE = "2026-02-27"
-PAIR_EXPOSURE_MIN_ABS_NET_USD = 500.0
+TOP_NET_EXPOSURE_MIN_ABS_USD = 500.0
+TOP_NET_EXPOSURE_MAX_ROWS = 25
 BUCKET_KEYS: tuple[str, ...] = ("bucket_1", "bucket_2", "bucket_3", "bucket_4")
 BUCKET_LABELS: dict[str, str] = {
     "bucket_1": "Bucket 1",
@@ -364,7 +365,11 @@ def format_bucket_4_exposure(
     if leg_df.empty or "leg_type" not in leg_df.columns:
         return table_text, net_total, gross_total
 
-    lines = [table_text, "", "--- B4 exposure legs (underlying + ETF) ---"]
+    lines = [
+        table_text,
+        "",
+        "--- B4 exposure legs (inverse ETF short + structural underlying short) ---",
+    ]
     for underlying in sorted(leg_df["underlying"].astype(str).unique()):
         sub = leg_df[leg_df["underlying"].astype(str) == underlying].sort_values(
             ["leg_type", "symbol"], ascending=[True, True]
@@ -373,7 +378,10 @@ def format_bucket_4_exposure(
             sym = str(r.get("symbol", ""))
             leg = str(r.get("leg_type", ""))
             net_v = float(r.get("net_notional_usd", 0.0))
-            lines.append(f"  {underlying} / {sym} ({leg})  {net_v:,.2f}")
+            tag = ""
+            if leg == "underlying":
+                tag = " short" if net_v < 0 else " long"
+            lines.append(f"  {underlying} / {sym} ({leg}{tag})  {net_v:,.2f}")
     return "\n".join(lines), net_total, gross_total
 
 
@@ -998,59 +1006,63 @@ def format_bucket_return_table(
     return "\n".join(lines)
 
 
-def format_pair_exposure_flags(
+def format_top_underlying_net_exposure(
     exposure_df: pd.DataFrame,
     *,
     net_col: str = "net_notional_usd",
     gross_col: str = "gross_notional_usd",
     label_col: str = "underlying",
-    threshold: float = 0.05,
-    min_abs_net_usd: float = PAIR_EXPOSURE_MIN_ABS_NET_USD,
+    min_abs_net_usd: float = TOP_NET_EXPOSURE_MIN_ABS_USD,
+    max_rows: int = TOP_NET_EXPOSURE_MAX_ROWS,
 ) -> str:
     """
-    Flag rows (e.g. per-underlying pairs) where |net| > threshold * gross and
-    |net| >= min_abs_net_usd. Returns multi-line text for the email body.
+    Compact headline block: per-underlying net/gross from the B1+B2+B4 book
+    rollup (``net_exposure_by_underlying.csv``), not B4 pair-view rows alone.
     """
     if exposure_df is None or exposure_df.empty:
-        return "Pair exposure: (no bucket 1/2/4 underlying exposure table)."
-    if label_col not in exposure_df.columns or net_col not in exposure_df.columns or gross_col not in exposure_df.columns:
-        return "Pair exposure: (missing columns for net/gross check)."
+        return "Net exposure (B1+B2+B4): (no underlying exposure table)."
+    if label_col not in exposure_df.columns or net_col not in exposure_df.columns:
+        return "Net exposure (B1+B2+B4): (missing columns for net/gross)."
 
     df = exposure_df.copy()
     df[net_col] = pd.to_numeric(df[net_col], errors="coerce").fillna(0.0)
-    df[gross_col] = pd.to_numeric(df[gross_col], errors="coerce").fillna(0.0)
+    has_gross = gross_col in df.columns
+    if has_gross:
+        df[gross_col] = pd.to_numeric(df[gross_col], errors="coerce").fillna(0.0)
 
-    rows: list[tuple[str, float, float, float]] = []
-    for _, r in df.iterrows():
-        gross = float(r[gross_col])
-        net = float(r[net_col])
-        anet = abs(net)
-        if gross <= 0:
-            continue
-        if anet < min_abs_net_usd:
-            continue
-        if anet <= threshold * gross:
-            continue
-        lab = str(r[label_col])
-        pct = 100.0 * anet / gross
-        rows.append((lab, net, gross, pct))
+    book_net = float(df[net_col].sum())
+    book_gross = float(df[gross_col].sum()) if has_gross else 0.0
 
-    if not rows:
-        return (
-            "Pair exposure: no underlying exceeds 5% |net| vs gross "
-            f"(buckets 1, 2 & 4; |net| ≥ ${min_abs_net_usd:,.0f} only)."
-        )
+    rows_df = df[df[net_col].abs() >= min_abs_net_usd].copy()
+    rows_df = rows_df.sort_values(net_col, key=lambda s: s.abs(), ascending=False)
+    n_above = int(rows_df.shape[0])
+    if max_rows > 0:
+        rows_df = rows_df.head(max_rows)
 
-    rows.sort(key=lambda t: abs(t[1]), reverse=True)
     lines = [
-        "⚠️ Pair exposure — |net| > 5% of gross "
-        f"(listed only if |net| ≥ ${min_abs_net_usd:,.0f}):",
+        "Net exposure by underlying (Buckets 1, 2 & 4 combined — book rollup, delta-normalized):",
+        f"  Book net: ${book_net:+,.0f}  |  Book gross: ${book_gross:,.0f}",
         "",
     ]
-    for lab, net, gross, pct in rows:
-        lines.append(
-            f"  • {lab:8}  net ${net:+,.0f}  gross ${gross:>11,.0f}  ratio {pct:5.1f}%"
-        )
+
+    if rows_df.empty:
+        lines.append(f"  (no underlying with |net| >= ${min_abs_net_usd:,.0f})")
+        return "\n".join(lines)
+
+    label_w = max(8, max(len(str(u)) for u in rows_df[label_col]))
+    for _, r in rows_df.iterrows():
+        lab = str(r[label_col])
+        net = float(r[net_col])
+        if has_gross:
+            gross = float(r[gross_col])
+            lines.append(
+                f"  • {lab:<{label_w}}  net ${net:+,.0f}  gross ${gross:>11,.0f}"
+            )
+        else:
+            lines.append(f"  • {lab:<{label_w}}  net ${net:+,.0f}")
+
+    if n_above > len(rows_df):
+        lines.append(f"  ... and {n_above - len(rows_df)} more (|net| >= ${min_abs_net_usd:,.0f})")
     return "\n".join(lines)
 
 
@@ -2242,15 +2254,15 @@ def main() -> int:
     exposure_table_str = "(exposure data unavailable)"
     total_net = 0.0
     total_gross = 0.0
-    pair_exposure_line = "Pair exposure: (exposure file missing)."
+    top_exposure_line = "Net exposure (B1+B2+B4): (exposure file missing)."
     if exposure_csv_path.exists():
         try:
             exposure_df = _filter_exposure_df(pd.read_csv(exposure_csv_path), blocked_exposure_keys)
             exposure_table_str, total_net, total_gross = format_exposure_table(exposure_df)
-            pair_exposure_line = format_pair_exposure_flags(exposure_df)
+            top_exposure_line = format_top_underlying_net_exposure(exposure_df)
         except Exception as e:
             exposure_table_str = f"(exposure error: {e})"
-            pair_exposure_line = f"Pair exposure: (error loading exposure: {e})"
+            top_exposure_line = f"Net exposure (B1+B2+B4): (error loading exposure: {e})"
 
     # Bucket 1 exposure
     b1_exposure_table_str = "(no bucket 1 exposure data)"
@@ -2351,9 +2363,10 @@ def main() -> int:
     discrepancy_csv_path, _discrepancy_latest_csv_path = write_position_discrepancy_csvs(run_date, discrepancy_df)
 
     # 6) Compose email
+    skip_email = os.environ.get("EOD_SKIP_EMAIL", "").strip().lower() in ("1", "true", "yes")
     recipients_raw = os.environ.get("PNL_RECIPIENTS", "")
     recipients = parse_recipients(recipients_raw)
-    if not recipients:
+    if not recipients and not skip_email:
         raise ValueError(f"PNL_RECIPIENTS parsed to empty list. Raw={recipients_raw!r}")
 
     # Use NY time in the email "As of"
@@ -2408,7 +2421,7 @@ def main() -> int:
     body = (
         f"As of: {asof}\n"
         f"Run date: {run_date} — Previous day mark-to-market\n"
-        f"{pair_exposure_line}\n\n"
+        f"{top_exposure_line}\n\n"
         f"{detail_note}"
         f"Position discrepancy rows: {len(discrepancy_df)} "
         f"(under-exposed: {under_exposed_count})\n\n"
@@ -2535,12 +2548,15 @@ def main() -> int:
         if csv_path.exists():
             attachments.append(csv_path)
 
-    send_email(
-        subject=subject,
-        body=body,
-        attachments=attachments,
-        recipients=recipients,
-    )
+    if skip_email:
+        print(f"[EOD] EOD_SKIP_EMAIL=1 — email not sent. Subject: {subject}")
+    else:
+        send_email(
+            subject=subject,
+            body=body,
+            attachments=attachments,
+            recipients=recipients,
+        )
 
     return 0
 

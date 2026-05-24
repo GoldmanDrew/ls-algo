@@ -42,7 +42,11 @@ Outputs (written to: data/runs/<RUN_DATE>/accounting/):
 - pnl_by_pair.csv
 - bucket4_pairs.csv
 - net_exposure_by_underlying.csv (buckets 1+2+4)
-- net_exposure_bucket_1.csv … net_exposure_bucket_4.csv
+- net_exposure_bucket_1.csv … net_exposure_bucket_4.csv (sleeve view; income shorts in b3)
+- net_exposure_bucket_{1,2,4}_full.csv (audit view; pre-overlay income-short routing)
+- net_exposure_spot_by_underlying.csv
+- bucket_exposure_detail.csv, bucket_leg_classification.csv
+- bucket_ratio_reconciliation.csv
 - net_exposure_bucket_4_detail.csv
 - totals.json
 
@@ -57,6 +61,7 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import numpy as np
@@ -475,11 +480,610 @@ def _spot_ledger_bucket_ratios(
     return r1, r2, r4
 
 
+def _spot_exposure_bucket_ratios(
+    position_qty: float,
+    ledger_qty: dict[str, float],
+) -> tuple[float, float, float]:
+    """
+    Exposure-only spot split: tagged rebalance shares over tagged total.
+
+    Uses qty_b* / (qty_b1 + qty_b2 + qty_b4) from the share ledger, applied to
+    the full IBKR line. Stale ledgers larger than the live line are scaled down
+    first (same cap as ``_spot_ledger_bucket_ratios``). Untagged IBKR shares
+    inherit the tagged mix rather than diluting bucket 2 via qty_b2/ibkr_qty.
+    """
+    if abs(position_qty) <= 1e-12:
+        return 0.0, 0.0, 0.0
+    b1 = float(ledger_qty.get("bucket_1", 0.0))
+    b2 = float(ledger_qty.get("bucket_2", 0.0))
+    b4 = float(ledger_qty.get("bucket_4", 0.0))
+    ledger_total = abs(b1) + abs(b2) + abs(b4)
+    if ledger_total > abs(position_qty) and ledger_total > 1e-12:
+        scale = abs(position_qty) / ledger_total
+        b1, b2, b4 = b1 * scale, b2 * scale, b4 * scale
+        ledger_total = abs(b1) + abs(b2) + abs(b4)
+    if ledger_total <= 1e-12:
+        return 1.0, 0.0, 0.0
+    r1 = abs(b1) / ledger_total
+    r2 = abs(b2) / ledger_total
+    r4 = abs(b4) / ledger_total
+    return r1, r2, r4
+
+
+@dataclass(frozen=True)
+class SpotBucketRatios:
+    """Canonical b1/b2/b4 split for a physical spot line (sums to 1)."""
+
+    b1: float
+    b2: float
+    b4: float
+    source: str
+
+
+def load_yieldboost_etf_syms(screened_path: Path, plan_csv: Path | None = None) -> set[str]:
+    """ETF symbols tagged ``is_yieldboost`` in the screener or trade plan."""
+    out: set[str] = set()
+    for path in (screened_path, plan_csv):
+        if path is None or not Path(path).exists():
+            continue
+        try:
+            df = pd.read_csv(path)
+        except Exception:
+            continue
+        if df.empty or "is_yieldboost" not in df.columns:
+            continue
+        cols_lc = {c.lower(): c for c in df.columns}
+        etf_col = _find_col(cols_lc, ["etf", "symbol", "ticker"])
+        if not etf_col:
+            continue
+        flagged = df[df["is_yieldboost"].map(_plan_row_is_yieldboost_scalar)]
+        for raw in flagged[etf_col].dropna().astype(str):
+            sym = canonical_symbol(raw)
+            if sym:
+                out.add(sym)
+    return out
+
+
+def resolve_flow_inverse_bucket3_syms(
+    flow_short_set: set[str],
+    etf_to_delta_map: dict[str, float],
+) -> set[str]:
+    """Flow-program inverse ETFs only (β < 0). Low-β flow names stay in bucket 2."""
+    return {
+        s
+        for s in flow_short_set
+        if float(etf_to_delta_map.get(s, 0.0)) < 0.0
+    }
+
+
+def resolve_underlying_spot_ratios(
+    *,
+    underlying: str,
+    ibkr_qty: float,
+    ledger_qty: dict[str, float],
+    plan_ratio: dict[str, float] | None = None,
+    plan_b4_pnl_mode: str = "inject_slice",
+    yieldboost_spot_b2: bool = False,
+    ledger_r_b1: float | None = None,
+    ledger_r_b2: float | None = None,
+) -> SpotBucketRatios:
+    """
+    Canonical spot-line b1/b2/b4 ratios (sum to 1).
+
+    Used for net exposure and (when not overridden by lot-timed PnL paths)
+    spot attribution. ``yieldboost_spot_b2`` is a PnL-only carry override;
+    exposure callers should leave it False and omit ``ledger_r_b1/b2`` so
+    physical share-ledger qty drives the b1/b2 split (then plan B4 inject).
+    """
+    _ = underlying  # reserved for diagnostics / future per-name rules
+    r1, r2, r4 = _spot_exposure_bucket_ratios(
+        ibkr_qty,
+        {
+            "bucket_1": float(ledger_qty.get("bucket_1", 0.0)),
+            "bucket_2": float(ledger_qty.get("bucket_2", 0.0)),
+            "bucket_4": float(ledger_qty.get("bucket_4", 0.0)),
+        },
+    )
+    lb1 = float(ledger_r_b1 if ledger_r_b1 is not None else r1)
+    lb2 = float(ledger_r_b2 if ledger_r_b2 is not None else r2)
+    b1_norm, b2_norm = _normalize_b1_b2_pair(lb1, lb2)
+
+    if plan_ratio and plan_b4_pnl_mode == "full_override":
+        pr1 = float(plan_ratio.get("b1", 0.0))
+        pr2 = float(plan_ratio.get("b2", 0.0))
+        pr4 = float(plan_ratio.get("b4", 0.0))
+        fb1, fb2, fb4 = _normalize_bucket_triple(pr1, pr2, pr4)
+        return SpotBucketRatios(fb1, fb2, fb4, "plan_full_override")
+
+    if plan_ratio and float(plan_ratio.get("b4", 0.0)) > 1e-12:
+        b4_frac = float(plan_ratio.get("b4", 0.0))
+        rem = max(0.0, 1.0 - b4_frac)
+        return SpotBucketRatios(
+            rem * b1_norm,
+            rem * b2_norm,
+            b4_frac,
+            "plan_inject_slice",
+        )
+
+    if yieldboost_spot_b2:
+        b4_frac = max(float(r4), 0.0)
+        rem = max(0.0, 1.0 - b4_frac)
+        return SpotBucketRatios(rem * b1_norm, rem * b2_norm, b4_frac, "yieldboost_spot_b2")
+
+    return SpotBucketRatios(r1, r2, r4, "ledger")
+
+
+def classify_etf_leg_bucket(
+    symbol: str,
+    beta: float,
+    *,
+    flow_short_set: set[str],
+    b4_etf_syms: set[str] | None = None,
+) -> tuple[str, str]:
+    """Return (bucket, leg_class) for an ETF leg."""
+    sym = canonical_symbol(symbol)
+    b4_set = b4_etf_syms or set()
+    if beta < 0:
+        if sym in flow_short_set:
+            return "bucket_3", "flow_inverse"
+        return "bucket_4", "inverse_b4_etf"
+    if sym in b4_set:
+        return "bucket_4", "inverse_b4_etf"
+    if beta > 1.5:
+        return "bucket_1", "core_levered_etf"
+    if beta > 0:
+        leg = "flow_low_delta" if sym in flow_short_set else "yieldboost_etf"
+        return "bucket_2", leg
+    return "bucket_1", "core_levered_etf"
+
+
+def _hedge_offset_spot(remaining: float, etf_net: float) -> float:
+    """Spot notional assigned to a bucket to offset ``etf_net``, bounded by ``remaining``."""
+    if abs(remaining) <= 1e-12 or abs(etf_net) <= 1e-12:
+        return 0.0
+    target = -etf_net
+    if remaining > 0:
+        return min(target, remaining) if target > 0 else 0.0
+    return max(target, remaining) if target < 0 else 0.0
+
+
+def hedge_residual_spot_slices(
+    spot_net: float,
+    etf_b1: float,
+    etf_b4: float,
+    *,
+    b4_short_target: float = 0.0,
+) -> tuple[float, float, float]:
+    """
+    Waterfall spot split for sleeve-level exposure.
+
+    When ``b4_short_target`` is non-zero we carve that signed slice off the
+    spot line first (typically negative for inverse-decay pairs where the
+    sleeve structurally shorts the underlying alongside the short inverse
+    ETF). The remaining spot then offsets B1 levered-ETF shorts; whatever
+    is left lands in B2.
+
+    When ``b4_short_target=0.0`` the function falls back to the legacy
+    offset waterfall (B1 first, then B4) so existing call sites that don't
+    supply an explicit structural target keep their old behaviour.
+    """
+    spot_b4 = float(b4_short_target)
+    remaining = float(spot_net) - spot_b4
+    spot_b1 = _hedge_offset_spot(remaining, float(etf_b1))
+    remaining -= spot_b1
+    if abs(spot_b4) <= 1e-12:
+        spot_b4 = _hedge_offset_spot(remaining, float(etf_b4))
+        remaining -= spot_b4
+    return spot_b1, remaining, spot_b4
+
+
+def plan_structural_spot_slices(
+    spot_net: float,
+    plan_b4_notional: float,
+) -> tuple[float, float, float]:
+    """
+    Gross B4-plan decomposition on the physical spot line.
+
+    ``plan_b4_notional`` is the signed structural short (negative USD). The B1
+    long residual is whatever remains so spot_b1 + spot_b4 == spot_net.
+    """
+    spot_b4 = float(plan_b4_notional)
+    spot_b1 = float(spot_net) - spot_b4
+    return spot_b1, 0.0, spot_b4
+
+
+def build_hedge_residual_spot_ratio_map(
+    exposure_detail: pd.DataFrame,
+    *,
+    etf_to_under: dict[str, str],
+    etf_to_delta_map: dict[str, float],
+    flow_short_set: set[str],
+    b4_etf_syms: set[str],
+    plan_ratio_b4: dict[str, dict[str, float]] | None = None,
+    plan_b4_qty_by_u: dict[str, float] | None = None,
+    spot_qty: dict[str, float] | None = None,
+    spot_marks: dict[str, float] | None = None,
+    plan_sleeve_usd: dict[str, dict[str, float]] | None = None,
+    etf_implied_short_usd: dict[str, float] | None = None,
+    b4_attribution_mode: str = "etf_implied",
+    b4_attribution_min_usd: float = 500.0,
+) -> dict[str, SpotBucketRatios]:
+    """
+    Per-underlying spot ratios for bucket exposure.
+
+    Source priority for the structural B4 short underlying leg:
+
+    1. **plan_structural_short** — when ``plan_ratio_b4[u]`` carries an explicit
+       sleeve target from the latest ``inverse_decay_bucket4`` trade plan row.
+    2. **etf_implied_short** — when ``b4_attribution_mode == 'etf_implied'``
+       and ``|etf_implied_short_usd[u]| >= b4_attribution_min_usd``. This is
+       computed from held inverse ETF positions × β × partial_hedge_ratio
+       and lets the accounting recover the structural short even after the
+       rebalancer has netted the sleeve order into a single IBKR stock line
+       and the FIFO ``qty_b4`` ledger has lost the tag.
+    3. **hedge_residual** — fall back to the offset waterfall (no structural
+       short carved out).
+
+    Mode ``plan_only`` disables source (2); mode ``ledger_fifo`` disables both
+    (1) and (2) so the legacy hedge-residual behaviour is restored.
+    """
+    if exposure_detail.empty:
+        return {}
+    plan_ratio_b4 = plan_ratio_b4 or {}
+    plan_b4_qty_by_u = plan_b4_qty_by_u or {}
+    spot_qty = spot_qty or {}
+    spot_marks = spot_marks or {}
+    plan_sleeve_usd = plan_sleeve_usd or {}
+    etf_implied_short_usd = etf_implied_short_usd or {}
+    attribution_mode = str(b4_attribution_mode or "etf_implied").strip().lower()
+    if attribution_mode not in {"plan_only", "etf_implied", "ledger_fifo"}:
+        attribution_mode = "etf_implied"
+    d = exposure_detail.copy()
+    d["underlying"] = d["underlying"].astype(str)
+    d["symbol"] = d["symbol"].astype(str)
+    if "_is_etf" not in d.columns:
+        d["_is_etf"] = d.apply(
+            lambda r: _is_etf_leg(str(r["symbol"]), str(r["underlying"]), etf_to_under),
+            axis=1,
+        )
+    if "_beta" not in d.columns:
+        d["_beta"] = pd.to_numeric(d["symbol"].map(etf_to_delta_map), errors="coerce").fillna(1.0)
+    d["net_notional_usd"] = pd.to_numeric(d["net_notional_usd"], errors="coerce").fillna(0.0)
+
+    out: dict[str, SpotBucketRatios] = {}
+    for u, grp in d.groupby("underlying"):
+        etf_b1 = etf_b4 = 0.0
+        spot_net = 0.0
+        for _, row in grp.iterrows():
+            sym = str(row["symbol"])
+            net = float(row["net_notional_usd"])
+            if bool(row["_is_etf"]):
+                bkt, _ = classify_etf_leg_bucket(
+                    sym,
+                    float(row["_beta"]),
+                    flow_short_set=flow_short_set,
+                    b4_etf_syms=b4_etf_syms,
+                )
+                if bkt == "bucket_1":
+                    etf_b1 += net
+                elif bkt == "bucket_4":
+                    etf_b4 += net
+            elif sym == u:
+                spot_net += net
+        if abs(spot_net) <= 1e-12:
+            continue
+        if attribution_mode != "ledger_fifo" and u in plan_ratio_b4:
+            _qty = float(spot_qty.get(u, 0.0))
+            if abs(_qty) > 1e-12:
+                _mark = abs(spot_net / _qty)
+            else:
+                _mark = float(spot_marks.get(u, 0.0))
+            plan_b4_notional = float(plan_b4_qty_by_u.get(u, 0.0)) * _mark
+            if abs(plan_b4_notional) <= 1e-9:
+                plan_b4_notional = float((plan_sleeve_usd.get(u) or {}).get("b4", 0.0))
+            spot_b1, spot_b2, spot_b4 = plan_structural_spot_slices(spot_net, plan_b4_notional)
+            out[u] = SpotBucketRatios(
+                spot_b1 / spot_net,
+                spot_b2 / spot_net,
+                spot_b4 / spot_net,
+                "plan_structural_short",
+            )
+            continue
+        if attribution_mode == "etf_implied":
+            implied_b4_usd = float(etf_implied_short_usd.get(u, 0.0))
+            if abs(implied_b4_usd) >= float(b4_attribution_min_usd):
+                spot_b1, spot_b2, spot_b4 = plan_structural_spot_slices(spot_net, implied_b4_usd)
+                out[u] = SpotBucketRatios(
+                    spot_b1 / spot_net,
+                    spot_b2 / spot_net,
+                    spot_b4 / spot_net,
+                    "etf_implied_short",
+                )
+                continue
+        etf_gross = abs(etf_b1) + abs(etf_b4)
+        if etf_gross <= 1e-12:
+            out[u] = SpotBucketRatios(1.0, 0.0, 0.0, "hedge_residual_spot_only")
+            continue
+        spot_b1, spot_b2, spot_b4 = hedge_residual_spot_slices(spot_net, etf_b1, etf_b4)
+        out[u] = SpotBucketRatios(
+            spot_b1 / spot_net,
+            spot_b2 / spot_net,
+            spot_b4 / spot_net,
+            "hedge_residual",
+        )
+    return out
+
+
+def build_net_exposure_spot_by_underlying(
+    exposure_detail: pd.DataFrame,
+    spot_ratio_map: dict[str, SpotBucketRatios],
+) -> pd.DataFrame:
+    """Spot-line exposure split using canonical ``spot_ratio_map`` ratios."""
+    if exposure_detail.empty or not spot_ratio_map:
+        return pd.DataFrame(
+            columns=[
+                "underlying",
+                "net_notional_usd",
+                "gross_notional_usd",
+                "ratio_spot_b1",
+                "ratio_spot_b2",
+                "ratio_spot_b4",
+                "ratio_spot_source",
+                "net_bucket_1",
+                "net_bucket_2",
+                "net_bucket_4",
+            ]
+        )
+    spot = exposure_detail[
+        (~exposure_detail["_is_etf"])
+        & (exposure_detail["symbol"].astype(str) == exposure_detail["underlying"].astype(str))
+    ].copy()
+    rows: list[dict] = []
+    for _, r in spot.iterrows():
+        u = str(r["underlying"])
+        sr = spot_ratio_map.get(u)
+        if sr is None:
+            continue
+        net = float(r["net_notional_usd"])
+        gross = float(r["gross_notional_usd"])
+        rows.append(
+            {
+                "underlying": u,
+                "net_notional_usd": net,
+                "gross_notional_usd": gross,
+                "ratio_spot_b1": sr.b1,
+                "ratio_spot_b2": sr.b2,
+                "ratio_spot_b4": sr.b4,
+                "ratio_spot_source": sr.source,
+                "net_bucket_1": net * sr.b1,
+                "net_bucket_2": net * sr.b2,
+                "net_bucket_4": net * sr.b4,
+            }
+        )
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    return out.sort_values("net_notional_usd", key=lambda s: s.abs(), ascending=False)
+
+
+def build_bucket_ratio_reconciliation(
+    pnl_df: pd.DataFrame,
+    spot_exposure_df: pd.DataFrame,
+    spot_ratio_map: dict[str, SpotBucketRatios],
+    *,
+    min_abs_pnl_usd: float = 100.0,
+    min_abs_net_usd: float = 1000.0,
+) -> tuple[pd.DataFrame, float, float]:
+    """
+    Compare spot PnL bucket shares vs exposure spot shares (canonical ratios).
+
+    Returns (detail dataframe, max exposure-vs-canonical diff, max pnl-vs-canonical diff).
+    """
+    cols = [
+        "underlying",
+        "pnl_total",
+        "pnl_share_b1",
+        "pnl_share_b2",
+        "pnl_share_b4",
+        "exp_net_total",
+        "exp_share_b1",
+        "exp_share_b2",
+        "exp_share_b4",
+        "ratio_spot_b1",
+        "ratio_spot_b2",
+        "ratio_spot_b4",
+        "diff_b1",
+        "diff_b2",
+        "diff_b4",
+        "diff_exp_b1",
+        "diff_exp_b2",
+        "diff_exp_b4",
+        "diff_pnl_b1",
+        "diff_pnl_b2",
+        "diff_pnl_b4",
+        "max_diff",
+    ]
+    if pnl_df.empty or not spot_ratio_map:
+        return pd.DataFrame(columns=cols), 0.0, 0.0
+
+    exp_by_u: dict[str, dict[str, float]] = {}
+    if not spot_exposure_df.empty:
+        for _, r in spot_exposure_df.iterrows():
+            u = str(r["underlying"])
+            exp_by_u[u] = {
+                "net": float(r["net_notional_usd"]),
+                "b1": float(r.get("net_bucket_1", 0.0)),
+                "b2": float(r.get("net_bucket_2", 0.0)),
+                "b4": float(r.get("net_bucket_4", 0.0)),
+            }
+
+    rows: list[dict] = []
+    max_diff_exp = 0.0
+    max_diff_pnl = 0.0
+    spot_buckets = {"bucket_1", "bucket_2", "bucket_4"}
+    for u, sr in spot_ratio_map.items():
+        spot_pnl = pnl_df[
+            (pnl_df["symbol"].astype(str) == u)
+            & (pnl_df["underlying"].astype(str) == u)
+            & pnl_df["bucket"].isin(spot_buckets)
+        ]
+        pnl_b1 = float(spot_pnl.loc[spot_pnl["bucket"] == "bucket_1", "total_pnl"].sum())
+        pnl_b2 = float(spot_pnl.loc[spot_pnl["bucket"] == "bucket_2", "total_pnl"].sum())
+        pnl_b4 = float(spot_pnl.loc[spot_pnl["bucket"] == "bucket_4", "total_pnl"].sum())
+        pnl_total = pnl_b1 + pnl_b2 + pnl_b4
+        exp = exp_by_u.get(u, {})
+        exp_net = float(exp.get("net", 0.0))
+        if abs(pnl_total) < min_abs_pnl_usd and abs(exp_net) < min_abs_net_usd:
+            continue
+
+        pnl_abs = abs(pnl_b1) + abs(pnl_b2) + abs(pnl_b4)
+        if pnl_abs > 1e-6:
+            pnl_s1, pnl_s2, pnl_s4 = abs(pnl_b1) / pnl_abs, abs(pnl_b2) / pnl_abs, abs(pnl_b4) / pnl_abs
+        else:
+            pnl_s1, pnl_s2, pnl_s4 = sr.b1, sr.b2, sr.b4
+
+        if abs(exp_net) > 1e-6:
+            exp_s1 = float(exp.get("b1", 0.0)) / exp_net
+            exp_s2 = float(exp.get("b2", 0.0)) / exp_net
+            exp_s4 = float(exp.get("b4", 0.0)) / exp_net
+        else:
+            exp_s1, exp_s2, exp_s4 = sr.b1, sr.b2, sr.b4
+
+        d_exp1, d_exp2, d_exp4 = abs(exp_s1 - sr.b1), abs(exp_s2 - sr.b2), abs(exp_s4 - sr.b4)
+        d_pnl1, d_pnl2, d_pnl4 = abs(pnl_s1 - sr.b1), abs(pnl_s2 - sr.b2), abs(pnl_s4 - sr.b4)
+        row_max_exp = max(d_exp1, d_exp2, d_exp4)
+        row_max_pnl = max(d_pnl1, d_pnl2, d_pnl4)
+        row_max = max(row_max_exp, row_max_pnl)
+        if abs(exp_net) >= min_abs_net_usd:
+            max_diff_exp = max(max_diff_exp, row_max_exp)
+        if abs(pnl_total) >= min_abs_pnl_usd:
+            max_diff_pnl = max(max_diff_pnl, row_max_pnl)
+        rows.append(
+            {
+                "underlying": u,
+                "pnl_total": pnl_total,
+                "pnl_share_b1": pnl_s1,
+                "pnl_share_b2": pnl_s2,
+                "pnl_share_b4": pnl_s4,
+                "exp_net_total": exp_net,
+                "exp_share_b1": exp_s1,
+                "exp_share_b2": exp_s2,
+                "exp_share_b4": exp_s4,
+                "ratio_spot_b1": sr.b1,
+                "ratio_spot_b2": sr.b2,
+                "ratio_spot_b4": sr.b4,
+                "diff_exp_b1": d_exp1,
+                "diff_exp_b2": d_exp2,
+                "diff_exp_b4": d_exp4,
+                "diff_pnl_b1": d_pnl1,
+                "diff_pnl_b2": d_pnl2,
+                "diff_pnl_b4": d_pnl4,
+                "max_diff": row_max,
+            }
+        )
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        out = out.sort_values("max_diff", ascending=False)
+    return out, max_diff_exp, max_diff_pnl
+
+
+def build_audit_full_bucket_exposure(
+    exposure_detail: pd.DataFrame,
+    *,
+    etf_to_under: dict[str, str],
+    etf_to_delta_map: dict[str, float],
+    flow_short_set: set[str],
+    b4_etf_syms: set[str],
+    spot_ratio_map: dict[str, SpotBucketRatios],
+    spot_qty: dict[str, float],
+    ledger_qty_map: dict[str, dict[str, float]],
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Audit view mirroring primary bucket-1/2/4 exposure (β 0–1.5 ETFs → bucket 2)."""
+    empty = pd.DataFrame(
+        columns=["underlying", "symbols", "net_notional_usd", "gross_notional_usd", "n_legs"]
+    )
+    if exposure_detail.empty:
+        return empty, empty, empty
+
+    _d = exposure_detail.copy()
+    _d["symbol"] = _d["symbol"].astype(str)
+    _d["underlying"] = _d["underlying"].astype(str)
+    if "_is_etf" not in _d.columns:
+        _d["_is_etf"] = _d.apply(
+            lambda r: _is_etf_leg(str(r["symbol"]), str(r["underlying"]), etf_to_under),
+            axis=1,
+        )
+    if "_beta" not in _d.columns:
+        _d["_beta"] = pd.to_numeric(_d["symbol"].map(etf_to_delta_map), errors="coerce").fillna(1.0)
+
+    def _audit_ratios(row: pd.Series) -> tuple[float, float, float]:
+        sym = str(row["symbol"])
+        u = str(row["underlying"])
+        if bool(row["_is_etf"]):
+            beta = float(row["_beta"])
+            if beta < 0:
+                if sym in flow_short_set:
+                    return 0.0, 0.0, 0.0
+                return 0.0, 0.0, 1.0
+            if sym in b4_etf_syms:
+                return 0.0, 0.0, 1.0
+            if beta > 1.5:
+                return 1.0, 0.0, 0.0
+            if beta > 0:
+                return 0.0, 1.0, 0.0
+            return 1.0, 0.0, 0.0
+        if sym != u:
+            return 0.0, 0.0, 0.0
+        sr = spot_ratio_map.get(u)
+        if sr is not None:
+            return sr.b1, sr.b2, sr.b4
+        ledger = ledger_qty_map.get(u, {})
+        return _spot_exposure_bucket_ratios(float(spot_qty.get(sym, 0.0)), ledger)
+
+    ratios = _d.apply(_audit_ratios, axis=1, result_type="expand")
+    _d["_ratio_b1"] = ratios[0]
+    _d["_ratio_b2"] = ratios[1]
+    _d["_ratio_b4"] = ratios[2]
+    _d.loc[_d["symbol"].isin(b4_etf_syms), "_ratio_b1"] = 0.0
+    _d.loc[_d["symbol"].isin(b4_etf_syms), "_ratio_b2"] = 0.0
+    _d.loc[_d["symbol"].isin(b4_etf_syms), "_ratio_b4"] = 1.0
+    _d = _normalize_exposure_bucket_ratios(
+        _d,
+        etf_to_delta_map=etf_to_delta_map,
+        flow_short_set=flow_short_set,
+        b4_etf_syms=b4_etf_syms,
+    )
+
+    def _scale(_detail: pd.DataFrame, col: str) -> pd.DataFrame:
+        out = _detail[_detail[col].abs() > 1e-12].copy()
+        out["net_notional_usd"] = out["net_notional_usd"] * out[col]
+        out["gross_notional_usd"] = out["gross_notional_usd"] * out[col]
+        return out
+
+    def _agg(_detail: pd.DataFrame) -> pd.DataFrame:
+        if _detail.empty:
+            return empty.copy()
+        return (
+            _detail.groupby("underlying", as_index=False)
+            .agg(
+                symbols=("symbol", lambda s: ", ".join(sorted(set(s.astype(str))))),
+                net_notional_usd=("net_notional_usd", "sum"),
+                gross_notional_usd=("gross_notional_usd", "sum"),
+                n_legs=("symbol", "nunique"),
+            )
+            .sort_values("net_notional_usd", ascending=False)
+        )
+
+    b1 = _agg(_scale(_d, "_ratio_b1"))
+    b2 = _agg(_scale(_d, "_ratio_b2"))
+    b4 = _agg(_scale(_d, "_ratio_b4"))
+    return b1, b2, b4
+
+
 def _normalize_exposure_bucket_ratios(
     detail: pd.DataFrame,
     *,
     etf_to_delta_map: dict[str, float],
-    flow_low_delta_bucket3_syms: set[str],
     flow_short_set: set[str],
     b4_etf_syms: set[str],
 ) -> pd.DataFrame:
@@ -496,6 +1100,10 @@ def _normalize_exposure_bucket_ratios(
         if gross <= 1e-12:
             continue
         ratio_sum = r1 + r2 + r4
+        # Signed plan split: B4 short + B1 long gross decomposition (sum == 1).
+        is_spot = (not bool(row.get("_is_etf", False))) and sym == str(row["underlying"])
+        if is_spot and r4 < -1e-12:
+            continue
         if ratio_sum > 1e-12:
             if ratio_sum < 1.0 - 1e-9:
                 d.at[idx, "_ratio_b1"] = r1 + (1.0 - ratio_sum)
@@ -509,7 +1117,7 @@ def _normalize_exposure_bucket_ratios(
         if bool(row.get("_is_etf", False)):
             if beta > 1.5:
                 d.at[idx, "_ratio_b1"] = 1.0
-            elif (beta > 0) and (beta <= 1.5) and sym not in flow_low_delta_bucket3_syms:
+            elif (beta > 0) and (beta <= 1.5):
                 d.at[idx, "_ratio_b2"] = 1.0
             elif beta < 0 and sym not in flow_short_set:
                 d.at[idx, "_ratio_b4"] = 1.0
@@ -598,6 +1206,10 @@ _PLAN_SLEEVE_TO_BUCKET: dict[str, str] = {
 
 def _plan_row_is_yieldboost(row: pd.Series) -> bool:
     val = row.get("is_yieldboost", False)
+    return _plan_row_is_yieldboost_scalar(val)
+
+
+def _plan_row_is_yieldboost_scalar(val) -> bool:
     if isinstance(val, str):
         return val.strip().lower() in {"1", "true", "yes", "y"}
     return bool(val)
@@ -730,18 +1342,44 @@ def apply_plan_b4_spot_pnl_override(
     mode: str,
     ledger_r_b1: float,
     ledger_r_b2: float,
+    b4_frac_signed: float | None = None,
 ) -> None:
-    """Redistribute IBKR spot PnL across buckets using plan B4 ratios."""
+    """Redistribute IBKR spot PnL across buckets using a B4 ratio.
+
+    ``plan_ratio`` historically came from the latest ``inverse_decay_bucket4``
+    plan row and carried a normalised positive ``b4`` magnitude. With the
+    canonical attribution rule the B4 sleeve runs as a structural *short*
+    underlying leg, so the PnL split must use the **signed** ratio
+    ``spot_b4 / spot_net`` (negative when short) to attribute correctly
+    against the broker line. Callers pass that value via ``b4_frac_signed``;
+    when omitted the function falls back to ``plan_ratio['b4']`` for
+    backward compatibility.
+
+    In ``inject_slice`` mode (default) **realized** PnL is left on the FIFO
+    lot-ledger bucket assignments already present in ``lot_components``;
+    only **unrealized** PnL and carry columns are re-split by the B4 ratio.
+    This avoids re-carving cumulative trade PnL when plan exposure changes
+    day-to-day (e.g. large hedge closes landing in B1 while B4 gets an
+    opposite-sign realized slice). ``full_override`` still replaces all
+    columns including realized.
+    """
     u_rows = df[
         (df["underlying"] == underlying)
         & (df["symbol"].astype(str) == df["underlying"].astype(str))
     ]
     if u_rows.empty:
         return
-    override_cols = {"realized_pnl", "unrealized_pnl"} | set(spot_carry_cols)
+    if mode == "full_override":
+        override_cols = {"realized_pnl", "unrealized_pnl"} | set(spot_carry_cols)
+    else:
+        override_cols = {"unrealized_pnl"} | set(spot_carry_cols)
     bucket_keys = ("bucket_1", "bucket_2", "bucket_4")
     b1_norm, b2_norm = _normalize_b1_b2_pair(ledger_r_b1, ledger_r_b2)
-    b4_frac = float(plan_ratio.get("b4", 0.0))
+    b4_frac = (
+        float(b4_frac_signed)
+        if b4_frac_signed is not None
+        else float(plan_ratio.get("b4", 0.0))
+    )
 
     for col in override_cols:
         if col not in u_rows.columns:
@@ -843,6 +1481,78 @@ def compute_plan_b4_structural_qty(
     return b4_usd / float(spot_mark_base)
 
 
+def compute_implied_b4_short(
+    underlying: str,
+    pos: pd.DataFrame,
+    *,
+    b4_registry: pd.DataFrame,
+    spot_mark_base: float,
+    partial_hedge_ratio_default: float = 0.75,
+) -> tuple[float, float]:
+    """
+    Implied B4 structural short for ``underlying`` from held inverse-ETF positions.
+
+    For each B4 registry pair mapped to ``underlying`` we sum the held ETF's
+    delta-normalised market value (``position × delta × markPx × fxRateToBase``)
+    — which yields the long-equivalent exposure created by being short the
+    inverse ETF — and return its negative scaled by ``partial_hedge_ratio``.
+    This is the structural short underlying leg the strategy *intends* to
+    run against the held B4 inverse ETF book even when the latest plan no
+    longer carries an explicit ``inverse_decay_bucket4`` row and the FIFO
+    share ledger has been netted into a single broker stock line.
+
+    Returns ``(short_usd, short_qty)``. Both are ≤ 0 when the held inverse
+    ETF position is short (the typical case); both are ≥ 0 if the inverse
+    ETF position is somehow long (signs flip naturally).
+    """
+    u = canonical_symbol(str(underlying))
+    if pos is None or pos.empty or b4_registry is None or b4_registry.empty:
+        return 0.0, 0.0
+
+    reg = b4_registry.copy()
+    reg["underlying"] = reg["underlying"].astype(str).map(canonical_symbol)
+    reg["etf"] = reg["etf"].astype(str).map(canonical_symbol)
+    reg = reg[reg["underlying"] == u]
+    if reg.empty:
+        return 0.0, 0.0
+
+    pos_u = pos.copy()
+    pos_u["symbol"] = pos_u["symbol"].astype(str).map(canonical_symbol)
+
+    short_usd = 0.0
+    for _, row in reg.iterrows():
+        etf = str(row["etf"])
+        try:
+            delta = float(row.get("delta", -1.0))
+        except (TypeError, ValueError):
+            delta = -1.0
+        try:
+            phr = float(row.get("partial_hedge_ratio", partial_hedge_ratio_default))
+        except (TypeError, ValueError):
+            phr = partial_hedge_ratio_default
+        if not np.isfinite(phr) or abs(phr) < 1e-12:
+            phr = partial_hedge_ratio_default
+        held = pos_u[pos_u["symbol"] == etf]
+        if held.empty:
+            continue
+        for _, h in held.iterrows():
+            try:
+                qty = float(h.get("position", 0.0) or 0.0)
+                fx = float(h.get("fxRateToBase", 1.0) or 1.0)
+                mark_local = float(h.get("markPrice", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+            mark_base = mark_local * fx
+            if abs(qty) <= 1e-12 or mark_base <= 0:
+                continue
+            etf_beta_norm = qty * delta * mark_base
+            short_usd += -phr * etf_beta_norm
+
+    spot_mark = float(spot_mark_base or 0.0)
+    short_qty = short_usd / spot_mark if abs(spot_mark) > 1e-12 else 0.0
+    return short_usd, short_qty
+
+
 def resolve_b4_plan_exposure_underlyings(
     *,
     mode: str,
@@ -850,18 +1560,41 @@ def resolve_b4_plan_exposure_underlyings(
     b4_underlyings: set[str],
     plan_sleeve_usd: dict[str, dict[str, float]],
     min_usd: float,
+    etf_implied_short_usd: dict[str, float] | None = None,
+    attribution_mode: str = "etf_implied",
 ) -> set[str]:
-    """Underlyings that receive plan-implied B4 structural short in pair exposure."""
-    if str(mode).strip().lower() != "plan_structural":
+    """Underlyings whose pair exposure carries a structural short underlying leg.
+
+    Sources, in priority:
+
+    * Plan ``inverse_decay_bucket4`` sleeve USD with magnitude ≥ ``min_usd``
+      (active only when ``mode='plan_structural'``).
+    * ETF-implied short magnitude ≥ ``min_usd`` (active when
+      ``attribution_mode='etf_implied'``).
+
+    ``explicit`` (when set) restricts the result to its intersection with
+    ``b4_underlyings``; otherwise both source signals are unioned and any
+    name reaching the threshold is included.
+    """
+    if str(mode).strip().lower() != "plan_structural" and str(attribution_mode).strip().lower() != "etf_implied":
         return set()
     if explicit:
         return {canonical_symbol(str(u)) for u in explicit if canonical_symbol(str(u)) in b4_underlyings}
+
+    etf_implied_short_usd = etf_implied_short_usd or {}
+    attribution_mode = str(attribution_mode or "").strip().lower()
     out: set[str] = set()
     for u in b4_underlyings:
         u_str = canonical_symbol(str(u))
-        b4_usd = abs(float((plan_sleeve_usd.get(u_str) or {}).get("b4", 0.0)))
-        if b4_usd >= float(min_usd):
-            out.add(u_str)
+        if str(mode).strip().lower() == "plan_structural":
+            b4_usd = abs(float((plan_sleeve_usd.get(u_str) or {}).get("b4", 0.0)))
+            if b4_usd >= float(min_usd):
+                out.add(u_str)
+                continue
+        if attribution_mode == "etf_implied":
+            implied_usd = abs(float(etf_implied_short_usd.get(u_str, 0.0)))
+            if implied_usd >= float(min_usd):
+                out.add(u_str)
     return out
 
 
@@ -874,14 +1607,31 @@ def build_b4_plan_ledger_reconciliation(
     ledger_qty_map: dict[str, dict[str, float]],
     spot_marks: dict[str, float],
     plan_exposure_underlyings: set[str],
+    etf_implied_short_usd: dict[str, float] | None = None,
+    etf_implied_short_qty: dict[str, float] | None = None,
+    structural_short_source: dict[str, str] | None = None,
 ) -> pd.DataFrame:
-    """Compare plan B4 targets vs FIFO ledger and flag drift."""
+    """Compare plan B4 targets, ETF-implied structural shorts, and FIFO ledger.
+
+    The ``b4_source`` column reports which signal won at attribution time:
+    ``plan`` (current ``inverse_decay_bucket4`` plan row), ``etf_implied``
+    (held inverse ETFs × β × partial_hedge_ratio), ``ledger`` (FIFO
+    ``qty_b4`` only), or ``none``. ``ledger_missing_b4`` fires whenever an
+    intended structural short (plan or implied) is absent from the FIFO
+    share ledger — useful when the rebalancer netted sleeve orders into a
+    single broker stock line.
+    """
+    etf_implied_short_usd = etf_implied_short_usd or {}
+    etf_implied_short_qty = etf_implied_short_qty or {}
+    structural_short_source = structural_short_source or {}
     rows: list[dict] = []
     for u in sorted(b4_underlyings):
         u_str = canonical_symbol(str(u))
         plan_usd = float((plan_sleeve_usd.get(u_str) or {}).get("b4", 0.0))
         mark = float(spot_marks.get(u_str, 0.0))
         plan_qty = compute_plan_b4_structural_qty(plan_sleeve_usd, u_str, mark)
+        implied_usd = float(etf_implied_short_usd.get(u_str, 0.0))
+        implied_qty = float(etf_implied_short_qty.get(u_str, 0.0))
         ledger = ledger_qty_map.get(u_str, {})
         ledger_b4 = float(ledger.get("bucket_4", 0.0))
         ibkr = float(spot_qty.get(u_str, 0.0))
@@ -891,13 +1641,18 @@ def build_b4_plan_ledger_reconciliation(
             + ledger_b4
         )
         orphan_frac = abs(orphan) / abs(ibkr) if abs(ibkr) > 1e-9 else 0.0
-        ledger_missing = abs(plan_usd) > 1e-9 and abs(ledger_b4) < 1.0
+        intent_usd = plan_usd if abs(plan_usd) > 1e-9 else implied_usd
+        ledger_missing = abs(intent_usd) > 1e-9 and abs(ledger_b4) < 1.0
+        b4_source = structural_short_source.get(u_str, "none")
         rows.append(
             {
                 "run_date": run_date,
                 "underlying": u_str,
                 "plan_b4_usd": plan_usd,
                 "plan_b4_qty": plan_qty,
+                "etf_implied_short_usd": implied_usd,
+                "etf_implied_short_qty": implied_qty,
+                "b4_source": b4_source,
                 "ledger_qty_b4": ledger_b4,
                 "ibkr_qty": ibkr,
                 "orphan_qty": orphan,
@@ -915,12 +1670,10 @@ def held_exposure_bucket124_weights(
     etf_to_under: dict[str, str],
     etf_to_delta: dict[str, float],
     *,
-    flow_low_delta_bucket3_syms: set[str] | None = None,
     flow_short_syms: set[str] | None = None,
     b4_etf_syms: set[str] | None = None,
 ) -> tuple[float, float, float]:
     """EOD delta-adjusted held weights for splitting spot PnL across b1/b2/b4."""
-    forced = flow_low_delta_bucket3_syms or set()
     flow = flow_short_syms or set()
     b4_set = b4_etf_syms or set()
     u = canonical_symbol(underlying)
@@ -935,8 +1688,6 @@ def held_exposure_bucket124_weights(
         if etf_to_under.get(etf) != u:
             continue
         beta = float(etf_to_delta.get(etf, 0.0))
-        if etf in forced:
-            continue
         notional = float(grp["positionValue_base"].abs().sum())
         if notional <= 1e-12:
             continue
@@ -1177,9 +1928,7 @@ def parse_trade_events(trades_xml: Path) -> pd.DataFrame:
     return df.sort_values("dateTime").reset_index(drop=True)
 
 
-def _bucket_from_delta(beta: float, *, force_bucket3: bool = False) -> str | None:
-    if force_bucket3:
-        return "bucket_3"
+def _bucket_from_delta(beta: float) -> str | None:
     if beta < 0:
         return "bucket_4"
     if beta > 1.5:
@@ -1192,9 +1941,7 @@ def _bucket_from_delta(beta: float, *, force_bucket3: bool = False) -> str | Non
 def _bucket_hint_from_order_reference(
     order_ref: str,
     etf_to_delta_map: dict[str, float],
-    flow_low_delta_bucket3_syms: set[str] | None = None,
 ) -> str | None:
-    forced = flow_low_delta_bucket3_syms or set()
     if not order_ref:
         return None
     for tok in str(order_ref).split("|"):
@@ -1205,7 +1952,7 @@ def _bucket_hint_from_order_reference(
         for item in candidates:
             cand = canonical_symbol(item)
             if cand in etf_to_delta_map:
-                return _bucket_from_delta(float(etf_to_delta_map.get(cand, 0.0)), force_bucket3=(cand in forced))
+                return _bucket_from_delta(float(etf_to_delta_map.get(cand, 0.0)))
     return None
 
 
@@ -1213,7 +1960,6 @@ def build_underlying_realized_bucket_ratio_map(
     trade_events: pd.DataFrame,
     etf_to_under: dict[str, str],
     etf_to_delta: dict[str, float],
-    flow_low_delta_bucket3_syms: set[str] | None = None,
     *,
     flow_short_syms: set[str] | None = None,
 ) -> dict[str, dict[str, float]]:
@@ -1226,7 +1972,6 @@ def build_underlying_realized_bucket_ratio_map(
     if trade_events.empty:
         return {}
 
-    forced = flow_low_delta_bucket3_syms or set()
     flow = flow_short_syms or set()
     etf_pos_qty: dict[str, float] = defaultdict(float)
     realized_by_under_bucket: dict[str, dict[str, float]] = defaultdict(
@@ -1253,7 +1998,6 @@ def build_underlying_realized_bucket_ratio_map(
         b_hint = _bucket_hint_from_order_reference(
             str(row.get("orderReference", "")),
             etf_to_delta,
-            flow_low_delta_bucket3_syms=forced,
         )
         if b_hint in {"bucket_1", "bucket_2", "bucket_4"}:
             realized_by_under_bucket[under][b_hint] += abs(realized)
@@ -1266,8 +2010,6 @@ def build_underlying_realized_bucket_ratio_map(
             if etf_under != under:
                 continue
             b = float(etf_to_delta.get(etf_sym, 0.0))
-            if etf_sym in forced:
-                continue
             pos_qty = float(etf_pos_qty.get(etf_sym, 0.0))
             if abs(pos_qty) <= 1e-12:
                 continue
@@ -1890,11 +2632,31 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         for x in (_acct_cfg.get("b4_plan_exposure_underlyings") or [])
         if str(x).strip()
     }
+    b4_attribution_mode = str(
+        _acct_cfg.get("b4_underlying_attribution", "etf_implied")
+    ).strip().lower()
+    if b4_attribution_mode not in {"plan_only", "etf_implied", "ledger_fifo"}:
+        print(
+            f"[ACCOUNTING] WARNING: unknown accounting.b4_underlying_attribution="
+            f"{b4_attribution_mode!r}; defaulting to 'etf_implied'"
+        )
+        b4_attribution_mode = "etf_implied"
+    b4_attribution_min_usd = float(_acct_cfg.get("b4_attribution_min_usd", 500.0) or 500.0)
+    b4_partial_hedge_ratio_default = float(
+        _acct_cfg.get("b4_partial_hedge_ratio_default", 0.75) or 0.75
+    )
     ledger_plan_seed_b4_underlyings = {
         canonical_symbol(str(x))
         for x in (_acct_cfg.get("ledger_plan_seed_b4_underlyings") or [])
         if str(x).strip()
     }
+    spot_ratio_consistency_gate = bool(_acct_cfg.get("spot_ratio_consistency_gate", True))
+    exposure_reconciliation_tol_gross_pct = float(
+        _acct_cfg.get("exposure_reconciliation_tol_gross_pct", 0.001) or 0.001
+    )
+    exposure_reconciliation_tol_net_abs_usd = float(
+        _acct_cfg.get("exposure_reconciliation_tol_net_abs_usd", 500.0) or 500.0
+    )
     bucket_state_path = PROJECT_ROOT / "data" / "accounting" / "underlying_bucket_state.csv"
     b4_partial_hedge_ratio = float(
         ((sleeves_cfg.get("inverse_decay_bucket4") or {}).get("rules") or {}).get(
@@ -2258,11 +3020,25 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     etf_to_under, etf_to_delta_map = complete_etf_maps_from_positions(
         pos, etf_to_under, etf_to_delta_map
     )
-    flow_low_delta_bucket3_syms = {
-        s for s in flow_short_set if 0 < float(etf_to_delta_map.get(s, 0.0)) <= 1.0
+    flow_low_delta_syms = {
+        s for s in flow_short_set if 0 < float(etf_to_delta_map.get(s, 0.0)) <= 1.5
     }
+    flow_inverse_bucket3_syms = resolve_flow_inverse_bucket3_syms(
+        flow_short_set, etf_to_delta_map
+    )
+    if flow_inverse_bucket3_syms:
+        print(
+            f"[ACCOUNTING] flow-program inverse bucket-3: "
+            f"{len(flow_inverse_bucket3_syms)} symbol(s) "
+            f"(e.g. {', '.join(sorted(flow_inverse_bucket3_syms)[:8])})"
+        )
+    if flow_low_delta_syms:
+        print(
+            f"[ACCOUNTING] flow low-beta (0-1.5) -> bucket 2: "
+            f"{len(flow_low_delta_syms)} symbol(s) "
+            f"(e.g. {', '.join(sorted(flow_low_delta_syms)[:8])})"
+        )
     neg_beta_syms = {s for s, b in etf_to_delta_map.items() if b < 0}
-    bucket3_etf_syms = set(neg_beta_syms) | set(flow_low_delta_bucket3_syms)
 
     is_etf = df.apply(
         lambda r: _is_etf_leg(str(r["symbol"]), str(r["underlying"]), etf_to_under),
@@ -2285,8 +3061,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     # bucket_1 for spot/fallback attribution.
     _all_rows = []
     for _s, _b in etf_to_delta_map.items():
-        if _s in flow_low_delta_bucket3_syms:
-            continue
         if _b < 0 and _s not in flow_short_set:
             _bkt = "bucket_4"
         elif _b <= 0:
@@ -2334,7 +3108,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     _held_etf_syms = set(pos["symbol"].unique()) & set(etf_to_delta_map.keys())
     _held_positive = {
         s for s in _held_etf_syms
-        if etf_to_delta_map.get(s, 0) > 0 and s not in flow_low_delta_bucket3_syms
+        if etf_to_delta_map.get(s, 0) > 0
     }
 
     _held_rows = []
@@ -2436,20 +3210,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 f"(e.g. {', '.join(sorted(_plan_ratio_b4)[:6])}); "
                 f"spot PnL mode={plan_b4_pnl_mode}"
             )
-    _b4_plan_exposure_underlyings = resolve_b4_plan_exposure_underlyings(
-        mode=b4_underlying_exposure_mode,
-        explicit=b4_plan_exposure_underlyings_cfg,
-        b4_underlyings=set(b4_underlyings),
-        plan_sleeve_usd=_plan_sleeve_usd,
-        min_usd=b4_plan_exposure_min_usd,
-    )
-    if _b4_plan_exposure_underlyings:
-        print(
-            f"[ACCOUNTING] plan-structural B4 exposure for "
-            f"{len(_b4_plan_exposure_underlyings)} underlying(s): "
-            f"{', '.join(sorted(_b4_plan_exposure_underlyings)[:8])}"
-            f"{'...' if len(_b4_plan_exposure_underlyings) > 8 else ''}"
-        )
+    # ``_b4_plan_exposure_underlyings`` and ``_b4_signed_frac`` are built
+    # later, after ``_spot_marks`` and ``_implied_b4_short_usd`` are known.
     if ledger_full_replay_underlyings:
         print(
             f"[ACCOUNTING] ledger full replay for "
@@ -2485,7 +3247,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             pos,
             etf_to_under,
             etf_to_delta_map,
-            flow_low_delta_bucket3_syms=flow_low_delta_bucket3_syms,
             flow_short_syms=flow_short_set,
             b4_etf_syms=b4_etf_syms,
         )
@@ -2495,7 +3256,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         trade_events=trade_events,
         etf_to_under=etf_to_under,
         etf_to_delta=etf_to_delta_map,
-        flow_low_delta_bucket3_syms=flow_low_delta_bucket3_syms,
         flow_short_syms=flow_short_set,
     )
 
@@ -2796,7 +3556,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             _tmp["under"] = _tmp["symbol"].map(etf_to_under)
             _tmp["delta"] = _tmp["symbol"].map(etf_to_delta_map).astype(float)
             _tmp["w"] = _tmp["quantity"].abs() * _tmp["tradePrice_base"].abs() * _tmp["delta"].abs()
-            _tmp = _tmp[~_tmp["symbol"].isin(flow_low_delta_bucket3_syms)].copy()
             if not _tmp.empty:
                 _tmp["_bkt"] = np.select(
                     [
@@ -2819,7 +3578,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         _hint = _bucket_hint_from_order_reference(
             _ref,
             etf_to_delta_map,
-            flow_low_delta_bucket3_syms=flow_low_delta_bucket3_syms,
         )
         if _hint == "bucket_1":
             return 1.0, 0.0, 0.0
@@ -2840,8 +3598,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             if _eu != _u:
                 continue
             _b = float(etf_to_delta_map.get(_es, 0.0))
-            if _es in flow_low_delta_bucket3_syms:
-                continue
             _q = abs(float(_etf_pos_qty.get(_es, 0.0)))
             if _q <= 1e-12:
                 continue
@@ -2863,7 +3619,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 pos,
                 etf_to_under,
                 etf_to_delta_map,
-                flow_low_delta_bucket3_syms=flow_low_delta_bucket3_syms,
                 flow_short_syms=flow_short_set,
                 b4_etf_syms=b4_etf_syms,
             )
@@ -2991,6 +3746,95 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 _px_rows.iloc[0]["fxRateToBase"]
             )
 
+    # ── ETF-implied B4 structural short (held inverse ETFs × β × hedge_ratio) ──
+    # For every B4 registry underlying, compute the signed short underlying
+    # notional the strategy intends to be running against its held inverse
+    # ETF book. This recovers the structural short even when the rebalancer
+    # netted the sleeve order into a single broker stock line and the FIFO
+    # ``qty_b4`` ledger never tagged the slice. Used as fallback when the
+    # current ``inverse_decay_bucket4`` plan no longer carries the row.
+    _implied_b4_short_usd: dict[str, float] = {}
+    _implied_b4_short_qty: dict[str, float] = {}
+    for _u_b4 in b4_underlyings:
+        _u_str_b4 = canonical_symbol(str(_u_b4))
+        _mark_u_b4 = float(_spot_marks.get(_u_str_b4, 0.0))
+        if _mark_u_b4 <= 1e-12:
+            _px_rows_b4 = pos[pos["symbol"] == _u_str_b4]
+            if not _px_rows_b4.empty:
+                _mark_u_b4 = float(_px_rows_b4.iloc[0]["markPrice"]) * float(
+                    _px_rows_b4.iloc[0]["fxRateToBase"]
+                )
+        if _mark_u_b4 <= 1e-12:
+            continue
+        _short_usd_b4, _short_qty_b4 = compute_implied_b4_short(
+            _u_str_b4,
+            pos,
+            b4_registry=b4_registry,
+            spot_mark_base=_mark_u_b4,
+            partial_hedge_ratio_default=b4_partial_hedge_ratio_default,
+        )
+        if abs(_short_usd_b4) < b4_attribution_min_usd:
+            continue
+        _implied_b4_short_usd[_u_str_b4] = _short_usd_b4
+        _implied_b4_short_qty[_u_str_b4] = _short_qty_b4
+
+    # Resolve the set of underlyings whose pair exposure carries a structural
+    # short underlying leg. Sources, in priority: ``plan_structural`` (latest
+    # ``inverse_decay_bucket4`` sleeve target above ``b4_plan_exposure_min_usd``)
+    # then ``etf_implied`` (held inverse ETFs above ``b4_attribution_min_usd``).
+    _b4_plan_exposure_underlyings = resolve_b4_plan_exposure_underlyings(
+        mode=b4_underlying_exposure_mode,
+        explicit=b4_plan_exposure_underlyings_cfg,
+        b4_underlyings=set(b4_underlyings),
+        plan_sleeve_usd=_plan_sleeve_usd,
+        min_usd=b4_plan_exposure_min_usd,
+        etf_implied_short_usd=_implied_b4_short_usd,
+        attribution_mode=b4_attribution_mode,
+    )
+    if _b4_plan_exposure_underlyings:
+        print(
+            f"[ACCOUNTING] structural B4 exposure for "
+            f"{len(_b4_plan_exposure_underlyings)} underlying(s) "
+            f"(attribution={b4_attribution_mode}, phr={b4_partial_hedge_ratio_default}): "
+            f"{', '.join(sorted(_b4_plan_exposure_underlyings)[:8])}"
+            f"{'...' if len(_b4_plan_exposure_underlyings) > 8 else ''}"
+        )
+
+    # Signed b4 fraction (spot_b4 / spot_net) per underlying. Plan-structural
+    # wins when an ``inverse_decay_bucket4`` plan row exists; otherwise the
+    # ETF-implied short fills in (when ``b4_attribution_mode=etf_implied``).
+    # Used by the spot PnL override and the ledger reconciliation column.
+    _b4_signed_frac: dict[str, float] = {}
+    _b4_attribution_source: dict[str, str] = {}
+    for _u_p in _plan_ratio_b4:
+        _spot_net_u_p = float(_spot_qty.get(_u_p, 0.0)) * float(_spot_marks.get(_u_p, 0.0))
+        if abs(_spot_net_u_p) <= 1e-12:
+            continue
+        _plan_b4_usd_p = float((_plan_sleeve_usd.get(_u_p) or {}).get("b4", 0.0))
+        if abs(_plan_b4_usd_p) <= 1e-9:
+            continue
+        _b4_signed_frac[_u_p] = _plan_b4_usd_p / _spot_net_u_p
+        _b4_attribution_source[_u_p] = "plan"
+    if b4_attribution_mode == "etf_implied":
+        for _u_imp, _short_usd_imp in _implied_b4_short_usd.items():
+            if _u_imp in _b4_signed_frac:
+                continue
+            _spot_net_u_i = float(_spot_qty.get(_u_imp, 0.0)) * float(
+                _spot_marks.get(_u_imp, 0.0)
+            )
+            if abs(_spot_net_u_i) <= 1e-12:
+                continue
+            _b4_signed_frac[_u_imp] = _short_usd_imp / _spot_net_u_i
+            _b4_attribution_source[_u_imp] = "etf_implied"
+    if _b4_signed_frac:
+        _plan_count_b4 = sum(1 for v in _b4_attribution_source.values() if v == "plan")
+        _impl_count_b4 = sum(1 for v in _b4_attribution_source.values() if v == "etf_implied")
+        print(
+            f"[ACCOUNTING] B4 spot attribution: {_plan_count_b4} plan + "
+            f"{_impl_count_b4} etf_implied underlying(s) "
+            f"(mode={b4_attribution_mode}, min_usd=${b4_attribution_min_usd:,.0f})"
+        )
+
     _plan_b4_qty_by_u: dict[str, float] = {}
     if ledger_plan_seed_b4_underlyings:
         print(
@@ -3015,6 +3859,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             _bucket_qty[_u_str]["bucket_1"] = _ibkr_seed * _pb1 / _phys_sum
             _bucket_qty[_u_str]["bucket_2"] = _ibkr_seed * _pb2 / _phys_sum
             _bucket_qty[_u_str]["bucket_4"] = 0.0
+
+    _spot_exposure_ratio_map: dict[str, SpotBucketRatios] = {}
 
     for _u in _all_underlyings:
         _ratio, _src = _bucket_ratio_entry(_u)
@@ -3121,6 +3967,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 mode=plan_b4_pnl_mode,
                 ledger_r_b1=_split_r_b1,
                 ledger_r_b2=_split_r_b2,
+                b4_frac_signed=_b4_signed_frac.get(_u),
             )
         elif _u in yieldboost_spot_b2_underlyings:
             apply_yieldboost_spot_b2_override(
@@ -3132,10 +3979,48 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 r_b2=_split_r_b2,
                 r_b4=_r4,
             )
+        elif _u in _b4_signed_frac:
+            # ETF-implied structural B4 short (no plan row): split spot PnL
+            # using the implied signed b4 ratio. Same mechanism as
+            # plan-structural mode, just sourced from held inverse ETFs.
+            apply_plan_b4_spot_pnl_override(
+                lot_components=_lot_components,
+                underlying=_u,
+                df=df,
+                plan_ratio={"b1": 0.0, "b2": 0.0, "b4": 0.0},
+                spot_carry_cols=_spot_carry_cols,
+                etf_to_delta_map=etf_to_delta_map,
+                mode="inject_slice",
+                ledger_r_b1=_split_r_b1,
+                ledger_r_b2=_split_r_b2,
+                b4_frac_signed=_b4_signed_frac[_u],
+            )
 
         _ibkr_qty = float(_spot_qty.get(_u, 0.0))
         _orphan_qty = _ibkr_qty - _qty_total
         _ledger_qty_map[_u] = dict(_bucket_qty[_u])
+        # Ledger spot split retained for PnL timing / diagnostics; exposure uses
+        # hedge-residual map built from live leg nets at aggregation time.
+        _spot_ratio = resolve_underlying_spot_ratios(
+            underlying=str(_u),
+            ibkr_qty=_ibkr_qty,
+            ledger_qty={
+                "bucket_1": _cur_b1,
+                "bucket_2": _cur_b2,
+                "bucket_4": _cur_b4,
+            },
+            plan_ratio=_plan_ratio_b4.get(_u),
+            plan_b4_pnl_mode=plan_b4_pnl_mode,
+            yieldboost_spot_b2=False,
+            ledger_r_b1=None,
+            ledger_r_b2=None,
+        )
+        _spot_exposure_ratio_map[str(_u)] = _spot_ratio
+        _pnl_split_mode = (
+            plan_b4_pnl_mode
+            if _u in _plan_ratio_b4
+            else ("yieldboost_spot_b2" if _u in yieldboost_spot_b2_underlyings else "lot_timed")
+        )
 
         _state_rows.append(
             {
@@ -3196,8 +4081,12 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 "plan_b4_qty": _plan_b4_qty_row,
                 "exposure_b4_qty_source": _expo_b4_src,
                 "ledger_b2_frac": _ru2,
-                "pnl_split_mode": plan_b4_pnl_mode if _u in _plan_ratio_b4 else "lot_timed",
+                "pnl_split_mode": _pnl_split_mode,
                 "plan_b2_usd": _plan_b2_usd,
+                "ratio_spot_b1": _spot_ratio.b1,
+                "ratio_spot_b2": _spot_ratio.b2,
+                "ratio_spot_b4": _spot_ratio.b4,
+                "ratio_spot_source": _spot_ratio.source,
             }
         )
         if _u in _plan_ratio_b4 and abs(_ru2 - _r2) > 0.25:
@@ -3270,25 +4159,51 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             )
 
     # Assign buckets:
-    # - ETFs are ALWAYS bucketed by their own beta (independent of held status)
+    # - ETFs are ALWAYS bucketed by leg class (independent of held status)
     # - Inverse ETFs (beta < 0):
     #     * flow program shorts -> bucket_3
     #     * all others          -> bucket_4
-    # - Spot positions (non-ETF rows) split using ratio map by underlying
+    # - Core levered ETFs (beta > 1.5) -> bucket_1
+    # - Standard / yieldboost / flow low-β (0 < β ≤ 1.5) -> bucket_2
+    # - Spot positions split using lot ledger + unified spot ratios
     df["bucket"] = ""
+    df["leg_class"] = ""
     neg_etf = is_etf & (sym_beta < 0)
     neg_flow = neg_etf & df["symbol"].isin(flow_short_set)
     neg_non_flow = neg_etf & (~df["symbol"].isin(flow_short_set))
     df.loc[neg_flow, "bucket"] = "bucket_3"
+    df.loc[neg_flow, "leg_class"] = "flow_inverse"
     df.loc[neg_non_flow, "bucket"] = "bucket_4"
-    df.loc[is_etf & (sym_beta > 1.5), "bucket"] = "bucket_1"
-    df.loc[is_etf & (sym_beta > 0) & (sym_beta <= 1.5), "bucket"] = "bucket_2"
-    # Flow sleeve low-delta ETFs behave as inverse sleeve for attribution:
-    # keep their ETF PnL/exposure in bucket_3 and remove their influence from bucket_2 splits.
-    df.loc[is_etf & df["symbol"].isin(flow_low_delta_bucket3_syms), "bucket"] = "bucket_3"
+    df.loc[neg_non_flow, "leg_class"] = "inverse_b4_etf"
+    df.loc[is_etf & df["symbol"].isin(b4_etf_syms), "bucket"] = "bucket_4"
+    df.loc[is_etf & df["symbol"].isin(b4_etf_syms), "leg_class"] = "inverse_b4_etf"
+    df.loc[
+        is_etf & (sym_beta > 1.5) & (df["bucket"] == ""),
+        "bucket",
+    ] = "bucket_1"
+    df.loc[
+        is_etf & (sym_beta > 1.5) & (df["leg_class"] == ""),
+        "leg_class",
+    ] = "core_levered_etf"
+    _b2_etf = (
+        is_etf
+        & (sym_beta > 0)
+        & (sym_beta <= 1.5)
+        & (df["bucket"] == "")
+    )
+    df.loc[_b2_etf, "bucket"] = "bucket_2"
+    df.loc[
+        _b2_etf & df["symbol"].isin(flow_short_set) & (df["leg_class"] == ""),
+        "leg_class",
+    ] = "flow_low_delta"
+    df.loc[
+        _b2_etf & (df["leg_class"] == ""),
+        "leg_class",
+    ] = "yieldboost_etf"
 
     # Only non-ETF rows split by lot ledger (exact shares); current_only uses held ratios.
     needs_split = (~is_etf) & (df["bucket"] == "")
+    df.loc[needs_split, "leg_class"] = "spot"
     fixed_rows = df[~needs_split].copy()
     split_source = df[needs_split].copy()
     component_cols = [c for c in base_cols if c != "total_pnl"]
@@ -3668,7 +4583,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     pnl_by_bucket.to_csv(outdir / "pnl_by_bucket.csv", index=False)
 
     # ── Net exposure (delta-normalized) ──
-    bucket3_only_syms = set(flow_short_set) | set(flow_low_delta_bucket3_syms)
+    bucket3_only_syms = set(flow_inverse_bucket3_syms)
     pos_b124 = pos[(~pos["symbol"].isin(bucket3_only_syms))].copy()
     pos_b124 = _filter_positions_blacklist(
         pos_b124, blocked_symbols, blocked_underlyings, etf_to_under
@@ -3710,69 +4625,82 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         )
         _d["_beta"] = pd.to_numeric(_d["symbol"].map(etf_to_delta_map), errors="coerce").fillna(1.0)
 
-        def _spot_ratios_for_row(_row: pd.Series) -> tuple[float, float, float]:
-            if bool(_row["_is_etf"]):
-                return 0.0, 0.0, 0.0
+        # Exposure: plan B4 names use the plan structural slice; underlyings
+        # with held inverse ETFs but no plan row use the ETF-implied short
+        # (when ``b4_attribution_mode='etf_implied'``); others hedge-residual.
+        _hedge_spot_ratio_map = build_hedge_residual_spot_ratio_map(
+            _d,
+            etf_to_under=etf_to_under,
+            etf_to_delta_map=etf_to_delta_map,
+            flow_short_set=flow_short_set,
+            b4_etf_syms=b4_etf_syms,
+            plan_ratio_b4=_plan_ratio_b4,
+            plan_b4_qty_by_u=_plan_b4_qty_by_u,
+            spot_qty=_spot_qty,
+            spot_marks=_spot_marks,
+            plan_sleeve_usd=_plan_sleeve_usd,
+            etf_implied_short_usd=_implied_b4_short_usd,
+            b4_attribution_mode=b4_attribution_mode,
+            b4_attribution_min_usd=b4_attribution_min_usd,
+        )
+
+        def _leg_bucket_ratios(_row: pd.Series) -> tuple[float, float, float]:
             _sym = str(_row["symbol"])
             _u = str(_row["underlying"])
+            if bool(_row["_is_etf"]):
+                _beta = float(_row["_beta"])
+                _bkt, _ = classify_etf_leg_bucket(
+                    _sym,
+                    _beta,
+                    flow_short_set=flow_short_set,
+                    b4_etf_syms=b4_etf_syms,
+                )
+                if _bkt == "bucket_1":
+                    return 1.0, 0.0, 0.0
+                if _bkt == "bucket_2":
+                    return 0.0, 1.0, 0.0
+                if _bkt == "bucket_4":
+                    return 0.0, 0.0, 1.0
+                return 0.0, 0.0, 0.0
             if _sym != _u:
                 return 0.0, 0.0, 0.0
+            _spot_ratio = _hedge_spot_ratio_map.get(_u)
+            if _spot_ratio is not None:
+                return _spot_ratio.b1, _spot_ratio.b2, _spot_ratio.b4
             _pos_q = float(_spot_qty.get(_sym, 0.0))
             _ledger = _ledger_qty_map.get(_u, {})
-            return _spot_ledger_bucket_ratios(_pos_q, _ledger)
+            return _spot_exposure_bucket_ratios(_pos_q, _ledger)
 
-        _spot_ratios = _d.apply(_spot_ratios_for_row, axis=1, result_type="expand")
-        _d["_ratio_b1"] = np.where(
-            _d["_is_etf"],
-            np.where(_d["_beta"] > 1.5, 1.0, 0.0),
-            _spot_ratios[0],
-        )
-        _d["_ratio_b2"] = np.where(
-            _d["_is_etf"],
-            np.where(
-                ((_d["_beta"] > 0) & (_d["_beta"] <= 1.5))
-                & (~_d["symbol"].isin(flow_low_delta_bucket3_syms)),
-                1.0,
-                0.0,
+        _spot_ratios = _d.apply(_leg_bucket_ratios, axis=1, result_type="expand")
+        _d["_ratio_b1"] = _spot_ratios[0]
+        _d["_ratio_b2"] = _spot_ratios[1]
+        _d["_ratio_b4"] = _spot_ratios[2]
+        _d["leg_class"] = _d.apply(
+            lambda r: (
+                "spot"
+                if (not bool(r["_is_etf"]) and str(r["symbol"]) == str(r["underlying"]))
+                else classify_etf_leg_bucket(
+                    str(r["symbol"]),
+                    float(r["_beta"]),
+                    flow_short_set=flow_short_set,
+                    b4_etf_syms=b4_etf_syms,
+                )[1]
             ),
-            _spot_ratios[1],
-        )
-        _d["_ratio_b4"] = np.where(
-            _d["_is_etf"],
-            np.where((_d["_beta"] < 0) & (~_d["symbol"].isin(flow_short_set)), 1.0, 0.0),
-            _spot_ratios[2],
+            axis=1,
         )
         # Pure bucket-4 ETF legs: no b1/b2 residual
         _d.loc[_d["symbol"].isin(b4_etf_syms), "_ratio_b1"] = 0.0
         _d.loc[_d["symbol"].isin(b4_etf_syms), "_ratio_b2"] = 0.0
         _d.loc[_d["symbol"].isin(b4_etf_syms), "_ratio_b4"] = 1.0
-        # Physical spot on plan-B4 names: B1/B2 share the IBKR line; B4 underlying
-        # is a separate synthetic short in the pair view (not a ratio of net spot).
-        _phys_plan_mask = (
-            (~_d["_is_etf"])
-            & (_d["symbol"] == _d["underlying"])
-            & (_d["underlying"].isin(_b4_plan_exposure_underlyings))
-        )
-        for _idx in _d.index[_phys_plan_mask]:
-            _u_ex = str(_d.at[_idx, "underlying"])
-            _pr_ex = _plan_ratio_b4.get(_u_ex) or {}
-            _pb1 = float(_pr_ex.get("b1", 0.0))
-            _pb2 = float(_pr_ex.get("b2", 0.0))
-            _psum = _pb1 + _pb2
-            if _psum > 1e-12:
-                _d.at[_idx, "_ratio_b1"] = _pb1 / _psum
-                _d.at[_idx, "_ratio_b2"] = _pb2 / _psum
-                _d.at[_idx, "_ratio_b4"] = 0.0
         _d = _normalize_exposure_bucket_ratios(
             _d,
             etf_to_delta_map=etf_to_delta_map,
-            flow_low_delta_bucket3_syms=flow_low_delta_bucket3_syms,
             flow_short_set=flow_short_set,
             b4_etf_syms=b4_etf_syms,
         )
 
         def _scale_detail(_detail: pd.DataFrame, ratio_col: str) -> pd.DataFrame:
-            out = _detail[_detail[ratio_col] > 1e-12].copy()
+            out = _detail[_detail[ratio_col].abs() > 1e-12].copy()
             out["net_notional_usd"] = out["net_notional_usd"] * out[ratio_col]
             out["gross_notional_usd"] = out["gross_notional_usd"] * out[ratio_col]
             return out
@@ -3796,6 +4724,31 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         exposure_b1_df = _agg_bucket_exposure(_scale_detail(_d, "_ratio_b1"))
         exposure_b2_df = _agg_bucket_exposure(_scale_detail(_d, "_ratio_b2"))
         exposure_b4_from_b124_df = _agg_bucket_exposure(_scale_detail(_d, "_ratio_b4"))
+        exposure_b1_full_df, exposure_b2_full_df, exposure_b4_full_df = build_audit_full_bucket_exposure(
+            _d,
+            etf_to_under=etf_to_under,
+            etf_to_delta_map=etf_to_delta_map,
+            flow_short_set=flow_short_set,
+            b4_etf_syms=b4_etf_syms,
+            spot_ratio_map=_hedge_spot_ratio_map,
+            spot_qty=_spot_qty,
+            ledger_qty_map=_ledger_qty_map,
+        )
+        spot_exposure_by_underlying_df = build_net_exposure_spot_by_underlying(
+            _d, _hedge_spot_ratio_map
+        )
+        bucket_exposure_detail_df = _d[
+            [
+                "underlying",
+                "symbol",
+                "leg_class",
+                "net_notional_usd",
+                "gross_notional_usd",
+                "_ratio_b1",
+                "_ratio_b2",
+                "_ratio_b4",
+            ]
+        ].copy()
     else:
         exposure_b1_df = pd.DataFrame(
             columns=["underlying", "symbols", "net_notional_usd", "gross_notional_usd", "n_legs"]
@@ -3806,10 +4759,31 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         exposure_b4_from_b124_df = pd.DataFrame(
             columns=["underlying", "symbols", "net_notional_usd", "gross_notional_usd", "n_legs"]
         )
+        exposure_b1_full_df = exposure_b2_full_df = exposure_b4_full_df = exposure_b1_df.copy()
+        spot_exposure_by_underlying_df = build_net_exposure_spot_by_underlying(
+            pd.DataFrame(), _spot_exposure_ratio_map
+        )
+        bucket_exposure_detail_df = pd.DataFrame(
+            columns=[
+                "underlying",
+                "symbol",
+                "leg_class",
+                "net_notional_usd",
+                "gross_notional_usd",
+                "_ratio_b1",
+                "_ratio_b2",
+                "_ratio_b4",
+            ]
+        )
+        _hedge_spot_ratio_map = {}
 
     # ── Pair-exposure underlying qty ─────────────────────────────────────
-    # Pair view: underlying leg uses plan structural short qty when
-    # ``b4_underlying_exposure_mode=plan_structural``; otherwise FIFO qty_b4.
+    # Pair view: underlying leg uses, in priority,
+    #   1. plan structural short qty (when ``b4_underlying_exposure_mode=plan_structural``
+    #      and the latest ``inverse_decay_bucket4`` plan row hits ``b4_plan_exposure_min_usd``)
+    #   2. ETF-implied structural short qty (when ``b4_attribution_mode=etf_implied``
+    #      and the implied short hits ``b4_attribution_min_usd``)
+    #   3. FIFO ``qty_b4`` from the share ledger
     _b4_under_qty: dict[str, float] = {}
     for _u_b4 in b4_underlyings:
         _u_str = str(_u_b4)
@@ -3821,6 +4795,15 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             _plan_q = float(_plan_b4_qty_by_u.get(_u_str, 0.0))
             if abs(_plan_q) > 1e-9:
                 _b4_under_qty[_u_str] = _plan_q
+                continue
+        if b4_attribution_mode == "etf_implied":
+            _implied_q = float(_implied_b4_short_qty.get(_u_str, 0.0))
+            _implied_usd_chk = float(_implied_b4_short_usd.get(_u_str, 0.0))
+            if (
+                abs(_implied_q) > 1e-9
+                and abs(_implied_usd_chk) >= b4_attribution_min_usd
+            ):
+                _b4_under_qty[_u_str] = _implied_q
                 continue
         _b4_under_qty[_u_str] = _ledger_b4
     exposure_b4_df, exposure_b4_detail_df = compute_bucket4_pair_exposure(
@@ -3838,6 +4821,12 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         exposure_b4_from_b124_df = _filter_exposure_df(
             exposure_b4_from_b124_df, blocked_underlyings
         )
+        exposure_b1_full_df = _filter_exposure_df(exposure_b1_full_df, blocked_underlyings)
+        exposure_b2_full_df = _filter_exposure_df(exposure_b2_full_df, blocked_underlyings)
+        exposure_b4_full_df = _filter_exposure_df(exposure_b4_full_df, blocked_underlyings)
+        spot_exposure_by_underlying_df = spot_exposure_by_underlying_df[
+            ~spot_exposure_by_underlying_df["underlying"].astype(str).isin(blocked_underlyings)
+        ].copy()
         exposure_b4_df = _filter_exposure_df(exposure_b4_df, blocked_underlyings)
         if not exposure_b4_detail_df.empty and "underlying" in exposure_b4_detail_df.columns:
             exposure_b4_detail_df = exposure_b4_detail_df[
@@ -3846,6 +4835,26 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
 
     exposure_b1_df.to_csv(outdir / "net_exposure_bucket_1.csv", index=False)
     exposure_b2_df.to_csv(outdir / "net_exposure_bucket_2.csv", index=False)
+    exposure_b1_full_df.to_csv(outdir / "net_exposure_bucket_1_full.csv", index=False)
+    exposure_b2_full_df.to_csv(outdir / "net_exposure_bucket_2_full.csv", index=False)
+    exposure_b4_full_df.to_csv(outdir / "net_exposure_bucket_4_full.csv", index=False)
+    if not spot_exposure_by_underlying_df.empty:
+        spot_exposure_by_underlying_df.to_csv(
+            outdir / "net_exposure_spot_by_underlying.csv", index=False
+        )
+    if not bucket_exposure_detail_df.empty:
+        bucket_exposure_detail_df.to_csv(outdir / "bucket_exposure_detail.csv", index=False)
+    leg_class_df = df[["symbol", "underlying", "bucket", "leg_class", "total_pnl"]].copy()
+    leg_class_df.to_csv(outdir / "bucket_leg_classification.csv", index=False)
+    bucket_ratio_recon_df, spot_ratio_max_diff_exp, spot_ratio_max_diff_pnl = build_bucket_ratio_reconciliation(
+        df,
+        spot_exposure_by_underlying_df,
+        _hedge_spot_ratio_map,
+    )
+    if not bucket_ratio_recon_df.empty:
+        bucket_ratio_recon_df.to_csv(outdir / "bucket_ratio_reconciliation.csv", index=False)
+    spot_ratio_gate_passed = spot_ratio_max_diff_exp <= 0.001
+    spot_ratio_gate_mode = "exposure_vs_plan_or_hedge_residual"
     exposure_df = exposure_df.sort_values("net_notional_usd", ascending=False)
     exposure_df.to_csv(outdir / "net_exposure_by_underlying.csv", index=False)
     if not exposure_b4_detail_df.empty:
@@ -3859,22 +4868,22 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         ledger_qty_map=_ledger_qty_map,
         spot_marks=_spot_marks,
         plan_exposure_underlyings=_b4_plan_exposure_underlyings,
+        etf_implied_short_usd=_implied_b4_short_usd,
+        etf_implied_short_qty=_implied_b4_short_qty,
+        structural_short_source=_b4_attribution_source,
     )
     if not _b4_plan_recon_df.empty:
         _b4_plan_recon_df.to_csv(outdir / "b4_plan_ledger_reconciliation.csv", index=False)
         _n_missing = int(_b4_plan_recon_df["ledger_missing_b4"].sum())
         if _n_missing:
             print(
-                f"[ACCOUNTING] B4 plan vs ledger: {_n_missing} name(s) with plan B4 "
-                f"but ledger qty_b4~=0 — see {outdir / 'b4_plan_ledger_reconciliation.csv'}"
+                f"[ACCOUNTING] B4 ledger reconciliation: {_n_missing} name(s) "
+                f"with intended structural short (plan or implied) but ledger "
+                f"qty_b4~=0 — see {outdir / 'b4_plan_ledger_reconciliation.csv'}"
             )
 
-    # Bucket 3 exposure (flow inverse / hedge)
-    pos_neg = pos[pos["symbol"].isin(neg_beta_syms)].copy()
-    pos_b3 = pos_neg[pos_neg["symbol"].isin(flow_short_set)].copy()
-    pos_b3_pos_delta_flow = pos[pos["symbol"].isin(flow_low_delta_bucket3_syms)].copy()
-    if not pos_b3_pos_delta_flow.empty:
-        pos_b3 = pd.concat([pos_b3, pos_b3_pos_delta_flow], ignore_index=True)
+    # Bucket 3 exposure: flow-program inverse ETFs only (β < 0).
+    pos_b3 = pos[pos["symbol"].isin(flow_inverse_bucket3_syms)].copy()
     pos_b3 = _filter_positions_blacklist(
         pos_b3, blocked_symbols, blocked_underlyings, etf_to_under
     )
@@ -3882,8 +4891,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         pos_b3["delta"] = pos_b3["symbol"].map(etf_to_delta_map).fillna(1.0)
         pos_b3["mv_base"] = pos_b3["position"] * pos_b3["delta"] * pos_b3["markPrice"] * pos_b3["fxRateToBase"]
         pos_b3["gross_mv_base"] = pos_b3["mv_base"].abs()
+        pos_b3["overlay_type"] = "flow_program"
         exposure_b3_df = (
-            pos_b3.groupby("symbol", as_index=False)
+            pos_b3.groupby(["symbol", "overlay_type"], as_index=False)
             .agg(
                 net_notional_usd=("mv_base", "sum"),
                 gross_notional_usd=("gross_mv_base", "sum"),
@@ -3892,7 +4902,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             .sort_values("net_notional_usd", ascending=False)
         )
     else:
-        exposure_b3_df = pd.DataFrame(columns=["symbol", "net_notional_usd", "gross_notional_usd", "n_legs"])
+        exposure_b3_df = pd.DataFrame(
+            columns=["symbol", "overlay_type", "net_notional_usd", "gross_notional_usd", "n_legs"]
+        )
     if blocked_symbols and not exposure_b3_df.empty and "symbol" in exposure_b3_df.columns:
         exposure_b3_df = exposure_b3_df[
             ~exposure_b3_df["symbol"].astype(str).isin(blocked_symbols)
@@ -3952,7 +4964,33 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "plan_sleeve_bucketing": plan_sleeve_bucketing,
         "b4_underlying_exposure_mode": b4_underlying_exposure_mode,
         "b4_plan_exposure_underlyings": sorted(_b4_plan_exposure_underlyings),
-        "bucket3_flow_low_delta_symbols": sorted(flow_low_delta_bucket3_syms),
+        "b4_underlying_attribution": b4_attribution_mode,
+        "b4_attribution_min_usd": float(b4_attribution_min_usd),
+        "b4_partial_hedge_ratio_default": float(b4_partial_hedge_ratio_default),
+        "b4_etf_implied_underlyings": sorted(_implied_b4_short_usd),
+        "b4_attribution_sources": {
+            "plan": sorted([k for k, v in _b4_attribution_source.items() if v == "plan"]),
+            "etf_implied": sorted(
+                [k for k, v in _b4_attribution_source.items() if v == "etf_implied"]
+            ),
+        },
+        "bucket2_flow_low_delta_symbols": sorted(flow_low_delta_syms),
+        "bucket3_flow_program_symbols": sorted(flow_inverse_bucket3_syms),
+        "net_exposure_bucket_1_full": float(exposure_b1_full_df["net_notional_usd"].sum())
+        if not exposure_b1_full_df.empty
+        else 0.0,
+        "net_exposure_bucket_2_full": float(exposure_b2_full_df["net_notional_usd"].sum())
+        if not exposure_b2_full_df.empty
+        else 0.0,
+        "net_exposure_bucket_4_full": float(exposure_b4_full_df["net_notional_usd"].sum())
+        if not exposure_b4_full_df.empty
+        else 0.0,
+        "spot_ratio_max_diff": float(spot_ratio_max_diff_exp),
+        "spot_ratio_max_diff_pnl": float(spot_ratio_max_diff_pnl),
+        "spot_ratio_gate_passed": bool(spot_ratio_gate_passed),
+        "spot_ratio_gate_mode": spot_ratio_gate_mode,
+        "exposure_reconciliation_tol_gross_pct": exposure_reconciliation_tol_gross_pct,
+        "exposure_reconciliation_tol_net_abs_usd": exposure_reconciliation_tol_net_abs_usd,
         "bucket_state_path": str(bucket_state_path),
         "bucket_realized_underlyings_from_trade_timing": int(len(_realized_ratio_from_trades)),
         "pnl_underlying_scope": "bucket_1_2_4",
@@ -3987,11 +5025,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     print(f"[ACCOUNTING] Bucket 4: net={totals['net_exposure_bucket_4']:,.0f}, gross={totals['gross_exposure_bucket_4']:,.0f}")
 
     # ── Reconciliation gate ────────────────────────────────────────────
-    # Bucket gross/net components must sum to the book aggregate within
-    # 1% of book gross. Bucket 3 is an overlay (delta-normalized hedge view)
-    # that doesn't claim share notional, so it is excluded from the sum.
-    # Fail the build if the gap exceeds the threshold so a future plan-
-    # aware / FIFO drift can never silently inflate the dashboard again.
+    # Bucket gross/net components (b1+b2+b4 ratio split) must sum to the book
+    # aggregate within configured tolerance. Bucket 3 is an overlay and is
+    # excluded from the sum.
     _book_gross = float(totals["gross_exposure_total"])
     _book_net = float(totals["net_exposure_total"])
     _bucket_gross_sum = (
@@ -4004,22 +5040,47 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         + float(totals["net_exposure_bucket_2"])
         + float(totals["net_exposure_bucket_4"])
     )
-    _tol_pct = 0.01
     if abs(_book_gross) > 1e-6:
         _gross_diff_pct = abs(_bucket_gross_sum - _book_gross) / abs(_book_gross)
-        _net_diff_pct = abs(_bucket_net_sum - _book_net) / abs(_book_gross)
+    else:
+        _gross_diff_pct = 0.0
+    _net_diff_abs = abs(_bucket_net_sum - _book_net)
+    print(
+        f"[ACCOUNTING] Reconciliation: bucket_sum_gross={_bucket_gross_sum:,.0f} "
+        f"(diff {_gross_diff_pct:.4%}), bucket_sum_net={_bucket_net_sum:,.0f} "
+        f"(abs diff ${_net_diff_abs:,.0f})"
+    )
+    _exposure_gate_failed = (
+        _gross_diff_pct > exposure_reconciliation_tol_gross_pct
+        or _net_diff_abs > exposure_reconciliation_tol_net_abs_usd
+    )
+    if _exposure_gate_failed:
         print(
-            f"[ACCOUNTING] Reconciliation: bucket_sum_gross={_bucket_gross_sum:,.0f} "
-            f"(diff {_gross_diff_pct:.2%}), bucket_sum_net={_bucket_net_sum:,.0f} "
-            f"(diff {_net_diff_pct:.2%})"
+            "[ACCOUNTING][ERROR] Bucket exposures do not reconcile to book aggregate. "
+            f"Gross diff {_gross_diff_pct:.4%} (tol {exposure_reconciliation_tol_gross_pct:.4%}), "
+            f"net abs diff ${_net_diff_abs:,.0f} "
+            f"(tol ${exposure_reconciliation_tol_net_abs_usd:,.0f})."
         )
-        if _gross_diff_pct > _tol_pct or _net_diff_pct > _tol_pct:
-            print(
-                "[ACCOUNTING][ERROR] Bucket exposures do not reconcile to book "
-                f"aggregate within {_tol_pct:.1%}. Gross diff {_gross_diff_pct:.2%}, "
-                f"net diff {_net_diff_pct:.2%}. Refusing to claim totals are correct."
-            )
-            return 2
+        return 2
+
+    if spot_ratio_consistency_gate and not spot_ratio_gate_passed:
+        print(
+            "[ACCOUNTING][ERROR] Spot exposure vs canonical ratio gate failed: "
+            f"max share diff {spot_ratio_max_diff_exp:.4%} > 0.10%. "
+            f"See {outdir / 'bucket_ratio_reconciliation.csv'}"
+        )
+        return 2
+
+    if spot_ratio_max_diff_pnl > 0.05:
+        print(
+            f"[ACCOUNTING] NOTE: spot PnL vs canonical max diff "
+            f"{spot_ratio_max_diff_pnl:.2%} (informational)"
+        )
+    elif spot_ratio_max_diff_exp > 0.001:
+        print(
+            f"[ACCOUNTING] NOTE: spot exposure vs canonical max diff "
+            f"{spot_ratio_max_diff_exp:.4%}"
+        )
 
     return 0
 
