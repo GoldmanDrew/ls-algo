@@ -33,6 +33,88 @@ _STRESS_BORROW_RHOS = (0.0, 0.2, 0.4)
 _BOOT_N = 400
 _BLOCK_LEN_DEFAULT = 10
 
+# p10/p90 -> sigma conversion for a Normal: P(Z<=1.2816) = 0.9, so
+# (p90 - p10) / 2 = 1.2816 * sigma  =>  sigma = (p90 - p10) / (2 * 1.2816).
+# Used by the inverse-variance Bayesian blend to back out a forward-forecast
+# standard deviation from the published p10/p50/p90 band.
+_BAND_QUANTILE_Z = 1.2815515655446004
+_SIGMA_FORWARD_FLOOR = 1e-6
+_SIGMA_REALIZED_FLOOR = 1e-6
+
+
+def _band_to_sigma(p10: float, p90: float) -> float | None:
+    """Convert a symmetric p10/p90 band into a Normal-equivalent ``sigma``.
+
+    Returns ``None`` if either quantile is missing / non-finite or the band
+    has non-positive width.  Skewed bands are tolerated: we use ``|p90 - p10|``
+    and rely on the 2 * z = 2 * 1.2816 fan width identity.  For the
+    HARQ-Log distributional forecasts this is exact in log-space and
+    accurate-enough in level-space for blend weights.
+    """
+    if p10 is None or p90 is None:
+        return None
+    try:
+        lo = float(p10)
+        hi = float(p90)
+    except (TypeError, ValueError):
+        return None
+    if not (np.isfinite(lo) and np.isfinite(hi)):
+        return None
+    width = abs(hi - lo)
+    if width <= 0:
+        return None
+    sigma = width / (2.0 * _BAND_QUANTILE_Z)
+    if not np.isfinite(sigma) or sigma <= 0:
+        return None
+    return float(max(sigma, _SIGMA_FORWARD_FLOOR))
+
+
+def _inverse_variance_blend(
+    mu_forward: float,
+    sigma_forward: float,
+    mu_realized: float,
+    sigma_realized: float,
+) -> tuple[float, float] | None:
+    """Posterior mean under Normal-Normal conjugate update.
+
+    Returns ``(posterior_mu, weight_forward)`` where ``weight_forward`` is
+    the fraction of the posterior mean coming from the forward forecast::
+
+        w_F = sigma_R^2 / (sigma_F^2 + sigma_R^2)
+        mu  = w_F * mu_F + (1 - w_F) * mu_R
+
+    Limit behaviour:
+        * sigma_F -> 0 (perfectly confident forecast): w_F -> 1 (pure forward)
+        * sigma_R -> 0 (perfectly confident history):  w_F -> 0 (pure realized)
+        * both finite & comparable:                    smooth blend
+
+    Returns ``None`` when any input is non-finite or both sigmas are zero
+    (the caller should fall back to a deterministic anchor-shift).
+    """
+    try:
+        mu_F = float(mu_forward)
+        sig_F = float(sigma_forward)
+        mu_R = float(mu_realized)
+        sig_R = float(sigma_realized)
+    except (TypeError, ValueError):
+        return None
+    if not all(np.isfinite([mu_F, sig_F, mu_R, sig_R])):
+        return None
+    if sig_F <= 0 and sig_R <= 0:
+        return None
+    sig_F = max(sig_F, _SIGMA_FORWARD_FLOOR)
+    sig_R = max(sig_R, _SIGMA_REALIZED_FLOOR)
+    vF = sig_F * sig_F
+    vR = sig_R * sig_R
+    denom = vF + vR
+    if denom <= 0 or not np.isfinite(denom):
+        return None
+    w_F = vR / denom
+    posterior = w_F * mu_F + (1.0 - w_F) * mu_R
+    if not np.isfinite(posterior):
+        return None
+    return float(posterior), float(w_F)
+
 
 def _extract_daily_drag(
     etf_tr: pd.Series,
@@ -489,6 +571,14 @@ def enrich_screener_v2_fields(
     anchor_shift_arr: list[float] = [np.nan] * n
     anchor_target_arr: list[float] = [np.nan] * n
     anchor_source_arr: list[str] = [""] * n
+    # Inverse-variance blend diagnostics.  ``gross_blend_method`` distinguishes
+    # the new Bayesian path from the legacy anchor-shift fallback (used when
+    # only a p50 anchor is available, e.g. ``yieldboost_put_spread_point``).
+    blend_method_arr: list[str] = [""] * n
+    sigma_forward_arr: list[float] = [np.nan] * n
+    sigma_realized_arr: list[float] = [np.nan] * n
+    blend_weight_forward_arr: list[float] = [np.nan] * n
+    realized_mean_arr: list[float] = [np.nan] * n
     underlying_sector: list[str] = [""] * n
     try:
         from risk_dashboard.factor_map import OVERRIDE_SECTOR_MAP as _sector_map
@@ -603,17 +693,24 @@ def enrich_screener_v2_fields(
         )
         g_real = row.get("gross_decay_annual")
 
-        # Anchor-shift the realized gross draws onto the expected (model-based)
-        # p50 when the latter is available. Net edge then becomes the spread
-        # between a *forward-looking* gross-decay distribution and the borrow
-        # distribution, while still preserving the empirical block-bootstrap
-        # shape (autocorrelation, vol-regime mixing) of the realized series.
-        # See README + AGENTS.md "anchor-shift bootstrap" section.
+        # Re-center the realized gross-draw bootstrap on a *forward-looking*
+        # best estimate that blends the model-based expected p50 with the
+        # realized history via an inverse-variance Bayesian update.  Net edge
+        # then becomes the spread between this posterior gross distribution
+        # and the borrow distribution, while still preserving the empirical
+        # block-bootstrap shape (autocorrelation, vol-regime mixing) of the
+        # realized series.  When the forward forecast has no usable band
+        # (e.g. ``yieldboost_put_spread_point`` ships a single sigma), the
+        # blend degenerates to the legacy anchor-shift (B1 fallback per E2).
+        # See README + AGENTS.md "Net edge inverse-variance blend" section.
         anchor_p50 = row.get("expected_gross_decay_p50_annual")
+        anchor_p10 = row.get("expected_gross_decay_p10_annual")
+        anchor_p90 = row.get("expected_gross_decay_p90_annual")
         anchor_shift_val = 0.0
         anchor_applied = False
-        # Only anchor-shift when an expected forecast is meaningful for this
-        # product class (i.e. ``expected_decay_available`` is True). For
+        blend_method = ""
+        # Only blend when an expected forecast is meaningful for this product
+        # class (i.e. ``expected_decay_available`` is True). For
         # ``passive_low_delta`` rows the simple-Itô identity collapses to ~0
         # and ``daily_screener`` Step 5d nulls the distributional columns;
         # we skip the shift here regardless of CSV column state.
@@ -623,18 +720,72 @@ def enrich_screener_v2_fields(
             and not _nanf(anchor_p50)
         ):
             mean_realized = float(np.mean(gross_draws))
+            std_realized = float(np.std(gross_draws, ddof=1)) if gross_draws.size > 1 else float("nan")
             try:
                 anchor_target = float(anchor_p50)
             except (TypeError, ValueError):
                 anchor_target = float("nan")
-            if np.isfinite(anchor_target) and np.isfinite(mean_realized):
+            sigma_forward = _band_to_sigma(anchor_p10, anchor_p90)
+            blend_result = None
+            if (
+                sigma_forward is not None
+                and np.isfinite(std_realized)
+                and std_realized > 0
+                and np.isfinite(anchor_target)
+                and np.isfinite(mean_realized)
+            ):
+                blend_result = _inverse_variance_blend(
+                    mu_forward=anchor_target,
+                    sigma_forward=sigma_forward,
+                    mu_realized=mean_realized,
+                    sigma_realized=std_realized,
+                )
+            if blend_result is not None:
+                posterior_mu, w_F = blend_result
+                anchor_shift_val = posterior_mu - mean_realized
+                gross_draws = gross_draws + anchor_shift_val
+                anchor_applied = True
+                blend_method = "inverse_variance"
+                anchor_shift_arr[j] = float(anchor_shift_val)
+                # ``gross_anchor_target_annual`` is the *posterior* mean (what
+                # the bootstrap mean was actually shifted to). The forward
+                # forecast itself remains available via ``expected_gross_decay_p50_annual``.
+                anchor_target_arr[j] = float(posterior_mu)
+                sigma_forward_arr[j] = float(sigma_forward)
+                sigma_realized_arr[j] = float(std_realized)
+                blend_weight_forward_arr[j] = float(w_F)
+                realized_mean_arr[j] = float(mean_realized)
+                src = row.get("expected_gross_decay_dist_model")
+                # Preserve the legacy ``gross_anchor_source`` (just the dist
+                # model name) so existing dashboard code keeps reading the
+                # forecast family. The new ``gross_blend_method`` column
+                # carries the blend-method distinction.
+                anchor_source_arr[j] = "" if src is None or pd.isna(src) else str(src)
+            elif np.isfinite(anchor_target) and np.isfinite(mean_realized):
+                # B1 fallback: pure anchor-shift to forward p50 (no band /
+                # zero-variance realized series). Preserves prior behaviour
+                # for ``yieldboost_put_spread_point`` rows (single-sigma MC).
                 anchor_shift_val = anchor_target - mean_realized
                 gross_draws = gross_draws + anchor_shift_val
                 anchor_applied = True
+                blend_method = "anchor_shift_fallback"
                 anchor_shift_arr[j] = float(anchor_shift_val)
                 anchor_target_arr[j] = float(anchor_target)
+                if np.isfinite(std_realized):
+                    sigma_realized_arr[j] = float(std_realized)
+                realized_mean_arr[j] = float(mean_realized)
                 src = row.get("expected_gross_decay_dist_model")
+                # Preserve the legacy ``gross_anchor_source`` label so that
+                # downstream code (and the existing anchor-shift tests) keep
+                # working unchanged. The new ``gross_blend_method`` column
+                # carries the blend-method distinction.
                 anchor_source_arr[j] = "" if src is None or pd.isna(src) else str(src)
+        elif gross_draws is not None:
+            blend_method = "realized_only"
+            realized_mean_arr[j] = float(np.mean(gross_draws))
+            if gross_draws.size > 1:
+                sigma_realized_arr[j] = float(np.std(gross_draws, ddof=1))
+        blend_method_arr[j] = blend_method
 
         if gross_draws is not None:
             rng_borrow = np.random.default_rng(int(bootstrap_seed) + 1_000_003)
@@ -645,11 +796,19 @@ def enrich_screener_v2_fields(
                 if (hist and borrow_history_map)
                 else None
             )
-            anchor_note = (
-                f"anchor_shift_to_expected_p50={anchor_shift_val:+.4f};"
-                if anchor_applied
-                else ""
-            )
+            if anchor_applied:
+                if blend_method == "inverse_variance":
+                    w_F = float(blend_weight_forward_arr[j])
+                    anchor_note = (
+                        f"inverse_variance_blend(w_F={w_F:.2f}),"
+                        f"shift={anchor_shift_val:+.4f};"
+                    )
+                else:
+                    anchor_note = (
+                        f"anchor_shift_to_expected_p50={anchor_shift_val:+.4f};"
+                    )
+            else:
+                anchor_note = ""
             if wb is not None:
                 vals, probs = wb
                 idx = rng_borrow.choice(vals.size, size=gross_draws.size, p=probs, replace=True)
@@ -764,6 +923,14 @@ def enrich_screener_v2_fields(
     out["gross_anchor_shift_annual"] = anchor_shift_arr
     out["gross_anchor_target_annual"] = anchor_target_arr
     out["gross_anchor_source"] = anchor_source_arr
+    # Inverse-variance blend diagnostics.  Consumed by the dashboard's
+    # Net edge tooltip and by ``build_data.py`` to re-blend YB rows after
+    # overriding the forward anchor with pair-trade P&L (decision C2).
+    out["gross_blend_method"] = blend_method_arr
+    out["gross_sigma_forward_annual"] = sigma_forward_arr
+    out["gross_sigma_realized_annual"] = sigma_realized_arr
+    out["gross_blend_weight_forward"] = blend_weight_forward_arr
+    out["gross_realized_mean_annual"] = realized_mean_arr
     vol_shape_cols = list(_all_vol_shape_columns()) + ["und_vol_shape_price_basis"]
     vol_shape_label_cols = {f"und_vol_shape_{w}d" for w in _VOL_SHAPE_WINDOWS} | {"und_vol_shape_price_basis"}
     metrics_path = resolve_etf_metrics_daily_path(metrics_daily_path)

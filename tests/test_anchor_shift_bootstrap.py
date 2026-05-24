@@ -48,13 +48,28 @@ def _gbm_tr(n_days: int, sigma_annual: float, mu_annual: float = 0.0, seed: int 
     return pd.Series(np.exp(log_levels), index=idx)
 
 
-def _build_letf_tr(und_tr: pd.Series, beta: float, daily_drag: float = 0.0005) -> pd.Series:
-    """Generate an LETF TR series implied by a constant daily drag.
+def _build_letf_tr(
+    und_tr: pd.Series,
+    beta: float,
+    daily_drag: float = 0.0005,
+    noise_sigma_daily: float = 0.0,
+    seed: int = 0,
+) -> pd.Series:
+    """Generate an LETF TR series implied by a daily drag (optionally noisy).
 
     daily_drag = β·r_und − r_etf  ⇒  r_etf = β·r_und − daily_drag.
+    With ``noise_sigma_daily > 0`` the drag fluctuates day-by-day; the
+    block-bootstrap then produces a finite ``sigma_realized`` (non-zero
+    standard error of the mean) instead of a degenerate point.
     """
     r_und = np.log(und_tr / und_tr.shift(1)).fillna(0.0)
-    r_etf = beta * r_und - daily_drag
+    if noise_sigma_daily and noise_sigma_daily > 0:
+        rng = np.random.default_rng(seed)
+        noise = rng.normal(loc=0.0, scale=float(noise_sigma_daily), size=len(r_und))
+        drag_series = float(daily_drag) + noise
+    else:
+        drag_series = float(daily_drag)
+    r_etf = beta * r_und - drag_series
     levels = np.exp(np.cumsum(r_etf))
     return pd.Series(levels.values, index=und_tr.index)
 
@@ -88,15 +103,16 @@ def _minimal_letf_row(
     }
 
 
-def test_anchor_shift_centers_bootstrap_on_expected_p50():
+def test_anchor_shift_fallback_when_only_p50_present():
+    """Pre-blend behaviour: with only ``expected_p50`` (no band), the bootstrap
+    falls back to the legacy anchor-shift (E2 fallback). ``gross_blend_method``
+    surfaces ``anchor_shift_fallback`` to distinguish from inverse-variance."""
     sigma = 0.30
     n = 600
     und = _gbm_tr(n, sigma_annual=sigma, seed=42)
     etf = _build_letf_tr(und, beta=2.0, daily_drag=0.0004)  # ~10% annual realized drag
     tr_map = {"ABC": etf, "ABCUND": und}
 
-    # Anchor at 30% expected (way above the 10% realized) — bootstrap mean
-    # should land near 30% after shift.
     anchor = 0.30
     df = pd.DataFrame(
         [
@@ -111,16 +127,128 @@ def test_anchor_shift_centers_bootstrap_on_expected_p50():
     )
     out = enrich_screener_v2_fields(df, tr_map, bootstrap_seed=7)
     row = out.iloc[0]
-    # Net-edge p50 ≈ shifted gross p50 (borrow=0) ≈ anchor (block-bootstrap mean
-    # ≈ anchor, p50 close to mean for symmetric draws).
+    # No band -> deterministic anchor-shift -> net-edge p50 lands on anchor.
     assert abs(float(row["net_edge_p50_annual"]) - anchor) < 0.05
-    # Anchor diagnostics surface the shift amount.
     shift_recorded = float(row["gross_anchor_shift_annual"])
     target_recorded = float(row["gross_anchor_target_annual"])
     assert math.isfinite(shift_recorded)
     assert abs(target_recorded - anchor) < 1e-9
-    assert abs(shift_recorded) > 0.05  # shift was meaningful (~+0.20)
+    assert abs(shift_recorded) > 0.05
     assert row["gross_anchor_source"] == "harq_log_anchored"
+    assert row["gross_blend_method"] == "anchor_shift_fallback"
+    assert pd.isna(row["gross_blend_weight_forward"])
+
+
+def test_inverse_variance_blend_with_band():
+    """When a p10/p90 band is present, the blend weight depends on how tight
+    the forward forecast is vs the realized bootstrap dispersion. Posterior
+    sits between the realized mean and the forward p50, and matches the
+    closed-form Normal-Normal conjugate identity.
+    """
+    sigma = 0.30
+    n = 600
+    und = _gbm_tr(n, sigma_annual=sigma, seed=42)
+    etf = _build_letf_tr(und, beta=2.0, daily_drag=0.0004, noise_sigma_daily=0.005, seed=1)
+    tr_map = {"BCD": etf, "BCDUND": und}
+
+    # Wide forward band (sigma_F large) → forward should get LESS weight; the
+    # posterior should be pulled toward the realized ~10% drag.
+    anchor_p50 = 0.30
+    anchor_p10 = 0.05
+    anchor_p90 = 0.55  # very wide band (sigma_F ≈ 0.195)
+    row_d = _minimal_letf_row(
+        etf="BCD",
+        underlying="BCDUND",
+        beta=2.0,
+        expected_p50=anchor_p50,
+        n_obs=n - 1,
+    )
+    row_d["expected_gross_decay_p10_annual"] = anchor_p10
+    row_d["expected_gross_decay_p90_annual"] = anchor_p90
+    df = pd.DataFrame([row_d])
+    out = enrich_screener_v2_fields(df, tr_map, bootstrap_seed=7)
+    row = out.iloc[0]
+    assert row["gross_blend_method"] == "inverse_variance"
+    w_F = float(row["gross_blend_weight_forward"])
+    assert 0.0 < w_F < 1.0  # genuine blend (neither extreme)
+    sigF = float(row["gross_sigma_forward_annual"])
+    sigR = float(row["gross_sigma_realized_annual"])
+    assert sigF > 0 and sigR > 0
+    # Mathematical identity: w_F = sigR^2 / (sigF^2 + sigR^2).
+    expected_w = sigR ** 2 / (sigF ** 2 + sigR ** 2)
+    assert abs(w_F - expected_w) < 1e-9
+    # Posterior must lie between realized mean and forward p50.
+    mu_R = float(row["gross_realized_mean_annual"])
+    posterior = float(row["gross_anchor_target_annual"])
+    assert min(mu_R, anchor_p50) <= posterior <= max(mu_R, anchor_p50)
+
+
+def test_inverse_variance_blend_tight_forward_dominates():
+    """Tight forward band (sigma_F small) relative to noisy realized history
+    → forward dominates → posterior sits close to forward p50, recovering
+    legacy anchor-shift behaviour.
+    """
+    sigma = 0.30
+    n = 600
+    und = _gbm_tr(n, sigma_annual=sigma, seed=42)
+    # Big realized noise so sigma_R is comfortably larger than sigma_F.
+    etf = _build_letf_tr(und, beta=2.0, daily_drag=0.0004, noise_sigma_daily=0.03, seed=2)
+    tr_map = {"CDE": etf, "CDEUND": und}
+
+    anchor_p50 = 0.30
+    # Tight band — sigma_F ≈ 0.012.
+    anchor_p10 = 0.285
+    anchor_p90 = 0.315
+    row_d = _minimal_letf_row(
+        etf="CDE",
+        underlying="CDEUND",
+        beta=2.0,
+        expected_p50=anchor_p50,
+        n_obs=n - 1,
+    )
+    row_d["expected_gross_decay_p10_annual"] = anchor_p10
+    row_d["expected_gross_decay_p90_annual"] = anchor_p90
+    df = pd.DataFrame([row_d])
+    out = enrich_screener_v2_fields(df, tr_map, bootstrap_seed=7)
+    row = out.iloc[0]
+    assert row["gross_blend_method"] == "inverse_variance"
+    w_F = float(row["gross_blend_weight_forward"])
+    assert w_F > 0.9
+    posterior = float(row["gross_anchor_target_annual"])
+    assert abs(posterior - anchor_p50) < 0.05
+
+
+def test_inverse_variance_blend_matches_closed_form():
+    """Direct unit test of the blend helper to lock the math identity."""
+    from screener_v2_fields import _inverse_variance_blend, _band_to_sigma
+
+    sigma_F = _band_to_sigma(p10=0.20, p90=0.40)
+    assert sigma_F is not None
+    expected_sigma_F = (0.40 - 0.20) / (2.0 * 1.2815515655446004)
+    assert abs(sigma_F - expected_sigma_F) < 1e-9
+    result = _inverse_variance_blend(
+        mu_forward=0.30, sigma_forward=sigma_F,
+        mu_realized=0.10, sigma_realized=0.10,
+    )
+    assert result is not None
+    posterior, w_F = result
+    # Closed form: w_F = sigR² / (sigF² + sigR²).
+    vF = sigma_F ** 2
+    vR = 0.10 ** 2
+    assert abs(w_F - vR / (vF + vR)) < 1e-12
+    assert abs(posterior - (w_F * 0.30 + (1 - w_F) * 0.10)) < 1e-12
+
+    # Limit: sigma_F → 0 ⇒ pure forward.
+    res2 = _inverse_variance_blend(0.30, 1e-9, 0.10, 0.10)
+    assert res2 is not None
+    assert abs(res2[0] - 0.30) < 1e-6
+    assert res2[1] > 0.999
+
+    # Limit: sigma_R → 0 ⇒ pure realized.
+    res3 = _inverse_variance_blend(0.30, 0.10, 0.10, 1e-9)
+    assert res3 is not None
+    assert abs(res3[0] - 0.10) < 1e-6
+    assert res3[1] < 1e-3
 
 
 def test_no_anchor_shift_when_expected_p50_missing():
