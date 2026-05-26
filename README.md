@@ -218,6 +218,11 @@ Full operator playbook, edge-case table, and verification checklist live in [`SP
   - **`plan_only`** — legacy behaviour: structural short only attributed when the latest plan still carries the sleeve row.
   - **`ledger_fifo`** — disable structural shorts entirely; trust the FIFO share ledger only.
   See `accounting.b4_attribution_min_usd` (ignore noise below threshold) and `accounting.b4_partial_hedge_ratio_default` (registry fallback). The `b4_source` column in `b4_plan_ledger_reconciliation.csv` reports which signal won per underlying.
+- **Stable B1/B2 ratio-split** (`accounting.b12_spot_split_method`, `accounting.b12_pnl_mode`):
+  - **`ledger_fifo`** (default) — ratio-split net exposure and PnL for buckets 1/2/4 use the FIFO share ledger on each underlying spot line (same behaviour as pre–May-2026 restate). Day-over-day B1/B2 moves track trades and marks, not daily plan/B4 waterfalls.
+  - **`held_exposure_waterfall`** — legacy ratio-split: spot is carved by held ETF hedge-residual + plan/ETF-implied B4 structural short (large B1↔B2 relabeling).
+  - **`lot_timed_strict`** (default PnL) — FIFO lot ledger for realized and unrealized; no `inject_slice` plan-B4 override on spot (yieldboost spot→B2 overrides still apply). Set **`plan_b4_inject`** to restore inject_slice on unrealized for plan-B4 names.
+  - **B4 pair view** (`net_exposure_bucket_4_detail`, `gross_exposure_bucket_4_pair`) always uses `etf_implied` structural shorts — independent of `b12_*` knobs.
 - **Combined stock-sleeve views** (`pnl_by_underlying.csv`, `net_exposure_by_underlying.csv`) sum **buckets 1 + 2 + 4** (flow inverse bucket 3 remains separate). Legacy bucket-1&2-only PnL is still written to `pnl_by_underlying_b12.csv`.
 
 ---

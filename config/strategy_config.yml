@@ -8,6 +8,9 @@ ibkr:
 accounting:
   use_yfinance: false           # override Flex markPrice with yfinance close
   bucket_split_method: held_exposure  # held_exposure | universe_beta
+  # Stable B1/B2 ratio-split (email/dashboard totals): FIFO ledger for spot; B4 pair view unchanged.
+  b12_spot_split_method: ledger_fifo       # ledger_fifo | held_exposure_waterfall
+  b12_pnl_mode: lot_timed_strict           # lot_timed_strict | plan_b4_inject (uses plan_b4_pnl_mode below)
   plan_b4_pnl_mode: inject_slice    # inject_slice: FIFO realized + plan-split unrealized | full_override (legacy)
   plan_sleeve_bucketing: sleeve_first  # sleeve_first | delta_first
   ledger_full_replay_underlyings:

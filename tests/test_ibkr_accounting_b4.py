@@ -17,6 +17,7 @@ from ibkr_accounting import (
     compute_bucket4_pair_exposure,
     compute_plan_b4_structural_qty,
     held_exposure_bucket124_weights,
+    ledger_spot_bucket_ratios,
     load_plan_sleeve_bucket_usd,
     merge_plan_etf_metadata,
     resolve_b4_plan_exposure_underlyings,
@@ -447,7 +448,7 @@ def test_exposure_spot_ratio_ignores_yieldboost_spot_b2_override() -> None:
     )
     assert sr.b2 == pytest.approx(11.0 / 140.0, rel=1e-4)
     assert sr.b1 == pytest.approx(129.0 / 140.0, rel=1e-4)
-    assert sr.source == "ledger"
+    assert sr.source == "ledger_fifo"
 
     sr_pnl = resolve_underlying_spot_ratios(
         underlying="SMCI",
@@ -456,8 +457,35 @@ def test_exposure_spot_ratio_ignores_yieldboost_spot_b2_override() -> None:
         yieldboost_spot_b2=True,
         ledger_r_b1=0.04,
         ledger_r_b2=0.96,
+        b12_spot_split_method="held_exposure_waterfall",
     )
     assert sr_pnl.b2 > sr.b2
+
+
+def test_ledger_spot_bucket_ratios_from_qty() -> None:
+    sr = ledger_spot_bucket_ratios(
+        1000.0,
+        {"bucket_1": 700.0, "bucket_2": 200.0, "bucket_4": 100.0},
+    )
+    assert sr.source == "ledger_fifo"
+    assert sr.b1 == pytest.approx(0.7)
+    assert sr.b2 == pytest.approx(0.2)
+    assert sr.b4 == pytest.approx(0.1)
+
+
+def test_resolve_underlying_spot_ratios_ledger_fifo_skips_plan() -> None:
+    sr = resolve_underlying_spot_ratios(
+        underlying="QBTS",
+        ibkr_qty=1000.0,
+        ledger_qty={"bucket_1": 800.0, "bucket_2": 200.0, "bucket_4": 0.0},
+        plan_ratio={"b1": 0.1, "b2": 0.2, "b4": 0.7},
+        plan_b4_pnl_mode="inject_slice",
+        b12_spot_split_method="ledger_fifo",
+    )
+    assert sr.source == "ledger_fifo"
+    assert sr.b1 == pytest.approx(0.8)
+    assert sr.b2 == pytest.approx(0.2)
+    assert sr.b4 == pytest.approx(0.0)
 
 
 def test_resolve_underlying_spot_ratios_inject_slice() -> None:
@@ -469,6 +497,7 @@ def test_resolve_underlying_spot_ratios_inject_slice() -> None:
         plan_b4_pnl_mode="inject_slice",
         ledger_r_b1=0.516,
         ledger_r_b2=0.012,
+        b12_spot_split_method="held_exposure_waterfall",
     )
     assert sr.b4 == pytest.approx(0.21)
     b1_norm = 0.516 / (0.516 + 0.012)
