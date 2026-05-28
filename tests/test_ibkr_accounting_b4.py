@@ -9,6 +9,8 @@ from ibkr_accounting import (
     _normalize_bucket_triple,
     apply_plan_b4_spot_pnl_override,
     apply_yieldboost_spot_b2_override,
+    ledger_pnl_split_b1_b2_ratios,
+    apply_spot_bucket_eligibility,
     build_bucket4_pair_registry,
     build_bucket_ratio_reconciliation,
     build_net_exposure_spot_by_underlying,
@@ -22,7 +24,13 @@ from ibkr_accounting import (
     merge_plan_etf_metadata,
     resolve_b4_plan_exposure_underlyings,
     resolve_flow_inverse_bucket3_syms,
+    hedge_ratio_spot_bucket_ratios,
+    sleeve_balance_spot_bucket_ratios,
+    resolve_underlying_spot_exposure_ratios,
+    sleeve_offset_spot_bucket_ratios,
     resolve_underlying_spot_ratios,
+    spot_trade_bucket_weights,
+    underlying_held_etf_bucket_flags,
 )
 
 
@@ -126,6 +134,15 @@ def test_pair_exposure_uses_exact_b4_share_count() -> None:
 def test_realized_ratio_map_includes_bucket_4() -> None:
     trades = pd.DataFrame(
         [
+            {
+                "dateTime": "20260115102900",
+                "symbol": "APLZ",
+                "underlyingSymbol": "APLD",
+                "quantity": -100.0,
+                "fifoPnlRealized_base": 0.0,
+                "tradePrice_base": 10.0,
+                "orderReference": "ETF_LS|APLD__GROUP|APLZ|ETF_DELTA",
+            },
             {
                 "dateTime": "20260115103000",
                 "symbol": "APLD",
@@ -240,8 +257,8 @@ def test_inject_slice_preserves_b2_lot_share() -> None:
     assert total == pytest.approx(1000.0)
 
 
-def test_yieldboost_spot_b2_override_uses_held_ratios() -> None:
-    """Yieldboost spot PnL should roll into bucket 2 using held-exposure split."""
+def test_yieldboost_spot_b2_override_force_all_b2() -> None:
+    """Held B2 sleeve → 100% of spot PnL in bucket 2."""
     df = pd.DataFrame(
         [
             {
@@ -267,11 +284,23 @@ def test_yieldboost_spot_b2_override_uses_held_ratios() -> None:
         spot_carry_cols={"borrow_fees"},
         r_b1=0.04,
         r_b2=0.96,
+        force_all_b2=True,
     )
-    assert lot["SMCI"]["bucket_2"]["unrealized_pnl"] == pytest.approx(960.0)
-    assert lot["SMCI"]["bucket_1"]["unrealized_pnl"] == pytest.approx(40.0)
-    assert lot["SMCI"]["bucket_2"]["borrow_fees"] == pytest.approx(-9.6)
-    assert lot["SMCI"]["bucket_1"]["borrow_fees"] == pytest.approx(-0.4)
+    assert lot["SMCI"]["bucket_2"]["unrealized_pnl"] == pytest.approx(1000.0)
+    assert lot["SMCI"]["bucket_1"]["unrealized_pnl"] == pytest.approx(0.0)
+    assert lot["SMCI"]["bucket_2"]["borrow_fees"] == pytest.approx(-10.0)
+    assert lot["SMCI"]["bucket_1"]["borrow_fees"] == pytest.approx(0.0)
+
+
+def test_ledger_pnl_split_ignores_held_when_orphan_high() -> None:
+    r1, r2 = ledger_pnl_split_b1_b2_ratios(
+        orphan_frac=0.5,
+        ledger_unreal_r_b1=1.0,
+        ledger_unreal_r_b2=0.0,
+        orphan_threshold=0.10,
+    )
+    assert r1 == pytest.approx(1.0)
+    assert r2 == pytest.approx(0.0)
 
 
 def test_inject_slice_preserves_fifo_realized() -> None:
@@ -436,30 +465,46 @@ def test_ledger_full_replay_trade_filter() -> None:
     assert len(kept) == 2
 
 
-def test_exposure_spot_ratio_ignores_yieldboost_spot_b2_override() -> None:
-    """Exposure spot split uses share ledger, not PnL yieldboost_spot_b2 held weights."""
+def test_exposure_spot_ratio_aligns_yieldboost_with_ledger_fifo() -> None:
+    """Yieldboost + held B2 only: ledger_fifo and yieldboost_spot_b2 both → 100% B2."""
+    pos = pd.DataFrame(
+        [
+            {
+                "symbol": "SMYY",
+                "position": -1000.0,
+                "markPrice": 10.0,
+                "fxRateToBase": 1.0,
+                "positionValue_base": -10000.0,
+            }
+        ]
+    )
+    etf_under = {"SMYY": "SMCI"}
+    etf_delta = {"SMYY": 0.4}
+    ledger = {"bucket_1": 129.0, "bucket_2": 11.0, "bucket_4": 0.0}
     sr = resolve_underlying_spot_ratios(
         underlying="SMCI",
         ibkr_qty=1160.0,
-        ledger_qty={"bucket_1": 129.0, "bucket_2": 11.0, "bucket_4": 0.0},
+        ledger_qty=ledger,
         yieldboost_spot_b2=False,
-        ledger_r_b1=None,
-        ledger_r_b2=None,
+        etf_to_under=etf_under,
+        etf_to_delta=etf_delta,
+        pos=pos,
     )
-    assert sr.b2 == pytest.approx(11.0 / 140.0, rel=1e-4)
-    assert sr.b1 == pytest.approx(129.0 / 140.0, rel=1e-4)
+    assert sr.b2 == pytest.approx(1.0)
     assert sr.source == "ledger_fifo"
 
-    sr_pnl = resolve_underlying_spot_ratios(
+    sr_yb = resolve_underlying_spot_ratios(
         underlying="SMCI",
         ibkr_qty=1160.0,
-        ledger_qty={"bucket_1": 129.0, "bucket_2": 11.0, "bucket_4": 0.0},
+        ledger_qty=ledger,
         yieldboost_spot_b2=True,
-        ledger_r_b1=0.04,
-        ledger_r_b2=0.96,
-        b12_spot_split_method="held_exposure_waterfall",
+        etf_to_under=etf_under,
+        etf_to_delta=etf_delta,
+        pos=pos,
     )
-    assert sr_pnl.b2 > sr.b2
+    assert sr_yb.b2 == pytest.approx(1.0)
+    assert sr_yb.b1 == pytest.approx(0.0)
+    assert sr_yb.source == "yieldboost_spot_b2"
 
 
 def test_ledger_spot_bucket_ratios_from_qty() -> None:
@@ -471,6 +516,243 @@ def test_ledger_spot_bucket_ratios_from_qty() -> None:
     assert sr.b1 == pytest.approx(0.7)
     assert sr.b2 == pytest.approx(0.2)
     assert sr.b4 == pytest.approx(0.1)
+
+
+def test_ledger_spot_masks_b2_without_held_b2_etf() -> None:
+    sr = ledger_spot_bucket_ratios(
+        37.0,
+        {"bucket_1": 12.5, "bucket_2": 26.5, "bucket_4": 0.0},
+        has_b1_etf=True,
+        has_b2_etf=False,
+        has_b4_etf=False,
+    )
+    assert sr.b2 == pytest.approx(0.0)
+    assert sr.b1 == pytest.approx(1.0)
+
+
+def test_intc_spot_trade_weights_only_b1_when_only_intw_held() -> None:
+    etf_to_under = {"INTW": "INTC", "LINT": "INTC"}
+    etf_to_delta = {"INTW": 1.98, "LINT": 1.99}
+    etf_pos = {"INTW": -55.0}
+    w = spot_trade_bucket_weights(
+        "INTC",
+        "ETF_LS|INTC__RESIZE|INTC|LONG_UNDER_TRIM",
+        etf_to_under,
+        etf_to_delta,
+        etf_pos,
+    )
+    assert w == (1.0, 0.0, 0.0)
+    has_b1, has_b2, has_b4 = underlying_held_etf_bucket_flags(
+        "INTC", etf_to_under, etf_to_delta, etf_pos
+    )
+    assert has_b1 is True
+    assert has_b2 is False
+    assert has_b4 is False
+
+
+def test_spot_order_ref_b2_ignored_without_b2_etf() -> None:
+    etf_to_under = {"TQQQ": "QQQ"}
+    etf_to_delta = {"TQQQ": 3.0}
+    w = spot_trade_bucket_weights(
+        "QQQ",
+        "ETF_LS|QQQ__TQQQ|UNDER_DELTA",
+        etf_to_under,
+        etf_to_delta,
+        {"TQQQ": 100.0},
+    )
+    assert w == (1.0, 0.0, 0.0)
+
+
+def test_apply_spot_bucket_eligibility_zeros_ineligible() -> None:
+    assert apply_spot_bucket_eligibility(
+        0.2, 0.8, 0.0, has_b1_etf=True, has_b2_etf=False, has_b4_etf=False
+    ) == (1.0, 0.0, 0.0)
+
+
+def test_sleeve_balance_spot_bucket_ratios_ionq_flat_sleeves() -> None:
+    pos = pd.DataFrame(
+        [
+            {
+                "symbol": "IONQ",
+                "position": 957.0,
+                "markPrice": 63.64,
+                "fxRateToBase": 1.0,
+                "positionValue_base": 60903.48,
+            },
+            {
+                "symbol": "IOYY",
+                "position": -100.0,
+                "markPrice": 366.34,
+                "fxRateToBase": 1.0,
+                "positionValue_base": -36633.83,
+            },
+            {
+                "symbol": "IONL",
+                "position": -50.0,
+                "markPrice": 62.52,
+                "fxRateToBase": 1.0,
+                "positionValue_base": -6251.91,
+            },
+            {
+                "symbol": "IONX",
+                "position": -30.0,
+                "markPrice": 138.10,
+                "fxRateToBase": 1.0,
+                "positionValue_base": -8286.22,
+            },
+            {
+                "symbol": "QPUX",
+                "position": -20.0,
+                "markPrice": 128.33,
+                "fxRateToBase": 1.0,
+                "positionValue_base": -5133.30,
+            },
+        ]
+    )
+    etf_to_under = {
+        "IONQ": "IONQ",
+        "IOYY": "IONQ",
+        "IONL": "IONQ",
+        "IONX": "IONQ",
+        "QPUX": "IONQ",
+    }
+    etf_to_delta = {"IOYY": 1.0, "IONL": 2.0, "IONX": 2.0, "QPUX": 2.0}
+    sr = sleeve_balance_spot_bucket_ratios(
+        "IONQ",
+        pos,
+        etf_to_under,
+        etf_to_delta,
+    )
+    assert sr.source == "sleeve_balance"
+    assert sr.b1 + sr.b2 + sr.b4 == pytest.approx(0.924, rel=1e-2)
+    assert sr.b2 == pytest.approx(36633.83 / 60903.48, rel=1e-3)
+    assert sr.b1 == pytest.approx(19671.43 / 60903.48, rel=1e-3)
+
+
+def test_hedge_ratio_spot_bucket_ratios_ionq() -> None:
+    pos = pd.DataFrame(
+        [
+            {
+                "symbol": "IONQ",
+                "position": 957.0,
+                "markPrice": 63.64,
+                "fxRateToBase": 1.0,
+                "positionValue_base": 60903.48,
+            },
+            {
+                "symbol": "IOYY",
+                "position": -100.0,
+                "markPrice": 366.34,
+                "fxRateToBase": 1.0,
+                "positionValue_base": -36633.83,
+            },
+            {
+                "symbol": "IONL",
+                "position": -50.0,
+                "markPrice": 62.52,
+                "fxRateToBase": 1.0,
+                "positionValue_base": -6251.91,
+            },
+            {
+                "symbol": "IONX",
+                "position": -30.0,
+                "markPrice": 138.10,
+                "fxRateToBase": 1.0,
+                "positionValue_base": -8286.22,
+            },
+            {
+                "symbol": "QPUX",
+                "position": -20.0,
+                "markPrice": 128.33,
+                "fxRateToBase": 1.0,
+                "positionValue_base": -5133.30,
+            },
+        ]
+    )
+    etf_to_under = {
+        "IONQ": "IONQ",
+        "IOYY": "IONQ",
+        "IONL": "IONQ",
+        "IONX": "IONQ",
+        "QPUX": "IONQ",
+    }
+    etf_to_delta = {"IOYY": 1.0, "IONL": 2.0, "IONX": 2.0, "QPUX": 2.0}
+    sr, meta = hedge_ratio_spot_bucket_ratios(
+        "IONQ",
+        pos,
+        etf_to_under,
+        etf_to_delta,
+        ibkr_qty=957.0,
+        ledger_qty={"bucket_1": 800.0, "bucket_2": 0.0, "bucket_4": 0.0},
+    )
+    assert sr.source == "hedge_ratio"
+    assert sr.b1 + sr.b2 + sr.b4 == pytest.approx(1.0)
+    # B2 hedge need fully covered → flat B2 sleeve; B1 gets partial + orphan
+    assert sr.b2 == pytest.approx(36633.83 / 60903.48, rel=1e-3)
+    assert meta.hedge_target_usd_b2 == pytest.approx(36633.83, rel=1e-2)
+    assert meta.hedge_alloc_usd_b2 == pytest.approx(36633.83, rel=1e-2)
+    assert meta.hedge_target_qty_b2 == pytest.approx(36633.83 / 63.64, rel=1e-2)
+
+
+def test_sleeve_offset_spot_bucket_ratios_ionq() -> None:
+    pos = pd.DataFrame(
+        [
+            {
+                "symbol": "IONQ",
+                "position": 957.0,
+                "markPrice": 63.64,
+                "fxRateToBase": 1.0,
+                "positionValue_base": 60903.48,
+            },
+            {
+                "symbol": "IOYY",
+                "position": -100.0,
+                "markPrice": 366.34,
+                "fxRateToBase": 1.0,
+                "positionValue_base": -36633.83,
+            },
+            {
+                "symbol": "IONL",
+                "position": -50.0,
+                "markPrice": 62.52,
+                "fxRateToBase": 1.0,
+                "positionValue_base": -6251.91,
+            },
+            {
+                "symbol": "IONX",
+                "position": -30.0,
+                "markPrice": 138.10,
+                "fxRateToBase": 1.0,
+                "positionValue_base": -8286.22,
+            },
+            {
+                "symbol": "QPUX",
+                "position": -20.0,
+                "markPrice": 128.33,
+                "fxRateToBase": 1.0,
+                "positionValue_base": -5133.30,
+            },
+        ]
+    )
+    etf_to_under = {
+        "IONQ": "IONQ",
+        "IOYY": "IONQ",
+        "IONL": "IONQ",
+        "IONX": "IONQ",
+        "QPUX": "IONQ",
+    }
+    etf_to_delta = {"IOYY": 1.0, "IONL": 2.0, "IONX": 2.0, "QPUX": 2.0}
+    sr = sleeve_offset_spot_bucket_ratios(
+        "IONQ",
+        pos,
+        etf_to_under,
+        etf_to_delta,
+    )
+    assert sr.source == "sleeve_offset"
+    assert sr.b1 + sr.b2 + sr.b4 == pytest.approx(1.0)
+    # B2 sleeve fully paired; B1 paired + orphan remainder (combined net ~4.6k)
+    assert sr.b2 == pytest.approx(36633.83 / 60903.48, rel=1e-3)
+    assert sr.b1 == pytest.approx((19671.43 + 4598.02) / 60903.48, rel=1e-3)
 
 
 def test_resolve_underlying_spot_ratios_ledger_fifo_skips_plan() -> None:
