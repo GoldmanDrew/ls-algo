@@ -219,6 +219,8 @@ new_pairs = [
     ("AMPU", "AMPX"),  # Defiance Daily Target 2X Long AMPX (Amprius Technologies)
     # 2026-05-07 Tradr 2X long (Xanadu Quantum)
     ("XNDX", "XNDU"),  # Tradr 2X Long XNDU Daily ETF (Xanadu Quantum Technologies)
+    # 2026-05-28 Direxion 2X daily bull — swap-based spot ETP refs (IBIT, ETHA, GLD, SLV)
+    ("BTCU", "IBIT"), ("EVMU", "ETHA"), ("UGLD", "GLD"), ("USLV", "SLV"),
 ]
 
 proshares_pairs_levered = [
