@@ -71,6 +71,43 @@ def test_build_attribution_row_totals_round_trip():
     assert row["long_realized_pnl"] + row["short_realized_pnl"] == 10.0
 
 
+def test_compute_bucket_capital_snapshot_excludes_positions_outside_screened_universe():
+    positions = pd.DataFrame(
+        [
+            {
+                "symbol": "LETF",
+                "position": -100.0,
+                "markPrice": 10.0,
+                "fxRateToBase": 1.0,
+                "positionValue_base": -1000.0,
+            },
+            {
+                "symbol": "GTX",
+                "position": 1000.0,
+                "markPrice": 10.0,
+                "fxRateToBase": 1.0,
+                "positionValue_base": 10000.0,
+            },
+        ]
+    )
+    screened = pd.DataFrame(
+        [
+            {
+                "ETF": "LETF",
+                "Underlying": "LETF_U",
+                "delta": 2.0,
+                "bucket": "bucket_1",
+                "maint_pct_long": 0.50,
+                "maint_pct_short": 0.60,
+            }
+        ]
+    )
+    snap = compute_bucket_capital_snapshot(positions, pd.DataFrame(), screened, pd.DataFrame())
+    assert snap["net_capital_bucket_1"] == pytest.approx(-1000.0)
+    assert snap["gross_capital_bucket_1"] == pytest.approx(1000.0)
+    assert snap["net_capital_bucket_2"] == pytest.approx(0.0)
+
+
 def test_compute_bucket_capital_snapshot_splits_spot_and_uses_maintenance_margin():
     positions = pd.DataFrame(
         [
@@ -106,7 +143,15 @@ def test_compute_bucket_capital_snapshot_splits_spot_and_uses_maintenance_margin
                 "bucket": "bucket_1",
                 "maint_pct_long": 0.50,
                 "maint_pct_short": 0.60,
-            }
+            },
+            {
+                "ETF": "SPOT_ETF",
+                "Underlying": "SPOT",
+                "delta": 1.0,
+                "bucket": "bucket_2",
+                "maint_pct_long": 0.25,
+                "maint_pct_short": 0.30,
+            },
         ]
     )
     lot_state = pd.DataFrame(
@@ -151,6 +196,18 @@ def test_compute_bucket_capital_snapshot_caps_at_position_when_lot_state_is_stal
             {"symbol": "SPOT", "bucket": "bucket_2"},
         ]
     )
+    screened = pd.DataFrame(
+        [
+            {
+                "ETF": "SPOT_ETF",
+                "Underlying": "SPOT",
+                "delta": 1.0,
+                "bucket": "bucket_1",
+                "maint_pct_long": 0.25,
+                "maint_pct_short": 0.30,
+            }
+        ]
+    )
     lot_state = pd.DataFrame(
         [
             {
@@ -162,7 +219,7 @@ def test_compute_bucket_capital_snapshot_caps_at_position_when_lot_state_is_stal
         ]
     )
 
-    snap = compute_bucket_capital_snapshot(positions, pnl_symbol, pd.DataFrame(), lot_state)
+    snap = compute_bucket_capital_snapshot(positions, pnl_symbol, screened, lot_state)
 
     # Total attributed MV scaled down to the actual $2,000 position.
     assert snap["net_capital_bucket_1"] + snap["net_capital_bucket_2"] == pytest.approx(2000.0)
@@ -188,6 +245,18 @@ def test_compute_bucket_capital_snapshot_excludes_orphan_position_shares():
         ]
     )
     pnl_symbol = pd.DataFrame([{"symbol": "SPOT", "bucket": "bucket_1"}])
+    screened = pd.DataFrame(
+        [
+            {
+                "ETF": "SPOT_ETF",
+                "Underlying": "SPOT",
+                "delta": 1.0,
+                "bucket": "bucket_1",
+                "maint_pct_long": 0.25,
+                "maint_pct_short": 0.30,
+            }
+        ]
+    )
     lot_state = pd.DataFrame(
         [
             {
@@ -199,7 +268,7 @@ def test_compute_bucket_capital_snapshot_excludes_orphan_position_shares():
         ]
     )
 
-    snap = compute_bucket_capital_snapshot(positions, pnl_symbol, pd.DataFrame(), lot_state)
+    snap = compute_bucket_capital_snapshot(positions, pnl_symbol, screened, lot_state)
 
     assert snap["net_capital_bucket_1"] == pytest.approx(1000.0)
     assert snap["gross_capital_bucket_1"] == pytest.approx(1000.0)
