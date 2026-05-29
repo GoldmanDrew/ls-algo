@@ -157,5 +157,22 @@
     "bucket_2": 84259.49678606307,
     "bucket_3": 9321.734802427443,
     "bucket_4": -30731.019742313623
+  },
+  "capital_snapshot": {
+    "net_capital_stock_sleeves": -294989.0799999994,
+    "net_capital_bucket_3": 0.0,
+    "gross_capital_stock_sleeves": 3275298.480000002,
+    "gross_capital_bucket_3": 0.0,
+    "margin_req_stock_sleeves": 1260427.4409801369,
+    "margin_req_bucket_3": 0.0,
+    "net_capital_bucket_1": 839796.0800000007,
+    "net_capital_bucket_2": -1065137.09,
+    "net_capital_bucket_4": -69648.06999999998,
+    "gross_capital_bucket_1": 2140513.3200000017,
+    "gross_capital_bucket_2": 1065137.09,
+    "gross_capital_bucket_4": 69648.06999999998,
+    "margin_req_bucket_1": 763786.1828491119,
+    "margin_req_bucket_2": 451377.32545582496,
+    "margin_req_bucket_4": 45263.9326752
   }
 }
