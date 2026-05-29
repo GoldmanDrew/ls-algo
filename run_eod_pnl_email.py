@@ -533,6 +533,41 @@ def _safe_float(value, default: float = 0.0) -> float:
         return default
 
 
+def _screened_etf_and_underlying_sets(screened: pd.DataFrame) -> tuple[set[str], set[str]]:
+    """Return (ETF tickers, Underlying tickers) from etf_screened_today.csv."""
+    if screened is None or screened.empty:
+        return set(), set()
+    cols = {c.lower(): c for c in screened.columns}
+    etf_col = cols.get("etf")
+    under_col = next(
+        (cols[k] for k in ("underlying", "underlyingsymbol", "underlying_symbol", "root") if k in cols),
+        None,
+    )
+    etfs: set[str] = set()
+    unders: set[str] = set()
+    if etf_col:
+        etfs.update(
+            canonical_symbol(str(x))
+            for x in screened[etf_col].dropna()
+            if str(x).strip()
+        )
+    if under_col:
+        unders.update(
+            canonical_symbol(str(x))
+            for x in screened[under_col].dropna()
+            if str(x).strip()
+        )
+    etfs = {s for s in etfs if s}
+    unders = {s for s in unders if s}
+    return etfs, unders
+
+
+def _screened_universe_symbols(screened: pd.DataFrame) -> set[str]:
+    """ETF and underlying tickers from etf_screened_today.csv (strategy universe)."""
+    etfs, unders = _screened_etf_and_underlying_sets(screened)
+    return etfs | unders
+
+
 def _load_screened_for_run(run_date: str) -> pd.DataFrame:
     dated = RUNS_ROOT / run_date / "etf_screened_today.csv"
     latest = PROJECT_ROOT / "data" / "etf_screened_today.csv"
@@ -863,14 +898,16 @@ def compute_bucket_capital_snapshot(
     Compute current per-bucket capital bases from open positions (buckets 1, 2, 4).
 
     Uses the same universe filters and ETF beta→bucket rules as ibkr_accounting
-  exposure (excluding bucket-3 flow symbols). Net capital is signed MV; gross is
-  |MV|; margin uses screened maintenance rates for ETFs.
+    exposure (excluding bucket-3 flow symbols). Only symbols listed in
+    etf_screened_today.csv (ETF or Underlying column) are included. Net capital
+    is signed MV; gross is |MV|; margin uses screened maintenance rates for ETFs.
     """
     snap = _empty_bucket_capital_snapshot()
     if positions is None or positions.empty or "symbol" not in positions.columns:
         return snap
 
     _etf_syms, _, margin_by_symbol = _screened_margin_and_bucket_maps(screened)
+    screened_etf_syms, screened_under_syms = _screened_etf_and_underlying_sets(screened)
     lot_qty_by_under = _lot_qty_map(lot_state)
 
     if screened is not None:
@@ -913,6 +950,10 @@ def compute_bucket_capital_snapshot(
     bucket3_only = flow_short_set | flow_low_delta_syms
     pos = pos[~pos["symbol"].isin(bucket3_only)].copy()
 
+    screened_universe = _screened_universe_symbols(screened)
+    if screened_universe:
+        pos = pos[pos["symbol"].isin(screened_universe)].copy()
+
     if b4_etf_syms is None and run_date:
         b4_path = RUNS_ROOT / run_date / "accounting" / "bucket4_pairs.csv"
         if b4_path.exists():
@@ -949,7 +990,7 @@ def compute_bucket_capital_snapshot(
         if abs(signed_mv) <= 1e-12 and abs(position) > 1e-12 and px_base > 0:
             signed_mv = position * px_base
 
-        is_etf = sym in etf_to_under
+        is_etf = sym in screened_etf_syms
         if is_etf:
             bucket = _etf_capital_bucket(
                 sym,
@@ -959,6 +1000,9 @@ def compute_bucket_capital_snapshot(
                 b4_etf_syms=b4_etf_syms,
             )
             _add(bucket, signed_mv, sym)
+            continue
+
+        if sym not in screened_under_syms:
             continue
 
         lot_qty = lot_qty_by_under.get(sym)
@@ -973,7 +1017,8 @@ def compute_bucket_capital_snapshot(
                     _add(bucket, signed_mv * ratio, None)
             continue
 
-        _add("bucket_1", signed_mv, None)
+        # Spot in screened underlyings but no ledger attribution: skip (not strategy capital).
+        continue
 
     return snap
 
@@ -2395,8 +2440,9 @@ def main() -> int:
         "----------------------------------------\n"
         f"{bucket_return_table}\n"
         "----------------------------------------\n"
-        "AVG_NET_CAP = average daily net capital deployed (long MV - abs(short MV)); "
-        "AVG_GROSS_CAP = average daily gross MV; "
+        "AVG_NET_CAP = average daily net capital deployed on etf_screened_today.csv tickers "
+        "(signed MV: long +, short −); "
+        "AVG_GROSS_CAP = average daily gross MV on the same universe; "
         "AVG_MAINT_MARGIN = average daily maintenance margin requirement. "
         "ROC = YTD PnL / avg net capital when net capital is positive. "
         "ROG / ROM = YTD PnL divided by the matching averaged denominator.\n\n"
