@@ -57,9 +57,11 @@ from typing import Dict, Mapping, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from yieldboost_decay import (
-    yieldboost_decay_distribution,
-    yieldboost_decay_point_estimate,
+from yieldboost_pair_mc import (
+    DEFAULT_CROSS_FUND_RATIO,
+    stable_seed_from_symbol,
+    yieldboost_pair_decay_distribution,
+    _borrow_from_row,
 )
 
 try:
@@ -572,10 +574,10 @@ def enrich_with_decay_distribution(
 
     The forecast is computed **once per unique underlying** (matching the
     existing ``enrich_with_decay_and_vol`` pattern), then applied to every
-    ETF with that underlying using its own β. **YieldBOOST rows** dispatch
-    to the put-spread Monte Carlo in ``yieldboost_decay`` instead of the
-    Avellaneda-Zhang Itô mapping; see that module's docstring for why
-    the LETF identity collapses on β ≈ 0.5 income-strategy ETFs.
+    ETF with that underlying using its own β.     **YieldBOOST rows** dispatch to the weekly-rebalanced compound pair
+    Monte Carlo in ``yieldboost_pair_mc`` (log-continuous-annual pair P&L)
+    instead of the Avellaneda-Zhang Itô mapping or the legacy simple-decay
+    ``yieldboost_decay`` engine.
 
     The function never mutates ``expected_gross_decay_annual``; it adds
     sibling columns so downstream consumers can opt in incrementally.
@@ -668,27 +670,22 @@ def enrich_with_decay_distribution(
         is_yb = bool(_yb_raw) if pd.notna(_yb_raw) else False
         if cache is not None and cache.get("model") is not None:
             if is_yb:
-                event_cal = _load_event_calendar_combined()
-                week_flags, jump_pool, has_events = _yieldboost_event_weeks(und, event_cal)
-                if has_events and event_aware_decay_distribution is not None:
-                    yb_out = event_aware_decay_distribution(
-                        mu_log_iv_annual=cache["mu_log_iv"],
-                        sigma_log_iv_annual=cache["sigma_log_iv"],
-                        week_has_event=week_flags,
-                        event_jump_pool=jump_pool,
-                    )
-                    model = "yieldboost_put_spread_event"
-                else:
-                    yb_out = yieldboost_decay_distribution(
-                        mu_log_iv_annual=cache["mu_log_iv"],
-                        sigma_log_iv_annual=cache["sigma_log_iv"],
-                    )
-                    model = "yieldboost_put_spread"
+                sigma_mc = float(math.sqrt(max(math.exp(float(cache["mu_log_iv"])), 1e-12)))
+                etf_sym = norm_sym(row.get("ETF") or "")
+                yb_out = yieldboost_pair_decay_distribution(
+                    sigma_annual=sigma_mc,
+                    beta=beta,
+                    capture_ratio=DEFAULT_CROSS_FUND_RATIO,
+                    borrow_annual=_borrow_from_row(row),
+                    seed=stable_seed_from_symbol(str(etf_sym or und)),
+                    mu_log_iv_annual=float(cache["mu_log_iv"]),
+                )
+                model = "yieldboost_weekly_compound_mc"
                 if yb_out is None:
                     n_skip += 1
                     continue
                 mapped = yb_out
-                n_obs = cache["n_obs"]
+                n_obs = float(yb_out.get("n_obs") or cache["n_obs"])
                 n_har += 1
             else:
                 mapped = _lognormal_decay_from_logiv(
@@ -710,22 +707,26 @@ def enrich_with_decay_distribution(
             except (TypeError, ValueError):
                 fb_val = None
             if is_yb:
-                # YB thin-history fallback: use trailing realised σ if we can
-                # estimate it; otherwise emit nothing (consumer treats as N/A).
+                # YB thin-history fallback: trailing realised σ + pair path MC.
                 tr_series = tr_map.get(und) if isinstance(tr_map, Mapping) else None
                 sigma_realised = _trailing_realised_sigma(tr_series)
                 if sigma_realised is None:
                     n_skip += 1
                     continue
-                yb_out = yieldboost_decay_point_estimate(
-                    sigma_annual=sigma_realised,
+                etf_sym = norm_sym(row.get("ETF") or "")
+                yb_out = yieldboost_pair_decay_distribution(
+                    sigma_annual=float(sigma_realised),
+                    beta=beta,
+                    capture_ratio=DEFAULT_CROSS_FUND_RATIO,
+                    borrow_annual=_borrow_from_row(row),
+                    seed=stable_seed_from_symbol(str(etf_sym or und)),
                 )
                 if yb_out is None:
                     n_skip += 1
                     continue
                 mapped = yb_out
-                model = "yieldboost_put_spread_point"
-                n_obs = cache["n_obs"] if cache is not None else 0.0
+                model = "yieldboost_weekly_compound_mc"
+                n_obs = float(yb_out.get("n_obs") or (cache["n_obs"] if cache is not None else 0.0))
                 n_fallback_b += 1
             else:
                 if fb_val is None or not np.isfinite(fb_val):
