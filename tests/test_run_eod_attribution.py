@@ -207,14 +207,14 @@ def test_compute_bucket_capital_snapshot_excludes_orphan_position_shares():
 
 def test_format_bucket_return_table_includes_return_metrics():
     table = format_bucket_return_table(
-        {"bucket_1": 10.0, "bucket_2": 0.0, "bucket_3": 0.0, "bucket_4": 0.0},
+        {"stock_sleeves": 10.0, "bucket_3": 0.0},
         {
-            "net_capital_bucket_1": 100.0,
-            "gross_capital_bucket_1": 200.0,
-            "margin_req_bucket_1": 50.0,
-            "net_capital_bucket_2": -50.0,
-            "gross_capital_bucket_2": 200.0,
-            "margin_req_bucket_2": 50.0,
+            "net_capital_stock_sleeves": 100.0,
+            "gross_capital_stock_sleeves": 200.0,
+            "margin_req_stock_sleeves": 50.0,
+            "net_capital_bucket_3": -50.0,
+            "gross_capital_bucket_3": 200.0,
+            "margin_req_bucket_3": 50.0,
         },
     )
 
@@ -225,16 +225,11 @@ def test_format_bucket_return_table_includes_return_metrics():
     assert "10.00%" in table
     assert "5.00%" in table
     assert "20.00%" in table
-    # Buckets 2–4 use negative net exposure; ROC is not meaningful.
     lines = table.splitlines()
-    b2_row = next(line for line in lines if line.startswith("Bucket 2"))
-    b3_row = next(line for line in lines if line.startswith("Bucket 3"))
-    b4_row = next(line for line in lines if line.startswith("Bucket 4"))
-    assert "n/a" in b2_row
+    stock_row = next(line for line in lines if "Stock sleeves" in line)
+    b3_row = next(line for line in lines if "Bucket 3" in line)
     assert "n/a" in b3_row
-    assert "n/a" in b4_row
-    b1_row = next(line for line in lines if line.startswith("Bucket 1"))
-    assert "n/a" not in b1_row
+    assert "n/a" not in stock_row
 
 
 def test_compute_average_bucket_capital_means_daily_history():
@@ -242,45 +237,45 @@ def test_compute_average_bucket_capital_means_daily_history():
         [
             {
                 "date": "2026-02-27",
-                "net_capital_bucket_1": 100.0,
-                "gross_capital_bucket_1": 200.0,
-                "margin_req_bucket_1": 50.0,
+                "net_capital_stock_sleeves": 100.0,
+                "gross_capital_stock_sleeves": 200.0,
+                "margin_req_stock_sleeves": 50.0,
             },
             {
                 "date": "2026-02-28",
-                "net_capital_bucket_1": 300.0,
-                "gross_capital_bucket_1": 400.0,
-                "margin_req_bucket_1": 150.0,
+                "net_capital_stock_sleeves": 300.0,
+                "gross_capital_stock_sleeves": 400.0,
+                "margin_req_stock_sleeves": 150.0,
             },
         ]
     )
 
     avg = compute_average_bucket_capital(history)
 
-    assert avg["net_capital_bucket_1"] == pytest.approx(200.0)
-    assert avg["gross_capital_bucket_1"] == pytest.approx(300.0)
-    assert avg["margin_req_bucket_1"] == pytest.approx(100.0)
-    assert avg["net_capital_bucket_2"] == pytest.approx(0.0)
+    assert avg["net_capital_stock_sleeves"] == pytest.approx(200.0)
+    assert avg["gross_capital_stock_sleeves"] == pytest.approx(300.0)
+    assert avg["margin_req_stock_sleeves"] == pytest.approx(100.0)
+    assert avg["net_capital_bucket_3"] == pytest.approx(0.0)
 
 
 def test_compute_average_bucket_capital_skips_nan_legacy_rows():
     history = pd.DataFrame(
         [
-            {"date": "2026-02-27", "net_capital_bucket_1": float("nan")},
-            {"date": "2026-02-28", "net_capital_bucket_1": 400.0},
-            {"date": "2026-03-02", "net_capital_bucket_1": 600.0},
+            {"date": "2026-02-27", "net_capital_stock_sleeves": float("nan")},
+            {"date": "2026-02-28", "net_capital_stock_sleeves": 400.0},
+            {"date": "2026-03-02", "net_capital_stock_sleeves": 600.0},
         ]
     )
 
     avg = compute_average_bucket_capital(history)
 
-    assert avg["net_capital_bucket_1"] == pytest.approx(500.0)
+    assert avg["net_capital_stock_sleeves"] == pytest.approx(500.0)
 
 
 def test_compute_average_bucket_capital_handles_empty_history():
     avg = compute_average_bucket_capital(pd.DataFrame())
-    assert avg["net_capital_bucket_1"] == 0.0
-    assert avg["gross_capital_bucket_4"] == 0.0
+    assert avg["net_capital_stock_sleeves"] == 0.0
+    assert avg["net_capital_bucket_3"] == 0.0
     assert avg["margin_req_bucket_3"] == 0.0
 
 
@@ -289,27 +284,24 @@ def test_compute_period_pnl_deltas_daily_vs_ytd():
         [
             {
                 "date": "2026-05-18",
-                "pnl_bucket_1": -223695.94,
-                "pnl_bucket_2": 283557.36,
+                "pnl_stock_sleeves": 59378.47 - 7809.71,
                 "pnl_bucket_3": 7809.71,
-                "pnl_bucket_4": -8292.66,
                 "total_pnl": 59378.47,
             },
             {
                 "date": "2026-05-19",
-                "pnl_bucket_1": -183092.64,
-                "pnl_bucket_2": 241831.50,
+                "pnl_stock_sleeves": 52613.11 - 7344.99,
                 "pnl_bucket_3": 7344.99,
-                "pnl_bucket_4": -13470.74,
                 "total_pnl": 52613.11,
             },
         ]
     )
     daily = compute_period_pnl_deltas(history, "2026-05-19", period="daily")
     assert daily is not None
-    assert daily["bucket_1"] == pytest.approx(40603.30, rel=0, abs=0.1)
+    assert daily["stock_sleeves"] == pytest.approx(-6300.64, rel=0, abs=0.1)
+    assert daily["bucket_3"] == pytest.approx(-464.72, rel=0, abs=0.1)
     assert daily["total"] == pytest.approx(-6765.36, rel=0, abs=0.1)
-    assert daily["bucket_1"] != history.iloc[-1]["pnl_bucket_1"]
+    assert daily["stock_sleeves"] != history.iloc[-1]["pnl_stock_sleeves"]
 
 
 def test_apply_bucket_pnl_continuity_spreads_account_daily(tmp_path, monkeypatch):
@@ -415,5 +407,5 @@ def test_format_top_underlying_net_exposure_uses_book_rollup():
     assert "AMD" in text
     assert "IBIT" in text
     assert "TINY" not in text
-    assert "Buckets 1, 2 & 4 combined" in text
+    assert "Buckets 1, 2 & 4 combined" in text or "stock sleeves" in text.lower()
 

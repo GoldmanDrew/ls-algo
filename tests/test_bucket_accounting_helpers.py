@@ -79,14 +79,14 @@ def test_blacklist_loader_and_filter_drop_derivatives(tmp_path) -> None:
 def test_format_period_pnl_summary_from_cumulative_history() -> None:
     hist = pd.DataFrame(
         [
-            {"date": "2026-04-24", "pnl_bucket_1": 10.0, "pnl_bucket_2": 20.0, "pnl_bucket_3": 0.0, "pnl_bucket_4": 0.0, "total_pnl": 30.0},
-            {"date": "2026-04-27", "pnl_bucket_1": 15.0, "pnl_bucket_2": 25.0, "pnl_bucket_3": 1.0, "pnl_bucket_4": 0.0, "total_pnl": 41.0},
-            {"date": "2026-04-28", "pnl_bucket_1": 18.0, "pnl_bucket_2": 35.0, "pnl_bucket_3": 2.0, "pnl_bucket_4": 5.0, "total_pnl": 60.0},
+            {"date": "2026-04-24", "pnl_stock_sleeves": 30.0, "pnl_bucket_3": 0.0, "total_pnl": 30.0},
+            {"date": "2026-04-27", "pnl_stock_sleeves": 40.0, "pnl_bucket_3": 1.0, "total_pnl": 41.0},
+            {"date": "2026-04-28", "pnl_stock_sleeves": 58.0, "pnl_bucket_3": 2.0, "total_pnl": 60.0},
         ]
     )
 
     out = format_period_pnl_summary(hist, "2026-04-28")
 
-    assert "Daily: B1: 3.00 | B2: 10.00 | B3: 1.00 | B4: 5.00 | Total: 19.00" in out
-    assert "Week-to-date: B1: 8.00 | B2: 15.00 | B3: 2.00 | B4: 5.00 | Total: 30.00" in out
-    assert "Month-to-date: B1: 18.00 | B2: 35.00 | B3: 2.00 | B4: 5.00 | Total: 60.00" in out
+    assert "Daily: Stock: 18.00 | B3: 1.00 | Total: 19.00" in out
+    assert "Week-to-date: Stock: 28.00 | B3: 2.00 | Total: 30.00" in out
+    assert "Month-to-date: Stock: 58.00 | B3: 2.00 | Total: 60.00" in out

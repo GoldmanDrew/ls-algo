@@ -8,7 +8,9 @@ from ibkr_accounting import (
     _is_etf_leg,
     _normalize_bucket_triple,
     apply_plan_b4_spot_pnl_override,
+    apply_spot_pnl_bucket_split,
     apply_yieldboost_spot_b2_override,
+    compose_spot_pnl_bucket_fractions,
     ledger_pnl_split_b1_b2_ratios,
     apply_spot_bucket_eligibility,
     build_bucket4_pair_registry,
@@ -885,3 +887,69 @@ def test_bucket_ratio_reconciliation_passes_when_aligned() -> None:
         min_abs_net_usd=0.0,
     )
     assert max_diff_exp <= 0.001
+
+
+def test_compose_spot_pnl_bucket_fractions_b2_hedge() -> None:
+    sr = SpotBucketRatios(
+        19671.43 / 60903.48,
+        36633.83 / 60903.48,
+        0.0,
+        "sleeve_balance",
+    )
+    r1, r2, r4, src = compose_spot_pnl_bucket_fractions(sr)
+    assert r1 + r2 + r4 == pytest.approx(1.0)
+    assert r2 == pytest.approx(36633.83 / 60903.48, rel=1e-3)
+    assert r4 == pytest.approx(0.0)
+    assert "orphan_b1" in src
+
+
+def test_compose_spot_pnl_bucket_fractions_b4_structural() -> None:
+    sr = SpotBucketRatios(0.5, 0.3, 0.0, "sleeve_balance")
+    r1, r2, r4, src = compose_spot_pnl_bucket_fractions(sr, b4_frac_signed=-0.2)
+    assert r1 + r2 + r4 == pytest.approx(1.0)
+    assert r4 == pytest.approx(-0.2)
+    assert r1 == pytest.approx(0.75)
+    assert r2 == pytest.approx(0.45)
+    assert "b4_structural" in src
+
+
+def test_apply_spot_pnl_bucket_split_moves_spot_to_b2_and_b4() -> None:
+    df = pd.DataFrame(
+        [
+            {
+                "symbol": "MSTR",
+                "underlying": "MSTR",
+                "realized_pnl": -100.0,
+                "unrealized_pnl": 1000.0,
+                "borrow_fees": -5.0,
+            }
+        ]
+    )
+    lot: dict = {
+        "MSTR": {
+            "bucket_1": {
+                "realized_pnl": -100.0,
+                "unrealized_pnl": 1000.0,
+                "borrow_fees": -5.0,
+            },
+            "bucket_2": {"realized_pnl": 0.0, "unrealized_pnl": 0.0, "borrow_fees": 0.0},
+            "bucket_4": {"realized_pnl": 0.0, "unrealized_pnl": 0.0, "borrow_fees": 0.0},
+        }
+    }
+    apply_spot_pnl_bucket_split(
+        lot_components=lot,
+        underlying="MSTR",
+        df=df,
+        r_b1=0.72,
+        r_b2=0.48,
+        r_b4=-0.20,
+        spot_carry_cols={"borrow_fees"},
+    )
+    assert lot["MSTR"]["bucket_2"]["unrealized_pnl"] == pytest.approx(480.0)
+    assert lot["MSTR"]["bucket_4"]["unrealized_pnl"] == pytest.approx(-200.0)
+    assert lot["MSTR"]["bucket_1"]["realized_pnl"] == pytest.approx(-72.0)
+    assert lot["MSTR"]["bucket_2"]["borrow_fees"] == pytest.approx(-2.4)
+    for col in ("realized_pnl", "unrealized_pnl", "borrow_fees"):
+        total = float(df[col].sum())
+        split = sum(lot["MSTR"][b].get(col, 0.0) for b in lot["MSTR"])
+        assert split == pytest.approx(total), col

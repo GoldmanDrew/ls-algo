@@ -1442,7 +1442,8 @@ def resolve_underlying_spot_exposure_ratios(
     yieldboost_spot_b2: bool = False,
 ) -> SpotBucketRatios:
     """
-    Spot ratios for ratio-split **net exposure** only (PnL uses ``resolve_underlying_spot_ratios``).
+    Spot ratios for ratio-split **net exposure** only when ``b12_spot_pnl_method=ledger_fifo``.
+    Otherwise spot PnL uses the same sleeve method via ``compose_spot_pnl_bucket_fractions``.
 
     ``sleeve_offset`` (default): long spot offsets short ETFs in the same bucket;
     unpaired remainder → B1 (or B2 if no B1 ETF).
@@ -2433,6 +2434,82 @@ def apply_plan_b4_spot_pnl_override(
             lot_components[underlying]["bucket_4"][col] = b4_part
             lot_components[underlying]["bucket_1"][col] = remainder * b1_norm
             lot_components[underlying]["bucket_2"][col] = remainder * b2_norm
+
+
+def compose_spot_pnl_bucket_fractions(
+    spot_exp_ratio: SpotBucketRatios,
+    *,
+    b4_frac_signed: float | None = None,
+) -> tuple[float, float, float, str]:
+    """
+    Final spot-line b1/b2/b4 fractions for PnL (sum to 1).
+
+    Mirrors exposure: sleeve-balance/offset B1/B2 hedge needs first, then carve
+    the structural B4 short underlying slice when ``b4_frac_signed`` is set
+    (``spot_b4 / spot_net``, negative when short).
+    """
+    hr_b1 = float(spot_exp_ratio.b1)
+    hr_b2 = float(spot_exp_ratio.b2)
+    r4 = float(spot_exp_ratio.b4)
+    source = str(spot_exp_ratio.source)
+
+    if b4_frac_signed is not None and abs(b4_frac_signed) > 1e-12:
+        r4 = float(b4_frac_signed)
+        rem = 1.0 - r4
+        s12 = hr_b1 + hr_b2
+        if s12 > 1e-12:
+            r1 = rem * hr_b1 / s12
+            r2 = rem * hr_b2 / s12
+        else:
+            r1, r2 = rem, 0.0
+        source = f"{source}+b4_structural"
+    else:
+        r1, r2 = hr_b1, hr_b2
+        s = r1 + r2 + r4
+        if s < 1.0 - 1e-9:
+            r1 += 1.0 - s
+            source = f"{source}+orphan_b1"
+        elif s > 1.0 + 1e-9:
+            scale = 1.0 / s
+            r1, r2, r4 = r1 * scale, r2 * scale, r4 * scale
+
+    return r1, r2, r4, source
+
+
+def apply_spot_pnl_bucket_split(
+    *,
+    lot_components: dict[str, dict[str, dict[str, float]]],
+    underlying: str,
+    df: pd.DataFrame,
+    r_b1: float,
+    r_b2: float,
+    r_b4: float,
+    spot_carry_cols: set[str],
+) -> None:
+    """Redistribute IBKR spot PnL across buckets using signed sleeve fractions."""
+    u_rows = df[
+        (df["underlying"] == underlying)
+        & (df["symbol"].astype(str) == df["underlying"].astype(str))
+    ]
+    if u_rows.empty:
+        return
+    bucket_keys = ("bucket_1", "bucket_2", "bucket_4")
+    fracs = {
+        "bucket_1": float(r_b1),
+        "bucket_2": float(r_b2),
+        "bucket_4": float(r_b4),
+    }
+    override_cols = {"realized_pnl", "unrealized_pnl"} | set(spot_carry_cols)
+    for col in override_cols:
+        if col not in u_rows.columns:
+            continue
+        total = float(u_rows[col].sum())
+        if abs(total) <= 1e-9:
+            for bk in bucket_keys:
+                lot_components[underlying][bk][col] = 0.0
+            continue
+        for bk in bucket_keys:
+            lot_components[underlying][bk][col] = total * fracs[bk]
 
 
 def load_plan_sleeve_bucket_usd(
@@ -3920,6 +3997,24 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             f"{b12_spot_exposure_method!r}; defaulting to 'sleeve_offset'"
         )
         b12_spot_exposure_method = "sleeve_offset"
+    _b12_spot_pnl_method_raw = _acct_cfg.get("b12_spot_pnl_method")
+    b12_spot_pnl_method = str(
+        _b12_spot_pnl_method_raw
+        if _b12_spot_pnl_method_raw is not None
+        else b12_spot_exposure_method
+    ).strip().lower()
+    if b12_spot_pnl_method not in {
+        "ledger_fifo",
+        "sleeve_offset",
+        "sleeve_balance",
+        "hedge_ratio",
+        "held_exposure_waterfall",
+    }:
+        print(
+            f"[ACCOUNTING] WARNING: unknown accounting.b12_spot_pnl_method="
+            f"{b12_spot_pnl_method!r}; defaulting to {b12_spot_exposure_method!r}"
+        )
+        b12_spot_pnl_method = b12_spot_exposure_method
     b12_hedge_delta_floor = float(_acct_cfg.get("b12_hedge_delta_floor", 0.25) or 0.25)
     b12_pnl_mode = str(_acct_cfg.get("b12_pnl_mode", "lot_timed_strict")).strip().lower()
     if b12_pnl_mode not in {"lot_timed_strict", "plan_b4_inject"}:
@@ -4576,7 +4671,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 f"[ACCOUNTING] plan-aware B4 attribution active for "
                 f"{len(_plan_ratio_b4)} underlying(s) "
                 f"(e.g. {', '.join(sorted(_plan_ratio_b4)[:6])}); "
-                f"b12 exposure={b12_spot_exposure_method} spot_pnl={b12_spot_split_method} "
+                f"b12 exposure={b12_spot_exposure_method} "
+                f"spot_pnl={b12_spot_pnl_method} ledger={b12_spot_split_method} "
                 f"pnl={b12_pnl_mode}"
             )
     # ``_b4_plan_exposure_underlyings`` and ``_b4_signed_frac`` are built
@@ -5299,17 +5395,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
 
         # Plan-aware B4 spot PnL: inject the structural B4 slice from plan
         # targets without clobbering FIFO B1/B2 lot attribution (inject_slice).
-        _ibkr_qty_pre = float(_spot_qty.get(_u, 0.0))
-        if abs(_ibkr_qty_pre) > 1e-9:
-            _orphan_frac_pre = abs(_ibkr_qty_pre - _qty_total) / abs(_ibkr_qty_pre)
-        else:
-            _orphan_frac_pre = 0.0
-        _split_r_b1, _split_r_b2 = ledger_pnl_split_b1_b2_ratios(
-            orphan_frac=_orphan_frac_pre,
-            ledger_unreal_r_b1=_ru1,
-            ledger_unreal_r_b2=_ru2,
-            orphan_threshold=ledger_orphan_split_threshold,
-        )
         _yb_has_b1, _yb_has_b2, _yb_has_b4 = held_etf_bucket_flags_from_positions(
             _u,
             pos,
@@ -5317,47 +5402,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             etf_to_delta_map,
             flow_short_syms=flow_short_set,
         )
-        if _u in yieldboost_spot_b2_underlyings:
-            apply_yieldboost_spot_b2_override(
-                lot_components=_lot_components,
-                underlying=_u,
-                df=df,
-                spot_carry_cols=_spot_carry_cols,
-                r_b1=_split_r_b1,
-                r_b2=_split_r_b2,
-                r_b4=_r4,
-                force_all_b2=_yb_has_b2,
-            )
-        elif use_plan_b4_spot_pnl and _u in _plan_ratio_b4:
-            apply_plan_b4_spot_pnl_override(
-                lot_components=_lot_components,
-                underlying=_u,
-                df=df,
-                plan_ratio=_plan_ratio_b4[_u],
-                spot_carry_cols=_spot_carry_cols,
-                etf_to_delta_map=etf_to_delta_map,
-                mode=plan_b4_pnl_mode,
-                ledger_r_b1=_split_r_b1,
-                ledger_r_b2=_split_r_b2,
-                b4_frac_signed=_b4_signed_frac.get(_u),
-            )
-        elif use_plan_b4_spot_pnl and _u in _b4_signed_frac:
-            # ETF-implied structural B4 short (no plan row): split spot PnL
-            # using the implied signed b4 ratio. Same mechanism as
-            # plan-structural mode, just sourced from held inverse ETFs.
-            apply_plan_b4_spot_pnl_override(
-                lot_components=_lot_components,
-                underlying=_u,
-                df=df,
-                plan_ratio={"b1": 0.0, "b2": 0.0, "b4": 0.0},
-                spot_carry_cols=_spot_carry_cols,
-                etf_to_delta_map=etf_to_delta_map,
-                mode="inject_slice",
-                ledger_r_b1=_split_r_b1,
-                ledger_r_b2=_split_r_b2,
-                b4_frac_signed=_b4_signed_frac[_u],
-            )
-
         _ibkr_qty = float(_spot_qty.get(_u, 0.0))
         _orphan_qty = _ibkr_qty - _qty_total
         _ledger_qty_map[_u] = dict(_bucket_qty[_u])
@@ -5367,25 +5411,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             "bucket_4": _cur_b4,
         }
         _plan_b4_qty_row = float(_plan_b4_qty_by_u.get(str(_u), 0.0))
-        # PnL spot ratios (FIFO / plan inject); exposure uses separate method.
-        _spot_pnl_ratio = resolve_underlying_spot_ratios(
-            underlying=str(_u),
-            ibkr_qty=_ibkr_qty,
-            ledger_qty=_ledger_for_ratio,
-            plan_ratio=_plan_ratio_b4.get(_u),
-            plan_b4_pnl_mode=plan_b4_pnl_mode,
-            yieldboost_spot_b2=(
-                _u in yieldboost_spot_b2_underlyings and _yb_has_b2
-            ),
-            ledger_r_b1=None,
-            ledger_r_b2=None,
-            b12_spot_split_method=b12_spot_split_method,
-            b4_registry_underlying=_u in b4_underlyings,
-            etf_to_under=etf_to_under,
-            etf_to_delta=etf_to_delta_map,
-            pos=pos,
-            flow_short_syms=flow_short_set,
-        )
         if b12_spot_exposure_method == "hedge_ratio":
             _spot_exp_ratio, _hr_meta = hedge_ratio_spot_bucket_ratios(
                 str(_u),
@@ -5423,12 +5448,94 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 ),
             )
         _spot_exposure_ratio_map[str(_u)] = _spot_exp_ratio
-        if _u in yieldboost_spot_b2_underlyings:
-            _pnl_split_mode = "yieldboost_spot_b2"
-        elif use_plan_b4_spot_pnl and _u in _plan_ratio_b4:
-            _pnl_split_mode = plan_b4_pnl_mode
+
+        _ibkr_qty_pre = _ibkr_qty
+        if abs(_ibkr_qty_pre) > 1e-9:
+            _orphan_frac_pre = abs(_ibkr_qty_pre - _qty_total) / abs(_ibkr_qty_pre)
         else:
-            _pnl_split_mode = "lot_timed"
+            _orphan_frac_pre = 0.0
+        _split_r_b1, _split_r_b2 = ledger_pnl_split_b1_b2_ratios(
+            orphan_frac=_orphan_frac_pre,
+            ledger_unreal_r_b1=_ru1,
+            ledger_unreal_r_b2=_ru2,
+            orphan_threshold=ledger_orphan_split_threshold,
+        )
+        _pnl_split_mode = "lot_timed"
+        if _u in yieldboost_spot_b2_underlyings:
+            apply_yieldboost_spot_b2_override(
+                lot_components=_lot_components,
+                underlying=_u,
+                df=df,
+                spot_carry_cols=_spot_carry_cols,
+                r_b1=_split_r_b1,
+                r_b2=_split_r_b2,
+                r_b4=_r4,
+                force_all_b2=_yb_has_b2,
+            )
+            _pnl_split_mode = "yieldboost_spot_b2"
+        elif b12_spot_pnl_method != "ledger_fifo":
+            _pnl_r1, _pnl_r2, _pnl_r4, _pnl_src = compose_spot_pnl_bucket_fractions(
+                _spot_exp_ratio,
+                b4_frac_signed=_b4_signed_frac.get(_u),
+            )
+            apply_spot_pnl_bucket_split(
+                lot_components=_lot_components,
+                underlying=_u,
+                df=df,
+                r_b1=_pnl_r1,
+                r_b2=_pnl_r2,
+                r_b4=_pnl_r4,
+                spot_carry_cols=_spot_carry_cols,
+            )
+            _pnl_split_mode = f"sleeve_pnl:{_pnl_src}"
+        elif use_plan_b4_spot_pnl and _u in _plan_ratio_b4:
+            apply_plan_b4_spot_pnl_override(
+                lot_components=_lot_components,
+                underlying=_u,
+                df=df,
+                plan_ratio=_plan_ratio_b4[_u],
+                spot_carry_cols=_spot_carry_cols,
+                etf_to_delta_map=etf_to_delta_map,
+                mode=plan_b4_pnl_mode,
+                ledger_r_b1=_split_r_b1,
+                ledger_r_b2=_split_r_b2,
+                b4_frac_signed=_b4_signed_frac.get(_u),
+            )
+            _pnl_split_mode = plan_b4_pnl_mode
+        elif use_plan_b4_spot_pnl and _u in _b4_signed_frac:
+            apply_plan_b4_spot_pnl_override(
+                lot_components=_lot_components,
+                underlying=_u,
+                df=df,
+                plan_ratio={"b1": 0.0, "b2": 0.0, "b4": 0.0},
+                spot_carry_cols=_spot_carry_cols,
+                etf_to_delta_map=etf_to_delta_map,
+                mode="inject_slice",
+                ledger_r_b1=_split_r_b1,
+                ledger_r_b2=_split_r_b2,
+                b4_frac_signed=_b4_signed_frac[_u],
+            )
+            _pnl_split_mode = "inject_slice"
+
+        # PnL spot ratios (FIFO ledger path / diagnostics).
+        _spot_pnl_ratio = resolve_underlying_spot_ratios(
+            underlying=str(_u),
+            ibkr_qty=_ibkr_qty,
+            ledger_qty=_ledger_for_ratio,
+            plan_ratio=_plan_ratio_b4.get(_u),
+            plan_b4_pnl_mode=plan_b4_pnl_mode,
+            yieldboost_spot_b2=(
+                _u in yieldboost_spot_b2_underlyings and _yb_has_b2
+            ),
+            ledger_r_b1=None,
+            ledger_r_b2=None,
+            b12_spot_split_method=b12_spot_split_method,
+            b4_registry_underlying=_u in b4_underlyings,
+            etf_to_under=etf_to_under,
+            etf_to_delta=etf_to_delta_map,
+            pos=pos,
+            flow_short_syms=flow_short_set,
+        )
 
         _state_rows.append(
             {
@@ -6486,6 +6593,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "bucket_component_split_method": component_split_method,
         "b12_spot_split_method": b12_spot_split_method,
         "b12_spot_exposure_method": b12_spot_exposure_method,
+        "b12_spot_pnl_method": b12_spot_pnl_method,
         "b12_pnl_mode": b12_pnl_mode,
         "plan_b4_pnl_mode": plan_b4_pnl_mode,
         "plan_sleeve_bucketing": plan_sleeve_bucketing,
@@ -6542,7 +6650,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     print(f"[ACCOUNTING] PnL: {df['symbol'].nunique()} symbols, {df['underlying'].nunique()} underlyings")
     print(
         f"[ACCOUNTING] B1/B2: exposure_spot={b12_spot_exposure_method} | "
-        f"pnl_spot={b12_spot_split_method} | "
+        f"pnl_spot={b12_spot_pnl_method} | "
         f"pnl={b12_pnl_mode} | component={component_split_method}"
     )
     print(f"[ACCOUNTING] Bucket split method: {split_method} | plan_b4_pnl_mode: {plan_b4_pnl_mode}")

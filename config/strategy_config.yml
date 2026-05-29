@@ -9,8 +9,11 @@ accounting:
   use_yfinance: false           # override Flex markPrice with yfinance close
   bucket_split_method: held_exposure  # held_exposure | universe_beta
   # Stable B1/B2 ratio-split (email/dashboard totals): FIFO ledger for spot; B4 pair view unchanged.
-  b12_spot_split_method: ledger_fifo       # PnL spot split: ledger_fifo | held_exposure_waterfall
+  b12_spot_split_method: ledger_fifo       # legacy PnL ledger split when b12_spot_pnl_method=ledger_fifo
   b12_spot_exposure_method: sleeve_balance  # net exposure: sleeve_balance | hedge_ratio | sleeve_offset | ledger_fifo | held_exposure_waterfall
+  # Spot PnL sleeve attribution (defaults to b12_spot_exposure_method): long spot → B2/B1 hedge
+  # sleeves, structural short spot → B4. Set ledger_fifo to keep FIFO trade-tag split only.
+  b12_spot_pnl_method: sleeve_balance
   b12_hedge_delta_floor: 0.25            # min |β| for hr = 1/|β| on B1/B2 ETF legs
   b12_pnl_mode: lot_timed_strict           # lot_timed_strict | plan_b4_inject (uses plan_b4_pnl_mode below)
   plan_b4_pnl_mode: inject_slice    # inject_slice: FIFO realized + plan-split unrealized | full_override (legacy)
