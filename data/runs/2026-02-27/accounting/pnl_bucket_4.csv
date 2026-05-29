@@ -1,1 +1,2 @@
-symbol,description,realized_pnl,unrealized_pnl,dividends,withholding_tax,pil_dividends,borrow_fees,short_credit_interest,other_fees,bond_interest,total_pnl
+underlying,symbols,realized_pnl,unrealized_pnl,dividends,withholding_tax,pil_dividends,borrow_fees,short_credit_interest,other_fees,bond_interest,total_pnl
+SOEZ,SOLT,-0.47269883,1744.225058,0.0,0.0,-12.1,-5.19,2.8274518704857186,0.0,0.0,1729.2898110404858
