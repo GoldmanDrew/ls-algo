@@ -124,7 +124,7 @@
       <h2>Factor exposure (beta to SPY / QQQ / IWM / BTC)</h2>
       <div id="factor-summary" class="strip"></div>
       <h3>Net beta by accounting bucket</h3>
-      <p class="dim small">Per-sleeve β-wtd net from <code>net_exposure_bucket_*.csv</code>. May not sum to book total when bucket legs double-count vs underlying aggregation.</p>
+      <p class="dim small">Equity β-wtd net from underlying betas × share notional. Bucket 3 overlay uses delta-normalized exposure in the sleeve table above — not comparable to these β figures row-for-row.</p>
       <div id="factor-by-bucket"></div>
       <div class="two-col">
         <div>
@@ -143,6 +143,11 @@
     <!-- Sleeve allocation -->
     <section id="sleeve-section" class="panel">
       <h2>Sleeve allocation</h2>
+      <h3>EOD groups (B1+B2+B4 vs B3)</h3>
+      <div id="display-sleeve-groups"></div>
+      <h3>Deployed capital (screener universe)</h3>
+      <div id="capital-panel"></div>
+      <h3>Per-bucket sleeves</h3>
       <div id="sleeve-banner" class="callout" hidden></div>
       <table class="tight" id="sleeve-table">
         <thead>
@@ -166,10 +171,10 @@
     <section id="buckets-section" class="panel">
       <h2>Bucket detail</h2>
       <nav class="tabs" id="bucket-tabs">
-        <button class="tab active" data-bucket="bucket_1">Bucket 1</button>
-        <button class="tab" data-bucket="bucket_2">Bucket 2</button>
-        <button class="tab" data-bucket="bucket_3">Bucket 3 (flow)</button>
-        <button class="tab" data-bucket="bucket_4">Bucket 4 (inverse)</button>
+        <button class="tab active" data-bucket="bucket_1">B1 (core)</button>
+        <button class="tab" data-bucket="bucket_2">B2 (yield)</button>
+        <button class="tab" data-bucket="bucket_3">B3 (flow overlay)</button>
+        <button class="tab" data-bucket="bucket_4">B4 (inverse)</button>
       </nav>
       <div id="bucket-content"></div>
     </section>

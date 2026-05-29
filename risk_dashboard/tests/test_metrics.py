@@ -500,53 +500,20 @@ def _managed_exposure_gross(accounting_dir: Path, blocked_underlyings: set[str])
 
 
 def test_live_snapshot_reconciles_bucket_to_book():
-    """Bucket gross/net (b1+b2+b4) must reconcile to book on the managed universe.
-
-    Blacklisted underlyings (e.g. APLD) and their ETFs (APLX, APLZ) are held
-    at IBKR for legacy reasons but excluded from strategy exposure via
-    ``expand_blacklist`` — they must not appear in ``net_exposure_by_underlying``
-    or in bucket sums used for risk limits. See ``tests/test_blacklist_exposure.py``.
-
-    Tolerance is 2.5% on the on-disk snapshot because ``net_exposure_bucket_4.csv``
-    is the pair sleeve view; EOD ``ibkr_accounting`` enforces 1% on ratio-split
-    totals at write time.
-    """
+    """totals.json B1+B2+B4 (+ unbucketed net) must reconcile to book within accounting tolerances."""
     accounting_dir = Path("data/runs/2026-05-18/accounting")
     totals_path = accounting_dir / "totals.json"
     if not totals_path.exists():
         pytest.skip(f"live snapshot not present: {totals_path}")
-    config_yml = Path("config/strategy_config.yml")
-    screener = Path("data/etf_screened_today.csv")
-    if not config_yml.exists() or not screener.exists():
-        pytest.skip("strategy config or screener missing for blacklist expansion")
 
-    from ibkr_accounting import (
-        SUPPLEMENTAL_ETF_MAP,
-        expand_blacklist,
-        load_blacklist,
-        load_etf_to_under_map,
-    )
+    from risk_dashboard.metrics import evaluate_exposure_reconciliation
 
-    etf_to_under = load_etf_to_under_map(screener)
-
-    for e_sym, u_sym in SUPPLEMENTAL_ETF_MAP.items():
-        etf_to_under.setdefault(e_sym, u_sym)
-    _, blocked_underlyings = expand_blacklist(load_blacklist(config_yml), etf_to_under)
-
-    book_g, book_n, bucket_g, bucket_n = _managed_exposure_gross(
-        accounting_dir, blocked_underlyings
-    )
-    assert abs(book_g) > 0, "snapshot has zero book gross"
-    gross_diff_pct = abs(bucket_g - book_g) / abs(book_g)
-    net_diff_pct = abs(bucket_n - book_n) / abs(book_g)
-    assert gross_diff_pct < 0.025, (
-        f"managed bucket gross {bucket_g:,.0f} does not reconcile to book {book_g:,.0f} "
-        f"(diff {gross_diff_pct:.2%}); blacklist={sorted(blocked_underlyings)}"
-    )
-    # Net is noisier on legacy snapshots: bucket_4.csv is pair-view net, not ratio-split.
-    assert net_diff_pct < 0.05, (
-        f"managed bucket net {bucket_n:,.0f} does not reconcile to book {book_n:,.0f} "
-        f"(diff {net_diff_pct:.2%})"
+    totals = json.loads(totals_path.read_text(encoding="utf-8"))
+    recon = evaluate_exposure_reconciliation(totals)
+    assert recon["reconciles"], (
+        f"totals.json reconciliation failed on {totals_path.name}: "
+        f"gross diff {recon['gross_diff_pct']:.4%} (tol {recon['tol_gross_pct']:.4%}), "
+        f"net abs diff ${recon['net_diff_abs_usd']:,.0f} (tol ${recon['tol_net_abs_usd']:,.0f})"
     )
 
 

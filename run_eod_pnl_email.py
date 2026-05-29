@@ -32,6 +32,24 @@ from ibkr_accounting import (
     _filter_positions_blacklist,
 )
 from strategy_config import load_config
+from reporting_scope import (
+    load_blocked_exposure_sets as _scope_blocked_exposure_sets,
+    load_screened_for_run as _scope_load_screened_for_run,
+    screened_etf_and_underlying_sets as _screened_etf_and_underlying_sets,
+    screened_universe_symbols as _screened_universe_symbols,
+)
+
+
+def _load_screened_for_run(run_date: str) -> pd.DataFrame:
+    return _scope_load_screened_for_run(
+        run_date, runs_root=RUNS_ROOT, project_root=PROJECT_ROOT
+    )
+
+
+def _blocked_exposure_sets(run_date: str) -> tuple[set[str], set[str]]:
+    return _scope_blocked_exposure_sets(
+        run_date, runs_root=RUNS_ROOT, project_root=PROJECT_ROOT
+    )
 
 
 def _spot_capital_bucket_ratios(
@@ -533,53 +551,6 @@ def _safe_float(value, default: float = 0.0) -> float:
         return default
 
 
-def _screened_etf_and_underlying_sets(screened: pd.DataFrame) -> tuple[set[str], set[str]]:
-    """Return (ETF tickers, Underlying tickers) from etf_screened_today.csv."""
-    if screened is None or screened.empty:
-        return set(), set()
-    cols = {c.lower(): c for c in screened.columns}
-    etf_col = cols.get("etf")
-    under_col = next(
-        (cols[k] for k in ("underlying", "underlyingsymbol", "underlying_symbol", "root") if k in cols),
-        None,
-    )
-    etfs: set[str] = set()
-    unders: set[str] = set()
-    if etf_col:
-        etfs.update(
-            canonical_symbol(str(x))
-            for x in screened[etf_col].dropna()
-            if str(x).strip()
-        )
-    if under_col:
-        unders.update(
-            canonical_symbol(str(x))
-            for x in screened[under_col].dropna()
-            if str(x).strip()
-        )
-    etfs = {s for s in etfs if s}
-    unders = {s for s in unders if s}
-    return etfs, unders
-
-
-def _screened_universe_symbols(screened: pd.DataFrame) -> set[str]:
-    """ETF and underlying tickers from etf_screened_today.csv (strategy universe)."""
-    etfs, unders = _screened_etf_and_underlying_sets(screened)
-    return etfs | unders
-
-
-def _load_screened_for_run(run_date: str) -> pd.DataFrame:
-    dated = RUNS_ROOT / run_date / "etf_screened_today.csv"
-    latest = PROJECT_ROOT / "data" / "etf_screened_today.csv"
-    p = dated if dated.exists() else latest
-    if not p.exists():
-        return pd.DataFrame()
-    try:
-        return pd.read_csv(p)
-    except Exception:
-        return pd.DataFrame()
-
-
 def _load_flow_universe_sets(run_date: str) -> tuple[set[str], set[str]]:
     """Flow-program shorts and low-delta symbols (bucket 3 overlay), matching accounting."""
     flow_short: set[str] = set()
@@ -701,6 +672,58 @@ def _bucket_pnl_continuity_adjusted(
     return out
 
 
+def _scale_pnl_bucket_csv(path: Path, new_total: float) -> None:
+    """Scale per-bucket PnL CSV rows so they sum to continuity-adjusted total."""
+    if not path.is_file():
+        return
+    try:
+        df = pd.read_csv(path)
+    except Exception:
+        return
+    if df.empty or "total_pnl" not in df.columns:
+        return
+    old_sum = float(pd.to_numeric(df["total_pnl"], errors="coerce").fillna(0.0).sum())
+    if abs(old_sum) <= 1e-9:
+        return
+    ratio = float(new_total) / old_sum
+    for col in (
+        "total_pnl",
+        "realized_pnl",
+        "unrealized_pnl",
+        "borrow_fees",
+        "short_credit_interest",
+    ):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0) * ratio
+    df.to_csv(path, index=False)
+
+
+def persist_totals_dashboard_fields(
+    run_date: str,
+    totals: dict,
+    capital_snap: dict[str, float],
+) -> dict:
+    """Persist capital snapshot and NAV on totals.json for the risk dashboard."""
+    totals = dict(totals)
+    consolidated = _consolidate_capital_snapshot(capital_snap)
+    totals["capital_snapshot"] = {
+        **consolidated,
+        **{k: float(v) for k, v in capital_snap.items()},
+    }
+    nav_raw = os.getenv("MAGIS_NAV_USD", "").strip()
+    if nav_raw:
+        try:
+            nav_f = float(nav_raw)
+            if nav_f > 0:
+                totals["nav_usd"] = nav_f
+                totals["nav_source"] = "MAGIS_NAV_USD"
+        except ValueError:
+            pass
+    outdir = RUNS_ROOT / run_date / "accounting"
+    (outdir / "totals.json").write_text(json.dumps(totals, indent=2), encoding="utf-8")
+    return totals
+
+
 def apply_bucket_pnl_continuity(run_date: str, totals: dict) -> dict:
     """
     If bucket YTD jumps are implausible vs the prior run, rewrite bucket_pnl in
@@ -752,6 +775,9 @@ def apply_bucket_pnl_continuity(run_date: str, totals: dict) -> dict:
         except Exception:
             pass
 
+    for b in BUCKET_KEYS:
+        _scale_pnl_bucket_csv(outdir / f"pnl_{b}.csv", adjusted[b])
+
     print(
         f"[EOD] Bucket PnL continuity: adjusted {run_date} buckets using {prior_date} "
         f"weights (max raw jump {max_bucket_jump:,.0f} vs account daily {account_daily:,.0f})."
@@ -785,19 +811,6 @@ def _etf_capital_bucket(
     if beta > 0:
         return "bucket_2"
     return None
-
-
-def _blocked_exposure_sets(run_date: str) -> tuple[set[str], set[str]]:
-    """Return (blocked_symbols, blocked_underlyings) for exposure metrics."""
-    config_yml = PROJECT_ROOT / "config" / "strategy_config.yml"
-    screened_path = RUNS_ROOT / run_date / "etf_screened_today.csv"
-    if not screened_path.exists():
-        screened_path = PROJECT_ROOT / "data" / "etf_screened_today.csv"
-    etf_to_under = load_etf_to_under_map(screened_path)
-    for e_sym, u_sym in SUPPLEMENTAL_ETF_MAP.items():
-        etf_to_under.setdefault(e_sym, u_sym)
-    blacklist = load_blacklist(config_yml) if config_yml.exists() else set()
-    return expand_blacklist(blacklist, etf_to_under)
 
 
 def _normalise_bucket_key(value: object) -> str | None:
@@ -2340,6 +2353,7 @@ def main() -> int:
     # 5) Update history + plot since START_DATE
     grand_total = float(total_pnl)
     bucket_capital_snapshot = build_bucket_capital_snapshot_from_run(run_date)
+    totals = persist_totals_dashboard_fields(run_date, totals, bucket_capital_snapshot)
     hist = update_pnl_history(
         run_date,
         b1=headline_bucket_pnl["bucket_1"],

@@ -24,6 +24,7 @@ from .flex_parser import (
     FlexBorrowFee,
     FlexPosition,
     parse_borrow_fee_details,
+    parse_flex_nav,
     parse_positions,
     summarize_borrow,
     summarize_positions,
@@ -57,19 +58,20 @@ except Exception:  # pragma: no cover - optional dep / fallback
     write_summary_cache = None  # type: ignore[assignment]
 
 try:
-    from ibkr_accounting import (
-        SUPPLEMENTAL_ETF_MAP,
-        expand_blacklist,
-        load_blacklist,
-        load_etf_to_under_map,
-        _filter_exposure_df,
+    from ibkr_accounting import _filter_exposure_df
+except ImportError:  # pragma: no cover
+    _filter_exposure_df = None  # type: ignore[assignment]
+
+try:
+    from reporting_scope import (
+        RECONCILE_EXPOSURE_BUCKETS,
+        STOCK_SLEEVE_BUCKETS,
+        load_blocked_exposure_keys as _scope_blocked_exposure_keys,
     )
 except ImportError:  # pragma: no cover
-    SUPPLEMENTAL_ETF_MAP = {}
-    expand_blacklist = None  # type: ignore[assignment]
-    load_blacklist = None  # type: ignore[assignment]
-    load_etf_to_under_map = None  # type: ignore[assignment]
-    _filter_exposure_df = None  # type: ignore[assignment]
+    RECONCILE_EXPOSURE_BUCKETS = ("bucket_1", "bucket_2", "bucket_4")
+    STOCK_SLEEVE_BUCKETS = ("bucket_1", "bucket_2", "bucket_4")
+    _scope_blocked_exposure_keys = None  # type: ignore[assignment]
 
 
 TRADING_DAYS_PER_YEAR_DAYS: int = 252
@@ -78,21 +80,18 @@ TRADING_DAYS_PER_YEAR_DAYS: int = 252
 def _load_blocked_exposure_keys(
     runs_root: Path,
     screener_csv: Path | None = None,
+    run_date: str | None = None,
 ) -> set[str]:
     """Symbols and underlyings excluded from gross/net exposure metrics."""
-    if expand_blacklist is None or load_blacklist is None or load_etf_to_under_map is None:
+    if _scope_blocked_exposure_keys is None:
         return set()
     project_root = runs_root.parent.parent
-    config_yml = project_root / "config" / "strategy_config.yml"
-    if not config_yml.exists():
-        return set()
-    screener_path = screener_csv or (project_root / "data" / "etf_screened_today.csv")
-    etf_to_under = load_etf_to_under_map(screener_path) if screener_path.is_file() else {}
-    for e_sym, u_sym in SUPPLEMENTAL_ETF_MAP.items():
-        etf_to_under.setdefault(e_sym, u_sym)
-    blacklist = load_blacklist(config_yml)
-    blocked_symbols, blocked_underlyings = expand_blacklist(blacklist, etf_to_under)
-    return blocked_symbols | blocked_underlyings
+    return _scope_blocked_exposure_keys(
+        screener_csv=screener_csv,
+        run_date=run_date,
+        runs_root=runs_root,
+        project_root=project_root,
+    )
 
 
 # Fallback limits when strategy_config.yml is missing. Production uses
@@ -117,11 +116,29 @@ BUCKET_SLEEVE_KEYS: dict[str, str] = {
 }
 
 BUCKET_LABELS: dict[str, str] = {
-    "bucket_1": "Bucket 1",
-    "bucket_2": "Bucket 2",
+    "bucket_1": "Bucket 1 (core leveraged)",
+    "bucket_2": "Bucket 2 (yield boost)",
     "bucket_3": "Bucket 3 (flow hedge overlay)",
-    "bucket_4": "Bucket 4",
+    "bucket_4": "Bucket 4 (inverse / decay)",
 }
+
+DISPLAY_SLEEVE_GROUPS: dict[str, dict[str, Any]] = {
+    "b124": {
+        "id": "b124",
+        "label": "Buckets 1, 2, and 4",
+        "buckets": STOCK_SLEEVE_BUCKETS,
+        "exposure_note": "Share-notional book (B1+B2+B4 ratio split); excludes B3 overlay.",
+    },
+    "b3": {
+        "id": "b3",
+        "label": "Bucket 3",
+        "buckets": ("bucket_3",),
+        "exposure_note": "Delta-normalized flow hedge overlay (|β| × notional), not share gross.",
+    },
+}
+
+DEFAULT_EXPOSURE_RECON_TOL_GROSS_PCT = 0.001
+DEFAULT_EXPOSURE_RECON_TOL_NET_ABS_USD = 500.0
 
 
 @dataclass
@@ -806,37 +823,79 @@ class BookSummary:
     sleeve_attribution_reason: str = ""
 
 
+def exposure_reconciliation_tolerances(totals: dict[str, Any]) -> tuple[float, float]:
+    """Gross % and net $ tolerances mirrored from ``ibkr_accounting`` totals.json."""
+    gross_pct = float(
+        totals.get("exposure_reconciliation_tol_gross_pct", DEFAULT_EXPOSURE_RECON_TOL_GROSS_PCT)
+        or DEFAULT_EXPOSURE_RECON_TOL_GROSS_PCT
+    )
+    net_abs = float(
+        totals.get("exposure_reconciliation_tol_net_abs_usd", DEFAULT_EXPOSURE_RECON_TOL_NET_ABS_USD)
+        or DEFAULT_EXPOSURE_RECON_TOL_NET_ABS_USD
+    )
+    return gross_pct, net_abs
+
+
+def bucket_exposure_component_sums(totals: dict[str, Any]) -> tuple[float, float]:
+    """Sum B1+B2+B4 gross/net; net includes unbucketed spot (matches accounting gate)."""
+    bucket_gross = sum(
+        float(totals.get(f"gross_exposure_{b}", 0.0) or 0.0) for b in RECONCILE_EXPOSURE_BUCKETS
+    )
+    bucket_net = sum(
+        float(totals.get(f"net_exposure_{b}", 0.0) or 0.0) for b in RECONCILE_EXPOSURE_BUCKETS
+    )
+    bucket_net += float(totals.get("net_exposure_unbucketed", 0.0) or 0.0)
+    return bucket_gross, bucket_net
+
+
+def evaluate_exposure_reconciliation(totals: dict[str, Any]) -> dict[str, Any]:
+    """Structured reconciliation result for dashboard gates and CI parity tests."""
+    book_gross = float(totals.get("gross_exposure_total", 0.0) or 0.0)
+    book_net = float(totals.get("net_exposure_total", 0.0) or 0.0)
+    bucket_gross, bucket_net = bucket_exposure_component_sums(totals)
+    tol_gross_pct, tol_net_abs = exposure_reconciliation_tolerances(totals)
+    if abs(book_gross) > 1e-6:
+        gross_diff_pct = abs(bucket_gross - book_gross) / abs(book_gross)
+    else:
+        gross_diff_pct = 0.0
+    net_diff_abs = abs(bucket_net - book_net)
+    gross_ok = gross_diff_pct <= tol_gross_pct
+    net_ok = net_diff_abs <= tol_net_abs
+    return {
+        "book_gross_usd": book_gross,
+        "book_net_usd": book_net,
+        "bucket_gross_usd": bucket_gross,
+        "bucket_net_usd": bucket_net,
+        "gross_diff_pct": gross_diff_pct,
+        "net_diff_abs_usd": net_diff_abs,
+        "tol_gross_pct": tol_gross_pct,
+        "tol_net_abs_usd": tol_net_abs,
+        "components_included": list(RECONCILE_EXPOSURE_BUCKETS) + ["net_exposure_unbucketed"],
+        "reconciles": gross_ok and net_ok,
+    }
+
+
 def _bucket_reconciles(totals: dict[str, Any]) -> tuple[bool, str]:
     """Return (sleeve_attribution_available, reason).
 
-    Bucket gross/net components (b1 + b2 + b4) must sum to within 1% of
-    the book aggregate. Bucket 3 is intentionally excluded because it is
-    a delta-normalized hedge OVERLAY (sum of |beta| * notional for
-    inverse / flow-hedge ETFs only), not a share-notional bucket -
-    including it would double-count those legs against book gross.
+    Bucket gross/net components (b1 + b2 + b4 + unbucketed net) must sum to
+    the book aggregate within accounting tolerances. Bucket 3 is intentionally
+    excluded because it is a delta-normalized hedge OVERLAY, not share-notional.
 
-    Mirrors the upstream accounting reconciliation gate in
-    ``ibkr_accounting.py`` (see Phase G).
+    Mirrors the upstream accounting reconciliation gate in ``ibkr_accounting.py``.
     """
-    book_gross = float(totals.get("gross_exposure_total", 0.0) or 0.0)
-    book_net = float(totals.get("net_exposure_total", 0.0) or 0.0)
+    recon = evaluate_exposure_reconciliation(totals)
+    book_gross = recon["book_gross_usd"]
     if book_gross <= 0:
         return True, ""
-    bucket_gross = sum(
-        float(totals.get(f"gross_exposure_{b}", 0.0) or 0.0)
-        for b in ("bucket_1", "bucket_2", "bucket_4")
-    )
-    bucket_net = sum(
-        float(totals.get(f"net_exposure_{b}", 0.0) or 0.0)
-        for b in ("bucket_1", "bucket_2", "bucket_4")
-    )
-    gross_diff = abs(bucket_gross - book_gross) / abs(book_gross)
-    net_diff = abs(bucket_net - book_net) / abs(book_gross)
-    if gross_diff <= 0.01 and net_diff <= 0.01:
+    if recon["reconciles"]:
         return True, ""
+    gross_diff = recon["gross_diff_pct"]
+    net_diff_abs = recon["net_diff_abs_usd"]
     return False, (
         f"Bucket exposures do not reconcile to book aggregate "
-        f"(gross diff {gross_diff:.1%}, net diff {net_diff:.1%}). "
+        f"(gross diff {gross_diff:.1%} vs tol {recon['tol_gross_pct']:.2%}, "
+        f"net abs diff ${net_diff_abs:,.0f} vs tol ${recon['tol_net_abs_usd']:,.0f}). "
         f"Showing sleeve P&L only; gross/net per sleeve suppressed."
     )
 
@@ -869,11 +928,7 @@ def compute_book_summary(
         net_b_raw = float(totals.get(f"net_exposure_{bucket}", 0.0) or 0.0)
         target_w = target_weights.get(bucket)
         target_gross_usd = (target_w * gross) if (target_w is not None and gross > 0) else None
-        bucket_label = (
-            "Bucket 3 (flow hedge overlay)"
-            if bucket == "bucket_3"
-            else bucket.replace("_", " ").title()
-        )
+        bucket_label = BUCKET_LABELS.get(bucket, bucket.replace("_", " ").title())
         if sleeve_available:
             gross_b = gross_b_raw
             net_b = net_b_raw
@@ -946,6 +1001,24 @@ def compute_book_summary(
 # Page 2/3 -- per-bucket detail
 
 
+def bucket_exposure_header(bucket: str, totals: dict[str, Any] | None) -> dict[str, Any]:
+    """Authoritative sleeve exposure from totals.json (ratio-split for B4)."""
+    totals = totals or {}
+    if bucket == "bucket_4":
+        return {
+            "attribution_net_usd": float(totals.get("net_exposure_bucket_4", 0.0) or 0.0),
+            "attribution_gross_usd": float(totals.get("gross_exposure_bucket_4", 0.0) or 0.0),
+            "pair_view_net_usd": float(totals.get("net_exposure_bucket_4_pair", 0.0) or 0.0),
+            "pair_view_gross_usd": float(totals.get("gross_exposure_bucket_4_pair", 0.0) or 0.0),
+            "source": "totals.json ratio-split (sleeve table); pair CSV is detail-only",
+        }
+    return {
+        "attribution_net_usd": float(totals.get(f"net_exposure_{bucket}", 0.0) or 0.0),
+        "attribution_gross_usd": float(totals.get(f"gross_exposure_{bucket}", 0.0) or 0.0),
+        "source": "totals.json",
+    }
+
+
 def compute_bucket_detail(
     bucket: str,
     pnl_csv: Path,
@@ -953,6 +1026,7 @@ def compute_bucket_detail(
     *,
     blocked_exposure_keys: set[str] | None = None,
     exposure_detail_csv: Path | None = None,
+    totals: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     pnl = _read_csv_or_empty(pnl_csv)
     expo = _read_csv_or_empty(net_exposure_csv)
@@ -1024,6 +1098,8 @@ def compute_bucket_detail(
 
     return {
         "bucket": bucket,
+        "bucket_label": BUCKET_LABELS.get(bucket, bucket),
+        "exposure_header": bucket_exposure_header(bucket, totals),
         "pnl_rows": rows,
         "exposure_rows": expo_rows,
         "exposure_leg_rows": exposure_leg_rows,
@@ -1339,39 +1415,28 @@ def compute_data_quality(
 
     reconciliations: list[dict[str, Any]] = []
     totals = totals or {}
-    book_gross = float(totals.get("gross_exposure_total", 0.0) or 0.0)
-    book_net = float(totals.get("net_exposure_total", 0.0) or 0.0)
-    # b1+b2+b4 only - bucket_3 is a delta-normalized overlay and excluded
-    # to match the sleeve-attribution gate in ``_bucket_reconciles``.
-    _reconcile_buckets = ("bucket_1", "bucket_2", "bucket_4")
-    bucket_gross = sum(
-        float(totals.get(f"gross_exposure_{b}", 0.0) or 0.0) for b in _reconcile_buckets
-    )
-    bucket_net = sum(
-        float(totals.get(f"net_exposure_{b}", 0.0) or 0.0) for b in _reconcile_buckets
-    )
-    if book_gross:
-        gross_diff_pct = abs(bucket_gross - book_gross) / abs(book_gross)
+    recon = evaluate_exposure_reconciliation(totals)
+    if recon["book_gross_usd"]:
         reconciliations.append(
             {
                 "name": "bucket_gross_vs_book_gross",
-                "status": "ok" if gross_diff_pct <= 0.01 else "hard",
-                "book_value": book_gross,
-                "component_sum": bucket_gross,
-                "diff_pct": gross_diff_pct,
-                "components_included": list(_reconcile_buckets),
+                "status": "ok" if recon["gross_diff_pct"] <= recon["tol_gross_pct"] else "hard",
+                "book_value": recon["book_gross_usd"],
+                "component_sum": recon["bucket_gross_usd"],
+                "diff_pct": recon["gross_diff_pct"],
+                "tol_pct": recon["tol_gross_pct"],
+                "components_included": list(RECONCILE_EXPOSURE_BUCKETS),
             }
         )
-    if book_gross:
-        net_diff_pct = abs(bucket_net - book_net) / abs(book_gross)
         reconciliations.append(
             {
                 "name": "bucket_net_vs_book_net",
-                "status": "ok" if net_diff_pct <= 0.01 else "hard",
-                "book_value": book_net,
-                "component_sum": bucket_net,
-                "diff_pct_of_gross": net_diff_pct,
-                "components_included": list(_reconcile_buckets),
+                "status": "ok" if recon["net_diff_abs_usd"] <= recon["tol_net_abs_usd"] else "hard",
+                "book_value": recon["book_net_usd"],
+                "component_sum": recon["bucket_net_usd"],
+                "diff_abs_usd": recon["net_diff_abs_usd"],
+                "tol_abs_usd": recon["tol_net_abs_usd"],
+                "components_included": recon["components_included"],
             }
         )
 
@@ -3943,6 +4008,108 @@ def compute_vol_shock_panel(
 
 
 # ---------------------------------------------------------------------------
+# NAV, capital, and consolidated sleeve groups
+
+
+def resolve_nav_usd(
+    totals: dict[str, Any],
+    *,
+    cli_fallback: float,
+    flex_dir: Path | None = None,
+) -> tuple[float, str]:
+    """Pick NAV denominator: persisted totals → Flex equity tags → CLI/env fallback."""
+    nav = totals.get("nav_usd")
+    if nav is not None:
+        try:
+            nav_f = float(nav)
+            if nav_f > 0:
+                return nav_f, str(totals.get("nav_source") or "totals.json")
+        except (TypeError, ValueError):
+            pass
+    if flex_dir is not None:
+        flex_nav = parse_flex_nav(flex_dir)
+        if flex_nav and float(flex_nav.get("nav_usd") or 0) > 0:
+            return float(flex_nav["nav_usd"]), str(flex_nav.get("source") or "flex")
+    return float(cli_fallback), "MAGIS_NAV_USD"
+
+
+def compute_display_sleeve_groups(
+    totals: dict[str, Any],
+    *,
+    nav_usd: float,
+    sleeve_available: bool,
+) -> list[dict[str, Any]]:
+    """EOD-aligned B124 vs B3 display groups (PnL from totals bucket_pnl)."""
+    bucket_pnl = totals.get("bucket_pnl") or {}
+    groups: list[dict[str, Any]] = []
+    for spec in DISPLAY_SLEEVE_GROUPS.values():
+        buckets = spec["buckets"]
+        gross: float | None
+        net: float | None
+        if sleeve_available:
+            gross = sum(float(totals.get(f"gross_exposure_{b}", 0.0) or 0.0) for b in buckets)
+            net = sum(float(totals.get(f"net_exposure_{b}", 0.0) or 0.0) for b in buckets)
+            if spec["id"] == "b124":
+                net += float(totals.get("net_exposure_unbucketed", 0.0) or 0.0)
+        else:
+            gross = None
+            net = None
+        pnl = sum(float(bucket_pnl.get(b, 0.0) or 0.0) for b in buckets)
+        groups.append(
+            {
+                "id": spec["id"],
+                "label": spec["label"],
+                "buckets": list(buckets),
+                "gross_usd": gross,
+                "net_usd": net,
+                "pnl_usd": pnl,
+                "pnl_pct_nav": (pnl / nav_usd) if nav_usd > 0 else None,
+                "gross_pct_nav": (gross / nav_usd) if (nav_usd > 0 and gross is not None) else None,
+                "exposure_note": spec.get("exposure_note", ""),
+            }
+        )
+    return groups
+
+
+def compute_capital_panel(totals: dict[str, Any], nav_usd: float) -> dict[str, Any]:
+    """Deployed capital from EOD ``capital_snapshot`` persisted in totals.json."""
+    snap = totals.get("capital_snapshot")
+    if not isinstance(snap, dict) or not snap:
+        return {"available": False, "reason": "capital_snapshot missing from totals.json (run EOD after upgrade)"}
+
+    bucket_pnl = totals.get("bucket_pnl") or {}
+
+    def _row(prefix: str, pnl_buckets: tuple[str, ...]) -> dict[str, float | None]:
+        net_c = float(snap.get(f"net_capital_{prefix}", 0.0) or 0.0)
+        gross_c = float(snap.get(f"gross_capital_{prefix}", 0.0) or 0.0)
+        margin = float(snap.get(f"margin_req_{prefix}", 0.0) or 0.0)
+        pnl = sum(float(bucket_pnl.get(b, 0.0) or 0.0) for b in pnl_buckets)
+        roc = (pnl / net_c) if abs(net_c) > 1e-6 else None
+        return {
+            "net_capital_usd": net_c,
+            "gross_capital_usd": gross_c,
+            "margin_req_usd": margin,
+            "pnl_usd": pnl,
+            "net_capital_pct_nav": (net_c / nav_usd) if nav_usd > 0 else None,
+            "roc_on_net_capital": roc,
+        }
+
+    rows = [
+        {
+            "id": "b124",
+            "label": DISPLAY_SLEEVE_GROUPS["b124"]["label"],
+            **_row("stock_sleeves", STOCK_SLEEVE_BUCKETS),
+        },
+        {
+            "id": "b3",
+            "label": DISPLAY_SLEEVE_GROUPS["b3"]["label"],
+            **_row("bucket_3", ("bucket_3",)),
+        },
+    ]
+    return {"available": True, "rows": rows, "source": "totals.json capital_snapshot"}
+
+
+# ---------------------------------------------------------------------------
 # Top-level snapshot assembler
 
 
@@ -3962,12 +4129,17 @@ class RiskSnapshot:
     alert_rows: list[dict[str, Any]] = field(default_factory=list)
     universe_counts: dict[str, Any] = field(default_factory=dict)
     raw_totals: dict[str, Any] = field(default_factory=dict)
+    nav_source: str = "MAGIS_NAV_USD"
+    display_sleeve_groups: list[dict[str, Any]] = field(default_factory=list)
+    capital_panel: dict[str, Any] = field(default_factory=dict)
+    exposure_reconciliation: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "run_date": self.run_date,
             "generated_at_utc": self.generated_at_utc,
             "nav_usd": self.nav_usd,
+            "nav_source": self.nav_source,
             "book": {
                 "nav_usd": self.book.nav_usd,
                 "gross_notional_usd": self.book.gross_notional_usd,
@@ -4001,6 +4173,9 @@ class RiskSnapshot:
             "alert_rows": self.alert_rows,
             "universe_counts": self.universe_counts,
             "raw_totals": self.raw_totals,
+            "display_sleeve_groups": self.display_sleeve_groups,
+            "capital_panel": self.capital_panel,
+            "exposure_reconciliation": self.exposure_reconciliation,
             "limits": getattr(self, "_limits", DEFAULT_LIMITS),
             "borrow_limits_by_bucket": getattr(self, "_borrow_limits_by_bucket", {}),
             "underlying_gross_frac_by_bucket": getattr(
@@ -4037,9 +4212,22 @@ def build_snapshot(
 
     totals = _read_json_or_empty(accounting / "totals.json")
     pnl_by_bucket = _read_csv_or_empty(accounting / "pnl_by_bucket.csv")
-    blocked_exposure_keys = _load_blocked_exposure_keys(runs_root, screener_csv)
+    blocked_exposure_keys = _load_blocked_exposure_keys(
+        runs_root, screener_csv, run_date=run_date
+    )
 
+    cli_nav_usd = nav_usd
+    nav_usd, nav_source = resolve_nav_usd(
+        totals, cli_fallback=cli_nav_usd, flex_dir=flex if flex.is_dir() else None
+    )
     book = compute_book_summary(totals, pnl_by_bucket, nav_usd=nav_usd, limits=limits)
+    display_sleeve_groups = compute_display_sleeve_groups(
+        totals,
+        nav_usd=nav_usd,
+        sleeve_available=book.sleeve_attribution_available,
+    )
+    capital_panel = compute_capital_panel(totals, nav_usd=nav_usd)
+    exposure_reconciliation = evaluate_exposure_reconciliation(totals)
 
     buckets: dict[str, dict[str, Any]] = {}
     for bucket in ("bucket_1", "bucket_2", "bucket_3", "bucket_4"):
@@ -4054,6 +4242,7 @@ def build_snapshot(
             net_exposure_csv=accounting / f"net_exposure_{bucket}.csv",
             blocked_exposure_keys=blocked_exposure_keys,
             exposure_detail_csv=detail_csv,
+            totals=totals,
         )
 
     borrow_panel = compute_borrow_panel(
@@ -4219,6 +4408,7 @@ def build_snapshot(
         run_date=run_date,
         generated_at_utc=generated_at_utc,
         nav_usd=nav_usd,
+        nav_source=nav_source,
         book=book,
         buckets=buckets,
         borrow_panel=borrow_panel,
@@ -4230,6 +4420,9 @@ def build_snapshot(
         alert_rows=alert_rows,
         universe_counts=universe_counts,
         raw_totals=totals,
+        display_sleeve_groups=display_sleeve_groups,
+        capital_panel=capital_panel,
+        exposure_reconciliation=exposure_reconciliation,
     )
     snap._limits = limits_ctx.limits
     snap._borrow_limits_by_bucket = limits_ctx.borrow_apr_pct_by_bucket

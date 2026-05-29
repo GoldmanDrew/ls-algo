@@ -46,6 +46,8 @@
     strip: document.getElementById("strip"),
     breaches: document.getElementById("breaches"),
     sleeveBody: document.querySelector("#sleeve-table tbody"),
+    displaySleeveGroups: document.getElementById("display-sleeve-groups"),
+    capitalPanel: document.getElementById("capital-panel"),
     bucketTabs: document.getElementById("bucket-tabs"),
     bucketContent: document.getElementById("bucket-content"),
     borrowContent: document.getElementById("borrow-content"),
@@ -463,6 +465,7 @@
       {
         label: "NAV",
         value: fmtUsd(book.nav_usd),
+        sub: snap.nav_source ? `source: ${snap.nav_source}` : "",
         spark: sparklineSvg(series("nav_usd")),
         delta: "",
       },
@@ -1614,6 +1617,68 @@
       .join("");
   }
 
+  function renderDisplaySleeveGroups(groups) {
+    if (!els.displaySleeveGroups) return;
+    const rows = groups || [];
+    if (!rows.length) {
+      els.displaySleeveGroups.innerHTML =
+        '<p class="dim">Consolidated sleeve groups unavailable.</p>';
+      return;
+    }
+    els.displaySleeveGroups.innerHTML = `
+      <table class="tight">
+        <thead><tr>
+          <th>Group</th><th>Gross $</th><th>Net $</th><th>P&amp;L</th><th>Notes</th>
+        </tr></thead>
+        <tbody>${rows
+          .map(
+            (r) => `<tr>
+          <td><strong>${safeText(r.label)}</strong></td>
+          <td class="num">${r.gross_usd == null ? "unavailable" : fmtUsd(r.gross_usd)}</td>
+          <td class="num ${signedClass(r.net_usd)}">${
+              r.net_usd == null ? "unavailable" : fmtUsd(r.net_usd)
+            }</td>
+          <td class="num ${signedClass(r.pnl_usd)}">${fmtUsdSigned(r.pnl_usd)}</td>
+          <td class="dim small">${safeText(r.exposure_note, "")}</td>
+        </tr>`
+          )
+          .join("")}</tbody>
+      </table>
+      <p class="dim small">Share-notional gross/net for B1+B2+B4 (EOD-aligned). Bucket 3 uses delta-normalized overlay notional — see factor panel for equity β.</p>`;
+  }
+
+  function renderCapitalPanel(panel) {
+    if (!els.capitalPanel) return;
+    if (!panel || !panel.available) {
+      els.capitalPanel.innerHTML = `<p class="dim">${safeText(
+        panel?.reason,
+        "Capital snapshot not available."
+      )}</p>`;
+      return;
+    }
+    const rows = panel.rows || [];
+    els.capitalPanel.innerHTML = `
+      <table class="tight">
+        <thead><tr>
+          <th>Group</th><th>Net capital</th><th>Gross capital</th><th>Margin req</th><th>ROC (run P&amp;L / net cap)</th>
+        </tr></thead>
+        <tbody>${rows
+          .map(
+            (r) => `<tr>
+          <td><strong>${safeText(r.label)}</strong></td>
+          <td class="num ${signedClass(r.net_capital_usd)}">${fmtUsd(r.net_capital_usd)}</td>
+          <td class="num">${fmtUsd(r.gross_capital_usd)}</td>
+          <td class="num">${fmtUsd(r.margin_req_usd)}</td>
+          <td class="num">${
+            r.roc_on_net_capital == null ? "-" : fmtPct(r.roc_on_net_capital, 2)
+          }</td>
+        </tr>`
+          )
+          .join("")}</tbody>
+      </table>
+      <p class="dim small">Source: ${safeText(panel.source, "totals.json")}. Scoped to etf_screened_today universe (same as EOD email).</p>`;
+  }
+
   function renderSleeveTable(book) {
     if (!els.sleeveBody) return;
     const rows = book?.sleeve_table || [];
@@ -1746,7 +1811,21 @@
         <th>Underlying</th><th>Symbol</th><th>Leg</th><th>Net $</th><th>Gross $</th>
       </tr></thead><tbody>${legTbl}</tbody></table>`
         : "";
+    const hdr = bucket.exposure_header || {};
+    const hdrBlock = hdr.attribution_net_usd != null
+      ? `<div class="strip" style="margin-bottom:10px;">
+          <div class="stat"><div class="label">Sleeve net (totals.json)</div><div class="value ${signedClass(hdr.attribution_net_usd)}">${fmtUsd(hdr.attribution_net_usd)}</div></div>
+          <div class="stat"><div class="label">Sleeve gross (totals.json)</div><div class="value">${fmtUsd(hdr.attribution_gross_usd)}</div></div>
+          ${
+            bucketKey === "bucket_4" && hdr.pair_view_gross_usd != null
+              ? `<div class="stat"><div class="label">Pair CSV gross (detail)</div><div class="value">${fmtUsd(hdr.pair_view_gross_usd)}</div><div class="sub dim">Pair view — not used for sleeve reconciliation</div></div>`
+              : ""
+          }
+        </div>
+        <p class="dim small">${safeText(hdr.source, "")}</p>`
+      : "";
     els.bucketContent.innerHTML = `
+      ${hdrBlock}
       <div class="two-col">
         <div>
           <h3>Top winners (${bucket.winners?.length || 0})</h3>
@@ -1976,6 +2055,8 @@
       () => renderSlideRisk(snap.slide_risk_panel || {}),
       () => renderConcentration(snap.concentration_panel || {}),
       () => renderFactor(snap.factor_panel || {}),
+      () => renderDisplaySleeveGroups(snap.display_sleeve_groups || []),
+      () => renderCapitalPanel(snap.capital_panel || {}),
       () => renderSleeveTable(snap.book || {}),
       () => bindTabs(snap),
       () => renderBorrow(snap.borrow_panel || {}),

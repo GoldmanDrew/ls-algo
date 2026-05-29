@@ -194,3 +194,56 @@ def summarize_borrow(borrow_rows: list[FlexBorrowFee]) -> dict[str, Any]:
         "names_over_90pct": over_90,
         "fee_rate_by_symbol": fee_rate_by_symbol,
     }
+
+
+_FLEX_NAV_TAGS = (
+    "EquitySummaryByReportDateInBase",
+    "EquitySummaryInBase",
+    "NetLiquidationByCurrency",
+    "ChangeInNAV",
+)
+
+
+def parse_flex_nav(flex_dir: Path) -> dict[str, Any] | None:
+    """Best-effort NAV from Flex equity summary tags (when present in run folder)."""
+    if not flex_dir.is_dir():
+        return None
+    candidates = [
+        flex_dir / name
+        for name in (
+            "flex_equity_summary.xml",
+            "flex_account.xml",
+            "flex_positions.xml",
+            "flex_trades.xml",
+        )
+        if (flex_dir / name).is_file()
+    ]
+    for path in candidates:
+        for tag in _FLEX_NAV_TAGS:
+            for elem in _iter_elements(path, tag):
+                a = elem.attrib
+                for nav_key in (
+                    "total",
+                    "totalEquity",
+                    "endingValue",
+                    "endingNav",
+                    "netLiquidation",
+                    "changeInNAV",
+                ):
+                    raw = a.get(nav_key)
+                    if raw in (None, ""):
+                        continue
+                    try:
+                        val = float(raw)
+                    except (TypeError, ValueError):
+                        continue
+                    if val <= 0:
+                        continue
+                    currency = (a.get("currency") or a.get("currencyPrimary") or "USD").upper()
+                    if currency and currency != "USD":
+                        continue
+                    return {
+                        "nav_usd": val,
+                        "source": f"{path.name}:{tag}.{nav_key}",
+                    }
+    return None
