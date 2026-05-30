@@ -94,25 +94,29 @@ def test_2026_05_21_b4_mstr_plan_structural_underlying_exposure() -> None:
     assert float(under.iloc[0]["net_notional_usd"]) < -1000.0
 
 
-def test_snapshot_bucket2_mstr_matches_csv() -> None:
-    """Dashboard snapshot must read the same 05-21 bucket-2 CSV totals."""
+def test_dashboard_bucket_detail_is_passthrough_of_csv() -> None:
+    """The dashboard reader (``compute_bucket_detail``) must reproduce the
+    accounting CSV verbatim -- it performs no rollup of its own.
+
+    Frozen 05-21 fixture: every bucket-2 row from ``compute_bucket_detail``
+    matches ``pnl_bucket_2.csv`` 1:1 on ``total_pnl`` and ``symbols``. The
+    end-to-end snapshot<->CSV parity (against whatever run_date the published
+    ``latest.json`` carries) is covered by
+    ``tests/test_dashboard_accounting_parity.py`` so this test no longer depends
+    on a frozen committed snapshot artifact.
+    """
     run_dir = RUNS / "2026-05-21" / "accounting"
     pnl_csv = _require(run_dir / "pnl_bucket_2.csv")
     net_csv = _require(run_dir / "net_exposure_bucket_2.csv")
 
     detail = compute_bucket_detail("bucket_2", pnl_csv, net_csv)
-    mstr_rows = [r for r in detail["pnl_rows"] if r["underlying"] == "MSTR"]
-    assert len(mstr_rows) == 1
-    csv_total = float(
-        pd.read_csv(pnl_csv).loc[lambda d: d["underlying"] == "MSTR", "total_pnl"].iloc[0]
-    )
-    assert mstr_rows[0]["total_pnl"] == pytest.approx(csv_total, rel=1e-9)
+    df = pd.read_csv(pnl_csv)
+    csv_by_u = {str(r["underlying"]): r for _, r in df.iterrows()}
 
-    snap_path = _require(PROJECT_ROOT / "risk_dashboard" / "data" / "latest.json")
-    snap = json.loads(snap_path.read_text(encoding="utf-8"))
-    assert snap.get("run_date") == "2026-05-21"
-    snap_mstr = next(
-        r for r in snap["buckets"]["bucket_2"]["pnl_rows"] if r["underlying"] == "MSTR"
-    )
-    assert snap_mstr["symbols"] == mstr_rows[0]["symbols"]
-    assert snap_mstr["total_pnl"] == pytest.approx(csv_total, rel=1e-9)
+    assert len(detail["pnl_rows"]) == len(csv_by_u)
+    for row in detail["pnl_rows"]:
+        u = str(row["underlying"])
+        assert u in csv_by_u
+        assert row["total_pnl"] == pytest.approx(float(csv_by_u[u]["total_pnl"]), rel=1e-9)
+        if "symbols" in df.columns and pd.notna(csv_by_u[u].get("symbols")):
+            assert str(row["symbols"]) == str(csv_by_u[u]["symbols"])

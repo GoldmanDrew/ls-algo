@@ -2934,7 +2934,11 @@ def _sigma_overrides_for_vix_shock(
         sym = str(leg.get("symbol") or "").upper()
         if not sym:
             continue
-        sigma = leg_sigma_for_vix_scenario(
+        # ``leg_sigma_for_vix_scenario`` returns ``(sigma_effective, borrow_stressed)``;
+        # the override map only carries the shocked sigma. Unpack it -- storing the
+        # raw tuple makes the downstream ``float(sigma_annual_override)`` in
+        # ``model_leg_return`` raise ``TypeError: float() argument ... not 'tuple'``.
+        sigma, _ = leg_sigma_for_vix_scenario(
             leg,
             underlying=underlying,
             underlying_sigma=underlying_sigma,
@@ -2945,7 +2949,7 @@ def _sigma_overrides_for_vix_shock(
             corr_lift_override=corr_lift_override,
         )
         if sigma is not None:
-            sigma_out[sym] = sigma
+            sigma_out[sym] = float(sigma)
     return sigma_out
 
 
