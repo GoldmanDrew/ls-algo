@@ -7,12 +7,84 @@ from daily_screener import (
     build_full_universe,
     load_strategy_blacklist,
 )
+from execute_trade_plan import (
+    build_long_spot_bucket_token,
+    classify_plan_leg_bucket,
+)
 from ibkr_accounting import (
     _bucket_hint_from_order_reference,
     _normalize_bucket_triple,
+    bucket_weights_from_order_reference,
     normalize_plan_etf_ticker,
+    resolve_ledger_full_replay_all,
+    spot_trade_bucket_weights,
 )
 from run_eod_pnl_email import format_period_pnl_summary
+
+
+# ── Phase 3: explicit B1/B2 long-spot split tagged at execution ──────────────
+
+
+def test_long_spot_bucket_token_permille_round_trip() -> None:
+    tok = build_long_spot_bucket_token(6000.0, 4000.0)
+    assert tok == "LSB:600:400"
+    assert bucket_weights_from_order_reference(f"ETF_LS|MSTR__ESTABLISH|MSTR|UNDER|{tok}") == (
+        0.6,
+        0.4,
+        0.0,
+    )
+
+
+def test_long_spot_bucket_token_single_sleeve() -> None:
+    assert build_long_spot_bucket_token(12000.0, 0.0) == "LSB:1000:0"
+    assert build_long_spot_bucket_token(0.0, 0.0) == ""
+
+
+def test_bucket_weights_bare_single_bucket_tokens() -> None:
+    assert bucket_weights_from_order_reference("ETF_LS|FOO|B1") == (1.0, 0.0, 0.0)
+    assert bucket_weights_from_order_reference("ETF_LS|FOO|B2") == (0.0, 1.0, 0.0)
+    assert bucket_weights_from_order_reference("ETF_LS|FOO|B4") == (0.0, 0.0, 1.0)
+    assert bucket_weights_from_order_reference("ETF_LS|FOO__ESTABLISH|FOO|UNDER") is None
+
+
+def test_classify_plan_leg_bucket_sleeve_then_delta() -> None:
+    assert classify_plan_leg_bucket(sleeve="core_leveraged") == "b1"
+    assert classify_plan_leg_bucket(sleeve="yieldboost") == "b2"
+    assert classify_plan_leg_bucket(sleeve="inverse_decay_bucket4") == "b4"
+    assert classify_plan_leg_bucket(sleeve=None, delta=2.0) == "b1"
+    assert classify_plan_leg_bucket(sleeve=None, delta=0.5) == "b2"
+    assert classify_plan_leg_bucket(sleeve=None, delta=-2.0) == "b4"
+    assert classify_plan_leg_bucket(sleeve=None, delta=None, long_usd=-100.0) == "b4"
+
+
+def test_resolve_ledger_full_replay_all_triggers() -> None:
+    # Off by default.
+    assert resolve_ledger_full_replay_all(False, ["MSTR", "COIN"], "") is False
+    # Config boolean.
+    assert resolve_ledger_full_replay_all(True, [], "") is True
+    # Sentinel inside the explicit replay list.
+    assert resolve_ledger_full_replay_all(False, ["MSTR", "*"], "") is True
+    assert resolve_ledger_full_replay_all(False, ["all"], "") is True
+    # Env var.
+    assert resolve_ledger_full_replay_all(False, [], "1") is True
+    assert resolve_ledger_full_replay_all(False, [], "true") is True
+    assert resolve_ledger_full_replay_all(False, [], "no") is False
+
+
+def test_explicit_split_overrides_inferred_weights() -> None:
+    # MSTR holds a B1 LETF (MSTU β=2) and a B2 yieldBOOST (MSTY β=0.4).
+    etf_to_under = {"MSTU": "MSTR", "MSTY": "MSTR"}
+    etf_to_delta = {"MSTU": 2.0, "MSTY": 0.4}
+    etf_pos_qty = {"MSTU": -100.0, "MSTY": -100.0}
+    ref = "ETF_LS|MSTR__ESTABLISH|MSTR|UNDER|LSB:700:300"
+    w1, w2, w4 = spot_trade_bucket_weights(
+        "MSTR",
+        ref,
+        etf_to_under,
+        etf_to_delta,
+        etf_pos_qty,
+    )
+    assert (round(w1, 3), round(w2, 3), round(w4, 3)) == (0.7, 0.3, 0.0)
 
 
 def test_order_ref_standalone_etf_token_classifies_bucket_2() -> None:

@@ -46,6 +46,7 @@ from execute_trade_plan import (
     norm_sym, append_csv_row,
     CoordinatorCancelService,
     is_short_unavailable_now,
+    classify_plan_leg_bucket, build_long_spot_bucket_token,
 )
 
 
@@ -341,6 +342,18 @@ def build_resize_trades(
                 u_dec.decision = "skip"
                 u_dec.reason   = u_dec.reason + "|qty=0_after_cap"
             else:
+                # B1/B2 long-spot split across the group's sleeves, so the
+                # netted underlying order can carry the true division tag.
+                _long_b1 = _long_b2 = 0.0
+                for _, _lr in grp.iterrows():
+                    _lu = float(_lr.get(band_long_col, _lr.get("long_usd", 0.0)) or 0.0)
+                    _bkt = classify_plan_leg_bucket(
+                        sleeve=_lr.get("sleeve"), delta=_lr.get("Delta"), long_usd=_lu
+                    )
+                    if _bkt == "b1":
+                        _long_b1 += _lu
+                    elif _bkt == "b2":
+                        _long_b2 += _lu
                 u_dec.qty = int(qty)
                 u_dec.ref_price = float(px_under)
                 trades.append({
@@ -357,6 +370,8 @@ def build_resize_trades(
                     "target_usd":       float(total_band_long),
                     "executable_target_usd": float(total_exec_long),
                     "current_usd":      float(cur_under_usd),
+                    "long_usd_b1":      float(_long_b1),
+                    "long_usd_b2":      float(_long_b2),
                 })
 
         decisions.append(u_dec)
@@ -631,6 +646,14 @@ def execute_resize_serial(
             f"{strategy_tag}|{under}__RESIZE|{symbol}|"
             f"{leg_side.upper()}_{decision.upper()}"
         )
+        # Tag the B1/B2 long-spot split on the netted underlying leg so
+        # accounting records the true division (Phase 3 forward attribution).
+        if leg_side == "long_under":
+            _lsb_tok = build_long_spot_bucket_token(
+                t.get("long_usd_b1", 0.0), t.get("long_usd_b2", 0.0)
+            )
+            if _lsb_tok:
+                order_ref = f"{order_ref}|{_lsb_tok}"
         tprint(
             f"[PHASE2B][{under}] {decision.upper()} {leg_side} -> "
             f"{action} {capped_qty} {symbol} @ {px:.4f}"

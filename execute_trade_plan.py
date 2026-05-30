@@ -479,6 +479,68 @@ def get_snapshot_price(ib: IB, symbol: str, prefer_delayed: bool = True) -> floa
 # Orders & execution
 # =============================================================================
 
+# Sleeve -> bucket map for plan rows (mirror of ibkr_accounting._PLAN_SLEEVE_TO_BUCKET).
+_PLAN_SLEEVE_TO_BUCKET: Dict[str, str] = {
+    "core_leveraged": "b1",
+    "yieldboost": "b2",
+    "inverse_decay_bucket4": "b4",
+}
+
+
+def classify_plan_leg_bucket(
+    sleeve: str | None = None,
+    delta: float | None = None,
+    long_usd: float | None = None,
+) -> str:
+    """Map a plan leg to ``b1`` / ``b2`` / ``b4`` for accounting attribution.
+
+    Prefers the explicit ``sleeve`` label, then the ETF ``Delta`` (beta) sign
+    (<0 -> b4, >1.5 -> b1, else b2), then the signed ``long_usd`` (negative is
+    a B4 structural short).
+    """
+    slv = str(sleeve or "").strip().lower()
+    if slv in _PLAN_SLEEVE_TO_BUCKET:
+        return _PLAN_SLEEVE_TO_BUCKET[slv]
+    if delta is not None:
+        try:
+            d = float(delta)
+            if d < 0:
+                return "b4"
+            if d > 1.5:
+                return "b1"
+            if d > 0:
+                return "b2"
+        except (TypeError, ValueError):
+            pass
+    try:
+        return "b4" if float(long_usd or 0.0) < 0 else "b1"
+    except (TypeError, ValueError):
+        return "b1"
+
+
+def build_long_spot_bucket_token(long_usd_b1: float, long_usd_b2: float) -> str:
+    """Permille B1/B2 split token for the long-spot leg of a netted underlying.
+
+    Encodes the *same-sign* long-spot intent (B1 vs B2) so the accounting FIFO
+    ledger records the true division (parsed by
+    ``ibkr_accounting.bucket_weights_from_order_reference``). The opposite-sign
+    B4 structural short is intentionally NOT encoded here -- it is recorded
+    separately as ``qty_b4_structural`` -- because a single net trade cannot be
+    split into mixed-sign sleeve intents via same-sign weights.
+
+    Returns e.g. ``"LSB:600:400"`` or ``""`` when there is no long-spot intent.
+    """
+    a = abs(float(long_usd_b1 or 0.0))
+    b = abs(float(long_usd_b2 or 0.0))
+    tot = a + b
+    if tot <= 1e-9:
+        return ""
+    p1 = int(round(1000.0 * a / tot))
+    p1 = max(0, min(1000, p1))
+    p2 = 1000 - p1
+    return f"LSB:{p1}:{p2}"
+
+
 def build_market_order(action: str, qty: int, order_ref: str) -> Order:
     o = MarketOrder(action.upper(), int(qty))
     o.tif = "DAY"

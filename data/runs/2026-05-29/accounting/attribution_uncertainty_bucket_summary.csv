@@ -1,0 +1,4 @@
+bucket,published_net_exposure_usd,published_pnl_usd,attribution_basis,exposure_at_stake_usd,pnl_at_stake_usd,note
+bucket_1,-4577.23,18887.05,single method (sleeve_balance); no data cross-check,466429.15,109429.9,shared B1/B2 long-spot division is model-only; ledger B2 spot=$0
+bucket_2,7827.52,84259.5,single method (sleeve_balance); no data cross-check,466429.15,109429.9,shared B1/B2 long-spot division is model-only; ledger B2 spot=$0
+bucket_4,9896.13,-30731.02,two methods (plan vs etf_implied) -- real spread,5191.42,,"plan total -99,606 vs etf_implied -104,798"

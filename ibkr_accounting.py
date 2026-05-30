@@ -57,6 +57,7 @@ Run:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -412,12 +413,22 @@ def load_etf_delta_map(screened_csv: Path) -> tuple[dict[str, str], dict[str, fl
 
 
 def _is_etf_leg(symbol: str, underlying: str, etf_to_under: dict[str, str]) -> bool:
-    """True when ``symbol`` is a packaged ETF, not the spot underlying row."""
+    """True when ``symbol`` is a packaged ETF, not the spot underlying row.
+
+    Classification keys off the *screener* mapping (``etf_to_under``) rather than
+    the Flex-reported ``underlyingSymbol``. IBKR Flex sometimes echoes
+    ``underlyingSymbol == symbol`` for a packaged ETF (e.g. APLZ trades tagged
+    with underlyingSymbol=APLZ instead of APLD). Trusting that field mis-booked
+    those ETF trades into the spot share ledger under the ETF ticker, manufacturing
+    huge ledger-vs-IBKR drift (APLZ ledger -2000 vs position -42000). Benchmark
+    self-maps (SPY->SPY, MSTR->MSTR) remain spot because the mapped underlying
+    equals the symbol.
+    """
     sym = canonical_symbol(symbol)
     if sym not in etf_to_under:
         return False
-    und = canonical_symbol(underlying or sym)
-    return sym != und
+    mapped_und = canonical_symbol(etf_to_under.get(sym, sym) or sym)
+    return sym != mapped_und
 
 
 def complete_etf_maps_from_positions(
@@ -3132,6 +3143,31 @@ def parse_trade_events(trades_xml: Path) -> pd.DataFrame:
     return df.sort_values("dateTime").reset_index(drop=True)
 
 
+_LEDGER_REPLAY_ALL_SENTINELS = {"*", "ALL", "__ALL__"}
+
+
+def resolve_ledger_full_replay_all(
+    cfg_flag: object = False,
+    replay_list: list | tuple | set | None = None,
+    env_value: str | None = None,
+) -> bool:
+    """True when a FULL historical restate of the share ledger is requested.
+
+    Triggered by any of: ``accounting.ledger_full_replay_all: true`` in config,
+    a ``"*"`` / ``"ALL"`` sentinel inside ``ledger_full_replay_underlyings``, or
+    the ``LS_LEDGER_FULL_RESTATE`` env var. A full restate rebuilds every
+    underlying from the complete Flex trade history, discarding the
+    carried-forward persisted seed (used to clear state booked under the old
+    ``_is_etf_leg`` bug).
+    """
+    if bool(cfg_flag):
+        return True
+    for x in replay_list or []:
+        if str(x).strip().upper() in _LEDGER_REPLAY_ALL_SENTINELS:
+            return True
+    return str(env_value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _bucket_from_delta(beta: float) -> str | None:
     if beta < 0:
         return "bucket_4"
@@ -3157,6 +3193,48 @@ def _bucket_hint_from_order_reference(
             cand = canonical_symbol(item)
             if cand in etf_to_delta_map:
                 return _bucket_from_delta(float(etf_to_delta_map.get(cand, 0.0)))
+    return None
+
+
+def bucket_weights_from_order_reference(
+    order_ref: str,
+) -> tuple[float, float, float] | None:
+    """Explicit B1/B2/B4 split tagged at execution (Phase 3 forward attribution).
+
+    Recognizes, inside the pipe-delimited ``orderReference``:
+
+    * ``LSB:<b1>:<b2>[:<b4>]`` -- long-spot bucket split in permille (e.g.
+      ``LSB:600:400`` => 60% B1 / 40% B2). Stamped by ``rebalance_strategy`` /
+      ``phase2b_resize`` on the netted underlying order from the plan's
+      per-sleeve ``long_usd`` mix, so the FIFO share ledger records the true
+      B1-vs-B2 long-spot division instead of inferring it.
+    * bare ``B1`` / ``B2`` / ``B4`` (or ``BUCKET_1`` ...) single-bucket tags.
+
+    Returns normalized (w1, w2, w4) or ``None`` when no explicit tag is present.
+    """
+    if not order_ref:
+        return None
+    for tok in str(order_ref).split("|"):
+        t = tok.strip().upper()
+        if t.startswith("LSB:"):
+            parts = t[4:].split(":")
+            try:
+                vals = [float(x) for x in parts if x != ""]
+            except ValueError:
+                continue
+            if len(vals) >= 2:
+                b1 = vals[0]
+                b2 = vals[1]
+                b4 = vals[2] if len(vals) >= 3 else 0.0
+                s = b1 + b2 + b4
+                if s > 1e-9:
+                    return b1 / s, b2 / s, b4 / s
+        if t in ("B1", "BUCKET_1"):
+            return 1.0, 0.0, 0.0
+        if t in ("B2", "BUCKET_2"):
+            return 0.0, 1.0, 0.0
+        if t in ("B4", "BUCKET_4"):
+            return 0.0, 0.0, 1.0
     return None
 
 
@@ -3296,6 +3374,15 @@ def spot_trade_bucket_weights(
     if yieldboost_spot_b2 and has_b2:
         return 0.0, 1.0, 0.0
 
+    # Explicit per-trade bucket split tagged at execution (Phase 3) takes
+    # precedence over inferred weights: it encodes the actual sleeve intent.
+    explicit = bucket_weights_from_order_reference(order_ref)
+    if explicit is not None and sum(explicit) > 1e-12:
+        return apply_spot_bucket_eligibility(
+            explicit[0], explicit[1], explicit[2],
+            has_b1_etf=has_b1, has_b2_etf=has_b2, has_b4_etf=has_b4,
+        )
+
     hint = _bucket_hint_from_order_reference(order_ref, etf_to_delta)
     if hint == "bucket_1" and has_b1:
         return 1.0, 0.0, 0.0
@@ -3375,6 +3462,20 @@ def build_underlying_realized_bucket_ratio_map(
             etf_pos_qty,
             flow_short_syms=flow,
         )
+        # Explicit per-trade split (Phase 3) wins over the ETF-symbol hint.
+        explicit = bucket_weights_from_order_reference(str(row.get("orderReference", "")))
+        if explicit is not None and sum(explicit) > 1e-12:
+            ew1, ew2, ew4 = apply_spot_bucket_eligibility(
+                explicit[0], explicit[1], explicit[2],
+                has_b1_etf=has_b1, has_b2_etf=has_b2, has_b4_etf=has_b4,
+            )
+            tot_e = ew1 + ew2 + ew4
+            if tot_e > 1e-12:
+                realized_by_under_bucket[under]["bucket_1"] += abs(realized) * ew1 / tot_e
+                realized_by_under_bucket[under]["bucket_2"] += abs(realized) * ew2 / tot_e
+                realized_by_under_bucket[under]["bucket_4"] += abs(realized) * ew4 / tot_e
+                continue
+
         b_hint = _bucket_hint_from_order_reference(
             str(row.get("orderReference", "")),
             etf_to_delta,
@@ -4033,10 +4134,25 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     use_plan_b4_spot_pnl = b12_pnl_mode == "plan_b4_inject"
     plan_sleeve_bucketing = str(_acct_cfg.get("plan_sleeve_bucketing", "sleeve_first")).strip().lower()
     plan_sleeve_first = plan_sleeve_bucketing != "delta_first"
-    ledger_full_replay_explicit = {
-        canonical_symbol(str(x))
+    _replay_raw = [
+        str(x).strip()
         for x in (_acct_cfg.get("ledger_full_replay_underlyings") or [])
         if str(x).strip()
+    ]
+    # A ``"*"`` / ``"ALL"`` sentinel (or ``ledger_full_replay_all: true``) forces
+    # a FULL historical restate: every underlying is rebuilt from the complete
+    # Flex trade history, ignoring the carried-forward persisted seed. This is
+    # the lever for Phase 4 -- it discards stale state booked under the old
+    # ``_is_etf_leg`` bug and re-derives the ledger from trades alone.
+    ledger_full_replay_all = resolve_ledger_full_replay_all(
+        cfg_flag=_acct_cfg.get("ledger_full_replay_all", False),
+        replay_list=_replay_raw,
+        env_value=os.environ.get("LS_LEDGER_FULL_RESTATE", ""),
+    )
+    ledger_full_replay_explicit = {
+        canonical_symbol(x)
+        for x in _replay_raw
+        if x.upper() not in _LEDGER_REPLAY_ALL_SENTINELS
     }
     ledger_full_replay_include_bucket2 = bool(
         _acct_cfg.get("ledger_full_replay_include_bucket2", True)
@@ -4677,7 +4793,12 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             )
     # ``_b4_plan_exposure_underlyings`` and ``_b4_signed_frac`` are built
     # later, after ``_spot_marks`` and ``_implied_b4_short_usd`` are known.
-    if ledger_full_replay_underlyings:
+    if ledger_full_replay_all:
+        print(
+            "[ACCOUNTING] FULL RESTATE: replaying ALL underlyings from complete "
+            "trade history (carried-forward seeds discarded)."
+        )
+    elif ledger_full_replay_underlyings:
         print(
             f"[ACCOUNTING] ledger full replay for "
             f"{len(ledger_full_replay_underlyings)} underlying(s): "
@@ -4743,6 +4864,10 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "qty_b4",
         "qty_b4_plan",
         "plan_b4_usd",
+        "qty_b4_structural",
+        "qty_b4_etf_implied",
+        "etf_implied_b4_usd",
+        "b4_structural_source",
         "realized_b1",
         "realized_b2",
         "realized_b4",
@@ -4765,7 +4890,13 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 0.0
                 if _c.startswith("qty_")
                 or _c.startswith("ratio_")
-                or _c in {"plan_b4_usd", "realized_b1", "realized_b2", "realized_b4"}
+                or _c in {
+                    "plan_b4_usd",
+                    "etf_implied_b4_usd",
+                    "realized_b1",
+                    "realized_b2",
+                    "realized_b4",
+                }
                 else ""
             )
     _state_hist["run_date"] = _state_hist["run_date"].astype(str)
@@ -4777,6 +4908,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "qty_b4",
         "qty_b4_plan",
         "plan_b4_usd",
+        "qty_b4_structural",
+        "qty_b4_etf_implied",
+        "etf_implied_b4_usd",
         "realized_b1",
         "realized_b2",
         "realized_b4",
@@ -4800,7 +4934,13 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         .tail(1)
         .set_index("underlying")
     ) if not _state_hist.empty else pd.DataFrame(columns=state_cols).set_index(pd.Index([], dtype=str))
-    if ledger_full_replay_underlyings and not _prev_state.empty:
+    if ledger_full_replay_all:
+        # Full restate: discard every carried-forward seed and the incremental
+        # cutoff so the loop below applies the complete trade history.
+        _prev_state = pd.DataFrame(columns=state_cols).set_index(pd.Index([], dtype=str))
+        _prev_cutoff = ""
+        _prev_cutoff_ymd = ""
+    elif ledger_full_replay_underlyings and not _prev_state.empty:
         _prev_state = _prev_state.drop(
             index=[u for u in ledger_full_replay_underlyings if u in _prev_state.index],
             errors="ignore",
@@ -5309,6 +5449,40 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             _bucket_qty[_u_str]["bucket_2"] = _ibkr_seed * _pb2 / _phys_sum
             _bucket_qty[_u_str]["bucket_4"] = 0.0
 
+    # ── Canonical B4 structural short (Phase 2: observable & durable) ────────
+    # The netted IBKR stock line carries no separable B4 FIFO trade, so the
+    # structural short underlying is *derived*. Record ONE canonical value per
+    # name with its provenance (``plan`` primary, ``etf_implied`` fallback) plus
+    # both candidate magnitudes, so the recorded short does not vanish when a
+    # name rotates out of ``proposed_trades.csv`` and the plan-vs-implied gap is
+    # auditable over time. This same dict feeds the exposure pair view so the
+    # persisted number equals the number used in net/gross exposure.
+    _b4_struct_qty_by_u: dict[str, float] = {}
+    _b4_struct_usd_by_u: dict[str, float] = {}
+    _b4_struct_src_by_u: dict[str, str] = {}
+    for _u in _all_underlyings:
+        _u_str = str(_u)
+        _plan_q = float(_plan_b4_qty_by_u.get(_u_str, 0.0))
+        _plan_usd = float((_plan_sleeve_usd.get(_u_str) or {}).get("b4", 0.0))
+        _imp_q = float(_implied_b4_short_qty.get(_u_str, 0.0))
+        _imp_usd = float(_implied_b4_short_usd.get(_u_str, 0.0))
+        if (
+            b4_underlying_exposure_mode == "plan_structural"
+            and _u_str in _b4_plan_exposure_underlyings
+            and abs(_plan_q) > 1e-9
+        ):
+            _b4_struct_qty_by_u[_u_str] = _plan_q
+            _b4_struct_usd_by_u[_u_str] = _plan_usd
+            _b4_struct_src_by_u[_u_str] = "plan"
+        elif (
+            b4_attribution_mode == "etf_implied"
+            and abs(_imp_q) > 1e-9
+            and abs(_imp_usd) >= b4_attribution_min_usd
+        ):
+            _b4_struct_qty_by_u[_u_str] = _imp_q
+            _b4_struct_usd_by_u[_u_str] = _imp_usd
+            _b4_struct_src_by_u[_u_str] = "etf_implied"
+
     _spot_exposure_ratio_map: dict[str, SpotBucketRatios] = {}
     _hedge_spot_meta_map: dict[str, HedgeRatioSpotMeta] = {}
 
@@ -5547,6 +5721,10 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 "qty_b4": _cur_b4,
                 "qty_b4_plan": float(_plan_b4_qty_by_u.get(str(_u), 0.0)),
                 "plan_b4_usd": float((_plan_sleeve_usd.get(str(_u)) or {}).get("b4", 0.0)),
+                "qty_b4_structural": float(_b4_struct_qty_by_u.get(str(_u), 0.0)),
+                "qty_b4_etf_implied": float(_implied_b4_short_qty.get(str(_u), 0.0)),
+                "etf_implied_b4_usd": float(_implied_b4_short_usd.get(str(_u), 0.0)),
+                "b4_structural_source": _b4_struct_src_by_u.get(str(_u), "none"),
                 "realized_b1": _rz_real,
                 "realized_b2": _rz_real2,
                 "realized_b4": _rz_real4,
@@ -5653,6 +5831,23 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     _state_merged = pd.concat([_state_hist[state_cols], _state_today_df], ignore_index=True)
     _state_merged = _state_merged.drop_duplicates(subset=["run_date", "underlying"], keep="last")
     _state_merged = _state_merged.sort_values(["run_date", "underlying"]).reset_index(drop=True)
+    # Purge ETF-leg contamination: rows whose ``underlying`` is actually a
+    # packaged ETF (e.g. APLZ) leaked into the spot share-ledger state under
+    # the pre-fix ``_is_etf_leg`` bug. They carry a spurious spot-only ledger
+    # (~0) that never reconciles against the full ETF position. The ledger only
+    # tracks true spot underlyings, so drop these rows across all dates.
+    if not _state_merged.empty:
+        _etf_state_mask = _state_merged["underlying"].apply(
+            lambda _su: _is_etf_leg(str(_su), str(_su), etf_to_under)
+        )
+        _n_purged = int(_etf_state_mask.sum())
+        if _n_purged:
+            print(
+                f"[ACCOUNTING] purged {_n_purged} ETF-leg row(s) from "
+                f"underlying_bucket_state.csv "
+                f"(e.g. {', '.join(sorted(set(_state_merged.loc[_etf_state_mask, 'underlying'].astype(str)))[:6])})"
+            )
+            _state_merged = _state_merged[~_etf_state_mask].copy()
     bucket_state_path.parent.mkdir(parents=True, exist_ok=True)
     _state_merged.to_csv(bucket_state_path, index=False)
     _timing_df = pd.DataFrame(_timing_rows)
@@ -5675,6 +5870,14 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
 
     _recon_rows: list[dict] = []
     for _u in _all_underlyings:
+        # The share ledger only tracks true spot underlyings. ETF tickers can
+        # leak into _all_underlyings via stale persisted state rows (created
+        # before the _is_etf_leg fix); comparing their spot-only ledger (~0)
+        # against the full ETF IBKR position manufactures false drift
+        # (e.g. APLZ ledger -2000 vs position -42000). Skip ETF legs so the
+        # reconciliation reflects genuine spot-underlying drift only.
+        if _is_etf_leg(_u, _u, etf_to_under):
+            continue
         _lb1 = float(_bucket_qty[_u]["bucket_1"])
         _lb2 = float(_bucket_qty[_u]["bucket_2"])
         _lb4 = float(_bucket_qty[_u]["bucket_4"])
@@ -6406,28 +6609,20 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     #   2. ETF-implied structural short qty (when ``b4_attribution_mode=etf_implied``
     #      and the implied short hits ``b4_attribution_min_usd``)
     #   3. FIFO ``qty_b4`` from the share ledger
+    # Use the canonical structural short (plan -> etf_implied) computed once
+    # above and persisted to the state file, so the exposure pair view and the
+    # recorded ledger value cannot drift apart. Fall back to FIFO ``qty_b4``
+    # only when neither plan nor implied produced a structural short.
     _b4_under_qty: dict[str, float] = {}
     for _u_b4 in b4_underlyings:
         _u_str = str(_u_b4)
-        _ledger_b4 = float(_ledger_qty_map.get(_u_str, {}).get("bucket_4", 0.0))
-        if (
-            b4_underlying_exposure_mode == "plan_structural"
-            and _u_str in _b4_plan_exposure_underlyings
-        ):
-            _plan_q = float(_plan_b4_qty_by_u.get(_u_str, 0.0))
-            if abs(_plan_q) > 1e-9:
-                _b4_under_qty[_u_str] = _plan_q
-                continue
-        if b4_attribution_mode == "etf_implied":
-            _implied_q = float(_implied_b4_short_qty.get(_u_str, 0.0))
-            _implied_usd_chk = float(_implied_b4_short_usd.get(_u_str, 0.0))
-            if (
-                abs(_implied_q) > 1e-9
-                and abs(_implied_usd_chk) >= b4_attribution_min_usd
-            ):
-                _b4_under_qty[_u_str] = _implied_q
-                continue
-        _b4_under_qty[_u_str] = _ledger_b4
+        _struct_q = float(_b4_struct_qty_by_u.get(_u_str, 0.0))
+        if abs(_struct_q) > 1e-9:
+            _b4_under_qty[_u_str] = _struct_q
+        else:
+            _b4_under_qty[_u_str] = float(
+                _ledger_qty_map.get(_u_str, {}).get("bucket_4", 0.0)
+            )
     exposure_b4_df, exposure_b4_detail_df = compute_bucket4_pair_exposure(
         _filter_positions_blacklist(pos, blocked_symbols, blocked_underlyings, etf_to_under),
         b4_registry,

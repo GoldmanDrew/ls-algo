@@ -7,7 +7,23 @@
     "SOUN": {
       "fetched_at_epoch": 1779379080.462442,
       "info": {}
+    },
+    "AAOI": {
+      "fetched_at_epoch": 1780160170.8274918,
+      "info": {}
+    },
+    "SVIX": {
+      "fetched_at_epoch": 1780160170.8274918,
+      "info": {}
+    },
+    "SBUX": {
+      "fetched_at_epoch": 1780160170.8274918,
+      "info": {}
+    },
+    "BIDU": {
+      "fetched_at_epoch": 1780160170.8274918,
+      "info": {}
     }
   },
-  "updated_at_epoch": 1779380009.8276377
+  "updated_at_epoch": 1780160170.8274918
 }

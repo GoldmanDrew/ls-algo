@@ -20,6 +20,15 @@ accounting:
   plan_sleeve_bucketing: sleeve_first  # sleeve_first | delta_first
   # All bucket-2 underlyings (yieldboost / 0<β≤1.5 ETFs) get full Flex replay by default.
   ledger_full_replay_include_bucket2: true
+  # Phase 4 restate: replay EVERY underlying from the complete Flex trade history
+  # each run instead of seeding from the prior persisted row. This permanently
+  # eliminates ledger-vs-IBKR drift carried forward from state booked under the
+  # old _is_etf_leg bug (incremental seeding otherwise re-imports stale prior-day
+  # rows). Verified non-regressive: published net-exposure/PnL totals are
+  # method-driven (sleeve_balance), unchanged $0; runtime ~unchanged (~22s).
+  # Current-strategy underlyings reconcile to within a few shares; residual drift
+  # is confined to rotated-out / non-strategy holdings (pre-Flex-window lots).
+  ledger_full_replay_all: true
   ledger_full_replay_underlyings:
     - MSTR   # extra full replay (also B1 levered)
     - INTC   # levered-only (INTW); rebuild spot ledger without orphan B2 lots

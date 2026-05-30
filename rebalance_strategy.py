@@ -50,6 +50,8 @@ from execute_trade_plan import (
     append_csv_row, append_jsonl, safe_avg_fill_price,
     # Symbol helpers
     norm_sym, make_stock,
+    # Bucket-tagging helpers (Phase 3 forward attribution)
+    classify_plan_leg_bucket, build_long_spot_bucket_token,
     ib_symbol_from_universal, universal_symbol_from_ib,
     IB_SYMBOL_MAP, REVERSE_IB_SYMBOL_MAP,
     # Path helpers
@@ -552,13 +554,23 @@ def build_establish_trades(
         bucket = buckets.setdefault(under, {
             "underlying":   under,
             "net_long_usd": 0.0,
+            "long_usd_b1":  0.0,
+            "long_usd_b2":  0.0,
+            "long_usd_b4":  0.0,
             "etf_legs":     [],
         })
         bucket["net_long_usd"] += long_usd
+        leg_bkt = classify_plan_leg_bucket(
+            sleeve=row.get("sleeve"),
+            delta=row.get("Delta"),
+            long_usd=long_usd,
+        )
+        bucket[f"long_usd_{leg_bkt}"] += long_usd
         bucket["etf_legs"].append({
             "etf":       etf,
             "short_usd": short_usd,
             "long_usd":  long_usd,
+            "bucket":    leg_bkt,
         })
 
     out = list(buckets.values())
@@ -831,6 +843,12 @@ def _establish_worker(
             order_ref = f"{strategy_tag}|{under}__ESTABLISH|{norm_sym(b4_leg['etf'])}|UNDER"
         else:
             order_ref = f"{strategy_tag}|{under}__ESTABLISH|{under}|UNDER"
+        # Tag the B1/B2 long-spot split so accounting records the true division.
+        _lsb_tok = build_long_spot_bucket_token(
+            bucket.get("long_usd_b1", 0.0), bucket.get("long_usd_b2", 0.0)
+        )
+        if _lsb_tok:
+            order_ref = f"{order_ref}|{_lsb_tok}"
         res = exec_leg_local(under, under_action, scaled_qty, px_under, order_ref)
         filled_signed = int(res.filled) if under_action == "BUY" else -int(res.filled)
 
