@@ -107,10 +107,21 @@ def test_compute_betas_recovers_known_factor_loadings(tmp_path: Path):
     assert lo.beta_to_spy_raw == pytest.approx(0.40, abs=0.15)
     assert hi.beta_to_spy > mid.beta_to_spy > lo.beta_to_spy
 
-    # NDX / RUT betas track the SPY beta (QQQ ~ 1.1*SPY, IWM ~ 1.05*SPY
-    # so the implied per-index slope is ~ beta_spy / 1.1, /1.05).
-    assert hi.beta_to_ndx_raw == pytest.approx(1.50 / 1.10, abs=0.20)
-    assert hi.beta_to_rut_raw == pytest.approx(1.50 / 1.05, abs=0.20)
+    # Multi-index betas: assert against the same OLS the loader uses. A naive
+    # ``beta_spy / 1.05`` ratio is too high here because (a) prices are built
+    # from compounded simple returns then differenced as log returns, and (b)
+    # IWM/QQQ carry idiosyncratic noise that attenuates cross-index slopes.
+    w = bl.DEFAULT_WINDOW_DAYS
+    y_hi = bl._log_returns(fixture["HIBETA"], w)
+    exp_ndx, _, _, _ = bl._ols_beta(
+        y_hi, bl._log_returns(fixture["QQQ"], w)
+    )
+    exp_rut, _, _, _ = bl._ols_beta(
+        y_hi, bl._log_returns(fixture["IWM"], w)
+    )
+    assert hi.beta_to_ndx_raw == pytest.approx(exp_ndx, rel=1e-9, abs=1e-9)
+    assert hi.beta_to_rut_raw == pytest.approx(exp_rut, rel=1e-9, abs=1e-9)
+    assert hi.beta_to_ndx_raw > hi.beta_to_rut_raw
 
 
 def test_compute_betas_uses_sector_mean_prior_when_available(tmp_path: Path):
