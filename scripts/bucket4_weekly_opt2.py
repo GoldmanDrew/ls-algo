@@ -720,6 +720,9 @@ class Bucket4WeeklyConfig:
     overlay: dict[str, Any] | None = None
     pf_params: V6PfParams | None = None
     use_ibkr_uvix_borrow: bool = False
+    # Hedge/cadence engine source: "v6_panel" (legacy) or "tr_vcr" (explainable engine).
+    hedge_source: str = "v6_panel"
+    hedge_cadence_policy: dict[str, Any] | None = None
 
 
 @dataclass
@@ -824,6 +827,84 @@ def build_pair_cache(
     return cache
 
 
+def _build_hedge_cadence_engine(
+    closes_broad: pd.DataFrame,
+    pairs: Sequence[tuple[str, str]],
+    b4_unds: list[str],
+    master: pd.DatetimeIndex,
+    cfg: Bucket4WeeklyConfig,
+) -> tuple[dict[str, pd.Series], pd.DatetimeIndex, pd.DataFrame, dict[str, Any]]:
+    """Build hedge_by_underlying + (union) rebalance schedule from the explainable
+    TR/VCR engine. Returns (hedge_map, rebal_dates, panel, cadence_by_underlying).
+
+    ``cadence_by_underlying`` carries the per-name interval + the reverse-engineerable
+    ``interval_explain`` / ``h_explain`` so a human can see why each underlying rebalances
+    every N days and what its hedge ratio is/was.
+    """
+    from scripts.bucket4_hedge_cadence import (
+        HedgeCadenceKnobs,
+        build_h_series,
+        build_rebal_dates,
+        compute_pair_policy,
+        load_name_tilts,
+    )
+    from scripts.bucket4_vol_shape_signals import get_pair_signal
+
+    block = dict(cfg.hedge_cadence_policy or {})
+    knobs = HedgeCadenceKnobs.from_config(block)
+    tilts = load_name_tilts(block.get("name_tilt"))
+
+    # map underlying -> representative ETF (for per-name tilt + display)
+    etf_by_und: dict[str, str] = {}
+    for e, u in pairs:
+        etf_by_und.setdefault(norm_sym_nb(u), norm_sym_nb(e))
+
+    hedge_map: dict[str, pd.Series] = {}
+    panel_rows: list[dict[str, Any]] = []
+    cadence: dict[str, Any] = {}
+    all_rebal: set[pd.Timestamp] = set()
+    for u in b4_unds:
+        px = pd.to_numeric(closes_broad[u], errors="coerce").dropna()
+        if len(px) < int(cfg.warmup_bdays) + 5:
+            hedge_map[u] = pd.Series(float(cfg.hedge_base), index=master)
+            cadence[u] = {"interval_days": None, "reason": "insufficient_history"}
+            continue
+        cal = pd.DatetimeIndex(px.index)
+        sig = get_pair_signal(u, u, cal, history={}, underlying_prices=px,
+                              window=int(block.get("vol_window", 60)), lookahead_shift=1)
+        tilt = tilts.get(etf_by_und.get(u, "")) or tilts.get(u)
+        h_ser = build_h_series(sig, cal, knobs=knobs, name_tilt=tilt).reindex(master).ffill().fillna(float(cfg.hedge_base))
+        hedge_map[u] = h_ser
+        rb, _ = build_rebal_dates(sig, cal, knobs=knobs, name_tilt=tilt, warmup_bdays=int(cfg.warmup_bdays))
+        all_rebal.update(pd.Timestamp(d) for d in rb)
+        for d in cal:
+            panel_rows.append({"date": d, "underlying": u, "h_applied": float(h_ser.get(d, np.nan))})
+        # latest snapshot for human-readable explanation
+        last = sig.dropna(subset=["vcr"]).tail(1) if (sig is not None and not sig.empty) else None
+        if last is not None and len(last):
+            tr = float(last["tr"].iloc[-1]) if "tr" in last else float("nan")
+            vcr = float(last["vcr"].iloc[-1])
+            vm = float(last["vcr_med"].iloc[-1]) if "vcr_med" in last else float("nan")
+            hh = h_ser.dropna()
+            prev_h = float(hh.iloc[-2]) if len(hh) >= 2 else None
+            pol = compute_pair_policy(tr, vcr, vm, knobs=knobs, name_tilt=tilt,
+                                      prev_h=prev_h, etf=etf_by_und.get(u, ""), underlying=u)
+            cadence[u] = {
+                "interval_days": pol.interval_days,
+                "hedge_ratio": round(pol.h, 4),
+                "tr": round(pol.tr, 4) if np.isfinite(pol.tr) else None,
+                "vcr": round(pol.vcr, 5) if np.isfinite(pol.vcr) else None,
+                "vcr_med": round(pol.vcr_med, 5) if np.isfinite(pol.vcr_med) else None,
+                "interval_explain": pol.interval_explain,
+                "h_explain": pol.h_explain,
+            }
+        else:
+            cadence[u] = {"interval_days": knobs.max_interval, "reason": "no_signal"}
+    rebal = pd.DatetimeIndex(sorted(all_rebal)) if all_rebal else pd.DatetimeIndex([master[0]])
+    panel = pd.DataFrame(panel_rows)
+    return hedge_map, rebal, panel, cadence
+
+
 def build_bucket4_state(
     cfg: Bucket4WeeklyConfig,
     *,
@@ -854,24 +935,32 @@ def build_bucket4_state(
     if closes_broad is None:
         inv = _inverse_etfs_from_screened(cfg.screened_csv)
         closes_broad = build_closes_broad(pairs, inv, cfg.start, cfg.end)
-    panel, rebal, _ = build_hedge_panel_opt2(
-        closes_broad,
-        pairs,
-        weekly_rebalance_freq=cfg.weekly_rebalance_freq,
-        warmup_bdays=cfg.warmup_bdays,
-        hedge_base=cfg.hedge_base,
-        overlay=cfg.overlay,
-        macro=macro,
-    )
     master = closes_broad.index.sort_values()
     b4_unds = sorted({u for _, u in pairs} & set(closes_broad.columns))
-    hedge_map = panel_to_hedge_by_underlying(panel, master, b4_unds, cfg.hedge_base)
+    cadence_diag: dict[str, Any] = {}
+    if str(cfg.hedge_source).strip().lower() == "tr_vcr":
+        hedge_map, rebal, panel, cadence_diag = _build_hedge_cadence_engine(
+            closes_broad, pairs, b4_unds, master, cfg,
+        )
+    else:
+        panel, rebal, _ = build_hedge_panel_opt2(
+            closes_broad,
+            pairs,
+            weekly_rebalance_freq=cfg.weekly_rebalance_freq,
+            warmup_bdays=cfg.warmup_bdays,
+            hedge_base=cfg.hedge_base,
+            overlay=cfg.overlay,
+            macro=macro,
+        )
+        hedge_map = panel_to_hedge_by_underlying(panel, master, b4_unds, cfg.hedge_base)
     meta = [{"etf": e, "underlying": u, "in_cache": (e, u) in pair_cache and "skip_reason" not in pair_cache[(e, u)]} for e, u in pairs]
     diag = {
         "n_pairs_screened": len(pairs),
         "n_pairs_cached": sum(1 for k, v in pair_cache.items() if "skip_reason" not in v),
         "weekly_rebalance_freq": cfg.weekly_rebalance_freq,
         "n_scheduled_rebalances": len(rebal),
+        "hedge_source": str(cfg.hedge_source),
+        "cadence_by_underlying": cadence_diag,
     }
     return Bucket4State(
         pair_cache=pair_cache,
