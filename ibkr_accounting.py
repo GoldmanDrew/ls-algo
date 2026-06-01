@@ -2453,6 +2453,18 @@ def apply_yieldboost_spot_b2_override(
         lot_components[underlying]["bucket_2"][col] = remainder * b2_norm
 
 
+def b4_spot_pnl_inject_eligible(
+    underlying: str,
+    *,
+    ledger_b4_qty: float,
+    implied_b4_short_usd: dict[str, float],
+    min_usd: float,
+) -> bool:
+    """Inject plan B4 unrealized only when FIFO ledger has tagged B4 spot qty."""
+    _ = underlying, implied_b4_short_usd, min_usd
+    return abs(float(ledger_b4_qty)) > 1e-9
+
+
 def apply_plan_b4_spot_pnl_override(
     *,
     lot_components: dict[str, dict[str, dict[str, float]]],
@@ -2524,6 +2536,29 @@ def apply_plan_b4_spot_pnl_override(
             lot_components[underlying]["bucket_4"][col] = b4_part
             lot_components[underlying]["bucket_1"][col] = remainder * b1_norm
             lot_components[underlying]["bucket_2"][col] = remainder * b2_norm
+
+
+def collapse_spot_b4_pnl_into_b12(
+    lot_components: dict[str, dict[str, dict[str, float]]],
+    underlying: str,
+    *,
+    ledger_r_b1: float,
+    ledger_r_b2: float,
+    spot_carry_cols: set[str],
+) -> None:
+    """Move spot-line bucket_4 PnL into B1/B2 before live B4 trading begins."""
+    u = lot_components.get(underlying)
+    if not u or "bucket_4" not in u:
+        return
+    cols = {"realized_pnl", "unrealized_pnl"} | set(spot_carry_cols)
+    b1n, b2n = _normalize_b1_b2_pair(ledger_r_b1, ledger_r_b2)
+    for col in cols:
+        v4 = float(u["bucket_4"].get(col, 0.0) or 0.0)
+        if abs(v4) <= 1e-9:
+            continue
+        u["bucket_1"][col] = float(u["bucket_1"].get(col, 0.0) or 0.0) + v4 * b1n
+        u["bucket_2"][col] = float(u["bucket_2"].get(col, 0.0) or 0.0) + v4 * b2n
+        u["bucket_4"][col] = 0.0
 
 
 def compose_spot_pnl_bucket_fractions(
@@ -4216,6 +4251,15 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         )
         plan_b4_pnl_mode = "inject_slice"
     use_plan_b4_spot_pnl = b12_pnl_mode == "plan_b4_inject"
+    plan_b4_inject_start_date = str(_acct_cfg.get("plan_b4_inject_start_date", "") or "").strip()
+    plan_b4_inject_active = use_plan_b4_spot_pnl
+    if plan_b4_inject_active and plan_b4_inject_start_date:
+        plan_b4_inject_active = run_date >= plan_b4_inject_start_date
+        if not plan_b4_inject_active:
+            print(
+                f"[ACCOUNTING] plan B4 spot inject disabled before {plan_b4_inject_start_date} "
+                f"(run_date={run_date})"
+            )
     plan_sleeve_bucketing = str(_acct_cfg.get("plan_sleeve_bucketing", "sleeve_first")).strip().lower()
     plan_sleeve_first = plan_sleeve_bucketing != "delta_first"
     _replay_raw = [
@@ -5789,7 +5833,12 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 spot_carry_cols=_spot_carry_cols,
             )
             _pnl_split_mode = f"sleeve_pnl:{_pnl_src}"
-        elif use_plan_b4_spot_pnl and _u in _plan_ratio_b4:
+        elif plan_b4_inject_active and _u in _plan_ratio_b4 and b4_spot_pnl_inject_eligible(
+            _u,
+            ledger_b4_qty=_cur_b4,
+            implied_b4_short_usd=_implied_b4_short_usd,
+            min_usd=b4_attribution_min_usd,
+        ):
             apply_plan_b4_spot_pnl_override(
                 lot_components=_lot_components,
                 underlying=_u,
@@ -5803,7 +5852,12 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 b4_frac_signed=_b4_signed_frac.get(_u),
             )
             _pnl_split_mode = plan_b4_pnl_mode
-        elif use_plan_b4_spot_pnl and _u in _b4_signed_frac:
+        elif plan_b4_inject_active and _u in _b4_signed_frac and b4_spot_pnl_inject_eligible(
+            _u,
+            ledger_b4_qty=_cur_b4,
+            implied_b4_short_usd=_implied_b4_short_usd,
+            min_usd=b4_attribution_min_usd,
+        ):
             apply_plan_b4_spot_pnl_override(
                 lot_components=_lot_components,
                 underlying=_u,
@@ -5904,6 +5958,15 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                         cols={"realized_pnl"},
                     )
                     _pnl_split_mode = f"sleeve_capacity_cap:{_cap_src}"
+
+        if not plan_b4_inject_active and abs(_ibkr_qty) > 1e-9:
+            collapse_spot_b4_pnl_into_b12(
+                _lot_components,
+                _u,
+                ledger_r_b1=_split_r_b1,
+                ledger_r_b2=_split_r_b2,
+                spot_carry_cols=_spot_carry_cols,
+            )
 
         # PnL spot ratios (FIFO ledger path / diagnostics).
         _spot_pnl_ratio = resolve_underlying_spot_ratios(

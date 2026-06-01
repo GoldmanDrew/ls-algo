@@ -22,6 +22,7 @@ from run_eod_pnl_email import (
     format_bucket_ytd_headline,
     format_eod_subject,
     format_top_underlying_net_exposure,
+    load_position_discrepancies,
     read_bucket_pnl_from_run,
     build_attribution_row,
     split_long_short_realized_unrealized,
@@ -663,4 +664,54 @@ def test_format_bucket_email_block_includes_pnl_and_exposure(tmp_path, monkeypat
     assert "PnL detail:" in block
     assert "Net exposure" in block
     assert "NVDA" in block
+
+
+def test_load_position_discrepancies_uses_optimal_target_usd(tmp_path, monkeypatch):
+    run_dir = tmp_path / "data" / "runs" / "2026-05-30"
+    flex_dir = run_dir / "ibkr_flex"
+    flex_dir.mkdir(parents=True)
+    (flex_dir / "flex_positions.xml").write_text(
+        """<?xml version="1.0"?>
+<FlexQueryResponse>
+  <FlexStatements>
+    <FlexStatement>
+      <OpenPositions>
+        <OpenPosition symbol="MTYY" position="-100" markPrice="4.0" fxRateToBase="1"
+          assetCategory="STK" description="MTYY" />
+      </OpenPositions>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>""",
+        encoding="utf-8",
+    )
+    screened = tmp_path / "data" / "etf_screened_today.csv"
+    screened.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([{"ETF": "MTYY", "Underlying": "MSTR", "delta": 1.0, "bucket": "bucket_2"}]).to_csv(
+        screened, index=False
+    )
+    pd.DataFrame(
+        [
+            {
+                "ETF": "MTYY",
+                "Underlying": "MSTR",
+                "long_usd": 1000.0,
+                "short_usd": -3000.0,
+                "optimal_long_usd": 5000.0,
+                "optimal_short_usd": -15000.0,
+                "strategy_tag": "ls",
+            }
+        ]
+    ).to_csv(run_dir / "proposed_trades.csv", index=False)
+
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / "strategy_config.yml").write_text(
+        "strategy:\n  tag: ls\n  blacklist: []\n", encoding="utf-8"
+    )
+
+    monkeypatch.setattr("run_eod_pnl_email.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr("run_eod_pnl_email.RUNS_ROOT", tmp_path / "data" / "runs")
+    df = load_position_discrepancies("2026-05-30")
+    row = df[df["symbol"] == "MTYY"].iloc[0]
+    assert row["target_net_usd"] == pytest.approx(-15000.0)
 

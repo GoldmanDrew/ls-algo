@@ -3,7 +3,7 @@
   "fifo_summary_present": true,
   "total_realized_pnl": 24266.021249289995,
   "total_unrealized_pnl": 33005.904569000006,
-  "total_dividends": 576.7699999999999,
+  "total_dividends": 576.77,
   "total_withholding_tax": -7.89,
   "total_pil_dividends": -22193.980000000003,
   "total_borrow_fees": -12302.45,
@@ -17,18 +17,18 @@
   "borrow_details_file_present": true,
   "borrow_details_rows_cumulative": 320,
   "universe_source": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\etf_screened_today.csv",
-  "universe_allowed_etfs": 492,
+  "universe_allowed_etfs": 494,
   "universe_allowed_underlyings": 240,
   "kept_symbols": 513,
   "kept_underlyings": 198,
-  "net_exposure_total": 4894.190573466003,
-  "gross_exposure_total": 3881952.069426534,
-  "net_exposure_bucket_1": 5132.3102800919005,
-  "gross_exposure_bucket_1": 3746637.30137397,
-  "net_exposure_bucket_2": -238.11970662588158,
-  "gross_exposure_bucket_2": 135314.76805256392,
-  "net_exposure_bucket_3": 96907.18311684721,
-  "gross_exposure_bucket_3": 96907.18311684721,
+  "net_exposure_total": 4979.421723050902,
+  "gross_exposure_total": 3881866.8382769492,
+  "net_exposure_bucket_1": 5255.7313733843985,
+  "gross_exposure_bucket_1": 3746541.835221919,
+  "net_exposure_bucket_2": -276.30965033349725,
+  "gross_exposure_bucket_2": 135325.0030550299,
+  "net_exposure_bucket_3": 96882.50291219041,
+  "gross_exposure_bucket_3": 96882.50291219041,
   "net_exposure_bucket_4": 0.0,
   "gross_exposure_bucket_4": 0.0,
   "net_exposure_unbucketed": 0.0,
@@ -77,8 +77,8 @@
     "TSLQ",
     "ZSL"
   ],
-  "net_exposure_bucket_1_full": 5132.3102800919005,
-  "net_exposure_bucket_2_full": -238.11970662588158,
+  "net_exposure_bucket_1_full": 5255.7313733843985,
+  "net_exposure_bucket_2_full": -276.30965033349725,
   "net_exposure_bucket_4_full": 0.0,
   "spot_ratio_max_diff": 1.1102230246251565e-16,
   "spot_ratio_max_diff_pnl": 0.989075843288949,
@@ -89,7 +89,7 @@
   "bucket_state_path": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\accounting\\underlying_bucket_state.csv",
   "bucket_realized_underlyings_from_trade_timing": 142,
   "pnl_underlying_scope": "bucket_1_2_4",
-  "bucket4_pairs": 63,
+  "bucket4_pairs": 64,
   "excluded_underlyings_exposure": [
     "APLD",
     "AXP",
@@ -114,9 +114,9 @@
     "SMZ"
   ],
   "bucket_pnl": {
-    "bucket_2": 24211.05197507332,
+    "bucket_2": 24224.231686175262,
     "bucket_3": 5415.525846650105,
     "bucket_4": 284.90400299,
-    "bucket_1": -4351.916006423425
+    "bucket_1": -4365.095717525367
   }
 }

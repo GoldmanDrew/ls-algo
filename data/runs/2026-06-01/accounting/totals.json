@@ -5,9 +5,9 @@
   "total_unrealized_pnl": 157078.868943,
   "total_dividends": 677.73,
   "total_withholding_tax": -15.7,
-  "total_pil_dividends": -51986.59999999999,
-  "total_borrow_fees": -29130.74,
-  "total_short_credit_interest": 4760.930000000001,
+  "total_pil_dividends": -51986.6,
+  "total_borrow_fees": -29130.739999999998,
+  "total_short_credit_interest": 4760.93,
   "total_other_fees": -1.82,
   "total_bond_interest": 0.0,
   "total_pnl": 102217.79114647,
@@ -16,7 +16,7 @@
   "borrow_total_account_source": -29130.74,
   "borrow_details_file_present": true,
   "borrow_details_rows_cumulative": 367,
-  "universe_source": "/home/runner/work/ls-algo/ls-algo/data/etf_screened_today.csv",
+  "universe_source": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\etf_screened_today.csv",
   "universe_allowed_etfs": 494,
   "universe_allowed_underlyings": 240,
   "kept_symbols": 558,
@@ -116,16 +116,24 @@
     "TSLQ",
     "ZSL"
   ],
+<<<<<<< Updated upstream
   "net_exposure_bucket_1_full": -93095.41944416697,
   "net_exposure_bucket_2_full": -12345.185672017094,
   "net_exposure_bucket_4_full": 142313.74993243362,
   "spot_ratio_max_diff": 0.0,
   "spot_ratio_max_diff_pnl": 0.8405127130541683,
+=======
+  "net_exposure_bucket_1_full": -93281.86846985065,
+  "net_exposure_bucket_2_full": -12334.139333301635,
+  "net_exposure_bucket_4_full": 142271.81813030242,
+  "spot_ratio_max_diff": 1.1102230246251565e-16,
+  "spot_ratio_max_diff_pnl": 0.8405092973508762,
+>>>>>>> Stashed changes
   "spot_ratio_gate_passed": true,
   "spot_ratio_gate_mode": "exposure_vs_plan_or_hedge_residual",
   "exposure_reconciliation_tol_gross_pct": 0.005,
   "exposure_reconciliation_tol_net_abs_usd": 10000.0,
-  "bucket_state_path": "/home/runner/work/ls-algo/ls-algo/data/accounting/underlying_bucket_state.csv",
+  "bucket_state_path": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\accounting\\underlying_bucket_state.csv",
   "bucket_realized_underlyings_from_trade_timing": 223,
   "pnl_underlying_scope": "bucket_1_2_4",
   "bucket4_pairs": 64,
@@ -153,6 +161,7 @@
     "SMZ"
   ],
   "bucket_pnl": {
+<<<<<<< Updated upstream
     "bucket_2": 73181.40441723121,
     "bucket_1": 24077.532814134844,
     "bucket_3": 9439.026480299757,
@@ -174,5 +183,11 @@
     "margin_req_bucket_1": 688855.8199737376,
     "margin_req_bucket_2": 523340.60742937186,
     "margin_req_bucket_4": 54434.6228450325
+=======
+    "bucket_2": 79687.28890915854,
+    "bucket_3": 9439.026480299757,
+    "bucket_4": 7079.754431940542,
+    "bucket_1": 6011.721325071155
+>>>>>>> Stashed changes
   }
 }

@@ -23,18 +23,18 @@
   "kept_underlyings": 86,
   "net_exposure_total": 16219.312639222224,
   "gross_exposure_total": 1580156.4788267778,
-  "net_exposure_bucket_1": 55401.752710465844,
-  "gross_exposure_bucket_1": 1488935.0611142039,
-  "net_exposure_bucket_2": 4483.665609836813,
-  "gross_exposure_bucket_2": 134887.52339365424,
+  "net_exposure_bucket_1": 59044.4516336065,
+  "gross_exposure_bucket_1": 1492577.7600373444,
+  "net_exposure_bucket_2": 9503.341424447844,
+  "gross_exposure_bucket_2": 139907.19920826526,
   "net_exposure_bucket_3": 2170.4593207800003,
   "gross_exposure_bucket_3": 2170.4593207800003,
-  "net_exposure_bucket_4": -43666.10568108043,
-  "gross_exposure_bucket_4": -43666.10568108043,
+  "net_exposure_bucket_4": -52328.48041883212,
+  "gross_exposure_bucket_4": -52328.48041883212,
   "net_exposure_unbucketed": 0.0,
   "gross_exposure_unbucketed": 0.0,
-  "net_exposure_bucket_4_pair": -43666.10568108043,
-  "gross_exposure_bucket_4_pair": 71221.05714708043,
+  "net_exposure_bucket_4_pair": -52328.48041883212,
+  "gross_exposure_bucket_4_pair": 79883.43188483211,
   "yfinance_override": false,
   "yfinance_symbols_overridden": 0,
   "bucket_split_method": "held_exposure",
@@ -47,7 +47,6 @@
   "plan_sleeve_bucketing": "sleeve_first",
   "b4_underlying_exposure_mode": "plan_structural",
   "b4_plan_exposure_underlyings": [
-    "ASTS",
     "CLSK",
     "COIN",
     "CRWV",
@@ -108,7 +107,7 @@
   "bucket_state_path": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\accounting\\underlying_bucket_state.csv",
   "bucket_realized_underlyings_from_trade_timing": 56,
   "pnl_underlying_scope": "bucket_1_2_4",
-  "bucket4_pairs": 39,
+  "bucket4_pairs": 38,
   "excluded_underlyings_exposure": [
     "APLD",
     "AXP",
@@ -132,9 +131,9 @@
     "SMUP"
   ],
   "bucket_pnl": {
-    "bucket_4": 2117.414545470948,
-    "bucket_1": 1189.7908344413938,
+    "bucket_4": 1729.2898110404858,
+    "bucket_1": 1005.1183287519741,
     "bucket_3": 118.33966166046002,
-    "bucket_2": -4200.940735112803
+    "bucket_2": -3628.1434949929203
   }
 }

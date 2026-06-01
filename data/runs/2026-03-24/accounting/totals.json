@@ -1,7 +1,7 @@
 {
   "run_date": "2026-03-24",
   "fifo_summary_present": true,
-  "total_realized_pnl": 15729.020845840001,
+  "total_realized_pnl": 15729.02084584,
   "total_unrealized_pnl": 6881.737644000008,
   "total_dividends": 242.25000000000006,
   "total_withholding_tax": 0.0,
@@ -120,9 +120,9 @@
     "SMUP"
   ],
   "bucket_pnl": {
-    "bucket_2": 10190.443097975145,
-    "bucket_1": 3957.0033239010063,
-    "bucket_4": 1329.0027238022442,
+    "bucket_2": 11755.48007381387,
+    "bucket_1": 2806.854206294527,
+    "bucket_4": 914.1148655700001,
     "bucket_3": -9093.270655838394
   }
 }

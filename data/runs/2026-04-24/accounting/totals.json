@@ -1,7 +1,7 @@
 {
   "run_date": "2026-04-24",
   "fifo_summary_present": true,
-  "total_realized_pnl": 23963.09606985,
+  "total_realized_pnl": 23963.09606984999,
   "total_unrealized_pnl": 26898.298791,
   "total_dividends": 569.27,
   "total_withholding_tax": -7.89,
@@ -17,18 +17,18 @@
   "borrow_details_file_present": true,
   "borrow_details_rows_cumulative": 291,
   "universe_source": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\etf_screened_today.csv",
-  "universe_allowed_etfs": 492,
+  "universe_allowed_etfs": 494,
   "universe_allowed_underlyings": 240,
   "kept_symbols": 504,
   "kept_underlyings": 198,
-  "net_exposure_total": 47844.61515668612,
-  "gross_exposure_total": 3578365.124843314,
-  "net_exposure_bucket_1": 54150.97336569159,
-  "gross_exposure_bucket_1": 3457983.0518881176,
-  "net_exposure_bucket_2": -62.60820900547804,
-  "gross_exposure_bucket_2": 126625.82295519611,
-  "net_exposure_bucket_3": 98888.4166530392,
-  "gross_exposure_bucket_3": 98888.4166530392,
+  "net_exposure_total": 47923.34975795841,
+  "gross_exposure_total": 3578286.390242041,
+  "net_exposure_bucket_1": 54292.6351678892,
+  "gross_exposure_bucket_1": 3457913.453946916,
+  "net_exposure_bucket_2": -125.53540993079426,
+  "gross_exposure_bucket_2": 126616.68629512542,
+  "net_exposure_bucket_3": 98863.8136537844,
+  "gross_exposure_bucket_3": 98863.8136537844,
   "net_exposure_bucket_4": -6243.75,
   "gross_exposure_bucket_4": -6243.75,
   "net_exposure_unbucketed": 0.0,
@@ -83,11 +83,11 @@
     "TSLQ",
     "ZSL"
   ],
-  "net_exposure_bucket_1_full": 47907.22336569159,
-  "net_exposure_bucket_2_full": -62.60820900547804,
+  "net_exposure_bucket_1_full": 48048.8851678892,
+  "net_exposure_bucket_2_full": -125.53540993079426,
   "net_exposure_bucket_4_full": 0.0,
   "spot_ratio_max_diff": 1.1102230246251565e-16,
-  "spot_ratio_max_diff_pnl": 0.9618567301775606,
+  "spot_ratio_max_diff_pnl": 1.0,
   "spot_ratio_gate_passed": true,
   "spot_ratio_gate_mode": "exposure_vs_plan_or_hedge_residual",
   "exposure_reconciliation_tol_gross_pct": 0.005,
@@ -95,7 +95,7 @@
   "bucket_state_path": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\accounting\\underlying_bucket_state.csv",
   "bucket_realized_underlyings_from_trade_timing": 141,
   "pnl_underlying_scope": "bucket_1_2_4",
-  "bucket4_pairs": 63,
+  "bucket4_pairs": 64,
   "excluded_underlyings_exposure": [
     "APLD",
     "AXP",
@@ -120,9 +120,9 @@
     "SMZ"
   ],
   "bucket_pnl": {
-    "bucket_2": 19946.308964794014,
+    "bucket_2": 19959.108819064546,
     "bucket_3": 3982.7921377246735,
-    "bucket_4": -611.3051432179409,
-    "bucket_1": -2783.54109845075
+    "bucket_4": -248.44030880432948,
+    "bucket_1": -3159.2057871348943
   }
 }

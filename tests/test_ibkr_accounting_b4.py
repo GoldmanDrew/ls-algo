@@ -10,6 +10,7 @@ from ibkr_accounting import (
     apply_plan_b4_spot_pnl_override,
     apply_spot_pnl_bucket_split,
     apply_yieldboost_spot_b2_override,
+    b4_spot_pnl_inject_eligible,
     compose_spot_pnl_bucket_fractions,
     ledger_pnl_split_b1_b2_ratios,
     apply_spot_bucket_eligibility,
@@ -377,6 +378,21 @@ def test_compute_plan_b4_structural_qty_signed_short() -> None:
     plan = {"MSTR": {"b1": 1000.0, "b2": 2000.0, "b4": -3000.0}}
     qty = compute_plan_b4_structural_qty(plan, "MSTR", 100.0)
     assert qty == pytest.approx(-30.0)
+
+
+def test_b4_spot_pnl_inject_eligible_requires_ledger_b4_qty() -> None:
+    assert not b4_spot_pnl_inject_eligible(
+        "IONQ",
+        ledger_b4_qty=0.0,
+        implied_b4_short_usd={"IONQ": -200_000.0},
+        min_usd=500.0,
+    )
+    assert b4_spot_pnl_inject_eligible(
+        "IONQ",
+        ledger_b4_qty=-100.0,
+        implied_b4_short_usd={},
+        min_usd=500.0,
+    )
 
 
 def test_plan_structural_underlying_short_on_net_long_spot() -> None:

@@ -1438,6 +1438,54 @@ def format_top_underlying_net_exposure(
     return "\n".join(lines)
 
 
+def format_b124_underlying_exposure_table(
+    exposure_csv: Path,
+    *,
+    blocked_keys: set[str] | None = None,
+) -> str:
+    """Full B1+B2+B4 net/gross exposure by underlying, sorted by net (high to low)."""
+    if not exposure_csv.exists():
+        return "(no net_exposure_by_underlying.csv)"
+
+    df = pd.read_csv(exposure_csv)
+    if df.empty or "underlying" not in df.columns or "net_notional_usd" not in df.columns:
+        return "(missing underlying/net columns in net_exposure_by_underlying.csv)"
+
+    df = df.copy()
+    df["underlying"] = df["underlying"].astype(str)
+    if blocked_keys:
+        df = df[~df["underlying"].isin(blocked_keys)].copy()
+    df["net_notional_usd"] = pd.to_numeric(df["net_notional_usd"], errors="coerce").fillna(0.0)
+    has_gross = "gross_notional_usd" in df.columns
+    if has_gross:
+        df["gross_notional_usd"] = pd.to_numeric(df["gross_notional_usd"], errors="coerce").fillna(0.0)
+
+    df = df.sort_values("net_notional_usd", ascending=False)
+    book_net = float(df["net_notional_usd"].sum())
+    book_gross = float(df["gross_notional_usd"].sum()) if has_gross else 0.0
+
+    label_w = max(10, max(len(str(u)) for u in df["underlying"]))
+    net_w = max(12, max(len(f"{v:,.0f}") for v in df["net_notional_usd"]))
+    gross_w = max(12, max(len(f"{v:,.0f}") for v in df["gross_notional_usd"])) if has_gross else 12
+
+    lines = [
+        f"Book net: ${book_net:+,.0f}  |  Book gross: ${book_gross:,.0f}",
+        "",
+        f"{'UNDERLYING'.ljust(label_w)}  {'NET_USD'.rjust(net_w)}"
+        + (f"  {'GROSS_USD'.rjust(gross_w)}" if has_gross else ""),
+        "-" * (label_w + net_w + (gross_w + 2 if has_gross else 0) + 2),
+    ]
+    for _, r in df.iterrows():
+        lab = str(r["underlying"])
+        net = f"{float(r['net_notional_usd']):,.0f}"
+        if has_gross:
+            gross = f"{float(r['gross_notional_usd']):,.0f}"
+            lines.append(f"{lab.ljust(label_w)}  {net.rjust(net_w)}  {gross.rjust(gross_w)}")
+        else:
+            lines.append(f"{lab.ljust(label_w)}  {net.rjust(net_w)}")
+    return "\n".join(lines)
+
+
 def read_bucket_pnl_from_run(run_date_str: str) -> tuple[float, float, float, float] | None:
     """
     Bucket YTD-style totals from a prior accounting run.
@@ -2343,14 +2391,25 @@ def load_position_discrepancies(run_date: str) -> pd.DataFrame:
     plan["Underlying"] = plan["Underlying"].astype(str).map(canonical_symbol)
     plan["long_usd"] = pd.to_numeric(plan.get("long_usd", 0.0), errors="coerce").fillna(0.0)
     plan["short_usd"] = pd.to_numeric(plan.get("short_usd", 0.0), errors="coerce").fillna(0.0)
+    long_col = "long_usd"
+    short_col = "short_usd"
+    if "optimal_long_usd" in plan.columns and "optimal_short_usd" in plan.columns:
+        plan["optimal_long_usd"] = pd.to_numeric(plan["optimal_long_usd"], errors="coerce").fillna(
+            plan["long_usd"]
+        )
+        plan["optimal_short_usd"] = pd.to_numeric(plan["optimal_short_usd"], errors="coerce").fillna(
+            plan["short_usd"]
+        )
+        long_col = "optimal_long_usd"
+        short_col = "optimal_short_usd"
 
     target_under = (
-        plan.groupby("Underlying", as_index=False)["long_usd"].sum()
-        .rename(columns={"Underlying": "symbol", "long_usd": "target_net_usd"})
+        plan.groupby("Underlying", as_index=False)[long_col].sum()
+        .rename(columns={"Underlying": "symbol", long_col: "target_net_usd"})
     )
     target_etf = (
-        plan.groupby("ETF", as_index=False)["short_usd"].sum()
-        .rename(columns={"ETF": "symbol", "short_usd": "target_net_usd"})
+        plan.groupby("ETF", as_index=False)[short_col].sum()
+        .rename(columns={"ETF": "symbol", short_col: "target_net_usd"})
     )
     target = pd.concat([target_under, target_etf], ignore_index=True)
     target = target[target["symbol"].astype(bool)].copy()
@@ -2728,6 +2787,13 @@ def main() -> int:
     method_block = f"{accounting_method_line}\n\n" if accounting_method_line else ""
     per_bucket_body = "\n".join(bucket_email_sections)
 
+    b124_pnl_table, _b124_pnl_total = format_underlying_table(pnl_under_csv, pnl_symbol_csv)
+    net_exp_under_csv = outdir / "net_exposure_by_underlying.csv"
+    b124_exp_table = format_b124_underlying_exposure_table(
+        net_exp_under_csv,
+        blocked_keys=blocked_exposure_keys,
+    )
+
     body = (
         f"As of: {asof}\n"
         f"Run date: {run_date} — Previous day mark-to-market\n\n"
@@ -2746,12 +2812,21 @@ def main() -> int:
         "ROC = YTD PnL / avg net capital when net capital is positive. "
         "ROG / ROM = YTD PnL divided by the matching averaged denominator.\n\n"
         f"{period_pnl_summary}\n\n"
+        f"B1+B2+B4 PnL BY UNDERLYING:\n"
+        "----------------------------------------\n"
+        f"{b124_pnl_table}\n"
+        "----------------------------------------\n\n"
+        f"B1+B2+B4 NET / GROSS EXPOSURE BY UNDERLYING (sorted by net, high to low):\n"
+        "----------------------------------------\n"
+        f"{b124_exp_table}\n"
+        "----------------------------------------\n\n"
         f"{per_bucket_body}"
         "Largest Position Discrepancies (actual net vs proposed target net):\n"
         "----------------------------------------\n"
         f"{discrepancy_table}\n"
         "----------------------------------------\n"
-        "UNDER flag = actual gross exposure is below target gross exposure.\n\n"
+        "UNDER flag = actual gross exposure is below target gross exposure.\n"
+        "TARGET_NET uses optimal_long_usd / optimal_short_usd (fully sized, pre-cap) when present.\n\n"
         f"{hist_summary}\n"
         "Attribution plot: long/short split uses EOD position sign (short if net shares < 0); "
         "realized on flat symbols is booked to long. Excluded cash interest is not in strategy total_pnl.\n\n"
@@ -2786,6 +2861,9 @@ def main() -> int:
         attachments.insert(1, pnl_symbol_csv)
     if pnl_bucket_csv.exists():
         attachments.append(pnl_bucket_csv)
+    net_exp_under_csv = outdir / "net_exposure_by_underlying.csv"
+    if net_exp_under_csv.exists():
+        attachments.append(net_exp_under_csv)
     seen: set[Path] = set()
     for csv_path in bucket_attachment_csvs:
         if csv_path not in seen:

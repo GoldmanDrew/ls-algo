@@ -1,12 +1,12 @@
 {
   "run_date": "2026-04-02",
   "fifo_summary_present": true,
-  "total_realized_pnl": 17694.36412968,
-  "total_unrealized_pnl": 14967.485448000021,
+  "total_realized_pnl": 17694.364129679998,
+  "total_unrealized_pnl": 14967.485447999992,
   "total_dividends": 438.81,
   "total_withholding_tax": 0.0,
-  "total_pil_dividends": -16863.510000000002,
-  "total_borrow_fees": -5992.77,
+  "total_pil_dividends": -16863.51,
+  "total_borrow_fees": -5992.7699999999995,
   "total_short_credit_interest": 872.6400000000001,
   "total_other_fees": 0.0,
   "total_bond_interest": 0.0,
@@ -23,18 +23,18 @@
   "kept_underlyings": 173,
   "net_exposure_total": 8093.3485140891,
   "gross_exposure_total": 2251981.1338859107,
-  "net_exposure_bucket_1": 95186.00638175962,
-  "gross_exposure_bucket_1": 2226572.1898607616,
-  "net_exposure_bucket_2": 5521.471611142014,
-  "gross_exposure_bucket_2": 118023.07350396203,
+  "net_exposure_bucket_1": 84471.01455383243,
+  "gross_exposure_bucket_1": 2215857.1980328346,
+  "net_exposure_bucket_2": 10541.147425753046,
+  "gross_exposure_bucket_2": 123042.74931857306,
   "net_exposure_bucket_3": 89184.22624729999,
   "gross_exposure_bucket_3": 89184.22624729999,
-  "net_exposure_bucket_4": -92614.12947881254,
-  "gross_exposure_bucket_4": -92614.12947881254,
+  "net_exposure_bucket_4": -86918.81346549637,
+  "gross_exposure_bucket_4": -86918.81346549637,
   "net_exposure_unbucketed": 0.0,
   "gross_exposure_unbucketed": 0.0,
-  "net_exposure_bucket_4_pair": -92614.12947881254,
-  "gross_exposure_bucket_4_pair": 92614.12947881254,
+  "net_exposure_bucket_4_pair": -86918.81346549637,
+  "gross_exposure_bucket_4_pair": 86918.81346549637,
   "yfinance_override": false,
   "yfinance_symbols_overridden": 0,
   "bucket_split_method": "held_exposure",
@@ -47,7 +47,6 @@
   "plan_sleeve_bucketing": "sleeve_first",
   "b4_underlying_exposure_mode": "plan_structural",
   "b4_plan_exposure_underlyings": [
-    "ASTS",
     "CLSK",
     "COIN",
     "CRWV",
@@ -64,7 +63,6 @@
   "b4_etf_implied_underlyings": [],
   "b4_attribution_sources": {
     "plan": [
-      "ASTS",
       "CLSK",
       "COIN",
       "CRWV",
@@ -108,7 +106,7 @@
   "bucket_state_path": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\accounting\\underlying_bucket_state.csv",
   "bucket_realized_underlyings_from_trade_timing": 122,
   "pnl_underlying_scope": "bucket_1_2_4",
-  "bucket4_pairs": 50,
+  "bucket4_pairs": 49,
   "excluded_underlyings_exposure": [
     "APLD",
     "AXP",
@@ -132,9 +130,9 @@
     "SMUP"
   ],
   "bucket_pnl": {
-    "bucket_4": 20080.707185552816,
-    "bucket_2": 3001.0072719859104,
-    "bucket_3": -4888.689521185415,
-    "bucket_1": -7076.005358673312
+    "bucket_1": 7804.043523093305,
+    "bucket_2": 7287.550710202109,
+    "bucket_4": 914.1148655700001,
+    "bucket_3": -4888.689521185415
   }
 }

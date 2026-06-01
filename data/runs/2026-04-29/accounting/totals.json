@@ -17,18 +17,18 @@
   "borrow_details_file_present": true,
   "borrow_details_rows_cumulative": 330,
   "universe_source": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\etf_screened_today.csv",
-  "universe_allowed_etfs": 492,
+  "universe_allowed_etfs": 494,
   "universe_allowed_underlyings": 240,
   "kept_symbols": 513,
   "kept_underlyings": 198,
-  "net_exposure_total": 74117.50037120248,
-  "gross_exposure_total": 3691247.1896287976,
-  "net_exposure_bucket_1": 74269.7100527701,
-  "gross_exposure_bucket_1": 3557152.119514827,
-  "net_exposure_bucket_2": -152.20968156762575,
-  "gross_exposure_bucket_2": 134095.07011397037,
-  "net_exposure_bucket_3": 100273.6832099932,
-  "gross_exposure_bucket_3": 100273.6832099932,
+  "net_exposure_total": 74201.16395312137,
+  "gross_exposure_total": 3691163.5260468787,
+  "net_exposure_bucket_1": 74394.16767462494,
+  "gross_exposure_bucket_1": 3557063.0802410273,
+  "net_exposure_bucket_2": -193.00372150354238,
+  "gross_exposure_bucket_2": 134100.44580585163,
+  "net_exposure_bucket_3": 100248.0590029404,
+  "gross_exposure_bucket_3": 100248.0590029404,
   "net_exposure_bucket_4": 0.0,
   "gross_exposure_bucket_4": 0.0,
   "net_exposure_unbucketed": 0.0,
@@ -77,10 +77,10 @@
     "TSLQ",
     "ZSL"
   ],
-  "net_exposure_bucket_1_full": 74269.7100527701,
-  "net_exposure_bucket_2_full": -152.20968156762575,
+  "net_exposure_bucket_1_full": 74394.16767462494,
+  "net_exposure_bucket_2_full": -193.00372150354238,
   "net_exposure_bucket_4_full": 0.0,
-  "spot_ratio_max_diff": 2.168404344971009e-19,
+  "spot_ratio_max_diff": 1.1102230246251565e-16,
   "spot_ratio_max_diff_pnl": 1.0,
   "spot_ratio_gate_passed": true,
   "spot_ratio_gate_mode": "exposure_vs_plan_or_hedge_residual",
@@ -89,7 +89,7 @@
   "bucket_state_path": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\accounting\\underlying_bucket_state.csv",
   "bucket_realized_underlyings_from_trade_timing": 142,
   "pnl_underlying_scope": "bucket_1_2_4",
-  "bucket4_pairs": 63,
+  "bucket4_pairs": 64,
   "excluded_underlyings_exposure": [
     "APLD",
     "AXP",
@@ -114,9 +114,9 @@
     "SMZ"
   ],
   "bucket_pnl": {
-    "bucket_2": 20331.854675107497,
+    "bucket_2": 20345.55813361876,
     "bucket_3": 3901.4734810153727,
     "bucket_4": 660.93488399,
-    "bucket_1": -903.247295822873
+    "bucket_1": -916.9507543341363
   }
 }

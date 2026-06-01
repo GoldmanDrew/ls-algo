@@ -21,6 +21,8 @@ accounting:
   b12_hedge_delta_floor: 0.25            # min |β| for hr = 1/|β| on B1/B2 ETF legs
   b12_pnl_mode: plan_b4_inject           # lot_timed_strict | plan_b4_inject (uses plan_b4_pnl_mode below)
   plan_b4_pnl_mode: inject_slice    # inject_slice: FIFO realized + plan-split unrealized | full_override (legacy)
+  # Do not retroactively inject plan B4 unrealized before live B4 trading began.
+  plan_b4_inject_start_date: "2026-05-12"
   # Sleeve-rotation: stale lot tags on closed yieldBOOST sleeves -> live sleeve (NVDA/GOOGL fix).
   spot_sleeve_rotation_retag: true
   spot_sleeve_rotation_tol: 0.05
