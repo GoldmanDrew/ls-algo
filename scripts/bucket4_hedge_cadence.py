@@ -421,7 +421,12 @@ def load_policy_from_config(cfg: Mapping[str, Any] | None) -> tuple[HedgeCadence
             .get("inverse_decay_bucket4", {})
             .get("rules", {})
         )
-        block = rules.get("hedge_cadence_policy", {}) or {}
+        # Accept both rules.hedge_cadence_policy and rules.bucket4_weekly_opt2.hedge_cadence_policy
+        block = (
+            rules.get("hedge_cadence_policy")
+            or (rules.get("bucket4_weekly_opt2", {}) or {}).get("hedge_cadence_policy")
+            or {}
+        )
     except Exception:
         block = {}
     knobs = HedgeCadenceKnobs.from_config(block)

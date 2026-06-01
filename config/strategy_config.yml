@@ -409,6 +409,55 @@ portfolio:
       # MINUS ``flow_program.universe.shorts`` (those are sized in the weekly flow sleeve).
       rules:
         partial_hedge_ratio: 0.75      # 1.0 = fully hedge inverse beta exposure
+        # ------------------------------------------------------------------
+        # Bucket 4 dynamic hedge + cadence engine (scripts/bucket4_hedge_cadence.py)
+        # Disabled by default -> sizing falls back to decay_score weighting and the
+        # legacy v6 hedge panel. Flip ``enabled: true`` to roll out (gradual ramp:
+        # raise target_weight / max_name_weight as comfort grows).
+        # ------------------------------------------------------------------
+        bucket4_weekly_opt2:
+          enabled: false
+          history_start: "2018-01-01"
+          weekly_rebalance_freq: "W-FRI"   # used only when hedge_cadence_policy.source = v6_panel
+          warmup_bdays: 65
+          fee_bps: 1.0
+          slippage_bps: 20.0               # realistic IBKR fill assumption from the A7 backtest
+          borrow_multiplier: 1.0
+          pf_min_pairs: 5
+          # Hedge ratio (h) + rebalance cadence (days) engine. Every output is
+          # reverse-engineerable from the printed inputs (TR, VCR, VCR_med).
+          hedge_cadence_policy:
+            source: tr_vcr                 # tr_vcr (new, explainable) | v6_panel (legacy)
+            # --- hedge ratio: h = clip(h_mid + k_vcr*(VCR-VCR_med), h_min, h_max), EMA(alpha)
+            h_mid: 0.55                     # neutral hedge (set to the v6 base to mimic v6 spirit)
+            k_vcr: 1.0                      # VCR sensitivity of h
+            h_min: 0.30
+            h_max: 0.80
+            alpha: 0.25                     # EMA smoothing on the daily h series (0 = off)
+            # --- cadence: days = clip(round(base_days / (1 + k_tr*(TR-1) + m_vcr*(VCR-VCR_med))), min, max)
+            base_days: 4.0
+            k_tr: 2.25
+            m_vcr: 2.5                      # mean-best A7 cadence sensitivity (39.4% CAGR @ 20bps)
+            min_interval: 1
+            max_interval: 10
+            # Discretionary per-name overrides (the ONLY sanctioned hand-tune). Bounded
+            # by h_min/h_max and min/max_interval regardless of values here.
+            name_tilt: {}
+            #   UVIX: { h_mult: 0.9, interval_mult: 1.0, note: "vol ETP tail-cap" }
+        # Grow-only ratchet: inverse-ETF short leg is floored at max(solved, held,
+        # persisted_floor); delta reduction flows through the underlying leg only.
+        ratchet:
+          enabled: false
+          state_json: data/b4_inverse_ratchet_state.json
+          reconcile_tolerance_usd: 250.0
+        # Sleeve-level drawdown governor: pause inverse adds + bias underlying hedge
+        # toward h_max on worst-DD pairs when trailing DD breaches thresholds.
+        drawdown_governor:
+          enabled: false
+          dd_freeze: 0.12                  # trailing DD that freezes new inverse adds
+          dd_derisk: 0.18                  # trailing DD that biases underlying hedge to h_max
+          dd_hedge_bump: 0.10              # additive bump toward h_max when derisking
+          state_json: data/b4_governor_state.json
         min_net_edge_annual: 0.35      # require bucket4_net_edge_annual >= this
         min_underlying_vol: 0.4      # universe entry: annual vol floor (aligned with DCQ bucket_4)
         excluded_etfs:                # never allocate inverse_decay_bucket4 to these tickers
