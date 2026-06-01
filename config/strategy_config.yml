@@ -12,11 +12,27 @@ accounting:
   b12_spot_split_method: ledger_fifo       # legacy PnL ledger split when b12_spot_pnl_method=ledger_fifo
   b12_spot_exposure_method: sleeve_balance  # net exposure: sleeve_balance | hedge_ratio | sleeve_offset | ledger_fifo | held_exposure_waterfall
   # Spot PnL sleeve attribution (defaults to b12_spot_exposure_method): long spot → B2/B1 hedge
-  # sleeves, structural short spot → B4. Set ledger_fifo to keep FIFO trade-tag split only.
-  b12_spot_pnl_method: sleeve_balance
+  # sleeves, structural short spot → B4. ``ledger_fifo`` keeps the lot-timed FIFO trade-tag
+  # split (realized by lot-close sleeve, unrealized by current cost basis) instead of smearing
+  # cumulative PnL by the *current* sleeve_balance hedge snapshot. Exposure stays sleeve_balance
+  # (current risk); PnL uses lot timing so a recently-grown sleeve cannot retroactively claim
+  # PnL earned while the spot hedged a different sleeve.
+  b12_spot_pnl_method: ledger_fifo
   b12_hedge_delta_floor: 0.25            # min |β| for hr = 1/|β| on B1/B2 ETF legs
-  b12_pnl_mode: lot_timed_strict           # lot_timed_strict | plan_b4_inject (uses plan_b4_pnl_mode below)
+  b12_pnl_mode: plan_b4_inject           # lot_timed_strict | plan_b4_inject (uses plan_b4_pnl_mode below)
   plan_b4_pnl_mode: inject_slice    # inject_slice: FIFO realized + plan-split unrealized | full_override (legacy)
+  # Sleeve-rotation: stale lot tags on closed yieldBOOST sleeves -> live sleeve (NVDA/GOOGL fix).
+  spot_sleeve_rotation_retag: true
+  spot_sleeve_rotation_tol: 0.05
+  spot_sleeve_dead_threshold: 0.05
+  # Capacity cap: lot tags overweight live B2 -> cap spot realized at live sleeve; excess -> B1.
+  spot_sleeve_capacity_cap: true
+  spot_sleeve_capacity_tol: 0.05
+  spot_sleeve_capacity_exclude_underlyings:
+    - AMD   # lot under-tags B2 vs live sleeve; do not pull realized from B2
+  # EOD email: use accounting bucket_pnl as-is (no continuity re-spread). Disable only for
+  # one-off methodology transitions where headline jumps must be smoothed vs prior run.
+  eod_bucket_pnl_continuity: false
   plan_sleeve_bucketing: sleeve_first  # sleeve_first | delta_first
   # All bucket-2 underlyings (yieldboost / 0<β≤1.5 ETFs) get full Flex replay by default.
   ledger_full_replay_include_bucket2: true

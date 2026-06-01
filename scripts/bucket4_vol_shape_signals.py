@@ -123,24 +123,46 @@ def get_pair_signal(
     underlying_prices: pd.Series | None = None,
     window: int = 60,
     lookahead_shift: int = 1,
+    prefer_underlying_recompute: bool = True,
     norm_sym: Callable[[str], str] = _default_norm,
 ) -> pd.DataFrame:
     """Per-pair TR/VCR aligned to *calendar* (ffill), shifted to avoid lookahead.
 
-    Source priority: ``history[ETF]`` first; if absent/empty and *underlying_prices* is
-    given, recompute from prices. ``vcr_med`` is filled with the expanding median of VCR
-    when missing so signal-relative policies still work.
+    **Cadence (continuous policy):** pass the **full** underlying ``b_px`` series from
+    ``PAIR_CACHE`` (include dates before ``START_SIM``) so the rolling ``window`` has
+    warmup. With only post-``START_SIM`` prices, the first ~``window`` simulation days
+    have no valid TR/VCR.
+
+    Source priority (``prefer_underlying_recompute=True``, default for Bucket-4 notebooks):
+    recompute TR/VCR from *underlying_prices* via ``vol_shape.build_underlying_vol_shape_history``.
+    Falls back to ``history[ETF]`` (etf-dashboard cache, often <=252 points) only when
+    underlying prices are unavailable.
     """
     cal = pd.DatetimeIndex(calendar)
     if getattr(cal, "tz", None) is not None:
         cal = cal.tz_convert("UTC").tz_localize(None)
     cal = cal.normalize()
 
-    df = history.get(norm_sym(etf))
-    source = "history"
-    if (df is None or df.empty) and underlying_prices is not None:
-        df = _recompute_signal_from_prices(underlying_prices, window=window)
-        source = "recompute"
+    hist_etf = history.get(norm_sym(etf))
+    rec = (
+        _recompute_signal_from_prices(underlying_prices, window=window)
+        if underlying_prices is not None
+        else None
+    )
+
+    if prefer_underlying_recompute and rec is not None and not rec.empty:
+        df = rec
+        source = "recompute_underlying"
+    elif hist_etf is not None and not hist_etf.empty:
+        df = hist_etf
+        source = "history_etf"
+    elif rec is not None and not rec.empty:
+        df = rec
+        source = "recompute_underlying"
+    else:
+        df = None
+        source = "missing"
+
     if df is None or df.empty:
         empty = pd.DataFrame(
             {"tr": np.nan, "vcr": np.nan, "vcr_med": np.nan},
@@ -176,11 +198,11 @@ def policy_continuous_interval(
     calendar: pd.DatetimeIndex,
     signal: pd.DataFrame,
     *,
-    base_days: float = 10.0,
-    k_tr: float = 1.5,
-    m_vcr: float = 2.0,
-    min_interval: int = 2,
-    max_interval: int = 42,
+    base_days: float = 4.0,
+    k_tr: float = 2.25,
+    m_vcr: float = 2.75,
+    min_interval: int = 1,
+    max_interval: int = 10,
     warmup_bdays: int = 0,
 ) -> tuple[pd.DatetimeIndex, pd.DataFrame]:
     """Cadence as a smooth function of TR & VCR.
@@ -301,6 +323,21 @@ def policy_every_n_days(
     return ix, pd.DataFrame({"date": ix, "n_days": n})
 
 
+def policy_label_continuous_drift(drift_long: float, drift_short: float) -> str:
+    """Stable policy id for continuous TR/VCR schedule + symmetric drift thresholds."""
+    return f"cont_drift_{int(round(float(drift_long) * 100)):02d}_{int(round(float(drift_short) * 100)):02d}"
+
+
+def parse_continuous_drift_policy(policy: str) -> tuple[float, float] | None:
+    """Parse ``cont_drift_LL_SS`` (percent integers) -> (drift_long, drift_short)."""
+    if not policy.startswith("cont_drift_"):
+        return None
+    parts = policy.replace("cont_drift_", "").split("_")
+    if len(parts) != 2:
+        return None
+    return float(parts[0]) / 100.0, float(parts[1]) / 100.0
+
+
 def rebalance_cadence_stats(rebal_dates: pd.DatetimeIndex) -> dict[str, float]:
     """Summary cadence metrics for a rebalance schedule."""
     ix = pd.DatetimeIndex(rebal_dates).sort_values().unique()
@@ -322,5 +359,7 @@ __all__ = [
     "policy_signal_change",
     "policy_fixed",
     "policy_every_n_days",
+    "policy_label_continuous_drift",
+    "parse_continuous_drift_policy",
     "rebalance_cadence_stats",
 ]

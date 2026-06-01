@@ -72,6 +72,11 @@ def main() -> int:
     parser.add_argument("--to-date", default=None, help="Last run date to restate, inclusive.")
     parser.add_argument("--resume", action="store_true", help="Continue from the existing bucket state instead of resetting it.")
     parser.add_argument("--history-only", action="store_true", help="Only rebuild pnl_history.csv from existing totals.json files.")
+    parser.add_argument(
+        "--rebuild-dashboard",
+        action="store_true",
+        help="After restate, rebuild all risk_dashboard/data snapshots from accounting outputs.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print run dates without changing outputs.")
     args = parser.parse_args()
 
@@ -110,6 +115,21 @@ def main() -> int:
 
     rebuild_pnl_history(discover_run_dates())
     print(f"[RESTATE] wrote {PNL_HISTORY_CSV}")
+
+    if args.rebuild_dashboard:
+        cmd = [
+            sys.executable,
+            "-m",
+            "risk_dashboard.build_site",
+            "--all-dates",
+            "--runs-root",
+            str(RUNS_ROOT),
+            "--out-dir",
+            str(PROJECT_ROOT / "risk_dashboard" / "data"),
+        ]
+        print("[RESTATE] rebuilding risk dashboard snapshots")
+        subprocess.run(cmd, cwd=PROJECT_ROOT, check=True)
+
     print("[RESTATE] complete")
     return 0
 

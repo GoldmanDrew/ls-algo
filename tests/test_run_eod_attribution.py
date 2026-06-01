@@ -7,11 +7,14 @@ import pandas as pd
 
 from run_eod_pnl_email import (
     _bucket_pnl_from_totals,
+    _eod_bucket_pnl_continuity_enabled,
+    _load_flow_universe_sets,
     apply_bucket_pnl_continuity,
     compute_average_bucket_capital,
     compute_bucket_capital_snapshot,
     compute_period_pnl_deltas,
     format_bucket_return_table,
+    format_bucket_ytd_headline,
     format_top_underlying_net_exposure,
     read_bucket_pnl_from_run,
     build_attribution_row,
@@ -397,6 +400,7 @@ def test_apply_bucket_pnl_continuity_spreads_account_daily(tmp_path, monkeypatch
             acct / "pnl_by_bucket.csv", index=False
         )
     monkeypatch.setattr("run_eod_pnl_email.RUNS_ROOT", runs)
+    monkeypatch.setattr("run_eod_pnl_email._eod_bucket_pnl_continuity_enabled", lambda: True)
     fixed = apply_bucket_pnl_continuity(
         "2026-05-19",
         json.loads((runs / "2026-05-19" / "accounting" / "totals.json").read_text()),
@@ -433,6 +437,7 @@ def test_headline_bucket_pnl_uses_totals_not_misattributed_detail_csv(tmp_path, 
             encoding="utf-8",
         )
     monkeypatch.setattr("run_eod_pnl_email.RUNS_ROOT", runs)
+    monkeypatch.setattr("run_eod_pnl_email._eod_bucket_pnl_continuity_enabled", lambda: True)
     totals = json.loads((runs / "2026-05-19" / "accounting" / "totals.json").read_text())
     fixed = apply_bucket_pnl_continuity("2026-05-19", totals)
     headline = _bucket_pnl_from_totals(fixed)
@@ -477,4 +482,57 @@ def test_format_top_underlying_net_exposure_uses_book_rollup():
     assert "IBIT" in text
     assert "TINY" not in text
     assert "Buckets 1, 2 & 4 combined" in text or "stock sleeves" in text.lower()
+
+
+def test_apply_bucket_pnl_continuity_skipped_when_config_disabled(tmp_path, monkeypatch):
+    runs = tmp_path / "data" / "runs"
+    for d, bp, total in (
+        (
+            "2026-05-18",
+            {"bucket_1": 25426.75, "bucket_2": 28552.10, "bucket_3": 7809.71, "bucket_4": -2410.09},
+            59378.47,
+        ),
+        (
+            "2026-05-19",
+            {"bucket_1": 227261.17, "bucket_2": -180028.37, "bucket_3": 7344.99, "bucket_4": -1964.68},
+            52613.11,
+        ),
+    ):
+        acct = runs / d / "accounting"
+        acct.mkdir(parents=True)
+        (acct / "totals.json").write_text(
+            json.dumps({"total_pnl": total, "bucket_pnl": bp}),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr("run_eod_pnl_email.RUNS_ROOT", runs)
+    monkeypatch.setattr("run_eod_pnl_email._eod_bucket_pnl_continuity_enabled", lambda: False)
+    totals = json.loads((runs / "2026-05-19" / "accounting" / "totals.json").read_text())
+    fixed = apply_bucket_pnl_continuity("2026-05-19", totals)
+    assert fixed["bucket_pnl"]["bucket_1"] == pytest.approx(227261.17)
+
+
+def test_load_flow_universe_sets_reads_bucket2_flow_low_delta_symbols(tmp_path, monkeypatch):
+    runs = tmp_path / "data" / "runs" / "2026-05-30" / "accounting"
+    runs.mkdir(parents=True)
+    (runs / "totals.json").write_text(
+        json.dumps({"bucket2_flow_low_delta_symbols": ["NVYY", "TSYY"]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("run_eod_pnl_email.RUNS_ROOT", tmp_path / "data" / "runs")
+    _, flow_low = _load_flow_universe_sets("2026-05-30")
+    assert flow_low == {"NVYY", "TSYY"}
+
+
+def test_format_bucket_ytd_headline_lists_all_buckets():
+    text = format_bucket_ytd_headline(
+        {
+            "bucket_1": 100.0,
+            "bucket_2": 200.0,
+            "bucket_3": 50.0,
+            "bucket_4": -10.0,
+        }
+    )
+    assert "Bucket 1: 100.00" in text
+    assert "Bucket 2: 200.00" in text
+    assert "Stock sleeves (B1+B2+B4): 290.00" in text
 

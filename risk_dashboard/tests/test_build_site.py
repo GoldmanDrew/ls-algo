@@ -9,6 +9,7 @@ import pytest
 
 from risk_dashboard.build_site import (
     _compute_deltas,
+    _discover_accounting_run_dates,
     _extract_history_point,
     _load_history,
 )
@@ -61,6 +62,16 @@ def test_load_history_skips_current_and_sorts(tmp_path: Path):
     _write_snapshot(tmp_path, "2026-05-18")
     history = _load_history(tmp_path, current_date="2026-05-18")
     assert [p["run_date"] for p in history] == ["2026-05-14", "2026-05-15"]
+
+
+def test_discover_accounting_run_dates_requires_totals_json(tmp_path: Path):
+    runs = tmp_path / "runs"
+    for d in ("2026-05-15", "2026-05-18"):
+        day = runs / d / "accounting"
+        day.mkdir(parents=True)
+        (day / "totals.json").write_text("{}", encoding="utf-8")
+    (runs / "2026-05-19").mkdir()
+    assert _discover_accounting_run_dates(runs) == ["2026-05-15", "2026-05-18"]
 
 
 def test_compute_deltas_handles_missing_prior():

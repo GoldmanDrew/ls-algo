@@ -1,5 +1,5 @@
 run_date,underlying,plan_b4_usd,plan_b4_qty,etf_implied_short_usd,etf_implied_short_qty,b4_source,ledger_qty_b4,ibkr_qty,orphan_qty,orphan_frac,ledger_missing_b4,plan_exposure_active
-2026-04-29,AMD,0.0,0.0,0.0,0.0,none,0.0,174.0,3.0,0.017241379310344827,False,False
+2026-04-29,AMD,0.0,0.0,0.0,0.0,none,0.0,174.0,3.0000000000000284,0.01724137931034499,False,False
 2026-04-29,ASTS,0.0,0.0,0.0,0.0,none,0.0,171.0,9.0,0.05263157894736842,False,False
 2026-04-29,AUR,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
 2026-04-29,AXON,0.0,0.0,0.0,0.0,none,0.0,1.0,0.0,0.0,False,False
@@ -7,14 +7,14 @@ run_date,underlying,plan_b4_usd,plan_b4_qty,etf_implied_short_usd,etf_implied_sh
 2026-04-29,BKNG,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
 2026-04-29,BLSH,0.0,0.0,0.0,0.0,none,0.0,240.0,18.0,0.075,False,False
 2026-04-29,BMNR,0.0,0.0,0.0,0.0,none,0.0,901.0,0.0,0.0,False,False
-2026-04-29,CELH,0.0,0.0,0.0,0.0,none,0.0,0.0,-158.0,0.0,False,False
-2026-04-29,CLSK,0.0,0.0,0.0,0.0,none,0.0,790.0,0.0,0.0,False,False
-2026-04-29,COIN,0.0,0.0,0.0,0.0,none,0.0,112.0,2.0,0.017857142857142856,False,False
+2026-04-29,CELH,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
+2026-04-29,CLSK,0.0,0.0,0.0,0.0,none,-960.0,790.0,0.0,0.0,False,False
+2026-04-29,COIN,0.0,0.0,0.0,0.0,none,0.0,112.0,1.9999999999999858,0.01785714285714273,False,False
 2026-04-29,CRCL,0.0,0.0,0.0,0.0,none,0.0,304.0,0.0,0.0,False,False
 2026-04-29,CRWV,0.0,0.0,0.0,0.0,none,0.0,341.0,9.0,0.026392961876832845,False,False
-2026-04-29,DASH,0.0,0.0,0.0,0.0,none,0.0,0.0,-48.0,0.0,False,False
-2026-04-29,DIA,0.0,0.0,0.0,0.0,none,0.0,0.0,36.0,0.0,False,False
-2026-04-29,DKNG,0.0,0.0,0.0,0.0,none,0.0,43.0,15.0,0.3488372093023256,False,False
+2026-04-29,DASH,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
+2026-04-29,DIA,0.0,0.0,0.0,0.0,none,-52.94117647058823,0.0,0.0,0.0,False,False
+2026-04-29,DKNG,0.0,0.0,0.0,0.0,none,0.0,43.0,15.000000000000014,0.3488372093023259,False,False
 2026-04-29,HOOD,0.0,0.0,0.0,0.0,none,0.0,232.0,4.0,0.017241379310344827,False,False
 2026-04-29,IBIT,0.0,0.0,0.0,0.0,none,0.0,932.0,14.0,0.015021459227467811,False,False
 2026-04-29,IONQ,0.0,0.0,0.0,0.0,none,0.0,750.0,0.0,0.0,False,False
@@ -23,7 +23,7 @@ run_date,underlying,plan_b4_usd,plan_b4_qty,etf_implied_short_usd,etf_implied_sh
 2026-04-29,KEEL,0.0,0.0,0.0,0.0,none,0.0,4937.0,0.0,0.0,False,False
 2026-04-29,LITE,0.0,0.0,0.0,0.0,none,0.0,10.0,0.0,0.0,False,False
 2026-04-29,LYFT,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
-2026-04-29,MSTR,0.0,0.0,0.0,0.0,none,0.0,171.0,3.0,0.017543859649122806,False,False
+2026-04-29,MSTR,0.0,0.0,0.0,0.0,none,0.0,171.0,3.0000000000000284,0.017543859649122973,False,False
 2026-04-29,NBIS,0.0,0.0,0.0,0.0,none,0.0,278.0,0.0,0.0,False,False
 2026-04-29,NEM,0.0,0.0,0.0,0.0,none,0.0,17.0,0.0,0.0,False,False
 2026-04-29,NET,0.0,0.0,0.0,0.0,none,0.0,3.0,0.0,0.0,False,False
@@ -45,8 +45,8 @@ run_date,underlying,plan_b4_usd,plan_b4_qty,etf_implied_short_usd,etf_implied_sh
 2026-04-29,TSM,0.0,0.0,0.0,0.0,none,0.0,45.0,1.0,0.022222222222222223,False,False
 2026-04-29,UPXI,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
 2026-04-29,USO,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
-2026-04-29,XLE,0.0,0.0,0.0,0.0,none,0.0,0.0,-168.0,0.0,False,False
+2026-04-29,XLE,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
 2026-04-29,XLF,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
-2026-04-29,XLK,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
+2026-04-29,XLK,0.0,0.0,0.0,0.0,none,-121.0,0.0,0.0,0.0,False,False
 2026-04-29,XOP,0.0,0.0,0.0,0.0,none,0.0,68.0,0.0,0.0,False,False
 2026-04-29,XRPZ,0.0,0.0,0.0,0.0,none,0.0,1722.0,0.0,0.0,False,False

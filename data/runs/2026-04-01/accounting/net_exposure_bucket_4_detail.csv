@@ -1,6 +1,6 @@
 underlying,symbol,leg_type,net_notional_usd,gross_notional_usd
 AXON,AXON,underlying,0.0,0.0
-CLSK,CLSK,underlying,0.0,0.0
+CLSK,CLSK,underlying,-8169.599999999999,8169.599999999999
 CRCL,CRCL,underlying,0.0,0.0
 CRWV,CRWV,underlying,0.0,0.0
 IBIT,IBIT,underlying,0.0,0.0

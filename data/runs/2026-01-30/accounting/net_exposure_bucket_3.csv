@@ -1,4 +1,1 @@
-symbol,net_notional_usd,gross_notional_usd,n_legs
-AZYY,-697.2948260999999,697.2948260999999,1
-NVYY,-1804.6645454625002,1804.6645454625002,1
-TQQY,-2441.790351576,2441.790351576,1
+symbol,overlay_type,net_notional_usd,gross_notional_usd,n_legs

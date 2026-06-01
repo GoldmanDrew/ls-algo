@@ -190,6 +190,85 @@ def _apply_signed_bucket_trade(
     return remainder, remainder * px, realized
 
 
+def reconcile_spot_bucket_unrealized(
+    qty_b1: float,
+    qty_b2: float,
+    qty_b4: float,
+    cost_b1: float,
+    cost_b2: float,
+    cost_b4: float,
+    ibkr_qty: float,
+    px_now: float,
+    *,
+    flat_share_eps: float = 0.5,
+) -> dict[str, float]:
+    """Per-bucket spot unrealized PnL, reconciled to the physical line.
+
+    The per-bucket FIFO ledger tracks an independent qty AND cost basis for each
+    sleeve. When a physical round-trip is split across buckets (e.g. spot buys
+    tagged ``bucket_1`` and later sells tagged ``bucket_4`` via inverse-ETF
+    co-execution), the ledger can be left holding **offsetting opposite-sign
+    lots** (long in one bucket, short in another) whose independent cost bases
+    no longer net. Marking each bucket separately (``qty_b * px - cost_b``) then
+    manufactures large equal-and-opposite "phantom" unrealized PnL that cancels
+    at the account level but shreds the bucket attribution (e.g. DIA/XLK, fully
+    closed yet showing ±$25k across B1/B4).
+
+    This reconciles to two invariants before marking:
+
+    1. **Flat physical → zero unrealized.** If ``|ibkr_qty|`` is under
+       ``flat_share_eps`` the position is closed; there is nothing to mark, so
+       all per-bucket unrealized collapses to the (residual ≈ 0) conserved
+       total, parked on B1. Only realized PnL survives for closed names.
+    2. **No bucket may oppose the physical net sign.** Any bucket whose ledger
+       qty sign opposes ``sign(ibkr_qty)`` is a FIFO round-trip artifact: its
+       qty and cost are folded into the same-sign buckets (pro-rata by |qty|)
+       so the structural-short slice comes only from the explicit plan/implied
+       inject path, never from a phantom ledger short.
+
+    The conserved total ``Σ(qty_b * px - cost_b)`` is preserved exactly, so the
+    account-level and per-underlying PnL are unchanged; only the split moves.
+    """
+    qtys = {"bucket_1": float(qty_b1), "bucket_2": float(qty_b2), "bucket_4": float(qty_b4)}
+    costs = {"bucket_1": float(cost_b1), "bucket_2": float(cost_b2), "bucket_4": float(cost_b4)}
+    px = float(px_now)
+
+    def _mark(q: dict[str, float], c: dict[str, float]) -> dict[str, float]:
+        return {b: q[b] * px - c[b] for b in qtys}
+
+    um = _mark(qtys, costs)
+    total_um = sum(um.values())
+
+    # (1) Flat physical line: no position => no unrealized.
+    if abs(float(ibkr_qty)) < float(flat_share_eps):
+        return {"bucket_1": total_um, "bucket_2": 0.0, "bucket_4": 0.0}
+
+    net_sign = 1.0 if float(ibkr_qty) > 0 else -1.0
+    opposing = [b for b in qtys if qtys[b] * net_sign < -float(flat_share_eps)]
+    if not opposing:
+        return um
+
+    # (2) Fold opposing-sign phantom lots into the aligned buckets pro-rata.
+    aligned = [b for b in qtys if b not in opposing]
+    add_q = sum(qtys[b] for b in opposing)
+    add_c = sum(costs[b] for b in opposing)
+    new_q = dict(qtys)
+    new_c = dict(costs)
+    for b in opposing:
+        new_q[b] = 0.0
+        new_c[b] = 0.0
+    aligned_w = {b: abs(qtys[b]) for b in aligned}
+    wsum = sum(aligned_w.values())
+    if wsum > 1e-12:
+        for b in aligned:
+            new_q[b] += add_q * (aligned_w[b] / wsum)
+            new_c[b] += add_c * (aligned_w[b] / wsum)
+    elif aligned:
+        new_q[aligned[0]] += add_q
+        new_c[aligned[0]] += add_c
+    return _mark(new_q, new_c)
+
+
 # Supplemental ETF→Underlying mappings for securities that were traded as part
 # of the algo but are no longer in etf_screened_today.csv (e.g. closed positions
 # from rotations).  These get merged into the CSV-based map so their realized
@@ -2496,6 +2575,7 @@ def apply_spot_pnl_bucket_split(
     r_b2: float,
     r_b4: float,
     spot_carry_cols: set[str],
+    cols: set[str] | None = None,
 ) -> None:
     """Redistribute IBKR spot PnL across buckets using signed sleeve fractions."""
     u_rows = df[
@@ -2510,7 +2590,11 @@ def apply_spot_pnl_bucket_split(
         "bucket_2": float(r_b2),
         "bucket_4": float(r_b4),
     }
-    override_cols = {"realized_pnl", "unrealized_pnl"} | set(spot_carry_cols)
+    override_cols = (
+        cols
+        if cols is not None
+        else ({"realized_pnl", "unrealized_pnl"} | set(spot_carry_cols))
+    )
     for col in override_cols:
         if col not in u_rows.columns:
             continue
@@ -4178,6 +4262,39 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     yieldboost_spot_b2_trade_underlyings = (
         _yieldboost_spot_b2_cfg if yieldboost_spot_b2_trade_tag else set()
     )
+    # Sleeve-rotation re-tag: when the FIFO lot tags point to a short-ETF
+    # sleeve no longer held (e.g. a yieldBOOST sleeve closed while the long
+    # spot persisted and now hedges the levered book), re-attribute the spot
+    # P&L to the live sleeve capacity (``ratio_spot_exposure``). Only fires
+    # when the lot tags diverge from the live sleeve beyond the tolerance, so
+    # genuinely held/mixed sleeves are left untouched.
+    spot_sleeve_rotation_retag = bool(
+        _acct_cfg.get("spot_sleeve_rotation_retag", True)
+    )
+    # Min lot-share for a bucket to count as "holding stale lots".
+    spot_sleeve_rotation_tol = float(
+        _acct_cfg.get("spot_sleeve_rotation_tol", 0.05)
+    )
+    # Live-sleeve weight below which a bucket is treated as "dead" (sleeve no
+    # longer held). The re-tag only fires when stale lots sit in a dead bucket.
+    spot_sleeve_dead_threshold = float(
+        _acct_cfg.get("spot_sleeve_dead_threshold", 0.05)
+    )
+    # Capacity cap: when open lot tags overweight B2 vs the live yieldBOOST sleeve
+    # (but B2 is still held — not a dead-sleeve rotation), re-attribute spot
+    # *realized* P&L to the live sleeve mix so excess lands in B1. Skips names
+    # in ``spot_sleeve_capacity_exclude_underlyings`` (e.g. AMD, under-tagged).
+    spot_sleeve_capacity_cap = bool(
+        _acct_cfg.get("spot_sleeve_capacity_cap", True)
+    )
+    spot_sleeve_capacity_tol = float(
+        _acct_cfg.get("spot_sleeve_capacity_tol", 0.05)
+    )
+    spot_sleeve_capacity_exclude = {
+        canonical_symbol(str(x))
+        for x in (_acct_cfg.get("spot_sleeve_capacity_exclude_underlyings") or [])
+        if str(x).strip()
+    }
     ledger_orphan_split_threshold = float(
         _acct_cfg.get("ledger_orphan_split_threshold", 0.10)
     )
@@ -5522,9 +5639,19 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         _px_rows = pos[pos["symbol"] == _u]
         if not _px_rows.empty:
             _px_now = float(_px_rows.iloc[0]["markPrice"]) * float(_px_rows.iloc[0]["fxRateToBase"])
-        _um1 = (_cur_b1 * _px_now) - float(_bucket_cost[_u]["bucket_1"])
-        _um2 = (_cur_b2 * _px_now) - float(_bucket_cost[_u]["bucket_2"])
-        _um4 = (_cur_b4 * _px_now) - float(_bucket_cost[_u]["bucket_4"])
+        _um_recon = reconcile_spot_bucket_unrealized(
+            _cur_b1,
+            _cur_b2,
+            _cur_b4,
+            float(_bucket_cost[_u]["bucket_1"]),
+            float(_bucket_cost[_u]["bucket_2"]),
+            float(_bucket_cost[_u]["bucket_4"]),
+            float(_spot_qty.get(_u, 0.0)),
+            _px_now,
+        )
+        _um1 = _um_recon["bucket_1"]
+        _um2 = _um_recon["bucket_2"]
+        _um4 = _um_recon["bucket_4"]
         if (abs(_um1) + abs(_um2) + abs(_um4)) > 1e-12:
             _ru1, _ru2, _ru4 = _normalize_bucket_triple(abs(_um1), abs(_um2), abs(_um4))
         else:
@@ -5690,6 +5817,93 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 b4_frac_signed=_b4_signed_frac[_u],
             )
             _pnl_split_mode = "inject_slice"
+
+        # ── Sleeve-rotation re-tag ──────────────────────────────────────────
+        # The plain lot-timed path freezes spot P&L in whatever bucket the
+        # FIFO lot was tagged at open. When a short-ETF sleeve is closed but
+        # the long spot persists (sleeve rotation), FIFO keeps closing the
+        # stale-tagged lots, mis-booking realized P&L to a sleeve that is no
+        # longer held (e.g. NVDA spot frozen in B2/yieldBOOST while the live
+        # short book is entirely levered/B1). Re-split the spot P&L to the
+        # live sleeve capacity (``_spot_exp_ratio``) when the lot tags diverge
+        # materially from it. Names whose lot tags already match the live
+        # sleeve (genuinely held yieldBOOST, e.g. SMCI/MSTR) are untouched.
+        if (
+            spot_sleeve_rotation_retag
+            and _pnl_split_mode == "lot_timed"
+            and abs(_ibkr_qty) > 1e-9
+        ):
+            _lot_tot = abs(_cur_b1) + abs(_cur_b2) + abs(_cur_b4)
+            if _lot_tot > 1e-9:
+                _lot_share = {
+                    "b1": abs(_cur_b1) / _lot_tot,
+                    "b2": abs(_cur_b2) / _lot_tot,
+                    "b4": abs(_cur_b4) / _lot_tot,
+                }
+                _live_w = {
+                    "b1": float(_spot_exp_ratio.b1),
+                    "b2": float(_spot_exp_ratio.b2),
+                    "b4": float(_spot_exp_ratio.b4),
+                }
+                # Fire only when stale lots are parked in a bucket whose live
+                # short-ETF sleeve is effectively gone (rotation). Names whose
+                # sleeves are all still held keep their lot-timed FIFO split.
+                _has_dead_sleeve = any(
+                    _lot_share[_b] > spot_sleeve_rotation_tol
+                    and _live_w[_b] < spot_sleeve_dead_threshold
+                    for _b in ("b1", "b2", "b4")
+                )
+                if _has_dead_sleeve:
+                    _rt1, _rt2, _rt4, _rt_src = compose_spot_pnl_bucket_fractions(
+                        _spot_exp_ratio,
+                        b4_frac_signed=_b4_signed_frac.get(_u),
+                    )
+                    apply_spot_pnl_bucket_split(
+                        lot_components=_lot_components,
+                        underlying=_u,
+                        df=df,
+                        r_b1=_rt1,
+                        r_b2=_rt2,
+                        r_b4=_rt4,
+                        spot_carry_cols=_spot_carry_cols,
+                    )
+                    _pnl_split_mode = f"sleeve_rotation_retag:{_rt_src}"
+
+        # ── Live-sleeve capacity cap (realized spot only) ───────────────────
+        # When lot tags park more shares in B2 than the live yieldBOOST sleeve
+        # can justify (e.g. SMCI lot 99% B2 vs live 72%), cap spot *realized*
+        # at the live sleeve fraction and push excess to B1. Only on lot_timed
+        # names (dead-sleeve retag already handled separately). Does not touch
+        # unrealized/carry or excluded underlyings (AMD is under-tagged B2).
+        if (
+            spot_sleeve_capacity_cap
+            and _pnl_split_mode == "lot_timed"
+            and str(_u) not in spot_sleeve_capacity_exclude
+            and abs(_ibkr_qty) > 1e-9
+        ):
+            _lot_tot_cap = abs(_cur_b1) + abs(_cur_b2) + abs(_cur_b4)
+            if _lot_tot_cap > 1e-9:
+                _lot_r2_cap = abs(_cur_b2) / _lot_tot_cap
+                _live_b2_cap = float(_spot_exp_ratio.b2)
+                if (
+                    _lot_r2_cap > _live_b2_cap + spot_sleeve_capacity_tol
+                    and _live_b2_cap >= spot_sleeve_dead_threshold
+                ):
+                    _cap1, _cap2, _cap4, _cap_src = compose_spot_pnl_bucket_fractions(
+                        _spot_exp_ratio,
+                        b4_frac_signed=_b4_signed_frac.get(_u),
+                    )
+                    apply_spot_pnl_bucket_split(
+                        lot_components=_lot_components,
+                        underlying=_u,
+                        df=df,
+                        r_b1=_cap1,
+                        r_b2=_cap2,
+                        r_b4=_cap4,
+                        spot_carry_cols=_spot_carry_cols,
+                        cols={"realized_pnl"},
+                    )
+                    _pnl_split_mode = f"sleeve_capacity_cap:{_cap_src}"
 
         # PnL spot ratios (FIFO ledger path / diagnostics).
         _spot_pnl_ratio = resolve_underlying_spot_ratios(
@@ -5929,6 +6143,19 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     df.loc[neg_non_flow, "leg_class"] = "inverse_b4_etf"
     df.loc[is_etf & df["symbol"].isin(b4_etf_syms), "bucket"] = "bucket_4"
     df.loc[is_etf & df["symbol"].isin(b4_etf_syms), "leg_class"] = "inverse_b4_etf"
+    # Flow-program low-β yieldBOOST shorts (0 < β ≤ 1.5, e.g. NVYY/TSYY) belong
+    # to the flow program -> bucket_3 for P&L (their P&L is dominated by the
+    # PIL/dividend carry of the flow short, not the directional yieldBOOST
+    # sleeve). NOTE: this only re-labels the *P&L* bucket. The ETF leg is left
+    # in the B2 hedge sleeve for spot-ratio / exposure purposes so the
+    # proportional underlying spot split (e.g. NVDA/TSLA) is unaffected.
+    _flow_low_b3 = (
+        is_etf
+        & df["symbol"].isin(flow_low_delta_syms)
+        & (df["bucket"] == "")
+    )
+    df.loc[_flow_low_b3, "bucket"] = "bucket_3"
+    df.loc[_flow_low_b3, "leg_class"] = "flow_low_delta"
     df.loc[
         is_etf & (sym_beta > 1.5) & (df["bucket"] == ""),
         "bucket",

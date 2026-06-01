@@ -1,16 +1,16 @@
 {
   "run_date": "2026-03-24",
   "fifo_summary_present": true,
-  "total_realized_pnl": 15729.02084261,
+  "total_realized_pnl": 15729.020845840001,
   "total_unrealized_pnl": 6881.737644000008,
-  "total_dividends": 242.25,
+  "total_dividends": 242.25000000000006,
   "total_withholding_tax": 0.0,
   "total_pil_dividends": -12761.020000000002,
   "total_borrow_fees": -4581.45,
   "total_short_credit_interest": 872.6400000000001,
   "total_other_fees": 0.0,
   "total_bond_interest": 0.0,
-  "total_pnl": 6383.1784866099915,
+  "total_pnl": 6383.178489839993,
   "excluded_cash_interest_base": -759.1551274,
   "borrow_mode": "borrow_fee_details_cumulative_by_symbol",
   "borrow_total_account_source": -4581.450000000001,
@@ -33,15 +33,16 @@
   "gross_exposure_bucket_4": -1338.8112,
   "net_exposure_unbucketed": 0.0,
   "gross_exposure_unbucketed": 0.0,
-  "net_exposure_bucket_4_pair": 13179.620399999998,
-  "gross_exposure_bucket_4_pair": 17105.6028,
+  "net_exposure_bucket_4_pair": 3598.820399999997,
+  "gross_exposure_bucket_4_pair": 26686.4028,
   "yfinance_override": false,
   "yfinance_symbols_overridden": 0,
   "bucket_split_method": "held_exposure",
   "bucket_component_split_method": "lot_timed",
   "b12_spot_split_method": "ledger_fifo",
   "b12_spot_exposure_method": "sleeve_balance",
-  "b12_pnl_mode": "lot_timed_strict",
+  "b12_spot_pnl_method": "ledger_fifo",
+  "b12_pnl_mode": "plan_b4_inject",
   "plan_b4_pnl_mode": "inject_slice",
   "plan_sleeve_bucketing": "sleeve_first",
   "b4_underlying_exposure_mode": "plan_structural",
@@ -93,7 +94,7 @@
   "exposure_reconciliation_tol_gross_pct": 0.005,
   "exposure_reconciliation_tol_net_abs_usd": 10000.0,
   "bucket_state_path": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\accounting\\underlying_bucket_state.csv",
-  "bucket_realized_underlyings_from_trade_timing": 247,
+  "bucket_realized_underlyings_from_trade_timing": 110,
   "pnl_underlying_scope": "bucket_1_2_4",
   "bucket4_pairs": 42,
   "excluded_underlyings_exposure": [
@@ -119,9 +120,9 @@
     "SMUP"
   ],
   "bucket_pnl": {
-    "bucket_2": 19840.231917906553,
-    "bucket_4": 913.5498655700001,
-    "bucket_1": -5169.611532172129,
-    "bucket_3": -9200.99176469442
+    "bucket_2": 10190.443097975145,
+    "bucket_1": 3957.0033239010063,
+    "bucket_4": 1329.0027238022442,
+    "bucket_3": -9093.270655838394
   }
 }

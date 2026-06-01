@@ -450,6 +450,31 @@ def format_bucket_table(pnl_bucket_csv: Path) -> str:
     return "\n".join(lines).rstrip()
 
 
+def format_bucket_ytd_headline(bucket_pnl: dict[str, float]) -> str:
+    """Compact YTD PnL by accounting bucket for the email headline block."""
+    lines = ["YTD PnL BY BUCKET (accounting):"]
+    for bucket in BUCKET_KEYS:
+        pnl = float(bucket_pnl.get(bucket, 0.0) or 0.0)
+        lines.append(f"  {BUCKET_LABELS[bucket]}: {pnl:,.2f}")
+    stock = _stock_sleeves_pnl_from_buckets(bucket_pnl)
+    lines.append(f"  Stock sleeves (B1+B2+B4): {stock:,.2f}")
+    return "\n".join(lines)
+
+
+def format_accounting_method_line(totals: dict) -> str:
+    """One-line note of the accounting attribution settings used for this run."""
+    keys = (
+        "b12_spot_pnl_method",
+        "b12_pnl_mode",
+        "plan_b4_pnl_mode",
+        "b12_spot_exposure_method",
+    )
+    parts = [f"{k}={totals[k]}" for k in keys if totals.get(k)]
+    if not parts:
+        return ""
+    return "Accounting: " + ", ".join(parts)
+
+
 def ensure_ledger_dir() -> None:
     LEDGER_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -571,14 +596,25 @@ def _load_flow_universe_sets(run_date: str) -> tuple[set[str], set[str]]:
     if totals_path.exists():
         try:
             obj = json.loads(totals_path.read_text(encoding="utf-8"))
-            flow_low = {
-                canonical_symbol(x)
-                for x in (obj.get("bucket3_flow_low_delta_symbols") or [])
-                if str(x).strip()
-            }
+            for key in ("bucket2_flow_low_delta_symbols", "bucket3_flow_low_delta_symbols"):
+                flow_low |= {
+                    canonical_symbol(x)
+                    for x in (obj.get(key) or [])
+                    if str(x).strip()
+                }
         except Exception:
             pass
     return flow_short, flow_low
+
+
+def _eod_bucket_pnl_continuity_enabled() -> bool:
+    """When false, EOD uses raw accounting bucket_pnl (post-restate ledger_fifo default)."""
+    cfg_path = PROJECT_ROOT / "config" / "strategy_config.yml"
+    if not cfg_path.exists():
+        return False
+    cfg = load_config(cfg_path)
+    accounting_cfg = cfg.get("accounting", {}) or {}
+    return bool(accounting_cfg.get("eod_bucket_pnl_continuity", False))
 
 
 def _bucket_pnl_from_totals(totals: dict) -> dict[str, float]:
@@ -728,7 +764,13 @@ def apply_bucket_pnl_continuity(run_date: str, totals: dict) -> dict:
     """
     If bucket YTD jumps are implausible vs the prior run, rewrite bucket_pnl in
     totals.json and pnl_by_bucket.csv using prior-day bucket weights.
+
+    Disabled by default (``accounting.eod_bucket_pnl_continuity: false``) so EOD
+    reports match restated ledger_fifo accounting outputs.
     """
+    if not _eod_bucket_pnl_continuity_enabled():
+        return totals
+
     prior_date = _prior_accounting_run_date(run_date)
     if not prior_date:
         return totals
@@ -2297,6 +2339,9 @@ def main() -> int:
     totals = apply_bucket_pnl_continuity(run_date, totals)
     total_pnl = float(totals.get("total_pnl", 0.0))
     headline_bucket_pnl = _bucket_pnl_from_totals(totals)
+    bucket_ytd_headline = format_bucket_ytd_headline(headline_bucket_pnl)
+    accounting_method_line = format_accounting_method_line(totals)
+    continuity_active = _eod_bucket_pnl_continuity_enabled()
 
     # 4) Underlying + bucket summary tables
     underlying_table, underlying_total = format_underlying_table(pnl_under_csv, pnl_symbol_csv)
@@ -2435,21 +2480,31 @@ def main() -> int:
 
     detail_note = ""
     if detail_mismatch:
-        detail_note = (
-            "Note: stock sleeves underlying detail table may not sum to the headline total; "
-            "headline uses continuity-adjusted totals.json / pnl_by_bucket.csv.\n\n"
-        )
+        if continuity_active:
+            detail_note = (
+                "Note: stock sleeves underlying detail table may not sum to the headline total; "
+                "headline uses continuity-adjusted totals.json / pnl_by_bucket.csv.\n\n"
+            )
+        else:
+            detail_note = (
+                "Note: stock sleeves underlying detail table may not sum to the headline total; "
+                "check pnl_by_underlying.csv vs totals.json bucket_pnl.\n\n"
+            )
+
+    method_block = f"{accounting_method_line}\n\n" if accounting_method_line else ""
 
     body = (
         f"As of: {asof}\n"
         f"Run date: {run_date} — Previous day mark-to-market\n"
         f"{top_exposure_line}\n\n"
+        f"{method_block}"
         f"{detail_note}"
         f"Position discrepancy rows: {len(discrepancy_df)} "
         f"(under-exposed: {under_exposed_count})\n\n"
         f"TOTAL PnL (base): {total_pnl:,.2f}\n"
         f"  Stock sleeves (B1+B2+B4): {display_pnl_map['stock_sleeves']:,.2f}\n"
         f"  Bucket 3 (Inverse / Hedge): {display_pnl_map['bucket_3']:,.2f}\n\n"
+        f"{bucket_ytd_headline}\n\n"
         f"SLEEVE RETURNS ON CAPITAL (denominators = average per-day capital since {START_DATE}):\n"
         "----------------------------------------\n"
         f"{bucket_return_table}\n"

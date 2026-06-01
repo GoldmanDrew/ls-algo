@@ -1,7 +1,6 @@
 underlying,symbols,net_notional_usd,gross_notional_usd,n_legs
 AXON,AXON,0.0,0.0,1
 BE,BE,0.0,0.0,1
-CLSK,CLSK,0.0,0.0,1
 CRCL,CRCL,0.0,0.0,1
 CRWV,CRWV,0.0,0.0,1
 IBIT,IBIT,0.0,0.0,1
@@ -15,3 +14,4 @@ SOXX,SOXX,0.0,0.0,1
 XLE,XLE,0.0,0.0,1
 XOP,XOP,0.0,0.0,1
 XRPZ,XRPZ,0.0,0.0,1
+CLSK,CLSK,-8736.0,8736.0,1

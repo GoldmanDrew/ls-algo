@@ -9,21 +9,145 @@
       "info": {}
     },
     "AAOI": {
-      "fetched_at_epoch": 1780160170.8274918,
+      "fetched_at_epoch": 1780328606.69045,
       "info": {}
     },
     "SVIX": {
-      "fetched_at_epoch": 1780160170.8274918,
+      "fetched_at_epoch": 1780328606.69045,
       "info": {}
     },
     "SBUX": {
-      "fetched_at_epoch": 1780160170.8274918,
+      "fetched_at_epoch": 1780328606.69045,
       "info": {}
     },
     "BIDU": {
-      "fetched_at_epoch": 1780160170.8274918,
+      "fetched_at_epoch": 1780328606.69045,
+      "info": {}
+    },
+    "XOM": {
+      "fetched_at_epoch": 1780327610.5519783,
+      "info": {}
+    },
+    "ABNB": {
+      "fetched_at_epoch": 1780327610.5519783,
+      "info": {}
+    },
+    "COST": {
+      "fetched_at_epoch": 1780327610.5519783,
+      "info": {}
+    },
+    "ISRG": {
+      "fetched_at_epoch": 1780327610.5519783,
+      "info": {}
+    },
+    "CSCO": {
+      "fetched_at_epoch": 1780327610.5519783,
+      "info": {}
+    },
+    "LMT": {
+      "fetched_at_epoch": 1780326760.8393524,
+      "info": {}
+    },
+    "MDB": {
+      "fetched_at_epoch": 1780327705.6063495,
+      "info": {}
+    },
+    "DASH": {
+      "fetched_at_epoch": 1780325344.862543,
+      "info": {}
+    },
+    "CELH": {
+      "fetched_at_epoch": 1780325344.862543,
+      "info": {}
+    },
+    "XLK": {
+      "fetched_at_epoch": 1780324679.3383565,
+      "info": {}
+    },
+    "F": {
+      "fetched_at_epoch": 1780327095.1970696,
+      "info": {}
+    },
+    "ASHR": {
+      "fetched_at_epoch": 1780327610.5519783,
+      "info": {}
+    },
+    "XLE": {
+      "fetched_at_epoch": 1780326760.8393524,
+      "info": {}
+    },
+    "EWJ": {
+      "fetched_at_epoch": 1780324679.3383565,
+      "info": {}
+    },
+    "SLV": {
+      "fetched_at_epoch": 1780324830.5361738,
+      "info": {}
+    },
+    "XLF": {
+      "fetched_at_epoch": 1780324679.3383565,
+      "info": {}
+    },
+    "XBI": {
+      "fetched_at_epoch": 1780327610.5519783,
+      "info": {}
+    },
+    "RTX": {
+      "fetched_at_epoch": 1780327610.5519783,
+      "info": {}
+    },
+    "SNPS": {
+      "fetched_at_epoch": 1780327785.0106134,
+      "info": {}
+    },
+    "AXON": {
+      "fetched_at_epoch": 1780325344.862543,
+      "info": {}
+    },
+    "PBR": {
+      "fetched_at_epoch": 1780326760.8393524,
+      "info": {}
+    },
+    "GSOL": {
+      "fetched_at_epoch": 1780327785.0106134,
+      "info": {}
+    },
+    "ORLY": {
+      "fetched_at_epoch": 1780327541.8136914,
+      "info": {}
+    },
+    "VALE": {
+      "fetched_at_epoch": 1780327610.5519783,
+      "info": {}
+    },
+    "SNDX": {
+      "fetched_at_epoch": 1780325191.4499614,
+      "info": {}
+    },
+    "DDOG": {
+      "fetched_at_epoch": 1780327785.0106134,
+      "info": {}
+    },
+    "HL": {
+      "fetched_at_epoch": 1780327610.5519783,
+      "info": {}
+    },
+    "ENPH": {
+      "fetched_at_epoch": 1780327705.6063495,
+      "info": {}
+    },
+    "FUTU": {
+      "fetched_at_epoch": 1780327610.5519783,
+      "info": {}
+    },
+    "CHNL": {
+      "fetched_at_epoch": 1780327610.5519783,
+      "info": {}
+    },
+    "IBM": {
+      "fetched_at_epoch": 1780327610.5519783,
       "info": {}
     }
   },
-  "updated_at_epoch": 1780160170.8274918
+  "updated_at_epoch": 1780328606.69045
 }
