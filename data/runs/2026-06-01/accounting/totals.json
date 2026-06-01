@@ -16,7 +16,7 @@
   "borrow_total_account_source": -29130.74,
   "borrow_details_file_present": true,
   "borrow_details_rows_cumulative": 367,
-  "universe_source": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\etf_screened_today.csv",
+  "universe_source": "/home/runner/work/ls-algo/ls-algo/data/etf_screened_today.csv",
   "universe_allowed_etfs": 494,
   "universe_allowed_underlyings": 240,
   "kept_symbols": 558,
@@ -26,7 +26,7 @@
   "net_exposure_bucket_1": 17129.821478769,
   "gross_exposure_bucket_1": 2663209.820880047,
   "net_exposure_bucket_2": 12020.09900659661,
-  "gross_exposure_bucket_2": 798419.0611568725,
+  "gross_exposure_bucket_2": 798419.0611568727,
   "net_exposure_bucket_3": 89544.95114552502,
   "gross_exposure_bucket_3": 90884.86775412499,
   "net_exposure_bucket_4": 8248.440716625979,
@@ -130,7 +130,7 @@
   "spot_ratio_gate_mode": "exposure_vs_plan_or_hedge_residual",
   "exposure_reconciliation_tol_gross_pct": 0.005,
   "exposure_reconciliation_tol_net_abs_usd": 10000.0,
-  "bucket_state_path": "C:\\Users\\werdn\\Documents\\Investing\\ls-algo\\data\\accounting\\underlying_bucket_state.csv",
+  "bucket_state_path": "/home/runner/work/ls-algo/ls-algo/data/accounting/underlying_bucket_state.csv",
   "bucket_realized_underlyings_from_trade_timing": 223,
   "pnl_underlying_scope": "bucket_1_2_4",
   "bucket4_pairs": 64,
@@ -159,8 +159,25 @@
   ],
   "bucket_pnl": {
     "bucket_2": 73138.1315797668,
-    "bucket_1": 24114.56084316615,
+    "bucket_1": 24114.560843166157,
     "bucket_3": 9439.026480299757,
     "bucket_4": -4473.927756762725
+  },
+  "capital_snapshot": {
+    "net_capital_stock_sleeves": -321034.20000000007,
+    "net_capital_bucket_3": 0.0,
+    "gross_capital_stock_sleeves": 3538700.826731482,
+    "gross_capital_bucket_3": 0.0,
+    "margin_req_stock_sleeves": 1265360.1586627644,
+    "margin_req_bucket_3": 0.0,
+    "net_capital_bucket_1": 466928.30412111135,
+    "net_capital_bucket_2": -691968.2686229565,
+    "net_capital_bucket_4": -95994.23549815497,
+    "gross_capital_bucket_1": 1800495.019856284,
+    "gross_capital_bucket_2": 1642211.5713770434,
+    "gross_capital_bucket_4": 95994.23549815497,
+    "margin_req_bucket_1": 687658.975065463,
+    "margin_req_bucket_2": 523269.0130858468,
+    "margin_req_bucket_4": 54432.1705114545
   }
 }
