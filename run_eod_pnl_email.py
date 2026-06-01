@@ -111,8 +111,6 @@ SUBJECT_BUCKET_SHORT: dict[str, str] = {
     "bucket_3": "B3",
     "bucket_4": "B4",
 }
-BUCKET_PNL_TOP_N = 25
-BUCKET_EXPOSURE_TOP_N = 20
 SUBJECT_MAX_LEN = 120
 # EOD email / history / plots: stock sleeves (B1+B2+B4) vs flow-inverse hedge (B3).
 DISPLAY_PNL_KEYS: tuple[str, ...] = ("stock_sleeves", "bucket_3")
@@ -326,7 +324,7 @@ def format_bucket_pnl_section(
     pnl_csv: Path,
     pnl_symbol_csv: Path,
     *,
-    top_n: int = BUCKET_PNL_TOP_N,
+    top_n: int | None = None,
 ) -> tuple[str, float]:
     """Format per-bucket PnL from accounting ``pnl_<bucket>.csv``."""
     if bucket == "bucket_3":
@@ -389,7 +387,7 @@ def format_bucket_exposure_section(
     *,
     exposure_detail_csv: Path | None = None,
     blocked_keys: set[str] | None = None,
-    top_n: int = BUCKET_EXPOSURE_TOP_N,
+    top_n: int | None = None,
 ) -> tuple[str, float, float]:
     """Format per-bucket net/gross exposure from accounting CSVs."""
     if not exposure_csv.exists():
@@ -665,26 +663,20 @@ PNL_HISTORY_CAPITAL_COLS = tuple(
     for metric in ("net_capital", "gross_capital", "margin_req")
     for bucket in BUCKET_KEYS
 )
-PNL_HISTORY_RETURN_BASE_COLS = PNL_HISTORY_DISPLAY_PNL_COLS + PNL_HISTORY_DISPLAY_CAPITAL_COLS
-
-
-def _stock_sleeves_pnl_from_buckets(buckets: dict[str, float]) -> float:
-    return sum(float(buckets.get(b, 0.0) or 0.0) for b in STOCK_SLEEVE_BUCKETS)
-
-
-def _consolidate_capital_snapshot(snap: dict[str, float]) -> dict[str, float]:
-    """Roll B1+B2+B4 capital into stock_sleeves; keep bucket_3 separate."""
-    out = {c: 0.0 for c in PNL_HISTORY_DISPLAY_CAPITAL_COLS}
-    for metric in ("net_capital", "gross_capital", "margin_req"):
-        out[f"{metric}_stock_sleeves"] = sum(
-            float(snap.get(f"{metric}_{b}", 0.0) or 0.0) for b in STOCK_SLEEVE_BUCKETS
+PNL_HISTORY_RETURN_BASE_COLS = tuple(
+    dict.fromkeys(
+        (
+            *PNL_HISTORY_BUCKET_COLS,
+            *PNL_HISTORY_DISPLAY_PNL_COLS,
+            *PNL_HISTORY_CAPITAL_COLS,
+            *PNL_HISTORY_DISPLAY_CAPITAL_COLS,
         )
-        out[f"{metric}_bucket_3"] = float(snap.get(f"{metric}_bucket_3", 0.0) or 0.0)
-    return out
+    )
+)
 
 
-def _migrate_pnl_history_to_display_cols(hist: pd.DataFrame) -> pd.DataFrame:
-    """Convert legacy four-bucket history rows to stock_sleeves + bucket_3."""
+def _ensure_pnl_history_derived_cols(hist: pd.DataFrame) -> pd.DataFrame:
+    """Ensure consolidated sleeve columns exist alongside per-bucket history columns."""
     if hist is None or hist.empty:
         return hist
     out = hist.copy()
@@ -693,6 +685,11 @@ def _migrate_pnl_history_to_display_cols(hist: pd.DataFrame) -> pd.DataFrame:
         if col in out.columns:
             return pd.to_numeric(out[col], errors="coerce").fillna(default)
         return pd.Series(default, index=out.index, dtype=float)
+
+    for bucket in BUCKET_KEYS:
+        col = f"pnl_{bucket}"
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
 
     if "pnl_stock_sleeves" not in out.columns:
         if any(c in out.columns for c in ("pnl_bucket_1", "pnl_bucket_2", "pnl_bucket_4")):
@@ -713,27 +710,49 @@ def _migrate_pnl_history_to_display_cols(hist: pd.DataFrame) -> pd.DataFrame:
         b3_col = f"{metric}_bucket_3"
         if b3_col not in out.columns:
             out[b3_col] = _col_series(f"{metric}_bucket_3", default=np.nan) if f"{metric}_bucket_3" in out.columns else np.nan
-    drop_cols = [
-        c
-        for c in out.columns
-        if c in {"pnl_bucket_1", "pnl_bucket_2", "pnl_bucket_4"}
-        or any(
-            c == f"{metric}_bucket_{suffix}"
-            for metric in ("net_capital", "gross_capital", "margin_req")
-            for suffix in ("1", "2", "4")
-        )
-    ]
-    return out.drop(columns=drop_cols, errors="ignore")
+    return out
+
+
+def _migrate_pnl_history_to_display_cols(hist: pd.DataFrame) -> pd.DataFrame:
+    """Backward-compatible alias for callers expecting the old migrate name."""
+    return _ensure_pnl_history_derived_cols(hist)
 
 
 def _canonical_pnl_history(hist: pd.DataFrame) -> pd.DataFrame:
-    """Keep only consolidated display columns in pnl_history.csv."""
+    """Persist per-bucket and consolidated sleeve columns in pnl_history.csv."""
     if hist is None or hist.empty:
         return hist
-    out = _migrate_pnl_history_to_display_cols(hist)
-    keep = ["date", "total_pnl", *PNL_HISTORY_DISPLAY_PNL_COLS, *PNL_HISTORY_DISPLAY_CAPITAL_COLS]
-    cols = [c for c in keep if c in out.columns]
+    out = _ensure_pnl_history_derived_cols(hist)
+    keep = [
+        "date",
+        "total_pnl",
+        *PNL_HISTORY_BUCKET_COLS,
+        *PNL_HISTORY_DISPLAY_PNL_COLS,
+        *PNL_HISTORY_CAPITAL_COLS,
+        *PNL_HISTORY_DISPLAY_CAPITAL_COLS,
+    ]
+    cols: list[str] = []
+    seen: set[str] = set()
+    for c in keep:
+        if c in out.columns and c not in seen:
+            cols.append(c)
+            seen.add(c)
     return out[cols].copy()
+
+
+def _stock_sleeves_pnl_from_buckets(buckets: dict[str, float]) -> float:
+    return sum(float(buckets.get(b, 0.0) or 0.0) for b in STOCK_SLEEVE_BUCKETS)
+
+
+def _consolidate_capital_snapshot(snap: dict[str, float]) -> dict[str, float]:
+    """Roll B1+B2+B4 capital into stock_sleeves; keep bucket_3 separate."""
+    out = {c: 0.0 for c in PNL_HISTORY_DISPLAY_CAPITAL_COLS}
+    for metric in ("net_capital", "gross_capital", "margin_req"):
+        out[f"{metric}_stock_sleeves"] = sum(
+            float(snap.get(f"{metric}_{b}", 0.0) or 0.0) for b in STOCK_SLEEVE_BUCKETS
+        )
+        out[f"{metric}_bucket_3"] = float(snap.get(f"{metric}_bucket_3", 0.0) or 0.0)
+    return out
 
 
 def _empty_bucket_capital_snapshot() -> dict[str, float]:
@@ -1291,13 +1310,13 @@ def _fmt_pct(value: float | None) -> str:
 
 def compute_average_bucket_capital(history: pd.DataFrame) -> dict[str, float]:
     """
-    Time-average each display capital column across persisted history rows.
+    Time-average each per-bucket capital column across persisted history rows.
     """
-    out = {c: 0.0 for c in PNL_HISTORY_DISPLAY_CAPITAL_COLS}
+    out = {c: 0.0 for c in PNL_HISTORY_CAPITAL_COLS}
     if history is None or history.empty:
         return out
-    hist = _migrate_pnl_history_to_display_cols(history)
-    for c in PNL_HISTORY_DISPLAY_CAPITAL_COLS:
+    hist = _ensure_pnl_history_derived_cols(history)
+    for c in PNL_HISTORY_CAPITAL_COLS:
         if c not in hist.columns:
             continue
         vals = pd.to_numeric(hist[c], errors="coerce").dropna()
@@ -1307,11 +1326,11 @@ def compute_average_bucket_capital(history: pd.DataFrame) -> dict[str, float]:
 
 
 def format_bucket_return_table(
-    display_pnl: dict[str, float],
+    bucket_pnl: dict[str, float],
     capital_snapshot: dict[str, float],
 ) -> str:
     headers = [
-        "SLEEVE",
+        "BUCKET",
         "PNL_YTD",
         "AVG_NET_CAP",
         "AVG_GROSS_CAP",
@@ -1321,19 +1340,19 @@ def format_bucket_return_table(
         "ROM",
     ]
     rows: list[list[str]] = []
-    for group in DISPLAY_PNL_KEYS:
-        pnl = float(display_pnl.get(group, 0.0) or 0.0)
-        net_cap = float(capital_snapshot.get(f"net_capital_{group}", 0.0) or 0.0)
-        gross_cap = float(capital_snapshot.get(f"gross_capital_{group}", 0.0) or 0.0)
-        margin_req = float(capital_snapshot.get(f"margin_req_{group}", 0.0) or 0.0)
+    for bucket in BUCKET_KEYS:
+        pnl = float(bucket_pnl.get(bucket, 0.0) or 0.0)
+        net_cap = float(capital_snapshot.get(f"net_capital_{bucket}", 0.0) or 0.0)
+        gross_cap = float(capital_snapshot.get(f"gross_capital_{bucket}", 0.0) or 0.0)
+        margin_req = float(capital_snapshot.get(f"margin_req_{bucket}", 0.0) or 0.0)
         roc = (
             "n/a"
-            if group in BUCKETS_WITHOUT_ROC or net_cap <= 0
+            if bucket in BUCKETS_WITHOUT_ROC or net_cap <= 0
             else _fmt_pct(_safe_return(pnl, net_cap))
         )
         rows.append(
             [
-                DISPLAY_LABELS[group],
+                BUCKET_LABELS[bucket],
                 f"{pnl:,.2f}",
                 f"{net_cap:,.2f}",
                 f"{gross_cap:,.2f}",
@@ -1796,11 +1815,17 @@ def enrich_history_bucket_cols_from_runs(hist: pd.DataFrame) -> pd.DataFrame:
     hist = hist.copy()
     hist["date"] = pd.to_datetime(hist["date"], errors="coerce")
     hist = hist.dropna(subset=["date"])
+    for c in PNL_HISTORY_BUCKET_COLS:
+        if c not in hist.columns:
+            hist[c] = np.nan
     for c in PNL_HISTORY_DISPLAY_PNL_COLS:
         if c not in hist.columns:
             hist[c] = np.nan
     if "total_pnl" not in hist.columns:
         hist["total_pnl"] = np.nan
+    for c in PNL_HISTORY_CAPITAL_COLS:
+        if c not in hist.columns:
+            hist[c] = np.nan
     for c in PNL_HISTORY_DISPLAY_CAPITAL_COLS:
         if c not in hist.columns:
             hist[c] = np.nan
@@ -1810,21 +1835,32 @@ def enrich_history_bucket_cols_from_runs(hist: pd.DataFrame) -> pd.DataFrame:
     for ds, (b1, b2, b3, b4) in updates.items():
         stock_pnl = b1 + b2 + b4
         tot = stock_pnl + b3
-        cap = _consolidate_capital_snapshot(capital_updates.get(ds, {}))
+        cap_full = capital_updates.get(ds, {})
+        cap = _consolidate_capital_snapshot(cap_full)
         m = date_key == ds
         if m.any():
-            hist.loc[m, "pnl_stock_sleeves"] = stock_pnl
+            hist.loc[m, "pnl_bucket_1"] = b1
+            hist.loc[m, "pnl_bucket_2"] = b2
             hist.loc[m, "pnl_bucket_3"] = b3
+            hist.loc[m, "pnl_bucket_4"] = b4
+            hist.loc[m, "pnl_stock_sleeves"] = stock_pnl
             hist.loc[m, "total_pnl"] = tot
+            for c in PNL_HISTORY_CAPITAL_COLS:
+                hist.loc[m, c] = float(cap_full.get(c, np.nan))
             for c in PNL_HISTORY_DISPLAY_CAPITAL_COLS:
                 hist.loc[m, c] = float(cap.get(c, np.nan))
         else:
             row = {
                 "date": pd.to_datetime(ds),
-                "pnl_stock_sleeves": stock_pnl,
+                "pnl_bucket_1": b1,
+                "pnl_bucket_2": b2,
                 "pnl_bucket_3": b3,
+                "pnl_bucket_4": b4,
+                "pnl_stock_sleeves": stock_pnl,
                 "total_pnl": tot,
             }
+            for c in PNL_HISTORY_CAPITAL_COLS:
+                row[c] = float(cap_full.get(c, np.nan))
             for c in PNL_HISTORY_DISPLAY_CAPITAL_COLS:
                 row[c] = float(cap.get(c, np.nan))
             new_rows.append(row)
@@ -1848,20 +1884,26 @@ def update_pnl_history(
 ) -> pd.DataFrame:
     """
     Appends (or overwrites) a row in pnl_history.csv for the given run_date.
-    Persists consolidated stock_sleeves (B1+B2+B4) and bucket_3 PnL/capital.
+    Persists per-bucket and consolidated sleeve PnL/capital.
     Returns the full history DF filtered from START_DATE onward.
     """
     ensure_ledger_dir()
 
     stock_pnl = float(b1) + float(b2) + float(b4)
     total_pnl = stock_pnl + float(b3)
-    display_capital = _consolidate_capital_snapshot(bucket_capital or _empty_bucket_capital_snapshot())
+    cap_full = bucket_capital or _empty_bucket_capital_snapshot()
+    display_capital = _consolidate_capital_snapshot(cap_full)
     row_obj = {
         "date": run_date,
-        "pnl_stock_sleeves": stock_pnl,
+        "pnl_bucket_1": float(b1),
+        "pnl_bucket_2": float(b2),
         "pnl_bucket_3": float(b3),
+        "pnl_bucket_4": float(b4),
+        "pnl_stock_sleeves": stock_pnl,
         "total_pnl": total_pnl,
     }
+    for c in PNL_HISTORY_CAPITAL_COLS:
+        row_obj[c] = float(cap_full.get(c, 0.0) or 0.0)
     for c in PNL_HISTORY_DISPLAY_CAPITAL_COLS:
         row_obj[c] = float(display_capital.get(c, 0.0) or 0.0)
     row = pd.DataFrame([row_obj])
@@ -1875,7 +1917,7 @@ def update_pnl_history(
             hist = row if not skip_row else pd.DataFrame(columns=row.columns)
         else:
             hist["date"] = hist["date"].astype(str)
-            hist = _migrate_pnl_history_to_display_cols(hist)
+            hist = _ensure_pnl_history_derived_cols(hist)
             for c in row.columns:
                 if c not in hist.columns:
                     hist[c] = np.nan
@@ -1889,9 +1931,11 @@ def update_pnl_history(
 
     hist["date"] = pd.to_datetime(hist["date"], errors="coerce")
     hist = hist.dropna(subset=["date"]).sort_values("date")
-    for c in PNL_HISTORY_DISPLAY_PNL_COLS:
+    pnl_cols = tuple(dict.fromkeys((*PNL_HISTORY_BUCKET_COLS, *PNL_HISTORY_DISPLAY_PNL_COLS)))
+    capital_cols = tuple(dict.fromkeys((*PNL_HISTORY_CAPITAL_COLS, *PNL_HISTORY_DISPLAY_CAPITAL_COLS)))
+    for c in pnl_cols:
         hist[c] = pd.to_numeric(hist.get(c, np.nan), errors="coerce")
-    for c in PNL_HISTORY_DISPLAY_CAPITAL_COLS:
+    for c in capital_cols:
         hist[c] = pd.to_numeric(hist.get(c, np.nan), errors="coerce")
     hist["total_pnl"] = pd.to_numeric(hist["total_pnl"], errors="coerce")
 
@@ -1930,21 +1974,21 @@ def compute_period_pnl_deltas(
     period: str = "daily",
 ) -> dict[str, float] | None:
     """
-    Return sleeve/total PnL changes vs a prior cumulative snapshot in history.
+    Return per-bucket/total PnL changes vs a prior cumulative snapshot in history.
 
-    Keys: stock_sleeves, bucket_3, total. ``period`` is daily (prior run date),
+    Keys: bucket_1..bucket_4, total. ``period`` is daily (prior run date),
     wtd (prior calendar week), or mtd (prior calendar month).
     """
     if history is None or history.empty:
         return None
 
-    hist = _migrate_pnl_history_to_display_cols(history.copy())
+    hist = _ensure_pnl_history_derived_cols(history.copy())
     hist["date"] = pd.to_datetime(hist["date"], errors="coerce")
     hist = hist.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
     if hist.empty:
         return None
 
-    cols = list(PNL_HISTORY_DISPLAY_PNL_COLS) + ["total_pnl"]
+    cols = list(PNL_HISTORY_BUCKET_COLS) + ["total_pnl"]
     for c in cols:
         hist[c] = pd.to_numeric(hist.get(c, np.nan), errors="coerce")
 
@@ -1962,7 +2006,9 @@ def compute_period_pnl_deltas(
 
     def _delta(start: pd.Series | None, col: str) -> float:
         cur = float(current.get(col, 0.0) or 0.0)
-        if start is None or pd.isna(start.get(col, np.nan)):
+        if start is None:
+            return 0.0
+        if pd.isna(start.get(col, np.nan)):
             return cur
         return cur - float(start.get(col, 0.0) or 0.0)
 
@@ -1979,8 +2025,8 @@ def compute_period_pnl_deltas(
         raise ValueError(f"unknown period {period!r}; use daily, wtd, or mtd")
 
     out: dict[str, float] = {}
-    for group in DISPLAY_PNL_KEYS:
-        out[group] = _delta(base, f"pnl_{group}")
+    for bucket in BUCKET_KEYS:
+        out[bucket] = _delta(base, f"pnl_{bucket}")
     out["total"] = _delta(base, "total_pnl")
     return out
 
@@ -2068,8 +2114,10 @@ def format_period_pnl_summary(history: pd.DataFrame, run_date: str) -> str:
         return "PERIOD PnL: unavailable (no history rows)."
 
     labels = {
-        "stock_sleeves": "Stock",
+        "bucket_1": "B1",
+        "bucket_2": "B2",
         "bucket_3": "B3",
+        "bucket_4": "B4",
         "total": "Total",
     }
     lines = ["PERIOD PnL changes from cumulative history:"]
@@ -2089,8 +2137,10 @@ def format_period_pnl_summary(history: pd.DataFrame, run_date: str) -> str:
 
 # Stable label placement per series: offset from marker in points (dx, dy), ha, va.
 _PNL_LABEL_STYLE: dict[str, tuple[float, float, str, str]] = {
-    "#1f77b4": (11, 7, "left", "bottom"),   # Stock sleeves (B1+B2+B4)
-    "#2ca02c": (-11, 7, "right", "bottom"),  # Bucket 3 — inverse / hedge
+    "#1f77b4": (11, 7, "left", "bottom"),   # Bucket 1
+    "#ff7f0e": (-11, 7, "right", "bottom"),  # Bucket 2
+    "#2ca02c": (11, -9, "left", "top"),      # Bucket 3
+    "#d62728": (-11, -9, "right", "top"),    # Bucket 4
 }
 _PNL_LABEL_LEGACY_STYLE = (0, -9, "center", "top")  # below marker, away from bucket labels above
 
@@ -2129,20 +2179,22 @@ def _annotate_pnl_point_labels_stable(
 
 def make_pnl_plot(history: pd.DataFrame) -> Path:
     """
-    Creates a PNG plot showing YTD PnL since START_DATE: stock sleeves vs bucket 3.
+    Creates a PNG plot showing YTD PnL since START_DATE for buckets 1–4.
     """
     ensure_ledger_dir()
 
     bucket_specs: tuple[tuple[str, str, str], ...] = (
-        ("pnl_stock_sleeves", "Stock sleeves (B1+B2+B4)", "#1f77b4"),
-        ("pnl_bucket_3", "Bucket 3 — Inverse / Hedge", "#2ca02c"),
+        ("pnl_bucket_1", SUBJECT_BUCKET_SHORT["bucket_1"], "#1f77b4"),
+        ("pnl_bucket_2", SUBJECT_BUCKET_SHORT["bucket_2"], "#ff7f0e"),
+        ("pnl_bucket_3", SUBJECT_BUCKET_SHORT["bucket_3"], "#2ca02c"),
+        ("pnl_bucket_4", SUBJECT_BUCKET_SHORT["bucket_4"], "#d62728"),
     )
 
-    hist = _migrate_pnl_history_to_display_cols(history) if not history.empty else history
+    hist = _ensure_pnl_history_derived_cols(history) if not history.empty else history
 
     if hist.empty:
-        fig, ax = plt.subplots(figsize=(13, 5))
-        ax.set_title(f"YTD PnL by sleeve since {START_DATE} (no data yet)", fontsize=11)
+        fig, ax = plt.subplots(figsize=(14, 6))
+        ax.set_title(f"YTD PnL by bucket since {START_DATE} (no data yet)", fontsize=11)
         ax.set_xlabel("Date")
         ax.set_ylabel("YTD PnL (base)")
         fig.tight_layout()
@@ -2150,7 +2202,7 @@ def make_pnl_plot(history: pd.DataFrame) -> Path:
         plt.close(fig)
         return PLOT_PNG
 
-    fig, ax = plt.subplots(figsize=(13, 5))
+    fig, ax = plt.subplots(figsize=(14, 6))
     ax.axhline(0, color="grey", linewidth=0.5, linestyle="--")
 
     bucket_label_points: list[tuple[pd.Timestamp, float, str]] = []
@@ -2166,8 +2218,7 @@ def make_pnl_plot(history: pd.DataFrame) -> Path:
         dates = hist.loc[mask, "date"]
         yv = y[mask]
         ax.plot(dates, yv, marker="o", linewidth=1.6, markersize=4, label=label, color=color)
-        for xi, yi in zip(dates, yv):
-            bucket_label_points.append((pd.Timestamp(xi), float(yi), color))
+        bucket_label_points.append((pd.Timestamp(dates.iloc[-1]), float(yv.iloc[-1]), color))
 
     if bucket_label_points:
         _annotate_pnl_point_labels_stable(
@@ -2176,8 +2227,8 @@ def make_pnl_plot(history: pd.DataFrame) -> Path:
 
     if "total_pnl" in hist.columns:
         tot = pd.to_numeric(hist["total_pnl"], errors="coerce")
-        if all(c in hist.columns for c in PNL_HISTORY_DISPLAY_PNL_COLS):
-            legacy_only = hist[list(PNL_HISTORY_DISPLAY_PNL_COLS)].isna().all(axis=1)
+        if all(c in hist.columns for c in PNL_HISTORY_BUCKET_COLS):
+            legacy_only = hist[list(PNL_HISTORY_BUCKET_COLS)].isna().all(axis=1)
         else:
             legacy_only = pd.Series(True, index=hist.index)
         mask = tot.notna() & legacy_only
@@ -2192,16 +2243,16 @@ def make_pnl_plot(history: pd.DataFrame) -> Path:
                 markersize=4,
                 color="0.35",
                 linestyle="--",
-                label="Total (legacy, before sleeve history)",
+                label="Total (legacy, before bucket history)",
             )
             legacy_pts = [
-                (pd.Timestamp(xi), float(yi), "0.35") for xi, yi in zip(dates, yv)
+                (pd.Timestamp(dates.iloc[-1]), float(yv.iloc[-1]), "0.35")
             ]
             _annotate_pnl_point_labels_stable(
                 ax, legacy_pts, fontsize=label_fs, is_legacy=True
             )
 
-    ax.set_title(f"YTD PnL by sleeve since {START_DATE}", fontsize=11)
+    ax.set_title(f"YTD PnL by bucket since {START_DATE}", fontsize=11)
     ax.set_xlabel("Date")
     ax.set_ylabel("YTD PnL (base)")
     ax.grid(True, alpha=0.3)
@@ -2594,7 +2645,6 @@ def main() -> int:
                 bucket_attachment_csvs.append(path)
 
     b3_pnl_total = float(headline_bucket_pnl["bucket_3"])
-    stock_pnl_total = _stock_sleeves_pnl_from_buckets(headline_bucket_pnl)
 
     # 5) Update history + plot since START_DATE
     grand_total = float(total_pnl)
@@ -2608,20 +2658,17 @@ def main() -> int:
         b4=headline_bucket_pnl["bucket_4"],
         bucket_capital=bucket_capital_snapshot,
     )
-    display_pnl_map = {
-        "stock_sleeves": stock_pnl_total,
-        "bucket_3": b3_pnl_total,
-    }
+    bucket_capital_avg = compute_average_bucket_capital(hist)
+    roc_bucket_pnl = dict(headline_bucket_pnl)
     if not hist.empty:
         _hist_row = hist[hist["date"].dt.strftime("%Y-%m-%d") == run_date]
         if not _hist_row.empty:
             _r = _hist_row.iloc[-1]
-            display_pnl_map = {
-                "stock_sleeves": float(_r.get("pnl_stock_sleeves", stock_pnl_total) or 0.0),
-                "bucket_3": float(_r.get("pnl_bucket_3", b3_pnl_total) or 0.0),
-            }
-    bucket_capital_avg = compute_average_bucket_capital(hist)
-    bucket_return_table = format_bucket_return_table(display_pnl_map, bucket_capital_avg)
+            for bucket in BUCKET_KEYS:
+                col = f"pnl_{bucket}"
+                if col in _r.index and pd.notna(_r.get(col)):
+                    roc_bucket_pnl[bucket] = float(_r.get(col) or 0.0)
+    bucket_return_table = format_bucket_return_table(roc_bucket_pnl, bucket_capital_avg)
     period_pnl_summary = format_period_pnl_summary(hist, run_date)
     plot_path = make_pnl_plot(hist)
 
@@ -2688,7 +2735,7 @@ def main() -> int:
         f"Position discrepancy rows: {len(discrepancy_df)} "
         f"(under-exposed: {under_exposed_count})\n\n"
         f"{headline_block}\n\n"
-        f"SLEEVE RETURNS ON CAPITAL (denominators = average per-day capital since {START_DATE}):\n"
+        f"BUCKET RETURNS ON CAPITAL (denominators = average per-day capital since {START_DATE}):\n"
         "----------------------------------------\n"
         f"{bucket_return_table}\n"
         "----------------------------------------\n"
