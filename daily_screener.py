@@ -225,6 +225,8 @@ new_pairs = [
     ("BTCU", "IBIT"), ("EVMU", "ETHA"), ("UGLD", "GLD"), ("USLV", "SLV"),
     # 2026-05-28 Tradr 2X long semiconductor singles (MCHP, NXPI, ON)
     ("MCHU", "MCHP"), ("NXPX", "NXPI"), ("ONX", "ON"),
+    # 2026-05-28 Tradr 2X long CBRS (Cerebras Systems)
+    ("CBRX", "CBRS"),
 ]
 
 proshares_pairs_levered = [
@@ -330,6 +332,8 @@ INVERSE_ETF_UNIVERSE = [
     ("LITZ", -2, "LITE"), ("SNDQ", -2, "SNDK"),
     # 2026-05-15 Leverage Shares 2X Short CBRS Daily ETF (SCBR)
     ("SCBR", -2, "CBRS"),
+    # 2026-05-28 Tradr 2X Short CBRS Daily ETF (CBRZ)
+    ("CBRZ", -2, "CBRS"),
     ("UVIX", -2, "SVIX"),
 ]
 
