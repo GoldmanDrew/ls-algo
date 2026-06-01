@@ -99,6 +99,21 @@ BUCKET_LABELS: dict[str, str] = {
     "bucket_3": "Bucket 3",
     "bucket_4": "Bucket 4",
 }
+BUCKET_EMAIL_TITLES: dict[str, str] = {
+    "bucket_1": "Bucket 1 — Levered (β > 1.5)",
+    "bucket_2": "Bucket 2 — Standard (0 < β ≤ 1.5)",
+    "bucket_3": "Bucket 3 — Inverse / Hedge (β < 0)",
+    "bucket_4": "Bucket 4 — Inverse Decay Internalized (β < 0)",
+}
+SUBJECT_BUCKET_SHORT: dict[str, str] = {
+    "bucket_1": "B1",
+    "bucket_2": "B2",
+    "bucket_3": "B3",
+    "bucket_4": "B4",
+}
+BUCKET_PNL_TOP_N = 25
+BUCKET_EXPOSURE_TOP_N = 20
+SUBJECT_MAX_LEN = 120
 # EOD email / history / plots: stock sleeves (B1+B2+B4) vs flow-inverse hedge (B3).
 DISPLAY_PNL_KEYS: tuple[str, ...] = ("stock_sleeves", "bucket_3")
 DISPLAY_LABELS: dict[str, str] = {
@@ -159,6 +174,8 @@ def _format_underlying_section(
     df: pd.DataFrame,
     sym_df: pd.DataFrame,
     section_label: str | None = None,
+    *,
+    max_rows: int | None = None,
 ) -> tuple[str, float]:
     """
     Format a single section of the underlying table.
@@ -177,8 +194,14 @@ def _format_underlying_section(
     if df.empty:
         return "(no data)", 0.0
 
-    df = df.sort_values("total_pnl", ascending=False)
-    section_total = float(df["total_pnl"].sum())
+    full_df = df.sort_values("total_pnl", ascending=False)
+    section_total = float(full_df["total_pnl"].sum())
+    truncated = 0
+    display_df = full_df
+    if max_rows is not None and len(full_df) > max_rows:
+        display_df = full_df.head(max_rows)
+        truncated = len(full_df) - max_rows
+    df = display_df
 
     # Column widths
     all_labels = list(df["underlying"].astype(str))
@@ -220,6 +243,8 @@ def _format_underlying_section(
     lines.append("-" * (label_width + 2 + pnl_width))
     total_str = f"{section_total:,.2f}"
     lines.append(f"{'TOTAL'.ljust(label_width)}  {total_str.rjust(pnl_width)}")
+    if truncated:
+        lines.append(f"  ... and {truncated} more underlyings (table truncated)")
 
     return "\n".join(lines), section_total
 
@@ -296,20 +321,23 @@ def format_bucket_3_pnl(pnl_b3_csv: Path) -> tuple[str, float]:
     return "\n".join(lines), total
 
 
-def format_bucket_4_pnl(
-    pnl_b4_csv: Path,
+def format_bucket_pnl_section(
+    bucket: str,
+    pnl_csv: Path,
     pnl_symbol_csv: Path,
+    *,
+    top_n: int = BUCKET_PNL_TOP_N,
 ) -> tuple[str, float]:
-    """
-    Format Bucket 4 (inverse decay) PnL by underlying with per-symbol detail.
-    Returns (table_str, total).
-    """
-    if not pnl_b4_csv.exists():
-        return "(no bucket 4 data)", 0.0
+    """Format per-bucket PnL from accounting ``pnl_<bucket>.csv``."""
+    if bucket == "bucket_3":
+        return format_bucket_3_pnl(pnl_csv)
 
-    df = pd.read_csv(pnl_b4_csv)
+    if not pnl_csv.exists():
+        return f"(no {BUCKET_LABELS[bucket]} data)", 0.0
+
+    df = pd.read_csv(pnl_csv)
     if df.empty or "total_pnl" not in df.columns:
-        return "(no bucket 4 positions)", 0.0
+        return f"(no {BUCKET_LABELS[bucket]} positions)", 0.0
 
     df["total_pnl"] = pd.to_numeric(df["total_pnl"], errors="coerce").fillna(0.0)
     sym_df = pd.DataFrame()
@@ -318,51 +346,61 @@ def format_bucket_4_pnl(
             sym_df = pd.read_csv(pnl_symbol_csv)
             sym_df["total_pnl"] = pd.to_numeric(sym_df["total_pnl"], errors="coerce").fillna(0.0)
             if "bucket" in sym_df.columns:
-                sym_df = sym_df[sym_df["bucket"] == "bucket_4"]
+                sym_df = sym_df[sym_df["bucket"] == bucket]
         except Exception:
             sym_df = pd.DataFrame()
 
     if "underlying" in df.columns:
-        return _format_underlying_section(df, sym_df)
+        return _format_underlying_section(df, sym_df, max_rows=top_n)
 
     if "symbol" not in df.columns:
-        return "(bucket 4 data missing underlying/symbol columns)", 0.0
+        return f"({bucket} data missing underlying/symbol columns)", 0.0
 
     df = df.dropna(subset=["symbol"]).copy()
     df["symbol"] = df["symbol"].astype(str)
-    df = df.sort_values("total_pnl", ascending=False)
-    total = float(df["total_pnl"].sum())
-    all_labels = list(df["symbol"]) + ["TOTAL"]
+    full_total = float(df["total_pnl"].sum())
+    display_df = df.sort_values("total_pnl", ascending=False)
+    truncated = 0
+    if top_n is not None and len(display_df) > top_n:
+        display_df = display_df.head(top_n)
+        truncated = len(df) - top_n
+    all_labels = list(display_df["symbol"]) + ["TOTAL"]
     label_width = max(12, max(len(s) for s in all_labels))
-    all_pnl = [f"{v:,.2f}" for v in list(df["total_pnl"]) + [total]]
+    all_pnl = [f"{v:,.2f}" for v in list(display_df["total_pnl"]) + [full_total]]
     pnl_width = max(12, max(len(s) for s in all_pnl))
     lines: list[str] = []
     header = f"{'SYMBOL'.ljust(label_width)}  {'TOTAL_PNL'.rjust(pnl_width)}"
     lines.append(header)
     lines.append("-" * (label_width + 2 + pnl_width))
-    for _, r in df.iterrows():
+    for _, r in display_df.iterrows():
         sym = str(r["symbol"])
         pnl_str = f"{float(r['total_pnl']):,.2f}"
         lines.append(f"{sym.ljust(label_width)}  {pnl_str.rjust(pnl_width)}")
     lines.append("-" * (label_width + 2 + pnl_width))
-    lines.append(f"{'TOTAL'.ljust(label_width)}  {f'{total:,.2f}'.rjust(pnl_width)}")
-    return "\n".join(lines), total
+    lines.append(f"{'TOTAL'.ljust(label_width)}  {f'{full_total:,.2f}'.rjust(pnl_width)}")
+    if truncated:
+        lines.append(f"  ... and {truncated} more symbols (table truncated)")
+    return "\n".join(lines), full_total
 
 
-def format_bucket_4_exposure(
-    exposure_b4_csv: Path,
-    exposure_b4_detail_csv: Path,
+def format_bucket_exposure_section(
+    bucket: str,
+    exposure_csv: Path,
+    *,
+    exposure_detail_csv: Path | None = None,
+    blocked_keys: set[str] | None = None,
+    top_n: int = BUCKET_EXPOSURE_TOP_N,
 ) -> tuple[str, float, float]:
-    """
-    Format Bucket 4 exposure rollup plus per-leg detail (underlying + inverse ETF).
-    Returns (table_str, net_total, gross_total).
-    """
-    if not exposure_b4_csv.exists():
-        return "(no bucket 4 exposure data)", 0.0, 0.0
+    """Format per-bucket net/gross exposure from accounting CSVs."""
+    if not exposure_csv.exists():
+        return f"(no {BUCKET_LABELS[bucket]} exposure data)", 0.0, 0.0
 
-    rollup_df = pd.read_csv(exposure_b4_csv)
+    rollup_df = pd.read_csv(exposure_csv)
     if rollup_df.empty or "net_notional_usd" not in rollup_df.columns:
-        return "(no bucket 4 exposure positions)", 0.0, 0.0
+        return f"(no {BUCKET_LABELS[bucket]} exposure positions)", 0.0, 0.0
+
+    if "underlying" not in rollup_df.columns and "symbol" in rollup_df.columns:
+        rollup_df = rollup_df.rename(columns={"symbol": "underlying"})
 
     rollup_df["net_notional_usd"] = pd.to_numeric(
         rollup_df["net_notional_usd"], errors="coerce"
@@ -372,46 +410,128 @@ def format_bucket_4_exposure(
         errors="coerce",
     ).fillna(0.0)
 
-    leg_df = pd.DataFrame()
-    if exposure_b4_detail_csv.exists():
+    if blocked_keys:
+        rollup_df = _filter_exposure_df(rollup_df, blocked_keys)
+
+    net_total = float(rollup_df["net_notional_usd"].sum())
+    gross_total = float(rollup_df["gross_notional_usd"].sum())
+
+    display_df = rollup_df.sort_values(
+        "net_notional_usd", key=lambda s: s.abs(), ascending=False
+    )
+    truncated = 0
+    if top_n is not None and len(display_df) > top_n:
+        truncated = len(display_df) - top_n
+        display_df = display_df.head(top_n)
+
+    table_text, _, _ = format_exposure_table(
+        display_df.sort_values("net_notional_usd", ascending=False)
+    )
+    lines = [table_text]
+    if truncated:
+        lines.append(f"  ... and {truncated} more underlyings (table truncated)")
+
+    if bucket == "bucket_4" and exposure_detail_csv and exposure_detail_csv.exists():
         try:
-            leg_df = pd.read_csv(exposure_b4_detail_csv)
+            leg_df = pd.read_csv(exposure_detail_csv)
             leg_df["net_notional_usd"] = pd.to_numeric(
                 leg_df["net_notional_usd"], errors="coerce"
             ).fillna(0.0)
-            leg_df["gross_notional_usd"] = pd.to_numeric(
-                leg_df.get("gross_notional_usd", leg_df["net_notional_usd"]),
-                errors="coerce",
-            ).fillna(0.0)
+            if blocked_keys and "underlying" in leg_df.columns:
+                leg_df = leg_df[
+                    ~leg_df["underlying"].astype(str).isin(blocked_keys)
+                ].copy()
+            if not leg_df.empty and "leg_type" in leg_df.columns:
+                lines.extend(
+                    [
+                        "",
+                        "--- B4 exposure legs (inverse ETF short + structural underlying short) ---",
+                    ]
+                )
+                for underlying in sorted(leg_df["underlying"].astype(str).unique()):
+                    sub = leg_df[leg_df["underlying"].astype(str) == underlying].sort_values(
+                        ["leg_type", "symbol"], ascending=[True, True]
+                    )
+                    for _, r in sub.iterrows():
+                        sym = str(r.get("symbol", ""))
+                        leg = str(r.get("leg_type", ""))
+                        net_v = float(r.get("net_notional_usd", 0.0))
+                        tag = ""
+                        if leg == "underlying":
+                            tag = " short" if net_v < 0 else " long"
+                        lines.append(f"  {underlying} / {sym} ({leg}{tag})  {net_v:,.2f}")
         except Exception:
-            leg_df = pd.DataFrame()
+            pass
 
-    table_text, net_total, gross_total = format_exposure_table(
-        rollup_df.sort_values("net_notional_usd", ascending=False),
-        leg_df if not leg_df.empty else None,
+    return "\n".join(lines), net_total, gross_total
+
+
+def format_bucket_4_pnl(
+    pnl_b4_csv: Path,
+    pnl_symbol_csv: Path,
+) -> tuple[str, float]:
+    """Format Bucket 4 PnL (wrapper for tests / legacy callers)."""
+    return format_bucket_pnl_section("bucket_4", pnl_b4_csv, pnl_symbol_csv)
+
+
+def format_bucket_4_exposure(
+    exposure_b4_csv: Path,
+    exposure_b4_detail_csv: Path,
+) -> tuple[str, float, float]:
+    """Format Bucket 4 exposure (wrapper for tests / legacy callers)."""
+    return format_bucket_exposure_section(
+        "bucket_4",
+        exposure_b4_csv,
+        exposure_detail_csv=exposure_b4_detail_csv,
     )
 
-    if leg_df.empty or "leg_type" not in leg_df.columns:
-        return table_text, net_total, gross_total
+
+def format_bucket_email_block(
+    bucket: str,
+    *,
+    headline_pnl: float,
+    pnl_csv: Path,
+    pnl_symbol_csv: Path,
+    exposure_csv: Path,
+    exposure_detail_csv: Path | None = None,
+    blocked_keys: set[str],
+    pnl_tol: float = 0.01,
+) -> str:
+    """Full email section for one bucket: PnL detail + net/gross exposure."""
+    title = BUCKET_EMAIL_TITLES.get(bucket, BUCKET_LABELS[bucket])
+    pnl_table, csv_sum = format_bucket_pnl_section(bucket, pnl_csv, pnl_symbol_csv)
+    exp_table, net, gross = format_bucket_exposure_section(
+        bucket,
+        exposure_csv,
+        exposure_detail_csv=exposure_detail_csv,
+        blocked_keys=blocked_keys,
+    )
 
     lines = [
-        table_text,
-        "",
-        "--- B4 exposure legs (inverse ETF short + structural underlying short) ---",
+        "════════════════════════════════════════",
+        title,
+        f"  YTD PnL (totals.json): {headline_pnl:,.2f}",
     ]
-    for underlying in sorted(leg_df["underlying"].astype(str).unique()):
-        sub = leg_df[leg_df["underlying"].astype(str) == underlying].sort_values(
-            ["leg_type", "symbol"], ascending=[True, True]
+    if abs(csv_sum - headline_pnl) > pnl_tol:
+        lines.append(
+            f"  Note: CSV detail sum {csv_sum:,.2f} != headline {headline_pnl:,.2f}"
         )
-        for _, r in sub.iterrows():
-            sym = str(r.get("symbol", ""))
-            leg = str(r.get("leg_type", ""))
-            net_v = float(r.get("net_notional_usd", 0.0))
-            tag = ""
-            if leg == "underlying":
-                tag = " short" if net_v < 0 else " long"
-            lines.append(f"  {underlying} / {sym} ({leg}{tag})  {net_v:,.2f}")
-    return "\n".join(lines), net_total, gross_total
+    lines.extend(
+        [
+            "",
+            "PnL detail:",
+            "----------------------------------------",
+            pnl_table,
+            "----------------------------------------",
+            "",
+            f"Net exposure — net: {net:,.2f}  |  gross: {gross:,.2f}",
+            "----------------------------------------",
+            exp_table,
+            "----------------------------------------",
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def format_bucket_table(pnl_bucket_csv: Path) -> str:
@@ -455,9 +575,63 @@ def format_bucket_ytd_headline(bucket_pnl: dict[str, float]) -> str:
     lines = ["YTD PnL BY BUCKET (accounting):"]
     for bucket in BUCKET_KEYS:
         pnl = float(bucket_pnl.get(bucket, 0.0) or 0.0)
-        lines.append(f"  {BUCKET_LABELS[bucket]}: {pnl:,.2f}")
+        short = SUBJECT_BUCKET_SHORT[bucket]
+        lines.append(f"  {short} ({BUCKET_LABELS[bucket]}): {pnl:,.2f}")
     stock = _stock_sleeves_pnl_from_buckets(bucket_pnl)
     lines.append(f"  Stock sleeves (B1+B2+B4): {stock:,.2f}")
+    return "\n".join(lines)
+
+
+def compute_bucket_daily_deltas(
+    run_date: str,
+    current_buckets: dict[str, float],
+) -> dict[str, float]:
+    """Per-bucket YTD change vs the prior accounting run (account daily PnL)."""
+    prior_date = _prior_accounting_run_date(run_date)
+    if not prior_date:
+        return {b: float(current_buckets.get(b, 0.0) or 0.0) for b in BUCKET_KEYS}
+    prior_path = RUNS_ROOT / prior_date / "accounting" / "totals.json"
+    try:
+        prior = json.loads(prior_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {b: float(current_buckets.get(b, 0.0) or 0.0) for b in BUCKET_KEYS}
+    prior_buckets = _bucket_pnl_from_totals(prior)
+    return {
+        b: float(current_buckets.get(b, 0.0) or 0.0) - float(prior_buckets.get(b, 0.0) or 0.0)
+        for b in BUCKET_KEYS
+    }
+
+
+def format_bucket_daily_headline(daily_buckets: dict[str, float]) -> str:
+    """One-line daily PnL change per bucket."""
+    parts = [
+        f"{SUBJECT_BUCKET_SHORT[b]}: {float(daily_buckets.get(b, 0.0) or 0.0):+,.0f}"
+        for b in BUCKET_KEYS
+    ]
+    total_daily = sum(float(daily_buckets.get(b, 0.0) or 0.0) for b in BUCKET_KEYS)
+    parts.append(f"Total: {total_daily:+,.0f}")
+    return "Daily PnL change: " + " | ".join(parts)
+
+
+def format_headline_pnl_block(
+    bucket_pnl: dict[str, float],
+    *,
+    total_pnl: float,
+    daily_buckets: dict[str, float] | None = None,
+) -> str:
+    """Email headline: YTD per bucket + optional daily deltas."""
+    lines = [
+        "HEADLINE YTD PnL",
+        f"  Total: {total_pnl:,.2f}",
+    ]
+    for bucket in BUCKET_KEYS:
+        pnl = float(bucket_pnl.get(bucket, 0.0) or 0.0)
+        short = SUBJECT_BUCKET_SHORT[bucket]
+        lines.append(f"  {short}: {pnl:,.2f}")
+    stock = _stock_sleeves_pnl_from_buckets(bucket_pnl)
+    lines.append(f"  Stock sleeves (B1+B2+B4): {stock:,.2f}")
+    if daily_buckets is not None:
+        lines.append(format_bucket_daily_headline(daily_buckets))
     return "\n".join(lines)
 
 
@@ -1811,6 +1985,51 @@ def compute_period_pnl_deltas(
     return out
 
 
+def _compact_usd(value: float) -> str:
+    """Compact dollar formatting for long email subjects."""
+    v = float(value)
+    sign = "-" if v < 0 else ""
+    av = abs(v)
+    if av >= 1_000_000:
+        return f"{sign}{av / 1e6:.1f}M"
+    if av >= 10_000:
+        return f"{sign}{av / 1e3:.1f}k"
+    return f"{v:,.0f}"
+
+
+def _format_subject_bucket_pnl_line(
+    bucket_pnl: dict[str, float],
+    *,
+    total_pnl: float,
+    compact: bool = False,
+) -> str:
+    parts: list[str] = []
+    for bucket in BUCKET_KEYS:
+        label = SUBJECT_BUCKET_SHORT[bucket]
+        val = float(bucket_pnl.get(bucket, 0.0) or 0.0)
+        if compact:
+            parts.append(f"{label}: {_compact_usd(val)}")
+        else:
+            parts.append(f"{label}: {val:,.0f}")
+    total_fmt = _compact_usd(total_pnl) if compact else f"{total_pnl:,.0f}"
+    parts.append(f"Total: {total_fmt}")
+    return " | ".join(parts)
+
+
+def format_eod_subject(
+    run_date: str,
+    bucket_pnl: dict[str, float],
+    *,
+    total_pnl: float,
+) -> str:
+    """Email subject with four-bucket YTD PnL from accounting totals.json."""
+    prefix = f"EOD PnL — {run_date} — "
+    line = _format_subject_bucket_pnl_line(bucket_pnl, total_pnl=total_pnl, compact=False)
+    if len(prefix + line) > SUBJECT_MAX_LEN:
+        line = _format_subject_bucket_pnl_line(bucket_pnl, total_pnl=total_pnl, compact=True)
+    return prefix + line
+
+
 def _format_subject_pnl_line(
     *,
     b124_pnl: float,
@@ -1818,6 +2037,7 @@ def _format_subject_pnl_line(
     total_pnl: float,
     daily_prefix: bool = False,
 ) -> str:
+    """Legacy two-group subject formatter (kept for format_eod_pnl_subject)."""
     prefix = "Daily " if daily_prefix else ""
     return (
         f"{prefix}{SUBJECT_B124_LABEL}: {b124_pnl:,.2f} | "
@@ -2339,61 +2559,42 @@ def main() -> int:
     totals = apply_bucket_pnl_continuity(run_date, totals)
     total_pnl = float(totals.get("total_pnl", 0.0))
     headline_bucket_pnl = _bucket_pnl_from_totals(totals)
-    bucket_ytd_headline = format_bucket_ytd_headline(headline_bucket_pnl)
+    daily_bucket_pnl = compute_bucket_daily_deltas(run_date, headline_bucket_pnl)
+    headline_block = format_headline_pnl_block(
+        headline_bucket_pnl,
+        total_pnl=total_pnl,
+        daily_buckets=daily_bucket_pnl,
+    )
     accounting_method_line = format_accounting_method_line(totals)
-    continuity_active = _eod_bucket_pnl_continuity_enabled()
-
-    # 4) Underlying + bucket summary tables
-    underlying_table, underlying_total = format_underlying_table(pnl_under_csv, pnl_symbol_csv)
-    pnl_bucket_csv = RUNS_ROOT / run_date / "accounting" / "pnl_by_bucket.csv"
-    bucket_table = format_bucket_table(pnl_bucket_csv)
 
     outdir = PROJECT_ROOT / "data" / "runs" / run_date / "accounting"
-    pnl_b3_csv = outdir / "pnl_bucket_3.csv"
-    b3_pnl_table, _b3_pnl_from_csv = format_bucket_3_pnl(pnl_b3_csv)
-
-    stock_pnl_total = _stock_sleeves_pnl_from_buckets(headline_bucket_pnl)
-    b3_pnl_total = float(headline_bucket_pnl["bucket_3"])
-
-    _pnl_tol = 0.01
-    detail_mismatch = abs(float(underlying_total) - stock_pnl_total) > _pnl_tol
-    if detail_mismatch:
-        print(
-            f"[EOD] WARNING: stock sleeves underlying CSV sum {underlying_total:,.2f} != "
-            f"headline (totals.json) {stock_pnl_total:,.2f}"
-        )
-
-    # 4b) Exposure: stock sleeves (B1+B2+B4) and bucket 3 only
-    exposure_csv_path = outdir / "net_exposure_by_underlying.csv"
-    exposure_b3_csv_path = outdir / "net_exposure_bucket_3.csv"
+    pnl_bucket_csv = outdir / "pnl_by_bucket.csv"
     blocked_symbols, blocked_underlyings = _blocked_exposure_sets(run_date)
     blocked_exposure_keys = blocked_symbols | blocked_underlyings
 
-    exposure_table_str = "(exposure data unavailable)"
-    stock_net = 0.0
-    stock_gross = 0.0
-    top_exposure_line = "Net exposure (stock sleeves): (exposure file missing)."
-    if exposure_csv_path.exists():
-        try:
-            exposure_df = _filter_exposure_df(pd.read_csv(exposure_csv_path), blocked_exposure_keys)
-            exposure_table_str, stock_net, stock_gross = format_exposure_table(exposure_df)
-            top_exposure_line = format_top_underlying_net_exposure(exposure_df)
-        except Exception as e:
-            exposure_table_str = f"(exposure error: {e})"
-            top_exposure_line = f"Net exposure (stock sleeves): (error loading exposure: {e})"
+    bucket_email_sections: list[str] = []
+    bucket_attachment_csvs: list[Path] = []
+    for bucket in BUCKET_KEYS:
+        pnl_csv = outdir / f"pnl_{bucket}.csv"
+        exposure_csv = outdir / f"net_exposure_{bucket}.csv"
+        detail_csv = outdir / "net_exposure_bucket_4_detail.csv" if bucket == "bucket_4" else None
+        bucket_email_sections.append(
+            format_bucket_email_block(
+                bucket,
+                headline_pnl=float(headline_bucket_pnl[bucket]),
+                pnl_csv=pnl_csv,
+                pnl_symbol_csv=pnl_symbol_csv,
+                exposure_csv=exposure_csv,
+                exposure_detail_csv=detail_csv,
+                blocked_keys=blocked_exposure_keys,
+            )
+        )
+        for path in (pnl_csv, exposure_csv, detail_csv):
+            if path is not None and path.exists():
+                bucket_attachment_csvs.append(path)
 
-    b3_exposure_table_str = "(no bucket 3 exposure data)"
-    b3_net = 0.0
-    b3_gross = 0.0
-    if exposure_b3_csv_path.exists():
-        try:
-            exposure_b3_df = pd.read_csv(exposure_b3_csv_path)
-            if "underlying" not in exposure_b3_df.columns and "symbol" in exposure_b3_df.columns:
-                exposure_b3_df = exposure_b3_df.rename(columns={"symbol": "underlying"})
-            exposure_b3_df = _filter_exposure_df(exposure_b3_df, blocked_exposure_keys)
-            b3_exposure_table_str, b3_net, b3_gross = format_exposure_table(exposure_b3_df)
-        except Exception as e:
-            b3_exposure_table_str = f"(bucket 3 exposure error: {e})"
+    b3_pnl_total = float(headline_bucket_pnl["bucket_3"])
+    stock_pnl_total = _stock_sleeves_pnl_from_buckets(headline_bucket_pnl)
 
     # 5) Update history + plot since START_DATE
     grand_total = float(total_pnl)
@@ -2448,10 +2649,7 @@ def main() -> int:
     except Exception:
         asof = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    subject = (
-        f"EOD PnL — {run_date} — "
-        f"{_format_subject_pnl_line(b124_pnl=display_pnl_map['stock_sleeves'], b3_pnl=display_pnl_map['bucket_3'], total_pnl=grand_total)}"
-    )
+    subject = format_eod_subject(run_date, headline_bucket_pnl, total_pnl=grand_total)
 
     n_days = int(hist.shape[0])
     if not hist.empty and all(c in hist.columns for c in PNL_HISTORY_DISPLAY_PNL_COLS):
@@ -2459,8 +2657,10 @@ def main() -> int:
         if all(pd.notna(last[c]) for c in PNL_HISTORY_DISPLAY_PNL_COLS):
             hist_summary = (
                 f"Since {START_DATE}: {n_days} day(s) — latest logged YTD "
-                f"{SUBJECT_B124_LABEL}: {float(last['pnl_stock_sleeves']):,.2f} | "
-                f"{SUBJECT_B3_LABEL} : {float(last['pnl_bucket_3']):,.2f} | "
+                f"B1: {float(headline_bucket_pnl['bucket_1']):,.2f} | "
+                f"B2: {float(headline_bucket_pnl['bucket_2']):,.2f} | "
+                f"B3: {float(headline_bucket_pnl['bucket_3']):,.2f} | "
+                f"B4: {float(headline_bucket_pnl['bucket_4']):,.2f} | "
                 f"Total: {float(last['total_pnl']):,.2f}\n"
             )
         else:
@@ -2478,33 +2678,16 @@ def main() -> int:
     else:
         hist_summary = f"Since {START_DATE}: no history rows yet.\n"
 
-    detail_note = ""
-    if detail_mismatch:
-        if continuity_active:
-            detail_note = (
-                "Note: stock sleeves underlying detail table may not sum to the headline total; "
-                "headline uses continuity-adjusted totals.json / pnl_by_bucket.csv.\n\n"
-            )
-        else:
-            detail_note = (
-                "Note: stock sleeves underlying detail table may not sum to the headline total; "
-                "check pnl_by_underlying.csv vs totals.json bucket_pnl.\n\n"
-            )
-
     method_block = f"{accounting_method_line}\n\n" if accounting_method_line else ""
+    per_bucket_body = "\n".join(bucket_email_sections)
 
     body = (
         f"As of: {asof}\n"
-        f"Run date: {run_date} — Previous day mark-to-market\n"
-        f"{top_exposure_line}\n\n"
+        f"Run date: {run_date} — Previous day mark-to-market\n\n"
         f"{method_block}"
-        f"{detail_note}"
         f"Position discrepancy rows: {len(discrepancy_df)} "
         f"(under-exposed: {under_exposed_count})\n\n"
-        f"TOTAL PnL (base): {total_pnl:,.2f}\n"
-        f"  Stock sleeves (B1+B2+B4): {display_pnl_map['stock_sleeves']:,.2f}\n"
-        f"  Bucket 3 (Inverse / Hedge): {display_pnl_map['bucket_3']:,.2f}\n\n"
-        f"{bucket_ytd_headline}\n\n"
+        f"{headline_block}\n\n"
         f"SLEEVE RETURNS ON CAPITAL (denominators = average per-day capital since {START_DATE}):\n"
         "----------------------------------------\n"
         f"{bucket_return_table}\n"
@@ -2516,31 +2699,7 @@ def main() -> int:
         "ROC = YTD PnL / avg net capital when net capital is positive. "
         "ROG / ROM = YTD PnL divided by the matching averaged denominator.\n\n"
         f"{period_pnl_summary}\n\n"
-        "════════════════════════════════════════\n"
-        "PnL by underlying (stock sleeves — B1+B2+B4 combined):\n"
-        "----------------------------------------\n"
-        f"{underlying_table}\n"
-        "----------------------------------------\n\n"
-        "PnL Bucket 3 — Inverse / Hedge (by symbol):\n"
-        "----------------------------------------\n"
-        f"{b3_pnl_table}\n"
-        "----------------------------------------\n\n"
-        "PnL BY BUCKET (accounting detail — four buckets):\n"
-        "----------------------------------------\n"
-        f"{bucket_table}\n"
-        "----------------------------------------\n\n"
-        f"NET EXPOSURE — Stock sleeves (B1+B2+B4, delta-normalized):\n"
-        f"  Net notional:   {stock_net:,.2f}\n"
-        f"  Gross notional: {stock_gross:,.2f}\n"
-        "----------------------------------------\n"
-        f"{exposure_table_str}\n"
-        "----------------------------------------\n\n"
-        f"NET EXPOSURE — Bucket 3 (Inverse / Hedge):\n"
-        f"  Net notional:   {b3_net:,.2f}\n"
-        f"  Gross notional: {b3_gross:,.2f}\n"
-        "----------------------------------------\n"
-        f"{b3_exposure_table_str}\n"
-        "----------------------------------------\n\n"
+        f"{per_bucket_body}"
         "Largest Position Discrepancies (actual net vs proposed target net):\n"
         "----------------------------------------\n"
         f"{discrepancy_table}\n"
@@ -2550,10 +2709,12 @@ def main() -> int:
         "Attribution plot: long/short split uses EOD position sign (short if net shares < 0); "
         "realized on flat symbols is booked to long. Excluded cash interest is not in strategy total_pnl.\n\n"
         "Attachments:\n"
-        "- pnl_by_underlying.csv  (stock sleeves: B1+B2+B4)\n"
-        "- pnl_bucket_3.csv\n"
+        "- pnl_by_underlying.csv  (stock sleeves rollup: B1+B2+B4)\n"
         "- pnl_by_symbol.csv\n"
         "- pnl_by_bucket.csv\n"
+        "- pnl_bucket_1.csv, pnl_bucket_2.csv, pnl_bucket_3.csv, pnl_bucket_4.csv\n"
+        "- net_exposure_bucket_1.csv … net_exposure_bucket_4.csv\n"
+        "- net_exposure_bucket_4_detail.csv\n"
         "- totals.json\n"
         "- pnl_history.csv  (sleeve PnL and capital history)\n"
         "- pnl_attribution_history.csv\n"
@@ -2561,8 +2722,6 @@ def main() -> int:
         f"- {att_plot_path.name}\n"
         f"- {discrepancy_plot_path.name}\n"
         f"- {discrepancy_csv_path.name}\n"
-        "- net_exposure_by_underlying.csv\n"
-        "- net_exposure_bucket_3.csv\n"
     )
 
     # 7) Send (attach consolidated CSVs + totals + plots)
@@ -2578,9 +2737,13 @@ def main() -> int:
     ]
     if pnl_symbol_csv.exists():
         attachments.insert(1, pnl_symbol_csv)
-    for csv_path in [pnl_b3_csv, pnl_bucket_csv, exposure_csv_path, exposure_b3_csv_path]:
-        if csv_path.exists():
+    if pnl_bucket_csv.exists():
+        attachments.append(pnl_bucket_csv)
+    seen: set[Path] = set()
+    for csv_path in bucket_attachment_csvs:
+        if csv_path not in seen:
             attachments.append(csv_path)
+            seen.add(csv_path)
 
     if skip_email:
         print(f"[EOD] EOD_SKIP_EMAIL=1 — email not sent. Subject: {subject}")

@@ -1,6 +1,7 @@
 """Tests for PnL attribution long/short split and row builder in run_eod_pnl_email."""
 
 import json
+from pathlib import Path
 
 import pytest
 import pandas as pd
@@ -8,13 +9,18 @@ import pandas as pd
 from run_eod_pnl_email import (
     _bucket_pnl_from_totals,
     _eod_bucket_pnl_continuity_enabled,
+    _format_subject_bucket_pnl_line,
     _load_flow_universe_sets,
     apply_bucket_pnl_continuity,
     compute_average_bucket_capital,
     compute_bucket_capital_snapshot,
+    compute_bucket_daily_deltas,
     compute_period_pnl_deltas,
+    format_bucket_email_block,
+    format_bucket_pnl_section,
     format_bucket_return_table,
     format_bucket_ytd_headline,
+    format_eod_subject,
     format_top_underlying_net_exposure,
     read_bucket_pnl_from_run,
     build_attribution_row,
@@ -532,7 +538,92 @@ def test_format_bucket_ytd_headline_lists_all_buckets():
             "bucket_4": -10.0,
         }
     )
-    assert "Bucket 1: 100.00" in text
-    assert "Bucket 2: 200.00" in text
+    assert "B1" in text
+    assert "B2" in text
     assert "Stock sleeves (B1+B2+B4): 290.00" in text
+
+
+def test_format_eod_subject_lists_four_buckets():
+    bucket_pnl = {
+        "bucket_1": 22752.45,
+        "bucket_2": 73537.07,
+        "bucket_3": 9439.03,
+        "bucket_4": -3510.76,
+    }
+    subject = format_eod_subject("2026-05-30", bucket_pnl, total_pnl=102217.79)
+    assert "B1:" in subject
+    assert "B2:" in subject
+    assert "B3:" in subject
+    assert "B4:" in subject
+    assert "Total:" in subject
+    line = _format_subject_bucket_pnl_line(bucket_pnl, total_pnl=102217.79)
+    assert line.count("|") == 4
+
+
+def test_format_bucket_pnl_section_matches_headline_for_fixture_run():
+    run_dir = Path("data/runs/2026-05-30/accounting")
+    if not (run_dir / "pnl_bucket_2.csv").is_file():
+        pytest.skip("fixture run 2026-05-30 not on disk")
+    totals = json.loads((run_dir / "totals.json").read_text(encoding="utf-8"))
+    headline = _bucket_pnl_from_totals(totals)
+    _, csv_sum = format_bucket_pnl_section(
+        "bucket_2",
+        run_dir / "pnl_bucket_2.csv",
+        run_dir / "pnl_by_symbol.csv",
+    )
+    assert csv_sum == pytest.approx(headline["bucket_2"], abs=1.0)
+
+
+def test_compute_bucket_daily_deltas_from_totals_json(tmp_path, monkeypatch):
+    runs = tmp_path / "data" / "runs"
+    for d, bp, total in (
+        (
+            "2026-05-29",
+            {"bucket_1": 100.0, "bucket_2": 200.0, "bucket_3": 50.0, "bucket_4": -10.0},
+            340.0,
+        ),
+        (
+            "2026-05-30",
+            {"bucket_1": 110.0, "bucket_2": 180.0, "bucket_3": 55.0, "bucket_4": -5.0},
+            340.0,
+        ),
+    ):
+        acct = runs / d / "accounting"
+        acct.mkdir(parents=True)
+        (acct / "totals.json").write_text(
+            json.dumps({"total_pnl": total, "bucket_pnl": bp}),
+            encoding="utf-8",
+        )
+    monkeypatch.setattr("run_eod_pnl_email.RUNS_ROOT", runs)
+    deltas = compute_bucket_daily_deltas(
+        "2026-05-30",
+        {"bucket_1": 110.0, "bucket_2": 180.0, "bucket_3": 55.0, "bucket_4": -5.0},
+    )
+    assert deltas["bucket_1"] == pytest.approx(10.0)
+    assert deltas["bucket_2"] == pytest.approx(-20.0)
+    assert deltas["bucket_3"] == pytest.approx(5.0)
+    assert deltas["bucket_4"] == pytest.approx(5.0)
+
+
+def test_format_bucket_email_block_includes_pnl_and_exposure(tmp_path, monkeypatch):
+    run_dir = tmp_path / "data" / "runs" / "2026-05-30" / "accounting"
+    run_dir.mkdir(parents=True)
+    pd.DataFrame(
+        [{"underlying": "NVDA", "total_pnl": 100.0, "realized_pnl": 50.0, "unrealized_pnl": 50.0}]
+    ).to_csv(run_dir / "pnl_bucket_2.csv", index=False)
+    pd.DataFrame(
+        [{"underlying": "NVDA", "net_notional_usd": 1000.0, "gross_notional_usd": 5000.0}]
+    ).to_csv(run_dir / "net_exposure_bucket_2.csv", index=False)
+    block = format_bucket_email_block(
+        "bucket_2",
+        headline_pnl=100.0,
+        pnl_csv=run_dir / "pnl_bucket_2.csv",
+        pnl_symbol_csv=run_dir / "pnl_by_symbol.csv",
+        exposure_csv=run_dir / "net_exposure_bucket_2.csv",
+        blocked_keys=set(),
+    )
+    assert "Bucket 2" in block
+    assert "PnL detail:" in block
+    assert "Net exposure" in block
+    assert "NVDA" in block
 
