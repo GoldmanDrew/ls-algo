@@ -69,6 +69,116 @@ def run_dir(run_date: str) -> Path:
     return Path("data") / "runs" / run_date
 
 
+def _b4_ratchet_state_path(b4_rules: dict) -> Path:
+    rcfg = (b4_rules.get("ratchet") or {})
+    return Path(str(rcfg.get("state_json") or "data/b4_inverse_ratchet_state.json"))
+
+
+def _b4_load_ratchet_state(path: Path) -> dict:
+    """Load persisted per-pair inverse short floors ({'ETF|UND': usd})."""
+    try:
+        if path.is_file():
+            raw = json.loads(path.read_text())
+            d = raw.get("inverse_short_usd_by_pair", raw) if isinstance(raw, dict) else {}
+            return {str(k): float(v) for k, v in (d or {}).items()
+                    if v is not None and np.isfinite(float(v))}
+    except Exception:
+        pass
+    return {}
+
+
+def _b4_write_ratchet_state(path: Path, state: dict, run_date: str) -> None:
+    """Atomically persist the grow-only inverse short floors."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "run_date": str(run_date),
+            "inverse_short_usd_by_pair": {k: round(float(v), 2) for k, v in state.items()},
+        }
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=2))
+        tmp.replace(path)
+    except Exception as e:
+        print(f"[WARN] could not persist b4 ratchet state ({e})")
+
+
+def _plot_b4_cadence(cad_df: "pd.DataFrame", state, out_dir: Path) -> None:
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception:
+        return
+    d = cad_df.dropna(subset=["interval_days"]).sort_values("interval_days")
+    if not d.empty:
+        fig, ax = plt.subplots(figsize=(9, 4.2), constrained_layout=True)
+        ax.bar(d["Underlying"].astype(str), d["interval_days"].astype(float), color="#1f6f54")
+        for i, (_, r) in enumerate(d.iterrows()):
+            ax.text(i, float(r["interval_days"]) + 0.1, f"{int(r['interval_days'])}d", ha="center", fontsize=8)
+        ax.set_ylabel("days to rebalance")
+        ax.set_title("Bucket 4 - days to rebalance (per underlying)")
+        ax.tick_params(axis="x", rotation=45)
+        fig.savefig(out_dir / "b4_days_to_rebalance.png", dpi=130)
+        plt.close(fig)
+    hbu = getattr(state, "hedge_by_underlying", None) or {}
+    if hbu:
+        fig, ax = plt.subplots(figsize=(9, 4.6), constrained_layout=True)
+        for u, ser in hbu.items():
+            try:
+                s = ser.dropna().tail(252)
+            except Exception:
+                continue
+            if len(s):
+                ax.plot(s.index, s.values, label=str(u), lw=1.2)
+        ax.set_ylabel("hedge ratio h")
+        ax.set_title("Bucket 4 - hedge ratio over time")
+        ax.legend(fontsize=7, ncol=4)
+        fig.savefig(out_dir / "b4_hedge_ratio_over_time.png", dpi=130)
+        plt.close(fig)
+
+
+def _emit_b4_cadence_outputs(state, tgt_df: "pd.DataFrame", run_date: str) -> None:
+    """Write human-readable cadence/hedge explainability + plots + ratchet provenance.
+
+    Answers, for each underlying: how many days until the next rebalance and why
+    (inputs TR/VCR -> output N days), plus the hedge ratio now/over-time. Lets a
+    human (or an AI) reverse-engineer every value from b4_cadence_explain.csv/.txt.
+    """
+    try:
+        out_dir = run_dir(run_date) / "b4_hedge_cadence"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        cad = (getattr(state, "diagnostics", {}) or {}).get("cadence_by_underlying", {}) or {}
+        keys = ("interval_days", "hedge_ratio", "tr", "vcr", "vcr_med",
+                "interval_explain", "h_explain", "reason")
+        rows = [{"Underlying": u, **{k: c.get(k) for k in keys}} for u, c in cad.items()]
+        cad_df = pd.DataFrame(rows)
+        if not cad_df.empty:
+            cad_df.to_csv(out_dir / "b4_cadence_explain.csv", index=False)
+            lines = [f"Bucket 4 rebalance cadence + hedge ratio  (run {run_date})", "=" * 64]
+            _srt = cad_df.copy()
+            _srt["_ord"] = pd.to_numeric(_srt["interval_days"], errors="coerce")
+            for _, r in _srt.sort_values("_ord", na_position="last").iterrows():
+                lines.append(
+                    f"{r['Underlying']}: rebalance every ~{r['interval_days']} trading day(s); "
+                    f"h={r['hedge_ratio']}"
+                )
+                if isinstance(r.get("interval_explain"), str):
+                    lines.append(f"   {r['interval_explain']}")
+                if isinstance(r.get("h_explain"), str):
+                    lines.append(f"   {r['h_explain']}")
+            (out_dir / "b4_cadence_explain.txt").write_text("\n".join(lines))
+            print(f"[INFO] bucket4 cadence explain -> {out_dir / 'b4_cadence_explain.csv'}")
+            _plot_b4_cadence(cad_df, state, out_dir)
+        rcols = [c for c in (
+            "ETF", "Underlying", "inverse_etf_short_usd", "inverse_short_solved_usd",
+            "underlying_short_usd", "hedge_ratio", "ratchet_binding", "ratchet_source",
+            "ratchet_explain") if c in tgt_df.columns]
+        if rcols:
+            tgt_df[rcols].to_csv(out_dir / "b4_ratchet_targets.csv", index=False)
+    except Exception as e:
+        print(f"[WARN] b4 cadence outputs skipped ({e})")
+
+
 def _norm_sym(x: str) -> str:
     return str(x).strip().upper().replace(".", "-")
 
@@ -2234,6 +2344,8 @@ def main() -> None:
                     excl_inv = frozenset({"SCO"} | {_norm_sym(x) for x in (b4_opt2.get("excluded_inverse_etfs") or [])})
                     mp = int(b4_opt2.get("pf_min_pairs", 5))
                     mp = min(mp, max(1, len(pairs_subset)))
+                    _hcp = b4_opt2.get("hedge_cadence_policy") or {}
+                    _hedge_source = str(_hcp.get("source", "v6_panel"))
                     cfg_b4 = Bucket4WeeklyConfig(
                         screened_csv=str(screened_csv),
                         start=str(b4_opt2.get("history_start", "2018-01-01")),
@@ -2248,9 +2360,20 @@ def main() -> None:
                         min_net_decay=float(b4_opt2.get("min_net_decay", b4_min_edge)),
                         use_ibkr_uvix_borrow=bool(b4_opt2.get("use_ibkr_uvix_borrow", False)),
                         pf_params=V6PfParams(min_pairs=mp),
+                        hedge_source=_hedge_source,
+                        hedge_cadence_policy=_hcp,
                     )
                     st_b4 = build_bucket4_state(cfg_b4, bucket4_pairs=pairs_subset)
                     pw, _, _ = compute_bucket4_weights(st_b4)
+                    # Grow-only ratchet: floor inverse leg at persisted per-pair state.
+                    _rcfg = b4_rules.get("ratchet") or {}
+                    _ratchet_on = bool(_rcfg.get("enabled"))
+                    _ratchet_path = _b4_ratchet_state_path(b4_rules)
+                    _ratchet_state = _b4_load_ratchet_state(_ratchet_path) if _ratchet_on else {}
+                    _ratchet_floor = {
+                        (e, u): float(_ratchet_state[f"{e}|{u}"])
+                        for (e, u) in pairs_subset if f"{e}|{u}" in _ratchet_state
+                    }
                     tgt_df, _ = compute_bucket4_targets(
                         st_b4,
                         pw,
@@ -2260,7 +2383,19 @@ def main() -> None:
                         slippage_bps=float(b4_opt2.get("slippage_bps", 20.0)),
                         partial_hedge_ratio=b4_partial_hedge_ratio,
                         delta_floor=delta_floor,
+                        ratchet_enabled=_ratchet_on,
+                        ratchet_floor_by_pair=_ratchet_floor,
                     )
+                    # Emit human-readable cadence + hedge-ratio explainability and plots.
+                    _emit_b4_cadence_outputs(st_b4, tgt_df, args.run_date)
+                    # Persist the grow-only floor (max of prior and this run's inverse target).
+                    if _ratchet_on:
+                        _new_state = dict(_ratchet_state)
+                        for _, r in tgt_df.iterrows():
+                            _k = f"{_norm_sym(str(r['ETF']))}|{_norm_sym(str(r['Underlying']))}"
+                            _inv = float(r.get("inverse_etf_short_usd", 0.0) or 0.0)
+                            _new_state[_k] = max(float(_new_state.get(_k, 0.0)), _inv)
+                        _b4_write_ratchet_state(_ratchet_path, _new_state, args.run_date)
                     gross_by_key = {
                         (_norm_sym(str(r["ETF"])), _norm_sym(str(r["Underlying"]))): float(r["gross_target_usd"])
                         for _, r in tgt_df.iterrows()
