@@ -412,6 +412,21 @@ def build_resize_trades(
             e_dec.underlying = under
             e_dec.etf = etf
 
+            # Bucket 4 grow-only ratchet (execution-time guard / defense-in-depth):
+            # the inverse-ETF short leg is never covered. For a short leg, action
+            # BUY == reduce the short (cover); convert that into a skip so we keep
+            # the hard-to-relocate inverse inventory and manage delta via the
+            # underlying leg instead. SELL (grow the short) is always allowed.
+            _sleeve_name = str(row.get("sleeve", "") or "").strip().lower()
+            if _sleeve_name == "inverse_decay_bucket4" and e_dec.action == "BUY":
+                e_dec.decision = "skip"
+                e_dec.action = None
+                e_dec.trade_usd = 0.0
+                e_dec.qty = 0
+                e_dec.reason = (e_dec.reason or "") + "|b4_ratchet_no_cover"
+                decisions.append(e_dec)
+                continue
+
             if e_dec.decision in ("trim", "grow") and e_dec.action and e_dec.trade_usd > 0:
                 if (
                     str(target_basis or "hybrid").strip().lower() == "hybrid"
