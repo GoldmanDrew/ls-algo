@@ -789,7 +789,10 @@ def _load_flow_universe_sets(run_date: str) -> tuple[set[str], set[str]]:
     if totals_path.exists():
         try:
             obj = json.loads(totals_path.read_text(encoding="utf-8"))
-            for key in ("bucket2_flow_low_delta_symbols", "bucket3_flow_low_delta_symbols"):
+            for key in (
+                "bucket3_flow_low_delta_symbols",
+                "bucket2_flow_low_delta_symbols",
+            ):
                 flow_low |= {
                     canonical_symbol(x)
                     for x in (obj.get(key) or [])

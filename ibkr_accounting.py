@@ -933,11 +933,23 @@ def resolve_flow_inverse_bucket3_syms(
     flow_short_set: set[str],
     etf_to_delta_map: dict[str, float],
 ) -> set[str]:
-    """Flow-program inverse ETFs only (β < 0). Low-β flow names stay in bucket 2."""
+    """Flow-program inverse ETFs only (β < 0)."""
     return {
         s
         for s in flow_short_set
         if float(etf_to_delta_map.get(s, 0.0)) < 0.0
+    }
+
+
+def resolve_flow_low_delta_bucket3_syms(
+    flow_short_set: set[str],
+    etf_to_delta_map: dict[str, float],
+) -> set[str]:
+    """Flow-program low-β yieldBOOST shorts (0 < β ≤ 1.5), e.g. NVYY/TSYY."""
+    return {
+        s
+        for s in flow_short_set
+        if 0.0 < float(etf_to_delta_map.get(s, 0.0)) <= 1.5
     }
 
 
@@ -1668,8 +1680,9 @@ def classify_etf_leg_bucket(
     if beta > 1.5:
         return "bucket_1", "core_levered_etf"
     if beta > 0:
-        leg = "flow_low_delta" if sym in flow_short_set else "yieldboost_etf"
-        return "bucket_2", leg
+        if sym in flow_short_set:
+            return "bucket_3", "flow_low_delta"
+        return "bucket_2", "yieldboost_etf"
     return "bucket_1", "core_levered_etf"
 
 
@@ -2176,7 +2189,12 @@ def _normalize_exposure_bucket_ratios(
             if beta > 1.5:
                 d.at[idx, "_ratio_b1"] = 1.0
             elif (beta > 0) and (beta <= 1.5):
-                d.at[idx, "_ratio_b2"] = 1.0
+                if sym in flow_short_set:
+                    d.at[idx, "_ratio_b1"] = 0.0
+                    d.at[idx, "_ratio_b2"] = 0.0
+                    d.at[idx, "_ratio_b4"] = 0.0
+                else:
+                    d.at[idx, "_ratio_b2"] = 1.0
             elif beta < 0 and sym not in flow_short_set:
                 d.at[idx, "_ratio_b4"] = 1.0
             else:
@@ -3382,6 +3400,8 @@ def _etf_bucket_demand_weights(
         elif beta > 1.5:
             w1 += w
         elif beta > 0:
+            if etf_sym in flow:
+                continue
             w2 += w
     return w1, w2, w4
 
@@ -4251,15 +4271,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         )
         plan_b4_pnl_mode = "inject_slice"
     use_plan_b4_spot_pnl = b12_pnl_mode == "plan_b4_inject"
-    plan_b4_inject_start_date = str(_acct_cfg.get("plan_b4_inject_start_date", "") or "").strip()
-    plan_b4_inject_active = use_plan_b4_spot_pnl
-    if plan_b4_inject_active and plan_b4_inject_start_date:
-        plan_b4_inject_active = run_date >= plan_b4_inject_start_date
-        if not plan_b4_inject_active:
-            print(
-                f"[ACCOUNTING] plan B4 spot inject disabled before {plan_b4_inject_start_date} "
-                f"(run_date={run_date})"
-            )
     plan_sleeve_bucketing = str(_acct_cfg.get("plan_sleeve_bucketing", "sleeve_first")).strip().lower()
     plan_sleeve_first = plan_sleeve_bucketing != "delta_first"
     _replay_raw = [
@@ -4749,12 +4760,13 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     etf_to_under, etf_to_delta_map = complete_etf_maps_from_positions(
         pos, etf_to_under, etf_to_delta_map
     )
-    flow_low_delta_syms = {
-        s for s in flow_short_set if 0 < float(etf_to_delta_map.get(s, 0.0)) <= 1.5
-    }
+    flow_low_delta_syms = resolve_flow_low_delta_bucket3_syms(
+        flow_short_set, etf_to_delta_map
+    )
     flow_inverse_bucket3_syms = resolve_flow_inverse_bucket3_syms(
         flow_short_set, etf_to_delta_map
     )
+    flow_bucket3_syms = flow_inverse_bucket3_syms | flow_low_delta_syms
     if flow_inverse_bucket3_syms:
         print(
             f"[ACCOUNTING] flow-program inverse bucket-3: "
@@ -4763,7 +4775,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         )
     if flow_low_delta_syms:
         print(
-            f"[ACCOUNTING] flow low-beta (0-1.5) -> bucket 2: "
+            f"[ACCOUNTING] flow low-beta (0-1.5) -> bucket 3: "
             f"{len(flow_low_delta_syms)} symbol(s) "
             f"(e.g. {', '.join(sorted(flow_low_delta_syms)[:8])})"
         )
@@ -4790,6 +4802,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     # bucket_1 for spot/fallback attribution.
     _all_rows = []
     for _s, _b in etf_to_delta_map.items():
+        if _s in flow_short_set:
+            continue
         if _b < 0 and _s not in flow_short_set:
             _bkt = "bucket_4"
         elif _b <= 0:
@@ -5833,12 +5847,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 spot_carry_cols=_spot_carry_cols,
             )
             _pnl_split_mode = f"sleeve_pnl:{_pnl_src}"
-        elif plan_b4_inject_active and _u in _plan_ratio_b4 and b4_spot_pnl_inject_eligible(
-            _u,
-            ledger_b4_qty=_cur_b4,
-            implied_b4_short_usd=_implied_b4_short_usd,
-            min_usd=b4_attribution_min_usd,
-        ):
+        elif use_plan_b4_spot_pnl and _u in _plan_ratio_b4:
             apply_plan_b4_spot_pnl_override(
                 lot_components=_lot_components,
                 underlying=_u,
@@ -5852,12 +5861,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 b4_frac_signed=_b4_signed_frac.get(_u),
             )
             _pnl_split_mode = plan_b4_pnl_mode
-        elif plan_b4_inject_active and _u in _b4_signed_frac and b4_spot_pnl_inject_eligible(
-            _u,
-            ledger_b4_qty=_cur_b4,
-            implied_b4_short_usd=_implied_b4_short_usd,
-            min_usd=b4_attribution_min_usd,
-        ):
+        elif use_plan_b4_spot_pnl and _u in _b4_signed_frac:
             apply_plan_b4_spot_pnl_override(
                 lot_components=_lot_components,
                 underlying=_u,
@@ -5958,15 +5962,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                         cols={"realized_pnl"},
                     )
                     _pnl_split_mode = f"sleeve_capacity_cap:{_cap_src}"
-
-        if not plan_b4_inject_active and abs(_ibkr_qty) > 1e-9:
-            collapse_spot_b4_pnl_into_b12(
-                _lot_components,
-                _u,
-                ledger_r_b1=_split_r_b1,
-                ledger_r_b2=_split_r_b2,
-                spot_carry_cols=_spot_carry_cols,
-            )
 
         # PnL spot ratios (FIFO ledger path / diagnostics).
         _spot_pnl_ratio = resolve_underlying_spot_ratios(
@@ -6207,11 +6202,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     df.loc[is_etf & df["symbol"].isin(b4_etf_syms), "bucket"] = "bucket_4"
     df.loc[is_etf & df["symbol"].isin(b4_etf_syms), "leg_class"] = "inverse_b4_etf"
     # Flow-program low-β yieldBOOST shorts (0 < β ≤ 1.5, e.g. NVYY/TSYY) belong
-    # to the flow program -> bucket_3 for P&L (their P&L is dominated by the
-    # PIL/dividend carry of the flow short, not the directional yieldBOOST
-    # sleeve). NOTE: this only re-labels the *P&L* bucket. The ETF leg is left
-    # in the B2 hedge sleeve for spot-ratio / exposure purposes so the
-    # proportional underlying spot split (e.g. NVDA/TSLA) is unaffected.
+    # to the flow program -> bucket_3 for P&L and exposure overlay.
     _flow_low_b3 = (
         is_etf
         & df["symbol"].isin(flow_low_delta_syms)
@@ -6992,8 +6983,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 f"qty_b4~=0 — see {outdir / 'b4_plan_ledger_reconciliation.csv'}"
             )
 
-    # Bucket 3 exposure: flow-program inverse ETFs only (β < 0).
-    pos_b3 = pos[pos["symbol"].isin(flow_inverse_bucket3_syms)].copy()
+    # Bucket 3 exposure: flow-program overlay (inverse β<0 + low-β yieldBOOST shorts).
+    pos_b3 = pos[pos["symbol"].isin(flow_bucket3_syms)].copy()
     pos_b3 = _filter_positions_blacklist(
         pos_b3, blocked_symbols, blocked_underlyings, etf_to_under
     )
@@ -7094,8 +7085,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 [k for k, v in _b4_attribution_source.items() if v == "etf_implied"]
             ),
         },
-        "bucket2_flow_low_delta_symbols": sorted(flow_low_delta_syms),
-        "bucket3_flow_program_symbols": sorted(flow_inverse_bucket3_syms),
+        "bucket3_flow_low_delta_symbols": sorted(flow_low_delta_syms),
+        "bucket3_flow_program_symbols": sorted(flow_bucket3_syms),
         "net_exposure_bucket_1_full": float(exposure_b1_full_df["net_notional_usd"].sum())
         if not exposure_b1_full_df.empty
         else 0.0,

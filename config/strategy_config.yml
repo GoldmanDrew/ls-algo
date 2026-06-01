@@ -77,8 +77,8 @@ accounting:
   b4_partial_hedge_ratio_default: 0.75           # fallback when registry row lacks partial_hedge_ratio
   # Re-seed physical B1/B2 ledger qty from plan ratios (qty_b4 stays 0 on net spot line).
   ledger_plan_seed_b4_underlyings: []
-  # Bucket 2: all ETFs with 0 < β ≤ 1.5 (yieldboost, income shorts, flow low-β) + pro-rata spot.
-  # Bucket 3: flow-program inverse ETFs only (β < 0, e.g. SDS, SQQQ).
+  # Bucket 2: non-flow ETFs with 0 < β ≤ 1.5 (yieldboost, income shorts) + pro-rata spot.
+  # Bucket 3: flow-program overlay (inverse β<0 and low-β yieldBOOST shorts, e.g. NVYY/TSYY).
   spot_ratio_consistency_gate: true
   exposure_reconciliation_tol_gross_pct: 0.005
   exposure_reconciliation_tol_net_abs_usd: 10000

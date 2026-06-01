@@ -821,13 +821,13 @@ def test_flow_inverse_routes_to_bucket_3() -> None:
     assert leg == "flow_inverse"
 
 
-def test_flow_low_delta_routes_to_bucket_2() -> None:
+def test_flow_low_delta_routes_to_bucket_3() -> None:
     bkt, leg = classify_etf_leg_bucket(
         "NVYY",
         0.5,
         flow_short_set={"NVYY", "SDS"},
     )
-    assert bkt == "bucket_2"
+    assert bkt == "bucket_3"
     assert leg == "flow_low_delta"
 
 

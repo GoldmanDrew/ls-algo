@@ -555,11 +555,11 @@ def test_apply_bucket_pnl_continuity_skipped_when_config_disabled(tmp_path, monk
     assert fixed["bucket_pnl"]["bucket_1"] == pytest.approx(227261.17)
 
 
-def test_load_flow_universe_sets_reads_bucket2_flow_low_delta_symbols(tmp_path, monkeypatch):
+def test_load_flow_universe_sets_reads_bucket3_flow_low_delta_symbols(tmp_path, monkeypatch):
     runs = tmp_path / "data" / "runs" / "2026-05-30" / "accounting"
     runs.mkdir(parents=True)
     (runs / "totals.json").write_text(
-        json.dumps({"bucket2_flow_low_delta_symbols": ["NVYY", "TSYY"]}),
+        json.dumps({"bucket3_flow_low_delta_symbols": ["NVYY", "TSYY"]}),
         encoding="utf-8",
     )
     monkeypatch.setattr("run_eod_pnl_email.RUNS_ROOT", tmp_path / "data" / "runs")
