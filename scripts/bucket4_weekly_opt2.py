@@ -927,6 +927,8 @@ def compute_bucket4_targets(
     delta_floor: float = 0.1,
     current_leg_notional_by_pair: Mapping[tuple[str, str], Mapping[str, float]] | None = None,
     small_epsilon: float = 100.0,
+    ratchet_enabled: bool = False,
+    ratchet_floor_by_pair: Mapping[tuple[str, str], float] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """
     Production-style target notionals for one run date (weights × sleeve budget; dynamic hedge).
@@ -937,6 +939,15 @@ def compute_bucket4_targets(
     ``etf_target_usd`` / ``underlying_target_usd`` are also accepted and converted with ``abs``).
     Threshold diagnostics then mirror the backtest rule:
     ``abs(current - target) / max(abs(target), small_epsilon)``.
+
+    RATCHET (``ratchet_enabled``): the inverse-ETF short leg is *grow-only*. The solved
+    delta-neutral inverse target is floored at ``max(solved, current_held, persisted_floor)``
+    so we never propose buying back (covering) inverse-ETF inventory that is hard to relocate.
+    The underlying short leg is then re-solved against the floored inverse leg
+    (``und = h * beta_used * inv * partial_hedge_ratio``) so the hedge stays consistent — all
+    delta reduction is expressed through the (bidirectional) underlying leg, never the inverse leg.
+    Provenance columns (``inverse_short_solved_usd``, ``ratchet_floor_usd``, ``ratchet_binding``,
+    ``ratchet_source``, ``ratchet_explain``) make every floored value reverse-engineerable.
     """
     as_of_ts = pd.Timestamp(as_of)
     rows: list[dict[str, Any]] = []
@@ -977,6 +988,33 @@ def compute_bucket4_targets(
         cur = (current_leg_notional_by_pair or {}).get((etf_sym, und_sym), {})
         cur_inv = abs(float(cur.get("inverse_etf_short_usd", cur.get("etf_target_usd", inv_short_usd))))
         cur_und = abs(float(cur.get("underlying_short_usd", cur.get("underlying_target_usd", und_short_usd))))
+
+        # ---- RATCHET: inverse-ETF short leg is grow-only --------------------
+        inv_short_solved = inv_short_usd
+        ratchet_floor = abs(float((ratchet_floor_by_pair or {}).get((etf_sym, und_sym), 0.0)))
+        cur_inv_held = abs(float(cur.get("inverse_etf_short_usd", cur.get("etf_target_usd", 0.0)))) \
+            if (etf_sym, und_sym) in (current_leg_notional_by_pair or {}) else 0.0
+        ratchet_binding = False
+        ratchet_source = "solve"
+        if ratchet_enabled:
+            floor_val = max(inv_short_solved, cur_inv_held, ratchet_floor)
+            if floor_val > inv_short_solved + 1e-6:
+                ratchet_binding = True
+                ratchet_source = "held_position" if cur_inv_held >= ratchet_floor else "ratchet_state"
+            inv_short_usd = floor_val
+            # re-solve underlying leg against the floored inverse leg (keeps hedge h consistent)
+            und_short_usd = h * beta_used * inv_short_usd * float(partial_hedge_ratio)
+        if ratchet_binding:
+            ratchet_explain = (
+                f"inverse floored to {inv_short_usd:,.0f} (>solved {inv_short_solved:,.0f}) "
+                f"from {ratchet_source} [held={cur_inv_held:,.0f}, state={ratchet_floor:,.0f}]; "
+                f"underlying re-solved = h({h:.3f})*beta({beta_used:.3f})*inv*phr({partial_hedge_ratio:.2f}) "
+                f"= {und_short_usd:,.0f}"
+            )
+        elif ratchet_enabled:
+            ratchet_explain = f"no cover needed; solved inverse {inv_short_solved:,.0f} already >= floor"
+        else:
+            ratchet_explain = "ratchet disabled"
         drift_short = abs(cur_inv - inv_short_usd) / max(abs(inv_short_usd), float(small_epsilon))
         drift_long = abs(cur_und - und_short_usd) / max(abs(und_short_usd), float(small_epsilon))
         trig_long = (
@@ -1022,6 +1060,11 @@ def compute_bucket4_targets(
                 "drift_short_pct": drift_short,
                 "drift_long_pct": drift_long,
                 "next_scheduled_rebalance_date": next_sched,
+                "inverse_short_solved_usd": inv_short_solved,
+                "ratchet_floor_usd": ratchet_floor,
+                "ratchet_binding": bool(ratchet_binding),
+                "ratchet_source": ratchet_source,
+                "ratchet_explain": ratchet_explain,
             }
         )
     meta = {
