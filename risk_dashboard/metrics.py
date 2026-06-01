@@ -115,6 +115,10 @@ BUCKET_SLEEVE_KEYS: dict[str, str] = {
     "bucket_4": "inverse_decay_bucket4",
 }
 
+BUCKET_KEYS: tuple[str, ...] = ("bucket_1", "bucket_2", "bucket_3", "bucket_4")
+BUCKETS_WITHOUT_ROC: frozenset[str] = frozenset({"bucket_3"})
+PNL_HISTORY_START_DATE = "2026-02-27"
+
 BUCKET_LABELS: dict[str, str] = {
     "bucket_1": "Bucket 1 (core leveraged)",
     "bucket_2": "Bucket 2 (yield boost)",
@@ -4075,42 +4079,144 @@ def compute_display_sleeve_groups(
     return groups
 
 
-def compute_capital_panel(totals: dict[str, Any], nav_usd: float) -> dict[str, Any]:
+def _safe_return_ratio(numerator: float, denominator: float) -> float | None:
+    if abs(denominator) <= 1e-12:
+        return None
+    return numerator / denominator
+
+
+def _roc_on_net_capital(pnl: float, net_cap: float, *, bucket: str | None = None) -> float | None:
+    if bucket is not None and bucket in BUCKETS_WITHOUT_ROC:
+        return None
+    if net_cap <= 0:
+        return None
+    return _safe_return_ratio(pnl, net_cap)
+
+
+def _load_pnl_history_for_returns(pnl_history_csv: Path | None) -> pd.DataFrame:
+    if pnl_history_csv is None or not pnl_history_csv.is_file():
+        return pd.DataFrame()
+    try:
+        hist = pd.read_csv(pnl_history_csv)
+        if "date" not in hist.columns:
+            return pd.DataFrame()
+        hist["date"] = pd.to_datetime(hist["date"], errors="coerce")
+        return hist[hist["date"] >= pd.to_datetime(PNL_HISTORY_START_DATE)].copy()
+    except Exception:
+        return pd.DataFrame()
+
+
+def _average_bucket_capital(history: pd.DataFrame) -> dict[str, float]:
+    """Time-average per-bucket capital columns (same convention as EOD email)."""
+    out: dict[str, float] = {}
+    for bucket in BUCKET_KEYS:
+        for metric in ("net_capital", "gross_capital", "margin_req"):
+            col = f"{metric}_{bucket}"
+            out[col] = 0.0
+            if history is None or history.empty or col not in history.columns:
+                continue
+            vals = pd.to_numeric(history[col], errors="coerce").dropna()
+            if not vals.empty:
+                out[col] = float(vals.mean())
+    for group in ("stock_sleeves", "bucket_3"):
+        for metric in ("net_capital", "gross_capital", "margin_req"):
+            col = f"{metric}_{group}"
+            out[col] = 0.0
+            if history is None or history.empty or col not in history.columns:
+                continue
+            vals = pd.to_numeric(history[col], errors="coerce").dropna()
+            if not vals.empty:
+                out[col] = float(vals.mean())
+    return out
+
+
+def compute_bucket_return_rows(
+    bucket_pnl: dict[str, Any],
+    capital_avg: dict[str, float],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for bucket in BUCKET_KEYS:
+        pnl = float(bucket_pnl.get(bucket, 0.0) or 0.0)
+        net_cap = float(capital_avg.get(f"net_capital_{bucket}", 0.0) or 0.0)
+        gross_cap = float(capital_avg.get(f"gross_capital_{bucket}", 0.0) or 0.0)
+        margin = float(capital_avg.get(f"margin_req_{bucket}", 0.0) or 0.0)
+        rows.append(
+            {
+                "id": bucket,
+                "label": BUCKET_LABELS.get(bucket, bucket),
+                "pnl_usd": pnl,
+                "avg_net_capital_usd": net_cap,
+                "avg_gross_capital_usd": gross_cap,
+                "avg_margin_req_usd": margin,
+                "roc_on_net_capital": _roc_on_net_capital(pnl, net_cap, bucket=bucket),
+                "rog_on_gross_capital": _safe_return_ratio(pnl, gross_cap),
+                "rom_on_margin_req": _safe_return_ratio(pnl, margin),
+            }
+        )
+    return rows
+
+
+def compute_capital_panel(
+    totals: dict[str, Any],
+    nav_usd: float,
+    *,
+    pnl_history_csv: Path | None = None,
+) -> dict[str, Any]:
     """Deployed capital from EOD ``capital_snapshot`` persisted in totals.json."""
     snap = totals.get("capital_snapshot")
     if not isinstance(snap, dict) or not snap:
         return {"available": False, "reason": "capital_snapshot missing from totals.json (run EOD after upgrade)"}
 
     bucket_pnl = totals.get("bucket_pnl") or {}
+    capital_avg = _average_bucket_capital(_load_pnl_history_for_returns(pnl_history_csv))
 
-    def _row(prefix: str, pnl_buckets: tuple[str, ...]) -> dict[str, float | None]:
+    def _row(
+        prefix: str,
+        pnl_buckets: tuple[str, ...],
+        *,
+        group_id: str,
+    ) -> dict[str, float | None]:
         net_c = float(snap.get(f"net_capital_{prefix}", 0.0) or 0.0)
         gross_c = float(snap.get(f"gross_capital_{prefix}", 0.0) or 0.0)
         margin = float(snap.get(f"margin_req_{prefix}", 0.0) or 0.0)
         pnl = sum(float(bucket_pnl.get(b, 0.0) or 0.0) for b in pnl_buckets)
-        roc = (pnl / net_c) if abs(net_c) > 1e-6 else None
+        avg_net = float(capital_avg.get(f"net_capital_{prefix}", 0.0) or 0.0)
+        avg_gross = float(capital_avg.get(f"gross_capital_{prefix}", 0.0) or 0.0)
+        avg_margin = float(capital_avg.get(f"margin_req_{prefix}", 0.0) or 0.0)
+        roc_bucket = "bucket_3" if group_id == "b3" else None
         return {
             "net_capital_usd": net_c,
             "gross_capital_usd": gross_c,
             "margin_req_usd": margin,
             "pnl_usd": pnl,
             "net_capital_pct_nav": (net_c / nav_usd) if nav_usd > 0 else None,
-            "roc_on_net_capital": roc,
+            "roc_on_net_capital": _roc_on_net_capital(pnl, avg_net, bucket=roc_bucket),
+            "rog_on_gross_capital": _safe_return_ratio(pnl, avg_gross),
+            "rom_on_margin_req": _safe_return_ratio(pnl, avg_margin),
         }
 
     rows = [
         {
             "id": "b124",
             "label": DISPLAY_SLEEVE_GROUPS["b124"]["label"],
-            **_row("stock_sleeves", STOCK_SLEEVE_BUCKETS),
+            **_row("stock_sleeves", STOCK_SLEEVE_BUCKETS, group_id="b124"),
         },
         {
             "id": "b3",
             "label": DISPLAY_SLEEVE_GROUPS["b3"]["label"],
-            **_row("bucket_3", ("bucket_3",)),
+            **_row("bucket_3", ("bucket_3",), group_id="b3"),
         },
     ]
-    return {"available": True, "rows": rows, "source": "totals.json capital_snapshot"}
+    return {
+        "available": True,
+        "rows": rows,
+        "bucket_return_rows": compute_bucket_return_rows(bucket_pnl, capital_avg),
+        "return_denominator_note": (
+            f"ROC / ROG / ROM denominators = average per-day capital since {PNL_HISTORY_START_DATE} "
+            "(same as EOD email). ROC omitted when avg net capital is not positive."
+        ),
+        "source": "totals.json capital_snapshot",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -4230,7 +4336,11 @@ def build_snapshot(
         nav_usd=nav_usd,
         sleeve_available=book.sleeve_attribution_available,
     )
-    capital_panel = compute_capital_panel(totals, nav_usd=nav_usd)
+    capital_panel = compute_capital_panel(
+        totals,
+        nav_usd=nav_usd,
+        pnl_history_csv=repo_root / "data" / "ledger" / "pnl_history.csv",
+    )
     exposure_reconciliation = evaluate_exposure_reconciliation(totals)
 
     buckets: dict[str, dict[str, Any]] = {}

@@ -16,6 +16,8 @@ from risk_dashboard.metrics import (
     compute_book_summary,
     compute_borrow_panel,
     compute_bucket_detail,
+    compute_bucket_return_rows,
+    compute_capital_panel,
     compute_concentration_panel,
     compute_data_quality,
     compute_factor_panel,
@@ -1039,3 +1041,75 @@ def test_factor_panel_totals_include_qqq_iwm_btc(tmp_path: Path):
     assert t["net_beta_to_qqq"] == pytest.approx(0.11)  # (15k - 4k) / 100k
     assert t["net_beta_to_iwm"] == pytest.approx(0.075)  # (12k - 4.5k) / 100k
     assert t["net_beta_to_btc"] == pytest.approx(0.045)  # (5k - 0.5k) / 100k
+
+
+def test_compute_bucket_return_rows_omits_roc_for_negative_or_overlay_buckets():
+    rows = compute_bucket_return_rows(
+        {
+            "bucket_1": 10.0,
+            "bucket_2": 0.0,
+            "bucket_3": 5.0,
+            "bucket_4": -2.0,
+        },
+        {
+            "net_capital_bucket_1": 100.0,
+            "gross_capital_bucket_1": 200.0,
+            "margin_req_bucket_1": 50.0,
+            "net_capital_bucket_2": -50.0,
+            "gross_capital_bucket_2": 150.0,
+            "margin_req_bucket_2": 25.0,
+            "net_capital_bucket_3": 80.0,
+            "gross_capital_bucket_3": 90.0,
+            "margin_req_bucket_3": 20.0,
+            "net_capital_bucket_4": 0.0,
+            "gross_capital_bucket_4": 40.0,
+            "margin_req_bucket_4": 10.0,
+        },
+    )
+    by_id = {r["id"]: r for r in rows}
+    assert by_id["bucket_1"]["roc_on_net_capital"] == pytest.approx(0.10)
+    assert by_id["bucket_1"]["rog_on_gross_capital"] == pytest.approx(0.05)
+    assert by_id["bucket_1"]["rom_on_margin_req"] == pytest.approx(10.0 / 50.0)
+    assert by_id["bucket_2"]["roc_on_net_capital"] is None
+    assert by_id["bucket_3"]["roc_on_net_capital"] is None
+    assert by_id["bucket_3"]["rog_on_gross_capital"] == pytest.approx(5.0 / 90.0)
+    assert by_id["bucket_4"]["roc_on_net_capital"] is None
+
+
+def test_compute_capital_panel_includes_per_bucket_returns(tmp_path: Path):
+    hist = tmp_path / "pnl_history.csv"
+    hist.write_text(
+        "date,net_capital_bucket_1,gross_capital_bucket_1,margin_req_bucket_1,"
+        "net_capital_bucket_2,gross_capital_bucket_2,margin_req_bucket_2,"
+        "net_capital_bucket_3,gross_capital_bucket_3,margin_req_bucket_3,"
+        "net_capital_bucket_4,gross_capital_bucket_4,margin_req_bucket_4,"
+        "net_capital_stock_sleeves,gross_capital_stock_sleeves,margin_req_stock_sleeves,"
+        "net_capital_bucket_3\n"
+        "2026-03-01,100,200,50,0,0,0,0,0,0,0,0,0,100,200,50,0\n"
+        "2026-03-02,300,400,150,0,0,0,0,0,0,0,0,0,300,400,150,0\n",
+        encoding="utf-8",
+    )
+    totals = {
+        "capital_snapshot": {
+            "net_capital_stock_sleeves": -321034.0,
+            "gross_capital_stock_sleeves": 3_491_157.0,
+            "margin_req_stock_sleeves": 1_639_104.0,
+            "net_capital_bucket_3": 0.0,
+            "gross_capital_bucket_3": 0.0,
+            "margin_req_bucket_3": 0.0,
+        },
+        "bucket_pnl": {
+            "bucket_1": 10.0,
+            "bucket_2": 0.0,
+            "bucket_3": 0.0,
+            "bucket_4": 0.0,
+        },
+    }
+    panel = compute_capital_panel(totals, nav_usd=800_000.0, pnl_history_csv=hist)
+    assert panel["available"] is True
+    assert len(panel["bucket_return_rows"]) == 4
+    b124 = next(r for r in panel["rows"] if r["id"] == "b124")
+    assert b124["roc_on_net_capital"] == pytest.approx(10.0 / 200.0)
+    assert b124["rog_on_gross_capital"] == pytest.approx(10.0 / 300.0)
+    b1 = next(r for r in panel["bucket_return_rows"] if r["id"] == "bucket_1")
+    assert b1["roc_on_net_capital"] == pytest.approx(10.0 / 200.0)

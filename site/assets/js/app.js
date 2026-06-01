@@ -123,9 +123,9 @@
         value: fmtUsd(book.short_notional_usd),
       },
       {
-        label: "P&L (run)",
+        label: "P&L YTD",
         value: fmtUsdSigned(book.pnl_today_usd),
-        sub: fmtPct(book.pnl_today_pct_nav, 2) + " of NAV",
+        sub: fmtPct(book.pnl_today_pct_nav, 2) + " of NAV (strategy cumulative)",
         cls: signedClass(book.pnl_today_usd),
       },
     ];
@@ -1628,7 +1628,7 @@
     els.displaySleeveGroups.innerHTML = `
       <table class="tight">
         <thead><tr>
-          <th>Group</th><th>Gross $</th><th>Net $</th><th>P&amp;L</th><th>Notes</th>
+          <th>Group</th><th>Gross $</th><th>Net $</th><th>P&amp;L YTD</th><th>Notes</th>
         </tr></thead>
         <tbody>${rows
           .map(
@@ -1657,10 +1657,12 @@
       return;
     }
     const rows = panel.rows || [];
+    const bucketRows = panel.bucket_return_rows || [];
+    const returnNote = panel.return_denominator_note || "";
     els.capitalPanel.innerHTML = `
       <table class="tight">
         <thead><tr>
-          <th>Group</th><th>Net capital</th><th>Gross capital</th><th>Margin req</th><th>ROC (run P&amp;L / net cap)</th>
+          <th>Group</th><th>Net capital</th><th>Gross capital</th><th>Margin req</th><th>ROC</th><th>ROG</th><th>ROM</th>
         </tr></thead>
         <tbody>${rows
           .map(
@@ -1672,10 +1674,43 @@
           <td class="num">${
             r.roc_on_net_capital == null ? "-" : fmtPct(r.roc_on_net_capital, 2)
           }</td>
+          <td class="num">${
+            r.rog_on_gross_capital == null ? "-" : fmtPct(r.rog_on_gross_capital, 2)
+          }</td>
+          <td class="num">${
+            r.rom_on_margin_req == null ? "-" : fmtPct(r.rom_on_margin_req, 2)
+          }</td>
         </tr>`
           )
           .join("")}</tbody>
       </table>
+      <h4>Per-bucket returns</h4>
+      <table class="tight">
+        <thead><tr>
+          <th>Bucket</th><th>P&amp;L YTD</th><th>Avg net cap</th><th>Avg gross cap</th><th>Avg margin</th><th>ROC</th><th>ROG</th><th>ROM</th>
+        </tr></thead>
+        <tbody>${bucketRows
+          .map(
+            (r) => `<tr>
+          <td><strong>${safeText(r.label)}</strong></td>
+          <td class="num ${signedClass(r.pnl_usd)}">${fmtUsdSigned(r.pnl_usd)}</td>
+          <td class="num ${signedClass(r.avg_net_capital_usd)}">${fmtUsd(r.avg_net_capital_usd)}</td>
+          <td class="num">${fmtUsd(r.avg_gross_capital_usd)}</td>
+          <td class="num">${fmtUsd(r.avg_margin_req_usd)}</td>
+          <td class="num">${
+            r.roc_on_net_capital == null ? "-" : fmtPct(r.roc_on_net_capital, 2)
+          }</td>
+          <td class="num">${
+            r.rog_on_gross_capital == null ? "-" : fmtPct(r.rog_on_gross_capital, 2)
+          }</td>
+          <td class="num">${
+            r.rom_on_margin_req == null ? "-" : fmtPct(r.rom_on_margin_req, 2)
+          }</td>
+        </tr>`
+          )
+          .join("")}</tbody>
+      </table>
+      <p class="dim small">${safeText(returnNote)}</p>
       <p class="dim small">Source: ${safeText(panel.source, "totals.json")}. Scoped to etf_screened_today universe (same as EOD email).</p>`;
   }
 
