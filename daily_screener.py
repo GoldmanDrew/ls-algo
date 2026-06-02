@@ -162,6 +162,9 @@ leverage_pairs_leverageshares = [
     ("STXU", "STX"),
     # 2026-05-15 Leverage Shares — 2X long CBRS (post-IPO) + 2X long CRML (CRMX)
     ("CBRG", "CBRS"), ("CRMX", "CRML"),
+    # 2026-06-02 Leverage Shares Themes — 2X long daily (Cboe-listed)
+    ("ONG", "ON"),    # Leverage Shares 2X Long ON Daily ETF (ON Semiconductor)
+    ("NXPG", "NXPI"), # Leverage Shares 2X Long NXPI Daily ETF (NXP Semiconductors)
 ]
 
 new_pairs = [
@@ -219,6 +222,10 @@ new_pairs = [
     ("AMPU", "AMPX"),  # Defiance Daily Target 2X Long AMPX (Amprius Technologies)
     # 2026-05-07 Tradr 2X long (Xanadu Quantum)
     ("XNDX", "XNDU"),  # Tradr 2X Long XNDU Daily ETF (Xanadu Quantum Technologies)
+    # 2026-05-21 Defiance + T-REX 2X long (ASTS, LITE)
+    ("ASTY", "ASTS"),  # Defiance Daily Target 2X Long ASTS (AST SpaceMobile)
+    ("ASUP", "ASTS"),  # T-REX 2X Long ASTS (REX / Tuttle; distinct from Tradr ASTX & Defiance ASTY)
+    ("LITU", "LITE"),  # T-REX 2X Long LITE (REX / Tuttle; distinct from Tradr LITX)
     # 2026-05-27 Defiance 2X long (One Stop Systems)
     ("OSSL", "OSS"),   # Defiance Daily Target 2X Long OSS
     # 2026-05-28 Direxion 2X daily bull — swap-based spot ETP refs (IBIT, ETHA, GLD, SLV)
