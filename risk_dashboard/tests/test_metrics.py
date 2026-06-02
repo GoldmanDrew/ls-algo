@@ -630,9 +630,10 @@ def test_compute_slide_risk_vix_decay_matrix_with_mock_vol_beta():
     assert current["delta_vs_current_pct_nav"] == pytest.approx(0.0, abs=1e-12)
     assert shocked["vix_shock_pts"] == 10
     assert len(matrix["cells"]) >= 2
+    assert current["borrow_pnl_usd"] == 0.0
+    assert current["borrow_pnl_pct_nav"] == 0.0
     assert current["total_pnl_pct_nav"] == pytest.approx(
-        (current["decay_pnl_pct_nav"] or 0.0) + (current["borrow_pnl_pct_nav"] or 0.0),
-        abs=1e-9,
+        current["decay_pnl_pct_nav"], abs=1e-9
     )
 
 
