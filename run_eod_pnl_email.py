@@ -32,6 +32,10 @@ from ibkr_accounting import (
     _filter_positions_blacklist,
 )
 from strategy_config import load_config
+from harvest_underexposed_shorts import (
+    _maybe_merge_optimal_targets,
+    _resolve_target_basis_columns,
+)
 from reporting_scope import (
     load_blocked_exposure_sets as _scope_blocked_exposure_sets,
     load_screened_for_run as _scope_load_screened_for_run,
@@ -2367,6 +2371,7 @@ def load_position_discrepancies(run_date: str) -> pd.DataFrame:
 
     proposed_path = resolve_proposed_trades_path(run_date)
     plan = pd.read_csv(proposed_path)
+    plan = _maybe_merge_optimal_targets(plan, run_date, runs_root=RUNS_ROOT)
     if plan.empty:
         return pd.DataFrame(
             columns=[
@@ -2394,17 +2399,15 @@ def load_position_discrepancies(run_date: str) -> pd.DataFrame:
     plan["Underlying"] = plan["Underlying"].astype(str).map(canonical_symbol)
     plan["long_usd"] = pd.to_numeric(plan.get("long_usd", 0.0), errors="coerce").fillna(0.0)
     plan["short_usd"] = pd.to_numeric(plan.get("short_usd", 0.0), errors="coerce").fillna(0.0)
-    long_col = "long_usd"
-    short_col = "short_usd"
-    if "optimal_long_usd" in plan.columns and "optimal_short_usd" in plan.columns:
+    if "optimal_long_usd" in plan.columns:
         plan["optimal_long_usd"] = pd.to_numeric(plan["optimal_long_usd"], errors="coerce").fillna(
             plan["long_usd"]
         )
+    if "optimal_short_usd" in plan.columns:
         plan["optimal_short_usd"] = pd.to_numeric(plan["optimal_short_usd"], errors="coerce").fillna(
             plan["short_usd"]
         )
-        long_col = "optimal_long_usd"
-        short_col = "optimal_short_usd"
+    long_col, short_col = _resolve_target_basis_columns(plan, "optimal")
 
     target_under = (
         plan.groupby("Underlying", as_index=False)[long_col].sum()
@@ -2829,7 +2832,8 @@ def main() -> int:
         f"{discrepancy_table}\n"
         "----------------------------------------\n"
         "UNDER flag = actual gross exposure is below target gross exposure.\n"
-        "TARGET_NET uses optimal_long_usd / optimal_short_usd (fully sized, pre-cap) when present.\n\n"
+        "TARGET_NET uses optimal_long_usd / optimal_short_usd (structural, pre-shares_available) "
+        "from proposed_trades.csv or optimal_targets.csv when merged.\n\n"
         f"{hist_summary}\n"
         "Attribution plot: long/short split uses EOD position sign (short if net shares < 0); "
         "realized on flat symbols is booked to long. Excluded cash interest is not in strategy total_pnl.\n\n"

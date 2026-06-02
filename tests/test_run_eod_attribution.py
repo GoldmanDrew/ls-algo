@@ -715,3 +715,63 @@ def test_load_position_discrepancies_uses_optimal_target_usd(tmp_path, monkeypat
     row = df[df["symbol"] == "MTYY"].iloc[0]
     assert row["target_net_usd"] == pytest.approx(-15000.0)
 
+
+def test_load_position_discrepancies_merges_optimal_targets_csv(tmp_path, monkeypatch):
+    """When proposed_trades lacks optimal_* columns, merge from optimal_targets.csv (harvest parity)."""
+    run_dir = tmp_path / "data" / "runs" / "2026-05-30"
+    flex_dir = run_dir / "ibkr_flex"
+    flex_dir.mkdir(parents=True)
+    (flex_dir / "flex_positions.xml").write_text(
+        """<?xml version="1.0"?>
+<FlexQueryResponse>
+  <FlexStatements>
+    <FlexStatement>
+      <OpenPositions>
+        <OpenPosition symbol="MTYY" position="-100" markPrice="4.0" fxRateToBase="1"
+          assetCategory="STK" description="MTYY" />
+      </OpenPositions>
+    </FlexStatement>
+  </FlexStatements>
+</FlexQueryResponse>""",
+        encoding="utf-8",
+    )
+    screened = tmp_path / "data" / "etf_screened_today.csv"
+    screened.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([{"ETF": "MTYY", "Underlying": "MSTR", "delta": 1.0, "bucket": "bucket_2"}]).to_csv(
+        screened, index=False
+    )
+    pd.DataFrame(
+        [
+            {
+                "ETF": "MTYY",
+                "Underlying": "MSTR",
+                "long_usd": 1000.0,
+                "short_usd": -3000.0,
+                "strategy_tag": "ls",
+            }
+        ]
+    ).to_csv(run_dir / "proposed_trades.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "ETF": "MTYY",
+                "Underlying": "MSTR",
+                "optimal_long_usd": 5000.0,
+                "optimal_short_usd": -15000.0,
+                "optimal_gross_target_usd": 20000.0,
+            }
+        ]
+    ).to_csv(run_dir / "optimal_targets.csv", index=False)
+
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / "strategy_config.yml").write_text(
+        "strategy:\n  tag: ls\n  blacklist: []\n", encoding="utf-8"
+    )
+
+    monkeypatch.setattr("run_eod_pnl_email.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr("run_eod_pnl_email.RUNS_ROOT", tmp_path / "data" / "runs")
+    df = load_position_discrepancies("2026-05-30")
+    row = df[df["symbol"] == "MTYY"].iloc[0]
+    assert row["target_net_usd"] == pytest.approx(-15000.0)
+

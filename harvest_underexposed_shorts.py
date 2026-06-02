@@ -104,7 +104,12 @@ def _resolve_target_basis_columns(plan: pd.DataFrame, target_basis: str) -> tupl
     return ("long_usd", "short_usd")
 
 
-def _maybe_merge_optimal_targets(plan: pd.DataFrame, run_date: str) -> pd.DataFrame:
+def _maybe_merge_optimal_targets(
+    plan: pd.DataFrame,
+    run_date: str,
+    *,
+    runs_root: Path | None = None,
+) -> pd.DataFrame:
     """Merge ``optimal_targets.csv`` into ``plan`` when available so harvest can use ``optimal_*``
     even if the in-hand ``proposed_trades.csv`` predates the dual-pipeline output.
     """
@@ -112,7 +117,10 @@ def _maybe_merge_optimal_targets(plan: pd.DataFrame, run_date: str) -> pd.DataFr
         return plan
     if "optimal_long_usd" in plan.columns and "optimal_short_usd" in plan.columns:
         return plan
-    optimal_path = run_dir(run_date) / "optimal_targets.csv"
+    if runs_root is not None:
+        optimal_path = Path(runs_root) / run_date / "optimal_targets.csv"
+    else:
+        optimal_path = run_dir(run_date) / "optimal_targets.csv"
     if not optimal_path.exists():
         return plan
     try:
