@@ -4204,60 +4204,92 @@ def compute_capital_panel(
     *,
     pnl_history_csv: Path | None = None,
 ) -> dict[str, Any]:
-    """Deployed capital from EOD ``capital_snapshot`` persisted in totals.json."""
+    """Per-bucket deployed capital and return metrics for the dashboard."""
+    _ = nav_usd  # reserved for future %-of-NAV columns
     snap = totals.get("capital_snapshot")
     if not isinstance(snap, dict) or not snap:
-        return {"available": False, "reason": "capital_snapshot missing from totals.json (run EOD after upgrade)"}
+        return {
+            "available": False,
+            "reason": "capital_snapshot missing from totals.json (run EOD after upgrade)",
+            "bucket_return_rows": [],
+        }
 
     bucket_pnl = totals.get("bucket_pnl") or {}
     capital_avg = _average_bucket_capital(_load_pnl_history_for_returns(pnl_history_csv))
-
-    def _row(
-        prefix: str,
-        pnl_buckets: tuple[str, ...],
-        *,
-        group_id: str,
-    ) -> dict[str, float | None]:
-        net_c = float(snap.get(f"net_capital_{prefix}", 0.0) or 0.0)
-        gross_c = float(snap.get(f"gross_capital_{prefix}", 0.0) or 0.0)
-        margin = float(snap.get(f"margin_req_{prefix}", 0.0) or 0.0)
-        pnl = sum(float(bucket_pnl.get(b, 0.0) or 0.0) for b in pnl_buckets)
-        avg_net = float(capital_avg.get(f"net_capital_{prefix}", 0.0) or 0.0)
-        avg_gross = float(capital_avg.get(f"gross_capital_{prefix}", 0.0) or 0.0)
-        avg_margin = float(capital_avg.get(f"margin_req_{prefix}", 0.0) or 0.0)
-        roc_bucket = "bucket_3" if group_id == "b3" else None
-        return {
-            "net_capital_usd": net_c,
-            "gross_capital_usd": gross_c,
-            "margin_req_usd": margin,
-            "pnl_usd": pnl,
-            "net_capital_pct_nav": (net_c / nav_usd) if nav_usd > 0 else None,
-            "roc_on_net_capital": _roc_on_net_capital(pnl, avg_net, bucket=roc_bucket),
-            "rog_on_gross_capital": _safe_return_ratio(pnl, avg_gross),
-            "rom_on_margin_req": _safe_return_ratio(pnl, avg_margin),
-        }
-
-    rows = [
-        {
-            "id": "b124",
-            "label": DISPLAY_SLEEVE_GROUPS["b124"]["label"],
-            **_row("stock_sleeves", STOCK_SLEEVE_BUCKETS, group_id="b124"),
-        },
-        {
-            "id": "b3",
-            "label": DISPLAY_SLEEVE_GROUPS["b3"]["label"],
-            **_row("bucket_3", ("bucket_3",), group_id="b3"),
-        },
-    ]
     return {
         "available": True,
-        "rows": rows,
         "bucket_return_rows": compute_bucket_return_rows(bucket_pnl, capital_avg),
         "return_denominator_note": (
             f"ROC / ROG / ROM denominators = average per-day capital since {PNL_HISTORY_START_DATE} "
             "(same as EOD email). ROC omitted when avg net capital is not positive."
         ),
         "source": "totals.json capital_snapshot",
+    }
+
+
+def compute_bucket_sleeve_rows(
+    sleeve_table: list[dict[str, Any]],
+    capital_panel: dict[str, Any],
+    totals: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Unified per-bucket sleeve row: exposure allocation + deployed capital + returns."""
+    totals = totals or {}
+    snap = totals.get("capital_snapshot")
+    snap_dict = snap if isinstance(snap, dict) else {}
+    capital_available = bool(capital_panel.get("available"))
+    returns_by_bucket = {
+        str(r.get("id", "")): r for r in capital_panel.get("bucket_return_rows") or []
+    }
+    sleeves_by_bucket = {str(r.get("bucket", "")): r for r in sleeve_table}
+
+    rows: list[dict[str, Any]] = []
+    for bucket in BUCKET_KEYS:
+        sleeve = sleeves_by_bucket.get(bucket, {})
+        ret = returns_by_bucket.get(bucket, {})
+        if capital_available and snap_dict:
+            net_cap = float(snap_dict.get(f"net_capital_{bucket}", 0.0) or 0.0)
+            gross_cap = float(snap_dict.get(f"gross_capital_{bucket}", 0.0) or 0.0)
+            margin = float(snap_dict.get(f"margin_req_{bucket}", 0.0) or 0.0)
+        else:
+            net_cap = gross_cap = margin = None
+
+        rows.append(
+            {
+                "bucket": bucket,
+                "bucket_label": sleeve.get("bucket_label") or BUCKET_LABELS.get(bucket, bucket),
+                "exposure_gross_usd": sleeve.get("gross_usd"),
+                "exposure_net_usd": sleeve.get("net_usd"),
+                "target_gross_usd": sleeve.get("target_gross_usd"),
+                "actual_weight": sleeve.get("actual_weight"),
+                "target_weight": sleeve.get("target_weight"),
+                "drift_pp": sleeve.get("drift_pp"),
+                "drift_status": sleeve.get("drift_status", "unknown"),
+                "pnl_usd": ret.get("pnl_usd", sleeve.get("pnl_usd")),
+                "net_capital_usd": net_cap,
+                "gross_capital_usd": gross_cap,
+                "margin_req_usd": margin,
+                "avg_net_capital_usd": ret.get("avg_net_capital_usd"),
+                "avg_gross_capital_usd": ret.get("avg_gross_capital_usd"),
+                "avg_margin_req_usd": ret.get("avg_margin_req_usd"),
+                "roc_on_net_capital": ret.get("roc_on_net_capital"),
+                "rog_on_gross_capital": ret.get("rog_on_gross_capital"),
+                "rom_on_margin_req": ret.get("rom_on_margin_req"),
+                "attribution_available": sleeve.get("attribution_available", True),
+            }
+        )
+
+    exposure_note = (
+        "Exposure gross/net = delta-normalized (β × notional). "
+        "Deployed capital = signed MV on etf_screened_today (screener universe). "
+        "B3 is a flow overlay; B4 gross is ratio-split (pair-view in bucket detail)."
+    )
+    return {
+        "rows": rows,
+        "capital_available": capital_available,
+        "capital_reason": capital_panel.get("reason"),
+        "return_denominator_note": capital_panel.get("return_denominator_note", ""),
+        "exposure_note": exposure_note,
+        "source": capital_panel.get("source", "totals.json"),
     }
 
 
@@ -4282,8 +4314,7 @@ class RiskSnapshot:
     universe_counts: dict[str, Any] = field(default_factory=dict)
     raw_totals: dict[str, Any] = field(default_factory=dict)
     nav_source: str = "MAGIS_NAV_USD"
-    display_sleeve_groups: list[dict[str, Any]] = field(default_factory=list)
-    capital_panel: dict[str, Any] = field(default_factory=dict)
+    bucket_sleeve_panel: dict[str, Any] = field(default_factory=dict)
     exposure_reconciliation: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -4325,8 +4356,7 @@ class RiskSnapshot:
             "alert_rows": self.alert_rows,
             "universe_counts": self.universe_counts,
             "raw_totals": self.raw_totals,
-            "display_sleeve_groups": self.display_sleeve_groups,
-            "capital_panel": self.capital_panel,
+            "bucket_sleeve_panel": self.bucket_sleeve_panel,
             "exposure_reconciliation": self.exposure_reconciliation,
             "limits": getattr(self, "_limits", DEFAULT_LIMITS),
             "borrow_limits_by_bucket": getattr(self, "_borrow_limits_by_bucket", {}),
@@ -4373,15 +4403,15 @@ def build_snapshot(
         totals, cli_fallback=cli_nav_usd, flex_dir=flex if flex.is_dir() else None
     )
     book = compute_book_summary(totals, pnl_by_bucket, nav_usd=nav_usd, limits=limits)
-    display_sleeve_groups = compute_display_sleeve_groups(
-        totals,
-        nav_usd=nav_usd,
-        sleeve_available=book.sleeve_attribution_available,
-    )
     capital_panel = compute_capital_panel(
         totals,
         nav_usd=nav_usd,
         pnl_history_csv=repo_root / "data" / "ledger" / "pnl_history.csv",
+    )
+    bucket_sleeve_panel = compute_bucket_sleeve_rows(
+        book.sleeve_table,
+        capital_panel,
+        totals,
     )
     exposure_reconciliation = evaluate_exposure_reconciliation(totals)
 
@@ -4576,8 +4606,7 @@ def build_snapshot(
         alert_rows=alert_rows,
         universe_counts=universe_counts,
         raw_totals=totals,
-        display_sleeve_groups=display_sleeve_groups,
-        capital_panel=capital_panel,
+        bucket_sleeve_panel=bucket_sleeve_panel,
         exposure_reconciliation=exposure_reconciliation,
     )
     snap._limits = limits_ctx.limits
