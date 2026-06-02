@@ -9,12 +9,15 @@ Both are closed-form functions of the pair's own vol-shape signals (TR = trend
 ratio, VCR = variance-contribution ratio), so a human (or an AI) can reverse-engineer
 any value from the printed inputs:
 
-    hedge ratio (v7 form):
+    hedge ratio (production default: v6 Opt-2 panel when ``hedge_ratio_model: v6``):
+        h_star = h_base - opt2_k * z_composite   # cross-section r_10d + range_expansion (+ regime)
+
+    hedge ratio (optional v7 closed form when ``hedge_ratio_model: v7``):
         h_raw = h_mid + k_vcr * (VCR - VCR_med)
         h     = clip(h_raw * tilt.h_mult + tilt.h_shift, h_min, h_max)
         h_ema = (1-alpha)*prev_h + alpha*h        # optional smoothing
 
-    cadence (continuous TR/VCR):
+    cadence (continuous TR/VCR, always when ``source: tr_vcr``):
         denom    = 1 + k_tr*(TR - 1) + m_vcr*(VCR - VCR_med)
         interval = clip(round(base_days / denom * tilt.interval_mult),
                         min_interval, max_interval)

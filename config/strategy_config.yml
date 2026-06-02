@@ -427,13 +427,15 @@ portfolio:
           # Hedge ratio (h) + rebalance cadence (days) engine. Every output is
           # reverse-engineerable from the printed inputs (TR, VCR, VCR_med).
           hedge_cadence_policy:
-            source: tr_vcr                 # tr_vcr (new, explainable) | v6_panel (legacy)
-            # --- hedge ratio: h = clip(h_mid + k_vcr*(VCR-VCR_med), h_min, h_max), EMA(alpha)
-            h_mid: 0.55                     # neutral hedge (set to the v6 base to mimic v6 spirit)
-            k_vcr: 1.0                      # VCR sensitivity of h
+            source: tr_vcr                 # tr_vcr cadence + hedge | v6_panel (weekly v6 for both)
+            hedge_ratio_model: v6          # v6 = Opt-2 panel (default) | v7 = VCR closed form
+            opt2_k: 0.05                   # v6: h_star = h_base - opt2_k * z_composite
+            # --- v7 hedge only (when hedge_ratio_model: v7): h = clip(h_mid + k_vcr*(VCR-VCR_med), ...)
+            h_mid: 0.55
+            k_vcr: 1.0
             h_min: 0.30
             h_max: 0.80
-            alpha: 0.25                     # EMA smoothing on the daily h series (0 = off)
+            alpha: 0.25                     # EMA on v7 daily h series (0 = off)
             # --- cadence: days = clip(round(base_days / (1 + k_tr*(TR-1) + m_vcr*(VCR-VCR_med))), min, max)
             base_days: 4.0
             k_tr: 2.25

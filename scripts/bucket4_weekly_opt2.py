@@ -827,19 +827,55 @@ def build_pair_cache(
     return cache
 
 
+def _v6_h_explain(
+    v6_panel: pd.DataFrame,
+    underlying: str,
+    *,
+    hedge_base: float,
+    opt2_k: float = 0.05,
+) -> str:
+    """Human-readable trace for the latest v6 Opt-2 hedge on one underlying."""
+    if v6_panel is None or v6_panel.empty or "underlying" not in v6_panel.columns:
+        return f"h from v6 panel (neutral h_base={hedge_base:.3f})"
+    sub = v6_panel[v6_panel["underlying"].astype(str).str.upper() == norm_sym_nb(underlying)]
+    sub = sub.dropna(subset=["h_applied"]) if "h_applied" in sub.columns else sub
+    if sub.empty:
+        return f"h from v6 panel (neutral h_base={hedge_base:.3f})"
+    r = sub.sort_values("date").iloc[-1]
+    h = float(r["h_applied"])
+    zc = r.get("z_composite", np.nan)
+    parts = [f"h={h:.4f}  |  v6 Opt-2"]
+    if pd.notna(zc):
+        h_star = float(np.clip(float(hedge_base) - float(opt2_k) * float(zc), 0.0, 2.0))
+        parts.append(
+            f"h_base({hedge_base:.3f}) - k({opt2_k:.3f})*z_composite({float(zc):+.4f}) "
+            f"-> h_star~{h_star:.4f}"
+        )
+        rm = r.get("regime_mult", np.nan)
+        if pd.notna(rm) and abs(float(rm) - 1.0) > 1e-6:
+            parts.append(f"*regime_mult({float(rm):.3f})")
+    else:
+        parts.append("held prior (insufficient cross-section at last rebalance)")
+    return " ".join(parts)
+
+
 def _build_hedge_cadence_engine(
     closes_broad: pd.DataFrame,
     pairs: Sequence[tuple[str, str]],
     b4_unds: list[str],
     master: pd.DatetimeIndex,
     cfg: Bucket4WeeklyConfig,
+    *,
+    macro: dict[str, pd.Series] | None = None,
 ) -> tuple[dict[str, pd.Series], pd.DatetimeIndex, pd.DataFrame, dict[str, Any]]:
-    """Build hedge_by_underlying + (union) rebalance schedule from the explainable
-    TR/VCR engine. Returns (hedge_map, rebal_dates, panel, cadence_by_underlying).
+    """TR/VCR rebalance cadence + hedge ratio (v6 Opt-2 by default, v7 optional).
 
-    ``cadence_by_underlying`` carries the per-name interval + the reverse-engineerable
-    ``interval_explain`` / ``h_explain`` so a human can see why each underlying rebalances
-    every N days and what its hedge ratio is/was.
+    Returns (hedge_map, rebal_dates, panel, cadence_by_underlying).
+
+    * **Cadence** (days between rebalances): continuous TR/VCR formula (explainable).
+    * **Hedge ratio** (default ``hedge_ratio_model: v6``): v6 Option-2 panel
+      (``r_10d`` + ``range_expansion`` cross-section, regime overlays). Set
+      ``hedge_ratio_model: v7`` to use the VCR closed form instead.
     """
     from scripts.bucket4_hedge_cadence import (
         HedgeCadenceKnobs,
@@ -853,56 +889,110 @@ def _build_hedge_cadence_engine(
     block = dict(cfg.hedge_cadence_policy or {})
     knobs = HedgeCadenceKnobs.from_config(block)
     tilts = load_name_tilts(block.get("name_tilt"))
+    hedge_model = str(block.get("hedge_ratio_model", "v6")).strip().lower()
+    opt2_k = float(block.get("opt2_k", 0.05))
+
+    # v6 hedge panel (production hedge ratio unless hedge_ratio_model=v7)
+    v6_panel, _, _ = build_hedge_panel_opt2(
+        closes_broad,
+        pairs,
+        weekly_rebalance_freq=cfg.weekly_rebalance_freq,
+        warmup_bdays=cfg.warmup_bdays,
+        hedge_base=cfg.hedge_base,
+        overlay=cfg.overlay,
+        macro=macro,
+        opt2_k=opt2_k,
+    )
+    hedge_map_v6 = panel_to_hedge_by_underlying(v6_panel, master, b4_unds, cfg.hedge_base)
 
     # map underlying -> representative ETF (for per-name tilt + display)
     etf_by_und: dict[str, str] = {}
     for e, u in pairs:
         etf_by_und.setdefault(norm_sym_nb(u), norm_sym_nb(e))
 
-    hedge_map: dict[str, pd.Series] = {}
-    panel_rows: list[dict[str, Any]] = []
     cadence: dict[str, Any] = {}
     all_rebal: set[pd.Timestamp] = set()
     for u in b4_unds:
         px = pd.to_numeric(closes_broad[u], errors="coerce").dropna()
         if len(px) < int(cfg.warmup_bdays) + 5:
-            hedge_map[u] = pd.Series(float(cfg.hedge_base), index=master)
-            cadence[u] = {"interval_days": None, "reason": "insufficient_history"}
+            cadence[u] = {
+                "interval_days": None,
+                "hedge_ratio": round(float(cfg.hedge_base), 4),
+                "reason": "insufficient_history",
+                "h_explain": f"h={cfg.hedge_base:.3f} | insufficient history -> h_base",
+            }
             continue
         cal = pd.DatetimeIndex(px.index)
         sig = get_pair_signal(u, u, cal, history={}, underlying_prices=px,
                               window=int(block.get("vol_window", 60)), lookahead_shift=1)
         tilt = tilts.get(etf_by_und.get(u, "")) or tilts.get(u)
-        h_ser = build_h_series(sig, cal, knobs=knobs, name_tilt=tilt).reindex(master).ffill().fillna(float(cfg.hedge_base))
-        hedge_map[u] = h_ser
         rb, _ = build_rebal_dates(sig, cal, knobs=knobs, name_tilt=tilt, warmup_bdays=int(cfg.warmup_bdays))
         all_rebal.update(pd.Timestamp(d) for d in rb)
-        for d in cal:
-            panel_rows.append({"date": d, "underlying": u, "h_applied": float(h_ser.get(d, np.nan))})
-        # latest snapshot for human-readable explanation
+
+        if hedge_model == "v7":
+            h_ser = build_h_series(sig, cal, knobs=knobs, name_tilt=tilt).reindex(master).ffill().fillna(float(cfg.hedge_base))
+        else:
+            h_ser = hedge_map_v6.get(u, pd.Series(float(cfg.hedge_base), index=master))
+        h_now = float(h_ser.dropna().iloc[-1]) if len(h_ser.dropna()) else float(cfg.hedge_base)
+
         last = sig.dropna(subset=["vcr"]).tail(1) if (sig is not None and not sig.empty) else None
         if last is not None and len(last):
             tr = float(last["tr"].iloc[-1]) if "tr" in last else float("nan")
             vcr = float(last["vcr"].iloc[-1])
             vm = float(last["vcr_med"].iloc[-1]) if "vcr_med" in last else float("nan")
-            hh = h_ser.dropna()
-            prev_h = float(hh.iloc[-2]) if len(hh) >= 2 else None
-            pol = compute_pair_policy(tr, vcr, vm, knobs=knobs, name_tilt=tilt,
-                                      prev_h=prev_h, etf=etf_by_und.get(u, ""), underlying=u)
+            prev_h = None
+            if hedge_model == "v7":
+                hh = h_ser.dropna()
+                prev_h = float(hh.iloc[-2]) if len(hh) >= 2 else None
+            pol = compute_pair_policy(
+                tr, vcr, vm, knobs=knobs, name_tilt=tilt,
+                prev_h=prev_h, etf=etf_by_und.get(u, ""), underlying=u,
+            )
+            h_explain = (
+                pol.h_explain
+                if hedge_model == "v7"
+                else _v6_h_explain(v6_panel, u, hedge_base=float(cfg.hedge_base), opt2_k=opt2_k)
+            )
             cadence[u] = {
                 "interval_days": pol.interval_days,
-                "hedge_ratio": round(pol.h, 4),
+                "hedge_ratio": round(h_now, 4),
+                "hedge_ratio_model": hedge_model,
                 "tr": round(pol.tr, 4) if np.isfinite(pol.tr) else None,
                 "vcr": round(pol.vcr, 5) if np.isfinite(pol.vcr) else None,
                 "vcr_med": round(pol.vcr_med, 5) if np.isfinite(pol.vcr_med) else None,
                 "interval_explain": pol.interval_explain,
-                "h_explain": pol.h_explain,
+                "h_explain": h_explain,
             }
         else:
-            cadence[u] = {"interval_days": knobs.max_interval, "reason": "no_signal"}
+            cadence[u] = {
+                "interval_days": knobs.max_interval,
+                "hedge_ratio": round(h_now, 4),
+                "hedge_ratio_model": hedge_model,
+                "reason": "no_signal",
+                "h_explain": (
+                    _v6_h_explain(v6_panel, u, hedge_base=float(cfg.hedge_base), opt2_k=opt2_k)
+                    if hedge_model != "v7"
+                    else f"h={h_now:.4f} | v7 neutral (no TR/VCR signal)"
+                ),
+            }
+
+    if hedge_model == "v7":
+        hedge_map = {}
+        for u in b4_unds:
+            px = pd.to_numeric(closes_broad[u], errors="coerce").dropna()
+            if len(px) < int(cfg.warmup_bdays) + 5:
+                hedge_map[u] = pd.Series(float(cfg.hedge_base), index=master)
+                continue
+            cal = pd.DatetimeIndex(px.index)
+            sig = get_pair_signal(u, u, cal, history={}, underlying_prices=px,
+                                  window=int(block.get("vol_window", 60)), lookahead_shift=1)
+            tilt = tilts.get(etf_by_und.get(u, "")) or tilts.get(u)
+            hedge_map[u] = build_h_series(sig, cal, knobs=knobs, name_tilt=tilt).reindex(master).ffill().fillna(float(cfg.hedge_base))
+    else:
+        hedge_map = hedge_map_v6
+
     rebal = pd.DatetimeIndex(sorted(all_rebal)) if all_rebal else pd.DatetimeIndex([master[0]])
-    panel = pd.DataFrame(panel_rows)
-    return hedge_map, rebal, panel, cadence
+    return hedge_map, rebal, v6_panel, cadence
 
 
 def build_bucket4_state(
@@ -940,7 +1030,7 @@ def build_bucket4_state(
     cadence_diag: dict[str, Any] = {}
     if str(cfg.hedge_source).strip().lower() == "tr_vcr":
         hedge_map, rebal, panel, cadence_diag = _build_hedge_cadence_engine(
-            closes_broad, pairs, b4_unds, master, cfg,
+            closes_broad, pairs, b4_unds, master, cfg, macro=macro,
         )
     else:
         panel, rebal, _ = build_hedge_panel_opt2(
