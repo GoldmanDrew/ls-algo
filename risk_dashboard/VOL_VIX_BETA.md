@@ -1,6 +1,6 @@
 # Vol→VIX β (`beta_vol_vix`)
 
-Used by the risk dashboard slide-risk strip **12M expected decay vs VIX (SPX 0%)**.
+Used by the risk dashboard slide-risk strip **12M expected carry vs VIX (SPX 0%)**.
 
 ## Estimator (v2)
 
