@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from generate_trade_plan import apply_gross_sizing_book_caps, _liquidity_tight_book_weights
-from harvest_underexposed_shorts import _resolve_target_basis_columns
+from trade_plan_targets import _resolve_target_basis_columns
 from phase2b_resize import _resize_target_columns, build_resize_trades, ResizeBandConfig
 
 
