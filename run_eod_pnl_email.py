@@ -32,9 +32,9 @@ from ibkr_accounting import (
     _filter_positions_blacklist,
 )
 from strategy_config import load_config
-from harvest_underexposed_shorts import (
-    _maybe_merge_optimal_targets,
-    _resolve_target_basis_columns,
+from trade_plan_targets import (
+    maybe_merge_optimal_targets as _maybe_merge_optimal_targets,
+    resolve_target_basis_columns as _resolve_target_basis_columns,
 )
 from reporting_scope import (
     load_blocked_exposure_sets as _scope_blocked_exposure_sets,
