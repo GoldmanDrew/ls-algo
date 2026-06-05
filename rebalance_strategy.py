@@ -93,6 +93,13 @@ from phase2b_resize import (
     print_resize_summary,
     write_resize_decisions,
 )
+from scripts.bucket4_cadence_gate import (
+    filter_resize_plan_for_b4_cadence,
+    load_cadence_state,
+    mark_pairs_rebalanced,
+    resolve_due_pairs_for_rebalance,
+    save_cadence_state,
+)
 from substitution_engine import SubstitutionConfig, SubstitutionEngine
 from tax_lot_view import load_lot_views_for_run_dir
 from tax_router import (
@@ -3028,12 +3035,59 @@ def main() -> None:
                         f"prefer_lt={tax_cfg.prefer_long_term_lots})."
                     )
 
+            # Bucket 4 cadence gate: on each operator run (every ~5 business days),
+            # only pairs whose TR/VCR interval has elapsed are included in Phase 2b.
+            b4_due_keys, b4_cadence_decisions, b4_gate = resolve_due_pairs_for_rebalance(
+                run_date=run_date,
+                resize_df=resize_df,
+                cfg=cfg,
+                run_dir_path=run_dir(run_date),
+            )
+            resize_plan = resize_df
+            if b4_due_keys is not None:
+                n_b4 = int(
+                    (resize_df["sleeve"].astype(str).str.strip().str.lower() == "inverse_decay_bucket4").sum()
+                ) if "sleeve" in resize_df.columns else 0
+                n_due = len(b4_due_keys)
+                n_defer = max(0, n_b4 - n_due)
+                tprint(
+                    f"[PHASE2B][B4-CADENCE] gate on: {n_due} due, {n_defer} deferred "
+                    f"(operator_check={b4_gate.operator_check_days}bd, "
+                    f"state={b4_gate.state_json})"
+                )
+                for dec in sorted(b4_cadence_decisions, key=lambda d: (not d.due, d.etf)):
+                    flag = "DUE" if dec.due else "DEFER"
+                    since = (
+                        f"{dec.trading_days_since_last}bd since {dec.last_rebalance}"
+                        if dec.trading_days_since_last is not None
+                        else "no prior rebalance"
+                    )
+                    tprint(
+                        f"[PHASE2B][B4-CADENCE] {flag} {dec.etf}/{dec.underlying}: "
+                        f"interval={dec.interval_days}d h={dec.hedge_ratio} "
+                        f"({since}; {dec.reason})"
+                    )
+                cadence_csv = rb_dir / "b4_cadence_decisions.csv"
+                pd.DataFrame([{
+                    "run_date": run_date,
+                    "etf": d.etf,
+                    "underlying": d.underlying,
+                    "due": d.due,
+                    "reason": d.reason,
+                    "interval_days": d.interval_days,
+                    "trading_days_since_last": d.trading_days_since_last,
+                    "last_rebalance": d.last_rebalance,
+                    "hedge_ratio": d.hedge_ratio,
+                } for d in b4_cadence_decisions]).to_csv(cadence_csv, index=False)
+                tprint(f"[PHASE2B][B4-CADENCE] Wrote {cadence_csv}")
+                resize_plan = filter_resize_plan_for_b4_cadence(resize_df, b4_due_keys)
+
             # Phase 2b consumes resize_df (B1+YB+B4) so the underlying-leg
             # target is the signed sum across all sleeves. This is what nets
             # B1 long-NVDA against B4 short-NVDA into a single underlying
             # decision rather than two opposing trades.
             resize_trades, resize_decisions = build_resize_trades(
-                hedgeable_plan=resize_df,
+                hedgeable_plan=resize_plan,
                 strat_pos=strat_pos,
                 prices=prices,
                 purgatory_etfs=purgatory_etfs,
@@ -3095,6 +3149,26 @@ def main() -> None:
                         _sync_positions_after_external_trades(ib, timeout_s=15.0)
                         ib_pos    = current_ib_positions(ib)
                         strat_pos = strategy_position_only(ib_pos, baseline)
+
+                    if b4_due_keys is not None and fills_p2b:
+                        traded_b4: Set[Tuple[str, str]] = set()
+                        for t in resize_trades:
+                            und = norm_sym(str(t.get("underlying", "")))
+                            etf = norm_sym(str(t.get("etf", "") or ""))
+                            if etf and (etf, und) in b4_due_keys:
+                                traded_b4.add((etf, und))
+                            elif not etf:
+                                for pair in b4_due_keys:
+                                    if pair[1] == und:
+                                        traded_b4.add(pair)
+                        if traded_b4:
+                            state = load_cadence_state(b4_gate.state_json)
+                            state = mark_pairs_rebalanced(state, sorted(traded_b4), run_date)
+                            save_cadence_state(b4_gate.state_json, state)
+                            tprint(
+                                f"[PHASE2B][B4-CADENCE] updated last_rebalance for "
+                                f"{len(traded_b4)} pair(s) -> {b4_gate.state_json}"
+                            )
                 else:
                     tprint("[PHASE2B] Skipped by user.")
             else:
