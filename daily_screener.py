@@ -240,6 +240,8 @@ proshares_pairs_levered = [
     ("CRCA", "CRCL"), ("NVDB", "NVDA"), ("PLTA", "PLTR"), ("TSLI", "TSLA"),
     ("COIA", "COIN"), ("BITU", "IBIT"), ("ETHT", "ETHA"), ("UXRP", "XRPZ"),
     ("SOLT", "SOEZ"),
+    # 2026-06-12 ProShares Ultra SpaceX (2x daily long vs SPCX IPO)
+    ("SPCF", "SPCX"),
 ]
 
 graniteshares_pairs_leveraged = [
@@ -309,7 +311,7 @@ BENCHMARK_MAP = {
     "IREN": "IREN", "BE": "BE", "NBIS": "NBIS", "SMR": "SMR", "SPHB": "SPHB",
     "AMD": "AMD", "ASTS": "ASTS", "BMNR": "BMNR", "CBRS": "CBRS", "HOOD": "HOOD", "IONQ": "IONQ",
     "OKLO": "OKLO", "PLTR": "PLTR", "QBTS": "QBTS", "RGTI": "RGTI", "RKLB": "RKLB",
-    "SMCI": "SMCI", "TSM": "TSM",
+    "SMCI": "SMCI", "TSM": "TSM", "MU": "MU",
     # Volatility pair: UVIX (−2× daily vs SVIX) hedged to SVIX; both legs short in book.
     "SVIX": "SVIX",
 }
@@ -341,6 +343,8 @@ INVERSE_ETF_UNIVERSE = [
     ("SCBR", -2, "CBRS"),
     # 2026-05-28 Tradr 2X Short CBRS Daily ETF (CBRZ)
     ("CBRZ", -2, "CBRS"),
+    # 2026-06-09 Defiance Daily Target 2X Short MU (Micron Technology)
+    ("MUZ", -2, "MU"),
     ("UVIX", -2, "SVIX"),
 ]
 
