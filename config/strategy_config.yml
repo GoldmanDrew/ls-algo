@@ -229,13 +229,13 @@ screener:
   #   entry_borrow_cap < borrow_current <= keep_borrow_cap
   per_bucket:
     bucket_1:
-      entry_borrow_cap: 0.60      # new B1 exposure when borrow cost <= this
+      entry_borrow_cap: 0.55      # new B1 exposure when borrow cost <= this
       keep_borrow_cap: 0.75       # keep-open purgatory band ends above this borrow cost
     bucket_2:
-      entry_borrow_cap: 0.35
+      entry_borrow_cap: 0.40
       keep_borrow_cap: 0.50
     bucket_4:
-      entry_borrow_cap: 0.95
+      entry_borrow_cap: 0.90
       keep_borrow_cap: 1.20
   min_delta_days: 30
   max_stale_days: 5             # drop ETFs with no trade in last N calendar days (delisted/liquidated)
@@ -441,7 +441,8 @@ portfolio:
             h_max: 0.80
             alpha: 0.25                     # EMA on v7 daily h series (0 = off)
             # --- cadence: days = clip(round(base_days / (1 + k_tr*(TR-1) + m_vcr*(VCR-VCR_med))), min, max)
-            base_days: 10.0                 # risk-aware default (sweep: ~median CAGR of 21d, lower vol)
+            base_days: 12.0                 # full theta-grid under v7 hedge: (2.25,2.5,12) EW mean 5.9%
+                                            # vs 3.3% at 10, same vol/DD (b4_param_scorecard.csv 2026-06-10)
             k_tr: 2.25
             m_vcr: 2.5                      # mean-best A7 cadence sensitivity (39.4% CAGR @ 20bps)
             min_interval: 1
@@ -490,16 +491,6 @@ portfolio:
           exit_borrow_floor_annual: 0.05  # borrow kill needs >= 5% annualized borrow drag on gross
           recover_obs_days: 10         # clean runs needed to promote one level
           reentry_cooldown_days: 45    # business days an exited pair stays out
-        # WS4 concentration (Stage C backtest: top-10/15 by (net_edge - borrow)/und_vol
-        # with EQUAL weights beat all-45 and beat Kelly tilts; cluster cap is cheap
-        # insurance, neutral in the test window).
-        concentration:
-          enabled: false             # flip true after shadow review of the kept list
-          top_n_pairs: 15            # keep best N by (net_edge - borrow) / underlying vol
-        cluster_caps:
-          crypto:
-            cap: 0.35                # max share of B4 core weight in this cluster
-            members: [MSTR, COIN, IBIT, CLSK, IREN, BMNR, CRCL, RIOT, MARA, XRPZ, BLSH]
         excluded_etfs:                # never allocate inverse_decay_bucket4 to these tickers
           - KOLD
           - SCO
@@ -511,12 +502,12 @@ portfolio:
           share_of_b4_budget: 0.01    # 1% of total inverse_decay_bucket4 gross when vol rows exist
       weighting:
         <<: *weighting_defaults
-        max_name_weight: 0.20        # raised with WS4 concentration (was 0.15)
+        max_name_weight: 0.15
         eq_blend: 0.05
         borrow_aversion: .6
     flow_program:
       rules:
-        hard_borrow_cap: 0.30        # weekly flow adds only when borrow <= 30% and net_edge_p50 > 0
+        hard_borrow_cap: 0.40        # weekly flow adds only when borrow <= 40% and net_edge_p50 > 0
       frequency: "W"
       deployment_base: "fixed_usd_per_week"
       fixed_usd_per_week: 1300

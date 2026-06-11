@@ -189,6 +189,10 @@ All decisions below come from `scripts/bucket4_phase345_backtest.py` (45 pairs,
 * **v7 VCR closed-form hedge ratio** (`hedge_ratio_model: v7`): EW mean CAGR
   **+3.8%** vs **-6.6%** for fixed h=0.75 — a ~10 pp improvement, and positive
   median. The biggest single lever found.
+* **`base_days` 10 → 12** (one-knob nudge): the full 3x3x3 theta grid re-run
+  UNDER the v7 hedge (`b4_param_scorecard.csv`) ranks (k_tr 2.25, m_vcr 2.5,
+  base_days 12) first — EW mean 5.9% / median 4.9% vs 3.3%/3.7% at 10, with the
+  same vol and DD. base_days 8 is negative across the entire grid.
 * **WS4 concentration** (`concentration.top_n_pairs: 15`, gated off until the
   kept-list is reviewed): Stage C top-15 equal-weight portfolio: **29.6% CAGR,
   Calmar 2.08** vs materially worse for the all-45 book. Top-10 was slightly

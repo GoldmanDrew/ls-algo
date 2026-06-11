@@ -38,10 +38,10 @@ sys.path.insert(0, str(REPO))
 
 from scripts.bucket4_base_days_frequency_sweep import (  # noqa: E402
     build_prices,
-    load_metrics,
     norm_sym,
     pair_metrics,
 )
+from scripts.bucket4_phase345_backtest import load_metrics_filtered  # noqa: E402
 from scripts.bucket4_dynamic_bt import run_bucket4_backtest_dynamic_h  # noqa: E402
 from scripts.bucket4_vol_shape_signals import (  # noqa: E402
     get_pair_signal,
@@ -130,7 +130,12 @@ def run_theta(
         rd = pd.DatetimeIndex(rd).intersection(cal)
         if len(rd) == 0:
             rd = pd.DatetimeIndex([cal[0]])
-        h = pd.Series(float(pd_["partial_h"]), index=cal)
+        if str(pd_.get("hedge_model", "v7")) == "v7":
+            # mirror production hedge_ratio_model: v7 (adopted in the Phase 3-5 lab)
+            from scripts.bucket4_phase345_backtest import build_h_series
+            h = build_h_series(pd_, h_model="v7", beta_mode="static", hyst=0.0, regime_bump=0.0)
+        else:
+            h = pd.Series(float(pd_["partial_h"]), index=cal)
         try:
             bt = run_bucket4_backtest_dynamic_h(
                 prices, h, rd,
@@ -200,6 +205,8 @@ def main(argv=None) -> int:
     ap.add_argument("--eps-ktr", type=float, default=0.5)
     ap.add_argument("--eps-mvcr", type=float, default=0.5)
     ap.add_argument("--eps-bd", type=float, default=2.0)
+    ap.add_argument("--hedge-model", choices=["v7", "fixed"], default="v7",
+                    help="h used while scoring cadence thetas (default mirrors production v7)")
     ap.add_argument("--history-jsonl", type=Path, default=REPO / "data/b4_param_scorecard_history.jsonl")
     args = ap.parse_args(argv)
 
@@ -218,7 +225,7 @@ def main(argv=None) -> int:
     pairs = pd.read_csv(pairs_csv)
     pairs["etf"] = pairs["etf"].map(norm_sym)
     pairs["underlying"] = pairs["underlying"].map(norm_sym)
-    metrics = load_metrics(args.metrics)
+    metrics = load_metrics_filtered(args.metrics, set(pairs["etf"]))
     vs_hist = load_vol_shape_history(args.vol_shape)
     screened = pd.read_csv(args.screened)
     screened["ETF"] = screened["ETF"].map(norm_sym)
@@ -252,6 +259,7 @@ def main(argv=None) -> int:
             "beta_a": float(delta),
             "borrow_a": float(borrow_map.get(etf, 0.0)),
             "partial_h": float(ph) if pd.notna(ph) else 0.75,
+            "hedge_model": args.hedge_model,
         })
     print(f"[b4-scorecard] pairs with data: {len(pair_data)}")
     if not pair_data:

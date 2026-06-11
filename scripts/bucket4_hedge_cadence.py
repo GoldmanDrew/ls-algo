@@ -69,7 +69,7 @@ class HedgeCadenceKnobs:
     h_max: float = V7_GLOBAL_H_MAX           # hard guardrail (upper)
     alpha: float = 0.25                      # EMA smoothing on the daily h series (0 = off)
     # --- cadence (continuous TR/VCR) ---
-    base_days: float = 10.0
+    base_days: float = 12.0
     k_tr: float = 2.25
     m_vcr: float = 2.5                       # mean-best A7 cadence sensitivity
     min_interval: int = 1
