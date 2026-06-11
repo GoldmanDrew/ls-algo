@@ -229,13 +229,13 @@ screener:
   #   entry_borrow_cap < borrow_current <= keep_borrow_cap
   per_bucket:
     bucket_1:
-      entry_borrow_cap: 0.55      # new B1 exposure when borrow cost <= this
+      entry_borrow_cap: 0.60      # new B1 exposure when borrow cost <= this
       keep_borrow_cap: 0.75       # keep-open purgatory band ends above this borrow cost
     bucket_2:
-      entry_borrow_cap: 0.40
+      entry_borrow_cap: 0.35
       keep_borrow_cap: 0.50
     bucket_4:
-      entry_borrow_cap: 0.90
+      entry_borrow_cap: 0.95
       keep_borrow_cap: 1.20
   min_delta_days: 30
   max_stale_days: 5             # drop ETFs with no trade in last N calendar days (delisted/liquidated)
@@ -428,7 +428,11 @@ portfolio:
           # reverse-engineerable from the printed inputs (TR, VCR, VCR_med).
           hedge_cadence_policy:
             source: tr_vcr                 # tr_vcr cadence + hedge | v6_panel (weekly v6 for both)
-            hedge_ratio_model: v6          # v6 = Opt-2 panel (default) | v7 = VCR closed form
+            # Phase-3/4/5 backtest lab (scripts/bucket4_phase345_backtest.py, 45 pairs,
+            # 2025-10 -> 2026-06, 20bps slip): v7 VCR closed-form h beat fixed 0.75 by
+            # ~+10pp EW mean CAGR; h-hysteresis and regime bump both HURT (not adopted);
+            # realized-20d beta was noise (+0.5pp mean, -0.1pp median; not adopted).
+            hedge_ratio_model: v7          # v6 = Opt-2 panel | v7 = VCR closed form (backtest winner)
             opt2_k: 0.05                   # v6: h_star = h_base - opt2_k * z_composite
             # --- v7 hedge only (when hedge_ratio_model: v7): h = clip(h_mid + k_vcr*(VCR-VCR_med), ...)
             h_mid: 0.55
@@ -486,6 +490,16 @@ portfolio:
           exit_borrow_floor_annual: 0.05  # borrow kill needs >= 5% annualized borrow drag on gross
           recover_obs_days: 10         # clean runs needed to promote one level
           reentry_cooldown_days: 45    # business days an exited pair stays out
+        # WS4 concentration (Stage C backtest: top-10/15 by (net_edge - borrow)/und_vol
+        # with EQUAL weights beat all-45 and beat Kelly tilts; cluster cap is cheap
+        # insurance, neutral in the test window).
+        concentration:
+          enabled: false             # flip true after shadow review of the kept list
+          top_n_pairs: 15            # keep best N by (net_edge - borrow) / underlying vol
+        cluster_caps:
+          crypto:
+            cap: 0.35                # max share of B4 core weight in this cluster
+            members: [MSTR, COIN, IBIT, CLSK, IREN, BMNR, CRCL, RIOT, MARA, XRPZ, BLSH]
         excluded_etfs:                # never allocate inverse_decay_bucket4 to these tickers
           - KOLD
           - SCO
@@ -497,12 +511,12 @@ portfolio:
           share_of_b4_budget: 0.01    # 1% of total inverse_decay_bucket4 gross when vol rows exist
       weighting:
         <<: *weighting_defaults
-        max_name_weight: 0.15
+        max_name_weight: 0.20        # raised with WS4 concentration (was 0.15)
         eq_blend: 0.05
         borrow_aversion: .6
     flow_program:
       rules:
-        hard_borrow_cap: 0.40        # weekly flow adds only when borrow <= 40% and net_edge_p50 > 0
+        hard_borrow_cap: 0.30        # weekly flow adds only when borrow <= 30% and net_edge_p50 > 0
       frequency: "W"
       deployment_base: "fixed_usd_per_week"
       fixed_usd_per_week: 1300
