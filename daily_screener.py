@@ -165,6 +165,8 @@ leverage_pairs_leverageshares = [
     # 2026-06-02 Leverage Shares Themes — 2X long daily (Cboe-listed)
     ("ONG", "ON"),    # Leverage Shares 2X Long ON Daily ETF (ON Semiconductor)
     ("NXPG", "NXPI"), # Leverage Shares 2X Long NXPI Daily ETF (NXP Semiconductors)
+    # 2026-06-15 Leverage Shares Themes — 2X long SpaceX (pending SPCX IPO)
+    ("SPCH", "SPCX"),
 ]
 
 new_pairs = [
@@ -234,6 +236,10 @@ new_pairs = [
     ("MCHU", "MCHP"), ("NXPX", "NXPI"), ("ONX", "ON"),
     # 2026-05-28 Tradr 2X long CBRS (Cerebras Systems)
     ("CBRX", "CBRS"),
+    # 2026-06-09 Defiance 2X long VELO (Velo3D)
+    ("VELL", "VELO"),
+    # 2026-06-15 Defiance 2X Long SpaceX (pending SPCX IPO)
+    ("SPCU", "SPCX"),
 ]
 
 proshares_pairs_levered = [
@@ -311,7 +317,7 @@ BENCHMARK_MAP = {
     "IREN": "IREN", "BE": "BE", "NBIS": "NBIS", "SMR": "SMR", "SPHB": "SPHB",
     "AMD": "AMD", "ASTS": "ASTS", "BMNR": "BMNR", "CBRS": "CBRS", "HOOD": "HOOD", "IONQ": "IONQ",
     "OKLO": "OKLO", "PLTR": "PLTR", "QBTS": "QBTS", "RGTI": "RGTI", "RKLB": "RKLB",
-    "SMCI": "SMCI", "TSM": "TSM", "MU": "MU",
+    "SMCI": "SMCI", "TSM": "TSM", "MU": "MU", "SPCX": "SPCX",
     # Volatility pair: UVIX (−2× daily vs SVIX) hedged to SVIX; both legs short in book.
     "SVIX": "SVIX",
 }
@@ -345,6 +351,8 @@ INVERSE_ETF_UNIVERSE = [
     ("CBRZ", -2, "CBRS"),
     # 2026-06-09 Defiance Daily Target 2X Short MU (Micron Technology)
     ("MUZ", -2, "MU"),
+    # 2026-06-15 Leverage Shares Themes 2X Short SpaceX Daily (pending SPCX IPO)
+    ("SSPC", -2, "SPCX"),
     ("UVIX", -2, "SVIX"),
 ]
 
