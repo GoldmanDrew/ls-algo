@@ -203,6 +203,24 @@ All decisions below come from `scripts/bucket4_phase345_backtest.py` (45 pairs,
   (exp-2 refit also landed on h_mid 0.45). Caveat: slightly worse in the
   Oct-Jan half (-16.8% vs -15.4% EW mean); 20-fold pair CV win-rate 100%.
   Full artifacts: `notebooks/output/b4_v8/`.
+* **"v9" cross-sectional tilt — `k_z: 0.20`** (`scripts/bucket4_v9_xsec_experiment.py`):
+  ports the v6 Opt-2 panel's signal core into the v8 closed form:
+  `h_raw -= k_z * z_composite`, `z_composite = 0.5*(-z(r10d)) + 0.5*(+z(sig5/sig63))`
+  ranked daily across B4 underlyings (robust median/MAD z, shifted 1 day,
+  dedup by underlying). The v6 regime overlay was NOT ported (rejected in the
+  phase-3 lab). Findings: the v6 SIGN convention wins (rally -> hedge up, vol
+  expansion -> hedge down — the h* lab's opposite-sign momentum idea loses);
+  composite beats momentum-only and range-only on balance; broad plateau over
+  k_z 0.10-0.60 with interior optimum ~0.20. At k_z=0.20 vs v8: EW mean 16.4%
+  vs 13.5%, median 11.0% vs 8.1%, better in BOTH halves, vol/DD ~unchanged
+  (39.5%/-24.2% vs 39.7%/-24.3%), ret/vol 0.41 vs 0.34. Honesty caveats: the
+  fixed pick wins on only 25/45 pairs (gains concentrated: ASTN +81pp, QBTZ
+  +31pp vs NBIZ -51pp, DAMD -42pp); 20-fold pair CV median uplift +0.8pp,
+  win-rate 65%, mean ~0 (dragged by folds picking outlier combos). All five
+  pre-declared gates passed -> adopted, reversible with `k_z: 0` (pure v8).
+  Engine support in `bucket4_hedge_cadence.py` (`build_xsec_z_panel`,
+  `xsec_z` arg); GTP path injects `sig["xsec_z"]` only when `k_z != 0`.
+  Full artifacts: `notebooks/output/b4_v9/`.
 * **`base_days` 10 → 12** (one-knob nudge): the full 3x3x3 theta grid re-run
   UNDER the v7 hedge (`b4_param_scorecard.csv`) ranks (k_tr 2.25, m_vcr 2.5,
   base_days 12) first — EW mean 5.9% / median 4.9% vs 3.3%/3.7% at 10, with the

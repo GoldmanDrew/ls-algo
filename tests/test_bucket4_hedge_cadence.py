@@ -45,6 +45,42 @@ def test_hedge_ratio_ema_smoothing():
     assert p.h == pytest.approx(0.75 * 0.50 + 0.25 * 0.571, abs=1e-9)
 
 
+def test_hedge_ratio_v9_xsec_tilt():
+    k = HedgeCadenceKnobs(h_mid=0.45, k_vcr=1.0, h_min=0.30, h_max=0.80, alpha=0.0, k_z=0.20)
+    # h_raw = 0.45 + (0.061-0.040) - 0.20*0.5 = 0.371
+    p = compute_pair_policy(1.0, 0.061, 0.040, knobs=k, xsec_z=0.5)
+    assert p.h == pytest.approx(0.371, abs=1e-9)
+    assert "k_z(0.20)" in p.h_explain
+
+
+def test_hedge_ratio_v9_off_or_missing_z_is_pure_v8():
+    base = HedgeCadenceKnobs(h_mid=0.45, alpha=0.0, k_z=0.0)
+    tilted = HedgeCadenceKnobs(h_mid=0.45, alpha=0.0, k_z=0.20)
+    p_off = compute_pair_policy(1.0, 0.061, 0.040, knobs=base, xsec_z=0.5)
+    p_nan = compute_pair_policy(1.0, 0.061, 0.040, knobs=tilted, xsec_z=float("nan"))
+    assert p_off.h == pytest.approx(p_nan.h, abs=1e-12)
+    assert "k_z" not in p_nan.h_explain
+
+
+def test_hedge_ratio_v9_tilt_respects_clips():
+    k = HedgeCadenceKnobs(h_mid=0.45, h_min=0.30, h_max=0.80, alpha=0.0, k_z=0.20)
+    p = compute_pair_policy(1.0, 0.040, 0.040, knobs=k, xsec_z=5.0)  # huge tilt down
+    assert p.h == pytest.approx(0.30, abs=1e-9)
+
+
+def test_build_h_series_reads_xsec_z_column():
+    cal = pd.bdate_range("2026-01-05", periods=5)
+    sig = pd.DataFrame(
+        {"tr": 1.0, "vcr": 0.05, "vcr_med": 0.05, "xsec_z": [0.0, 0.0, 1.0, 1.0, 1.0]},
+        index=cal,
+    )
+    k = HedgeCadenceKnobs(h_mid=0.45, alpha=0.0, k_z=0.20)
+    h = build_h_series(sig, cal, knobs=k)
+    assert h.iloc[0] == pytest.approx(0.45, abs=1e-9)
+    # raw 0.45 - 0.20*1.0 = 0.25 -> clipped to h_min 0.30
+    assert h.iloc[-1] == pytest.approx(0.30, abs=1e-9)
+
+
 def test_cadence_trending_is_faster():
     k = HedgeCadenceKnobs(base_days=4.0, k_tr=2.25, m_vcr=2.5, min_interval=1, max_interval=10)
     # TR=1.42, VCR=0.061, med=0.040: denom = 1 + 2.25*0.42 + 2.5*0.021 = 1.9975

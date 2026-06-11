@@ -881,6 +881,7 @@ def _build_hedge_cadence_engine(
         HedgeCadenceKnobs,
         build_h_series,
         build_rebal_dates,
+        build_xsec_z_panel,
         compute_pair_policy,
         load_name_tilts,
     )
@@ -891,6 +892,12 @@ def _build_hedge_cadence_engine(
     tilts = load_name_tilts(block.get("name_tilt"))
     hedge_model = str(block.get("hedge_ratio_model", "v6")).strip().lower()
     opt2_k = float(block.get("opt2_k", 0.05))
+
+    # v9 cross-sectional tilt (only computed when k_z is on; degrades to v8 when off)
+    xsec_panel = (
+        build_xsec_z_panel(closes_broad[[c for c in closes_broad.columns if c in set(b4_unds)]])
+        if knobs.k_z != 0.0 else None
+    )
 
     # v6 hedge panel (production hedge ratio unless hedge_ratio_model=v7)
     v6_panel, _, _ = build_hedge_panel_opt2(
@@ -925,6 +932,9 @@ def _build_hedge_cadence_engine(
         cal = pd.DatetimeIndex(px.index)
         sig = get_pair_signal(u, u, cal, history={}, underlying_prices=px,
                               window=int(block.get("vol_window", 60)), lookahead_shift=1)
+        if xsec_panel is not None and u in xsec_panel.columns:
+            sig = sig.copy()
+            sig["xsec_z"] = xsec_panel[u].reindex(sig.index)
         tilt = tilts.get(etf_by_und.get(u, "")) or tilts.get(u)
         rb, _ = build_rebal_dates(sig, cal, knobs=knobs, name_tilt=tilt, warmup_bdays=int(cfg.warmup_bdays))
         all_rebal.update(pd.Timestamp(d) for d in rb)
@@ -947,6 +957,7 @@ def _build_hedge_cadence_engine(
             pol = compute_pair_policy(
                 tr, vcr, vm, knobs=knobs, name_tilt=tilt,
                 prev_h=prev_h, etf=etf_by_und.get(u, ""), underlying=u,
+                xsec_z=float(last["xsec_z"].iloc[-1]) if "xsec_z" in last else float("nan"),
             )
             h_explain = (
                 pol.h_explain

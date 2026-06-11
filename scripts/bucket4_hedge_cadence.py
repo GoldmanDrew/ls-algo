@@ -68,8 +68,12 @@ class HedgeCadenceKnobs:
     h_min: float = V7_GLOBAL_H_MIN           # hard guardrail (lower)
     h_max: float = V7_GLOBAL_H_MAX           # hard guardrail (upper)
     alpha: float = 0.25                      # EMA smoothing on the daily h series (0 = off)
+    # "v9" cross-sectional tilt ported from the v6 panel (0 = off -> pure v8):
+    # h_raw -= k_z * z_composite, z_composite = 0.5*(-z(r10d)) + 0.5*(+z(sig5/sig63))
+    # ranked across the B4 underlying universe (see build_xsec_z_panel).
+    k_z: float = 0.0
     # --- cadence (continuous TR/VCR) ---
-    base_days: float = 12.0
+    base_days: float = 10.0
     k_tr: float = 2.25
     m_vcr: float = 2.5                       # mean-best A7 cadence sensitivity
     min_interval: int = 1
@@ -85,6 +89,7 @@ class HedgeCadenceKnobs:
             h_min=float(b.get("h_min", d.h_min)),
             h_max=float(b.get("h_max", d.h_max)),
             alpha=float(b.get("alpha", d.alpha)),
+            k_z=float(b.get("k_z", d.k_z)),
             base_days=float(b.get("base_days", d.base_days)),
             k_tr=float(b.get("k_tr", d.k_tr)),
             m_vcr=float(b.get("m_vcr", d.m_vcr)),
@@ -185,11 +190,16 @@ def compute_pair_policy(
     prev_h: float | None = None,
     etf: str = "",
     underlying: str = "",
+    xsec_z: float = float("nan"),
 ) -> PairPolicy:
     """Closed-form hedge ratio + rebalance interval for one pair on one day.
 
     Every returned value is reconstructable from ``h_explain`` / ``interval_explain``.
     Missing/NaN signals fall back to the neutral prior (h_mid, base_days) and say so.
+
+    ``xsec_z`` is the optional v9 cross-sectional composite for the pair's
+    underlying (see :func:`build_xsec_z_panel`); applied only when
+    ``knobs.k_z != 0`` and the value is finite, so missing data degrades to v8.
     """
     tilt = name_tilt or NameTilt()
     t = float(tr) if tr is not None and np.isfinite(tr) else np.nan
@@ -208,6 +218,11 @@ def compute_pair_policy(
     else:
         h_raw = knobs.h_mid
         h_src = f"signal missing -> neutral h_mid({knobs.h_mid:.3f})"
+
+    zx = float(xsec_z) if xsec_z is not None and np.isfinite(xsec_z) else np.nan
+    if knobs.k_z != 0.0 and np.isfinite(zx):
+        h_raw = h_raw - knobs.k_z * zx
+        h_src += f" - k_z({knobs.k_z:.2f})*z_xsec({zx:+.3f}) = {h_raw:.4f}"
 
     h_tilted = h_raw * tilt.h_mult + tilt.h_shift
     tilt_part = ""
@@ -290,6 +305,7 @@ def build_h_series(
     tr = signal.get("tr") if signal is not None else None
     vcr = signal.get("vcr") if signal is not None else None
     vm = signal.get("vcr_med") if signal is not None else None
+    zx = signal.get("xsec_z") if signal is not None else None
     out = pd.Series(index=cal, dtype=float)
     prev_h: float | None = None
     for d in cal:
@@ -300,6 +316,7 @@ def build_h_series(
             knobs=knobs,
             name_tilt=name_tilt,
             prev_h=prev_h,
+            xsec_z=float(zx.get(d, np.nan)) if zx is not None else np.nan,
         )
         out.loc[d] = pol.h
         prev_h = pol.h
@@ -404,6 +421,34 @@ def _short_reason(p: PairPolicy) -> str:
         elif p.vcr < p.vcr_med:
             bits.append("VCR<med->slower+less hedged")
     return ", ".join(bits) if bits else "near baseline"
+
+
+# ----------------------------------------------------------------------------
+# v9 cross-sectional tilt panel (ported from the v6 Opt-2 panel's z_composite)
+# ----------------------------------------------------------------------------
+def build_xsec_z_panel(closes: pd.DataFrame) -> pd.DataFrame:
+    """Daily v6-style composite z per underlying, shifted 1 day (no lookahead).
+
+    z_composite = 0.5*(-z(r_10d)) + 0.5*(+z(sigma5/sigma63)) with robust
+    (median/MAD) cross-sectional z-scores per date — the exact signal core of
+    ``bucket4_weekly_opt2.build_hedge_panel_opt2``, daily instead of weekly,
+    without the (rejected) regime overlay. Columns = underlyings.
+    """
+    closes = closes.sort_index().astype(float)
+    logret = np.log(closes / closes.shift(1))
+    r10 = np.log(closes / closes.shift(10))
+    rx = logret.rolling(5, min_periods=5).std(ddof=1) / logret.rolling(63, min_periods=30).std(ddof=1)
+
+    def _robust_z_row(row: pd.Series) -> pd.Series:
+        v = pd.to_numeric(row, errors="coerce")
+        m = v.median(skipna=True)
+        mad = (v - m).abs().median(skipna=True)
+        scale = 1.4826 * float(mad) if pd.notna(mad) and mad > 0 else float(v.std(skipna=True) or 1.0)
+        return (v - m) / scale if scale > 0 else v * 0.0
+
+    z10 = r10.apply(_robust_z_row, axis=1)
+    zrx = rx.apply(_robust_z_row, axis=1)
+    return (0.5 * (-z10) + 0.5 * zrx).shift(1)
 
 
 # ----------------------------------------------------------------------------
