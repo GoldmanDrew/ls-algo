@@ -2738,6 +2738,23 @@ def main() -> int:
     att_hist = update_attribution_history(run_date, totals, pnl_symbol_csv, flex_positions_xml)
     att_plot_path = make_attribution_plot(att_hist)
 
+    # 5b) Bucket 4 per-pair PnL + hedge-ratio charts (fail-soft; env-gated)
+    b4_pair_chart_path: Path | None = None
+    b4_pair_csv_path: Path | None = None
+    if os.environ.get("EOD_B4_PAIR_CHARTS", "1").strip().lower() not in ("0", "false", "no"):
+        from scripts.bucket4_eod_pair_charts import make_b4_pair_pnl_hedge_chart
+
+        b4_pair_chart_path, b4_pair_csv_path = make_b4_pair_pnl_hedge_chart(
+            run_date,
+            runs_root=RUNS_ROOT,
+            out_dir=LEDGER_DIR,
+            max_pairs=int(os.environ.get("EOD_B4_PAIR_CHART_MAX", "12")),
+        )
+        if b4_pair_chart_path is not None and "bucket_4" in BUCKET_KEYS:
+            bucket_email_sections[BUCKET_KEYS.index("bucket_4")] += (
+                f"\nPer-pair PnL + hedge-ratio charts attached: {b4_pair_chart_path.name}\n"
+            )
+
     discrepancy_df = load_position_discrepancies(run_date)
     discrepancy_plot_path = make_position_discrepancy_plot(discrepancy_df, run_date, top_n=30)
     discrepancy_table = format_largest_discrepancies(discrepancy_df, top_n=30)
@@ -2847,6 +2864,11 @@ def main() -> int:
         f"- {att_plot_path.name}\n"
         f"- {discrepancy_plot_path.name}\n"
         f"- {discrepancy_csv_path.name}\n"
+        + (
+            f"- {b4_pair_chart_path.name}  (B4 per-pair PnL by leg + underlying price with model/book hedge ratio)\n"
+            if b4_pair_chart_path is not None else ""
+        )
+        + (f"- {b4_pair_csv_path.name}\n" if b4_pair_csv_path is not None else "")
     )
 
     # 7) Send (attach consolidated CSVs + totals + plots)
@@ -2867,6 +2889,9 @@ def main() -> int:
     net_exp_under_csv = outdir / "net_exposure_by_underlying.csv"
     if net_exp_under_csv.exists():
         attachments.append(net_exp_under_csv)
+    for extra in (b4_pair_chart_path, b4_pair_csv_path):
+        if extra is not None and extra.exists():
+            attachments.append(extra)
     seen: set[Path] = set()
     for csv_path in bucket_attachment_csvs:
         if csv_path not in seen:
