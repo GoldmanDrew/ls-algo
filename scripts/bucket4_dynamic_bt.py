@@ -31,6 +31,7 @@ def run_bucket4_backtest_dynamic_h(
     slippage_bps: float = 0.0,
     opt2_h_base: float | None = None,
     drift_threshold_share_of_gross: float | None = None,
+    force_rebalance_after_days: int | None = None,
 ) -> pd.DataFrame:
     """Mark-to-market two-leg short book with dynamic hedge *h* on rebalance days.
 
@@ -43,6 +44,12 @@ def run_bucket4_backtest_dynamic_h(
         first row always rebalances (initial entry), and a flat book (gross == 0) is
         forced to trade so the pair can re-establish positions. ``None`` (default)
         keeps the legacy behavior: rebalance on every scheduled date.
+
+    ``force_rebalance_after_days``
+        Clock floor for the drift gate (hybrid drift+time cadence): when set, a
+        scheduled rebalance that would be skipped for low drift is forced anyway once
+        this many *trading days* have elapsed since the last actual rebalance. Only
+        meaningful together with ``drift_threshold_share_of_gross``.
     """
     h_base = float(opt2_h_base if opt2_h_base is not None else V6_OPT2_H_BASE)
     bt = prices.copy()
@@ -66,6 +73,8 @@ def run_bucket4_backtest_dynamic_h(
         if drift_threshold_share_of_gross is not None
         else None
     )
+    clock_floor = int(force_rebalance_after_days) if force_rebalance_after_days else None
+    days_since_rebal = 0
     for dt, row in bt.iterrows():
         ap = float(row["a_px"])
         bp = float(row["b_px"])
@@ -101,6 +110,8 @@ def run_bucket4_backtest_dynamic_h(
                 cur_a_share = abs(a_pos_notional) / cur_gross
                 drift_share = abs(cur_a_share - target_a_share)
                 actually_rebal = drift_share > drift_thr
+                if not actually_rebal and clock_floor is not None and days_since_rebal >= clock_floor:
+                    actually_rebal = True
 
         if actually_rebal:
             target_gross = max(0.0, float(gross_multiplier) * equity)
@@ -121,6 +132,7 @@ def run_bucket4_backtest_dynamic_h(
             a_pos_notional, b_pos_notional = a_sh * ap, b_sh * bp
             equity = cash + a_pos_notional + b_pos_notional
         first_row = False
+        days_since_rebal = 0 if actually_rebal else days_since_rebal + 1
 
         beta_notional = (
             (-1.0) * float(beta_a) * abs(a_pos_notional) + (-1.0) * float(beta_b) * abs(b_pos_notional)

@@ -1949,6 +1949,15 @@ def main() -> None:
     _lc_path = b4_lifecycle_cfg.state_json
     if not _lc_path.is_absolute():
         _lc_path = Path(__file__).resolve().parent / _lc_path
+    # WS4 concentration + WS5 cluster caps (scripts/bucket4_sizing.py)
+    from scripts.bucket4_sizing import (
+        apply_cluster_caps_to_b4 as _b4_apply_cluster_caps,
+        apply_concentration_to_b4 as _b4_apply_concentration,
+    )
+    _b4_conc_cfg = b4_rules.get("concentration") or {}
+    b4_conc_enabled = bool(_b4_conc_cfg.get("enabled", False))
+    b4_conc_top_n = int(_b4_conc_cfg.get("top_n_pairs", 0) or 0)
+    b4_cluster_caps = b4_rules.get("cluster_caps") or {}
     b4_lifecycle_state = _b4_load_lifecycle_state(_lc_path) if b4_lifecycle_cfg.enabled else {}
     if b4_lifecycle_cfg.enabled:
         _lc_counts: dict[str, int] = {}
@@ -2358,6 +2367,23 @@ def main() -> None:
                         f"freeze={_lc_info['n_freeze']} half={_lc_info['n_half']} "
                         f"({len(b4c)} pairs remain in core slice)"
                     )
+            if b4_conc_enabled and b4_conc_top_n > 0:
+                _held = _b4_held_etfs(b4_lifecycle_state) if b4_lifecycle_cfg.enabled else set()
+                b4c, w, _conc_info = _b4_apply_concentration(b4c, w, top_n=b4_conc_top_n, held=_held)
+                if any(_conc_info.values()):
+                    print(
+                        f"[INFO] B4 concentration top-{b4_conc_top_n}: "
+                        f"dropped={_conc_info['n_dropped']} keep_open={_conc_info['n_keep_open']} "
+                        f"({len(b4c)} pairs remain)"
+                    )
+            if b4_cluster_caps and len(b4c) > 0:
+                w, _cl_info = _b4_apply_cluster_caps(b4c, w, b4_cluster_caps)
+                for _cname, _cinfo in _cl_info.items():
+                    if _cinfo.get("capped"):
+                        print(
+                            f"[INFO] B4 cluster cap '{_cname}': weight "
+                            f"{_cinfo['weight']:.1%} -> capped at {_cinfo['cap']:.0%}"
+                        )
             b4c["gross_target_usd"] = b4_core_cash * w
             # ``_pre_cap_score_weight`` here is the b4-core-slice-internal weight; combined-sleeve
             # baseline is normalized below in the ``b4_names`` concat once all slices are merged.

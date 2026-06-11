@@ -179,6 +179,48 @@ shadow mode; sanity-check the flagged names; then set `pair_lifecycle.enabled: t
 
 ---
 
+## Optimization plan — Phases 3-5 (backtest-driven; this branch)
+
+All decisions below come from `scripts/bucket4_phase345_backtest.py` (45 pairs,
+2025-10-07 → 2026-06, 20 bps slippage, production TR/VCR cadence). Full tables:
+`notebooks/output/b4_phase345_stage{A,B,C}.csv` + `b4_phase345_summary.md`.
+
+### Adopted (config/live)
+* **v7 VCR closed-form hedge ratio** (`hedge_ratio_model: v7`): EW mean CAGR
+  **+3.8%** vs **-6.6%** for fixed h=0.75 — a ~10 pp improvement, and positive
+  median. The biggest single lever found.
+* **WS4 concentration** (`concentration.top_n_pairs: 15`, gated off until the
+  kept-list is reviewed): Stage C top-15 equal-weight portfolio: **29.6% CAGR,
+  Calmar 2.08** vs materially worse for the all-45 book. Top-10 was slightly
+  higher CAGR (37%) but more concentrated; 15 is the risk-aware pick. Held pairs
+  that fall out of the top-N become keep-open (no force-close churn).
+* **WS5 crypto cluster cap** (`cluster_caps.crypto: 0.35`): neutral in the test
+  window (the cap rarely bound) — kept as cheap insurance against the
+  MSTR/COIN/IBIT/CLSK/IREN/BMNR/CRCL monoculture.
+* **`max_name_weight` 0.15 → 0.20** in lockstep with concentration.
+* **WS5 Phase-3 visibility**: `[B4-DELTA]` read-only line in the Phase 3 header
+  shows B4's residual delta contribution to the book (Phase 3 still never
+  trades B4).
+
+### Tested and REJECTED (negative results, documented to prevent re-litigation)
+* **Hybrid drift+time cadence (WS3)**: every drift-trigger variant (4-12% leg-share
+  drift, 10/21d clock floor) *cut vol nearly in half* (33% → 13-15%) but destroyed
+  the return (best drift variant -9.5% vs +3.8% EW mean for the production clock).
+  The TR/VCR clock stays. Drift support remains in the engine
+  (`drift_threshold_share_of_gross`, `force_rebalance_after_days`) for re-testing
+  in a different regime.
+* **h hysteresis 0.05**: -1.4 pp EW mean CAGR. Not adopted.
+* **Regime bump (+0.10 toward h_max when rv pctile > 0.8)**: -2.4 pp in this
+  (calm) window. The book-level overlay idea stays parked until there is a
+  crash window to test it on.
+* **Realized 20d beta**: +0.5 pp mean, -0.1 pp median — noise. Static screener
+  |Δ| stays.
+* **Kelly-lite weights (WS4)**: λ=0 (pure equal weight over the selected top-N)
+  beat λ=0.5 and λ=1.0 at every book size. Selection does the work; trailing
+  per-pair momentum tilts only added vol.
+
+---
+
 ## Operator commands
 
 ```powershell

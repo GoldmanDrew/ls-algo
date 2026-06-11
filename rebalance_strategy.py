@@ -3250,6 +3250,41 @@ def main() -> None:
                 f"min_trade_usd=${min_trade_usd:,.0f}"
             )
 
+            # WS5 visibility (read-only): what B4 contributes to the book's net
+            # delta. Phase 3 does NOT trade B4 — this line just lets the operator
+            # judge the 4%/1% band decisions knowing B4's residual contribution.
+            # (Underlying shorts here may include Phase 3 hedge shorts on shared
+            # underlyings; treat as an upper bound on B4's own hedge leg.)
+            try:
+                _b4_inv_delta = 0.0
+                _b4_und_short = 0.0
+                _b4_unds: Set[str] = set()
+                for _sym, _sh in strat_pos.items():
+                    if float(_sh) == 0.0:
+                        continue
+                    _u = etf_to_under.get(_sym)
+                    _d = float(etf_to_delta.get(_sym, 0.0) or 0.0)
+                    _px = prices.get(_sym)
+                    if _u and _sym not in flow_etfs and _d < 0 and _px:
+                        _b4_inv_delta += _d * float(_sh) * float(_px)
+                        _b4_unds.add(_u)
+                for _u in _b4_unds:
+                    _sh = float(strat_pos.get(_u, 0.0))
+                    _px = prices.get(_u)
+                    if _sh < 0 and _px:
+                        _b4_und_short += _sh * float(_px)
+                _b4_resid = _b4_inv_delta + _b4_und_short
+                if _b4_unds:
+                    tprint(
+                        f"[B4-DELTA] residual ≈ ${_b4_resid:,.0f} "
+                        f"(inverse legs ${_b4_inv_delta:,.0f} + underlying shorts ${_b4_und_short:,.0f}, "
+                        f"{len(_b4_unds)} underlyings, "
+                        f"{_b4_resid / account_equity * 100:+.1f}% of equity) — read-only, "
+                        f"Phase 3 does not trade B4"
+                    )
+            except Exception as _e:
+                tprint(f"[B4-DELTA] visibility line failed (non-fatal): {_e}")
+
             # Pre-hedge snapshot (for summary) — include all positioned
             # underlyings, not just plan, so the summary reflects orphans.
             pre_net: Dict[str, float] = {}
