@@ -35,6 +35,10 @@ from execute_trade_plan import (
     today_str,
 )
 from generate_trade_plan import load_blacklist
+from trade_plan_targets import (
+    _maybe_merge_optimal_targets,
+    _resolve_target_basis_columns,
+)
 from ibkr_accounting import (
     EXCLUDE_SYMBOLS,
     SUPPLEMENTAL_ETF_MAP,
@@ -81,49 +85,6 @@ def resolve_proposed_trades_path(run_date: str, paths_cfg: dict) -> Path:
         "Could not locate proposed_trades.csv (try dated data/runs/<run-date>/proposed_trades.csv "
         "or paths.proposed_trades_csv in config)."
     )
-
-
-def _resolve_target_basis_columns(plan: pd.DataFrame, target_basis: str) -> tuple[str, str]:
-    """Return the ``(long_col, short_col)`` to use for harvest target sizing.
-
-    - ``optimal`` (default): ``optimal_long_usd`` / ``optimal_short_usd`` if present in
-      ``proposed_trades.csv`` (or merged from ``optimal_targets.csv``). Falls back to
-      executable when columns are missing (legacy CSVs).
-    - ``executable`` (legacy): ``long_usd`` / ``short_usd``.
-    - ``max``: row-level max(|optimal|, |executable|), signed by sleeve direction. Implemented
-      by callers (this helper just resolves which absolute columns to read).
-    """
-    basis = str(target_basis or "optimal").strip().lower()
-    if basis == "executable":
-        return ("long_usd", "short_usd")
-    if "optimal_long_usd" in plan.columns and "optimal_short_usd" in plan.columns:
-        opt_l = pd.to_numeric(plan["optimal_long_usd"], errors="coerce").abs().fillna(0.0).sum()
-        opt_s = pd.to_numeric(plan["optimal_short_usd"], errors="coerce").abs().fillna(0.0).sum()
-        if (opt_l + opt_s) > 1e-9:
-            return ("optimal_long_usd", "optimal_short_usd")
-    return ("long_usd", "short_usd")
-
-
-def _maybe_merge_optimal_targets(plan: pd.DataFrame, run_date: str) -> pd.DataFrame:
-    """Merge ``optimal_targets.csv`` into ``plan`` when available so harvest can use ``optimal_*``
-    even if the in-hand ``proposed_trades.csv`` predates the dual-pipeline output.
-    """
-    if plan is None or plan.empty:
-        return plan
-    if "optimal_long_usd" in plan.columns and "optimal_short_usd" in plan.columns:
-        return plan
-    optimal_path = run_dir(run_date) / "optimal_targets.csv"
-    if not optimal_path.exists():
-        return plan
-    try:
-        opt = pd.read_csv(optimal_path)
-    except Exception:
-        return plan
-    if opt.empty or "ETF" not in opt.columns or "Underlying" not in opt.columns:
-        return plan
-    keep_cols = [c for c in opt.columns if c.startswith("optimal_") or c in ("ETF", "Underlying", "binding_cap", "liquidity_gap_usd")]
-    opt = opt[keep_cols].copy()
-    return plan.merge(opt, on=["ETF", "Underlying"], how="left", suffixes=("", "_opt"))
 
 
 def _position_discrepancy_merge(

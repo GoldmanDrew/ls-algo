@@ -17,6 +17,7 @@ from risk_dashboard.metrics import (
     compute_borrow_panel,
     compute_bucket_detail,
     compute_bucket_return_rows,
+    compute_bucket_sleeve_rows,
     compute_capital_panel,
     compute_concentration_panel,
     compute_data_quality,
@@ -630,10 +631,9 @@ def test_compute_slide_risk_vix_decay_matrix_with_mock_vol_beta():
     assert current["delta_vs_current_pct_nav"] == pytest.approx(0.0, abs=1e-12)
     assert shocked["vix_shock_pts"] == 10
     assert len(matrix["cells"]) >= 2
-    assert current["borrow_pnl_usd"] == 0.0
-    assert current["borrow_pnl_pct_nav"] == 0.0
     assert current["total_pnl_pct_nav"] == pytest.approx(
-        current["decay_pnl_pct_nav"], abs=1e-9
+        (current["decay_pnl_pct_nav"] or 0.0) + (current["borrow_pnl_pct_nav"] or 0.0),
+        abs=1e-9,
     )
 
 
@@ -1108,8 +1108,51 @@ def test_compute_capital_panel_includes_per_bucket_returns(tmp_path: Path):
     panel = compute_capital_panel(totals, nav_usd=800_000.0, pnl_history_csv=hist)
     assert panel["available"] is True
     assert len(panel["bucket_return_rows"]) == 4
-    b124 = next(r for r in panel["rows"] if r["id"] == "b124")
-    assert b124["roc_on_net_capital"] == pytest.approx(10.0 / 200.0)
-    assert b124["rog_on_gross_capital"] == pytest.approx(10.0 / 300.0)
     b1 = next(r for r in panel["bucket_return_rows"] if r["id"] == "bucket_1")
     assert b1["roc_on_net_capital"] == pytest.approx(10.0 / 200.0)
+
+
+def test_compute_bucket_sleeve_rows_merges_exposure_and_capital():
+    sleeve_table = [
+        {
+            "bucket": "bucket_1",
+            "bucket_label": "Bucket 1 (core leveraged)",
+            "gross_usd": 1_000_000.0,
+            "net_usd": 5_000.0,
+            "target_weight": 0.55,
+            "drift_pp": 10.0,
+            "drift_status": "hard",
+            "pnl_usd": 10.0,
+            "attribution_available": True,
+        }
+    ]
+    capital_panel = {
+        "available": True,
+        "bucket_return_rows": [
+            {
+                "id": "bucket_1",
+                "pnl_usd": 10.0,
+                "avg_net_capital_usd": 100.0,
+                "avg_gross_capital_usd": 200.0,
+                "avg_margin_req_usd": 50.0,
+                "roc_on_net_capital": 0.10,
+                "rog_on_gross_capital": 0.05,
+                "rom_on_margin_req": 0.20,
+            }
+        ],
+        "return_denominator_note": "test note",
+    }
+    totals = {
+        "capital_snapshot": {
+            "net_capital_bucket_1": 500.0,
+            "gross_capital_bucket_1": 800.0,
+            "margin_req_bucket_1": 120.0,
+        }
+    }
+    panel = compute_bucket_sleeve_rows(sleeve_table, capital_panel, totals)
+    assert len(panel["rows"]) == 4
+    b1 = next(r for r in panel["rows"] if r["bucket"] == "bucket_1")
+    assert b1["exposure_gross_usd"] == pytest.approx(1_000_000.0)
+    assert b1["net_capital_usd"] == pytest.approx(500.0)
+    assert b1["roc_on_net_capital"] == pytest.approx(0.10)
+    assert b1["drift_status"] == "hard"

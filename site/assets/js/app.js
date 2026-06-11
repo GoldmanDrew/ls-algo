@@ -45,9 +45,7 @@
     volShockMeta: document.getElementById("vol-shock-meta"),
     strip: document.getElementById("strip"),
     breaches: document.getElementById("breaches"),
-    sleeveBody: document.querySelector("#sleeve-table tbody"),
-    displaySleeveGroups: document.getElementById("display-sleeve-groups"),
-    capitalPanel: document.getElementById("capital-panel"),
+    bucketSleevePanel: document.getElementById("bucket-sleeve-panel"),
     bucketTabs: document.getElementById("bucket-tabs"),
     bucketContent: document.getElementById("bucket-content"),
     borrowContent: document.getElementById("borrow-content"),
@@ -1071,7 +1069,7 @@
       const spxMode = panel.horizon_shock_mode || "rms";
       els.slideRiskMeta.innerHTML = `<span class="dim small">T+0 = instantaneous &beta;&times;&Delta;SPX (linear). ${scenarioHorizons.join(
         " / "
-      )} = horizon-scaled equity shock (<code>${safeText(spxMode)}</code>) + LETF decay/borrow. VIX panel: decay only (no borrow).${betaCov} &middot; ${letf}/${total} LETF &middot; ${panel.n_names_with_vol || 0} with vol</span>`;
+      )} = horizon-scaled equity shock (<code>${safeText(spxMode)}</code>) + LETF decay/borrow. VIX panel: same decay/borrow stack at SPX 0% with VIX-stressed vol &amp; borrow.${betaCov} &middot; ${letf}/${total} LETF &middot; ${panel.n_names_with_vol || 0} with vol</span>`;
     }
     const worst = panel.worst_shock || null;
     const worstShare =
@@ -1117,15 +1115,18 @@
                   cell.decay_pnl_pct_nav != null
                     ? `Decay ${fmtPct(cell.decay_pnl_pct_nav, 2)}`
                     : null,
+                  cell.borrow_pnl_pct_nav != null
+                    ? `Borrow ${fmtPct(cell.borrow_pnl_pct_nav, 2)}`
+                    : null,
                   cell.delta_vs_current_pct_nav != null
                     ? `Δ vs current ${fmtPct(cell.delta_vs_current_pct_nav, 2)}`
                     : null,
                 ]
                   .filter(Boolean)
                   .join(" · ");
-                return `<td class="num ${signedClass(cell.decay_pnl_pct_nav ?? cell.total_pnl_pct_nav)} ${scenarioHeatClass(
-                  cell.decay_pnl_pct_nav ?? cell.total_pnl_pct_nav
-                )}" title="${safeText(tip)}">${fmtPct(cell.decay_pnl_pct_nav ?? cell.total_pnl_pct_nav, 1)}</td>`;
+                return `<td class="num ${signedClass(cell.total_pnl_pct_nav)} ${scenarioHeatClass(
+                  cell.total_pnl_pct_nav
+                )}" title="${safeText(tip)}">${fmtPct(cell.total_pnl_pct_nav, 1)}</td>`;
               })
               .join("");
             return `<div class="slide-strip" style="margin-top:12px;">
@@ -1144,7 +1145,7 @@
             <div class="stat"><div class="label">VIX 9D / 3M</div><div class="value">${hl.vix9d_pts != null ? Number(hl.vix9d_pts).toFixed(1) : "-"} / ${hl.vix3m_pts != null ? Number(hl.vix3m_pts).toFixed(1) : "-"}</div><div class="sub">${safeText(hl.term_structure, "")}</div></div>
             <div class="stat"><div class="label">VVIX</div><div class="value">${hl.vvix_pts != null ? Number(hl.vvix_pts).toFixed(1) : "-"}</div></div>
             <div class="stat"><div class="label">σ book (med)</div><div class="value">${hl.sigma_book_median != null ? (Number(hl.sigma_book_median) * 100).toFixed(0) + "%" : "-"}</div></div>
-            <div class="stat"><div class="label">12M decay</div><div class="value ${signedClass(hl.decay_12m_pct_nav ?? hl.carry_12m_pct_nav)}">${hl.decay_12m_pct_nav != null ? fmtPct(hl.decay_12m_pct_nav, 1) : hl.carry_12m_pct_nav != null ? fmtPct(hl.carry_12m_pct_nav, 1) : "-"}</div></div>
+            <div class="stat"><div class="label">12M net carry</div><div class="value ${signedClass(hl.carry_12m_pct_nav)}">${hl.carry_12m_pct_nav != null ? fmtPct(hl.carry_12m_pct_nav, 1) : "-"}</div><div class="sub">${hl.decay_12m_pct_nav != null && hl.borrow_12m_pct_nav != null ? `decay ${fmtPct(hl.decay_12m_pct_nav, 1)}, borrow ${fmtPct(hl.borrow_12m_pct_nav, 1)}` : ""}</div></div>
           </div>`;
 
           const estVer = vixMatrix.vol_vix_estimator_version || "unknown";
@@ -1172,13 +1173,20 @@
             ? `<div class="slide-strip" style="margin-top:12px;">
               <h4>Historical analog scenarios</h4>
               <table class="tight"><thead><tr>
-                <th>Scenario</th><th>VIX peak</th><th>12M decay</th><th>Δ vs current</th>
+                <th>Scenario</th><th>VIX peak</th><th>12M net</th><th>Δ vs current</th>
               </tr></thead><tbody>${hist
                 .map(
                   (h) => `<tr>
                     <td><strong>${safeText(h.label)}</strong></td>
                     <td class="num">${h.vix_peak_pts != null ? Number(h.vix_peak_pts).toFixed(0) : "-"}</td>
-                    <td class="num ${signedClass(h.decay_pnl_pct_nav ?? h.total_pnl_pct_nav)}">${fmtPct(h.decay_pnl_pct_nav ?? h.total_pnl_pct_nav, 1)}</td>
+                    <td class="num ${signedClass(h.total_pnl_pct_nav)}" title="${safeText(
+                      [
+                        h.decay_pnl_pct_nav != null ? `Decay ${fmtPct(h.decay_pnl_pct_nav, 2)}` : null,
+                        h.borrow_pnl_pct_nav != null ? `Borrow ${fmtPct(h.borrow_pnl_pct_nav, 2)}` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")
+                    )}">${fmtPct(h.total_pnl_pct_nav, 1)}</td>
                     <td class="num ${signedClass(h.delta_vs_current_pct_nav)}">${fmtPct(h.delta_vs_current_pct_nav, 1)}</td>
                   </tr>`
                 )
@@ -1190,7 +1198,7 @@
           const perNameTbl = perName.length
             ? `<details style="margin-top:12px;"><summary><strong>Per-name vol sensitivity (top ${Math.min(perName.length, 25)})</strong></summary>
               <table class="tight"><thead><tr>
-                <th>Underlying</th><th>β vol</th><th>σ base</th><th>σ @ VIX+20</th><th>12M decay $</th><th>Net $</th>
+                <th>Underlying</th><th>β vol</th><th>σ base</th><th>σ @ VIX+20</th><th>12M net $</th><th>Decay $</th><th>Borrow $</th>
               </tr></thead><tbody>${perName
                 .slice(0, 25)
                 .map(
@@ -1199,15 +1207,16 @@
                     <td class="num">${r.beta_vol_vix == null ? "-" : Number(r.beta_vol_vix).toFixed(2)}</td>
                     <td class="num">${r.sigma_base == null ? "-" : (Number(r.sigma_base) * 100).toFixed(0) + "%"}</td>
                     <td class="num">${r.sigma_shocked_plus_20 == null ? "-" : (Number(r.sigma_shocked_plus_20) * 100).toFixed(0) + "%"}</td>
+                    <td class="num ${signedClass(r.total_pnl_usd)}">${fmtUsdSigned(r.total_pnl_usd)}</td>
                     <td class="num ${signedClass(r.decay_pnl_usd)}">${fmtUsdSigned(r.decay_pnl_usd)}</td>
-                    <td class="num ${signedClass(r.net_notional_usd)}">${fmtUsdSigned(r.net_notional_usd)}</td>
+                    <td class="num ${signedClass(r.borrow_pnl_usd)}">${fmtUsdSigned(r.borrow_pnl_usd)}</td>
                   </tr>`
                 )
                 .join("")}</tbody></table></details>`
             : "";
 
           return `<div class="slide-strip">
-            <div class="slide-strip-head"><h3>12M expected decay vs VIX (SPX 0%)</h3></div>
+            <div class="slide-strip-head"><h3>12M expected carry vs VIX (SPX 0%)</h3></div>
             ${headlineStrip}
             ${decayMeta}
             ${sustainedTbl}
@@ -1617,156 +1626,113 @@
       .join("");
   }
 
-  function renderDisplaySleeveGroups(groups) {
-    if (!els.displaySleeveGroups) return;
-    const rows = groups || [];
-    if (!rows.length) {
-      els.displaySleeveGroups.innerHTML =
-        '<p class="dim">Consolidated sleeve groups unavailable.</p>';
-      return;
-    }
-    els.displaySleeveGroups.innerHTML = `
+  function renderBucketSleevePanel(panel, book) {
+    if (!els.bucketSleevePanel) return;
+    const rows = panel?.rows || [];
+    const exposureAvailable = book?.sleeve_attribution_available !== false;
+    const capitalAvailable = panel?.capital_available !== false;
+    const unavailableCell = (title) =>
+      `<td class="num dim" title="${safeText(
+        title,
+        "unavailable"
+      )}">unavailable</td>`;
+
+    els.bucketSleevePanel.innerHTML = `
+      <div class="table-scroll">
       <table class="tight">
         <thead><tr>
-          <th>Group</th><th>Gross $</th><th>Net $</th><th>P&amp;L YTD</th><th>Notes</th>
+          <th rowspan="2">Bucket</th>
+          <th colspan="4">Exposure (β-normalized)</th>
+          <th colspan="3">Deployed capital (snapshot)</th>
+          <th colspan="5">Returns (YTD / avg capital)</th>
+        </tr>
+        <tr>
+          <th>Gross $</th><th>Net $</th><th>Target %</th><th>Drift</th>
+          <th>Net cap</th><th>Gross cap</th><th>Margin</th>
+          <th>P&amp;L YTD</th><th>ROC</th><th>ROG</th><th>ROM</th><th>Status</th>
         </tr></thead>
         <tbody>${rows
-          .map(
-            (r) => `<tr>
-          <td><strong>${safeText(r.label)}</strong></td>
-          <td class="num">${r.gross_usd == null ? "unavailable" : fmtUsd(r.gross_usd)}</td>
-          <td class="num ${signedClass(r.net_usd)}">${
-              r.net_usd == null ? "unavailable" : fmtUsd(r.net_usd)
-            }</td>
-          <td class="num ${signedClass(r.pnl_usd)}">${fmtUsdSigned(r.pnl_usd)}</td>
-          <td class="dim small">${safeText(r.exposure_note, "")}</td>
-        </tr>`
-          )
-          .join("")}</tbody>
-      </table>
-      <p class="dim small">Share-notional gross/net for B1+B2+B4 (EOD-aligned). Bucket 3 uses delta-normalized overlay notional — see factor panel for equity β.</p>`;
-  }
-
-  function renderCapitalPanel(panel) {
-    if (!els.capitalPanel) return;
-    if (!panel || !panel.available) {
-      els.capitalPanel.innerHTML = `<p class="dim">${safeText(
-        panel?.reason,
-        "Capital snapshot not available."
-      )}</p>`;
-      return;
-    }
-    const rows = panel.rows || [];
-    const bucketRows = panel.bucket_return_rows || [];
-    const returnNote = panel.return_denominator_note || "";
-    els.capitalPanel.innerHTML = `
-      <table class="tight">
-        <thead><tr>
-          <th>Group</th><th>Net capital</th><th>Gross capital</th><th>Margin req</th><th>ROC</th><th>ROG</th><th>ROM</th>
-        </tr></thead>
-        <tbody>${rows
-          .map(
-            (r) => `<tr>
-          <td><strong>${safeText(r.label)}</strong></td>
-          <td class="num ${signedClass(r.net_capital_usd)}">${fmtUsd(r.net_capital_usd)}</td>
-          <td class="num">${fmtUsd(r.gross_capital_usd)}</td>
-          <td class="num">${fmtUsd(r.margin_req_usd)}</td>
-          <td class="num">${
-            r.roc_on_net_capital == null ? "-" : fmtPct(r.roc_on_net_capital, 2)
-          }</td>
-          <td class="num">${
-            r.rog_on_gross_capital == null ? "-" : fmtPct(r.rog_on_gross_capital, 2)
-          }</td>
-          <td class="num">${
-            r.rom_on_margin_req == null ? "-" : fmtPct(r.rom_on_margin_req, 2)
-          }</td>
-        </tr>`
-          )
-          .join("")}</tbody>
-      </table>
-      <h4>Per-bucket returns</h4>
-      <table class="tight">
-        <thead><tr>
-          <th>Bucket</th><th>P&amp;L YTD</th><th>Avg net cap</th><th>Avg gross cap</th><th>Avg margin</th><th>ROC</th><th>ROG</th><th>ROM</th>
-        </tr></thead>
-        <tbody>${bucketRows
-          .map(
-            (r) => `<tr>
-          <td><strong>${safeText(r.label)}</strong></td>
-          <td class="num ${signedClass(r.pnl_usd)}">${fmtUsdSigned(r.pnl_usd)}</td>
-          <td class="num ${signedClass(r.avg_net_capital_usd)}">${fmtUsd(r.avg_net_capital_usd)}</td>
-          <td class="num">${fmtUsd(r.avg_gross_capital_usd)}</td>
-          <td class="num">${fmtUsd(r.avg_margin_req_usd)}</td>
-          <td class="num">${
-            r.roc_on_net_capital == null ? "-" : fmtPct(r.roc_on_net_capital, 2)
-          }</td>
-          <td class="num">${
-            r.rog_on_gross_capital == null ? "-" : fmtPct(r.rog_on_gross_capital, 2)
-          }</td>
-          <td class="num">${
-            r.rom_on_margin_req == null ? "-" : fmtPct(r.rom_on_margin_req, 2)
-          }</td>
-        </tr>`
-          )
-          .join("")}</tbody>
-      </table>
-      <p class="dim small">${safeText(returnNote)}</p>
-      <p class="dim small">Source: ${safeText(panel.source, "totals.json")}. Scoped to etf_screened_today universe (same as EOD email).</p>`;
-  }
-
-  function renderSleeveTable(book) {
-    if (!els.sleeveBody) return;
-    const rows = book?.sleeve_table || [];
-    const available = book?.sleeve_attribution_available !== false;
-    const unavailableCell = `<td class="num dim" title="${safeText(
-      book?.sleeve_attribution_reason,
-      "sleeve attribution unavailable"
-    )}">unavailable</td>`;
-    els.sleeveBody.innerHTML = rows
-      .map((r) => {
-        const trCls =
-          r.drift_status === "hard"
-            ? "row-hard"
-            : r.drift_status === "warn"
-            ? "row-warn"
-            : "";
-        const grossCell = available
-          ? `<td class="num">${fmtUsd(r.gross_usd)}</td>`
-          : unavailableCell;
-        const targetGrossCell = available
-          ? `<td class="num dim">${r.target_gross_usd == null ? "-" : fmtUsd(r.target_gross_usd)}</td>`
-          : unavailableCell;
-        const netCell = available
-          ? `<td class="num ${signedClass(r.net_usd)}">${fmtUsd(r.net_usd)}</td>`
-          : unavailableCell;
-        const actualCell = available
-          ? `<td class="num">${fmtPct(r.actual_weight, 1)}</td>`
-          : unavailableCell;
-        const driftCell = available
-          ? `<td class="num">${fmtPp(r.drift_pp, 1)}</td>`
-          : unavailableCell;
-        const statusCell = available
-          ? `<td>${statusPill(r.drift_status)}</td>`
-          : `<td>${statusPill("unknown", "n/a")}</td>`;
-        return `<tr class="${trCls}">
+          .map((r) => {
+            const trCls =
+              r.drift_status === "hard"
+                ? "row-hard"
+                : r.drift_status === "warn"
+                ? "row-warn"
+                : "";
+            const grossCell = exposureAvailable
+              ? `<td class="num">${fmtUsd(r.exposure_gross_usd)}</td>`
+              : unavailableCell(book?.sleeve_attribution_reason);
+            const netCell = exposureAvailable
+              ? `<td class="num ${signedClass(r.exposure_net_usd)}">${fmtUsd(r.exposure_net_usd)}</td>`
+              : unavailableCell(book?.sleeve_attribution_reason);
+            const targetCell = exposureAvailable
+              ? `<td class="num">${
+                  r.target_weight == null ? "-" : fmtPct(r.target_weight, 0)
+                }</td>`
+              : unavailableCell(book?.sleeve_attribution_reason);
+            const driftCell = exposureAvailable
+              ? `<td class="num">${fmtPp(r.drift_pp, 1)}</td>`
+              : unavailableCell(book?.sleeve_attribution_reason);
+            const netCapCell = capitalAvailable
+              ? `<td class="num ${signedClass(r.net_capital_usd)}">${fmtUsd(r.net_capital_usd)}</td>`
+              : unavailableCell(panel?.capital_reason);
+            const grossCapCell = capitalAvailable
+              ? `<td class="num">${fmtUsd(r.gross_capital_usd)}</td>`
+              : unavailableCell(panel?.capital_reason);
+            const marginCell = capitalAvailable
+              ? `<td class="num">${fmtUsd(r.margin_req_usd)}</td>`
+              : unavailableCell(panel?.capital_reason);
+            const rocCell = capitalAvailable
+              ? `<td class="num">${
+                  r.roc_on_net_capital == null ? "-" : fmtPct(r.roc_on_net_capital, 2)
+                }</td>`
+              : unavailableCell(panel?.capital_reason);
+            const rogCell = capitalAvailable
+              ? `<td class="num">${
+                  r.rog_on_gross_capital == null ? "-" : fmtPct(r.rog_on_gross_capital, 2)
+                }</td>`
+              : unavailableCell(panel?.capital_reason);
+            const romCell = capitalAvailable
+              ? `<td class="num">${
+                  r.rom_on_margin_req == null ? "-" : fmtPct(r.rom_on_margin_req, 2)
+                }</td>`
+              : unavailableCell(panel?.capital_reason);
+            const statusCell = exposureAvailable
+              ? `<td>${statusPill(r.drift_status)}</td>`
+              : `<td>${statusPill("unknown", "n/a")}</td>`;
+            return `<tr class="${trCls}">
           <td><strong>${safeText(r.bucket_label || r.bucket)}</strong></td>
           ${grossCell}
-          ${targetGrossCell}
           ${netCell}
-          ${actualCell}
-          <td class="num">${
-            r.target_weight == null ? "-" : fmtPct(r.target_weight, 0)
-          }</td>
+          ${targetCell}
           ${driftCell}
-          ${statusCell}
+          ${netCapCell}
+          ${grossCapCell}
+          ${marginCell}
           <td class="num ${signedClass(r.pnl_usd)}">${fmtUsdSigned(r.pnl_usd)}</td>
+          ${rocCell}
+          ${rogCell}
+          ${romCell}
+          ${statusCell}
         </tr>`;
-      })
-      .join("");
+          })
+          .join("")}</tbody>
+      </table>
+      </div>
+      <p class="dim small">${safeText(panel?.exposure_note, "")}</p>
+      <p class="dim small">${safeText(panel?.return_denominator_note, "")}</p>
+      ${
+        capitalAvailable
+          ? `<p class="dim small">Source: ${safeText(panel?.source, "totals.json")}. Scoped to etf_screened_today universe (same as EOD email).</p>`
+          : `<p class="dim small callout">${safeText(
+              panel?.capital_reason,
+              "Capital snapshot not available."
+            )}</p>`
+      }`;
 
     const banner = document.getElementById("sleeve-banner");
     if (banner) {
-      if (!available) {
+      if (!exposureAvailable) {
         banner.hidden = false;
         banner.className = "callout hard";
         banner.innerHTML = `<strong>Sleeve attribution unavailable.</strong> ${safeText(
@@ -2090,9 +2056,7 @@
       () => renderSlideRisk(snap.slide_risk_panel || {}),
       () => renderConcentration(snap.concentration_panel || {}),
       () => renderFactor(snap.factor_panel || {}),
-      () => renderDisplaySleeveGroups(snap.display_sleeve_groups || []),
-      () => renderCapitalPanel(snap.capital_panel || {}),
-      () => renderSleeveTable(snap.book || {}),
+      () => renderBucketSleevePanel(snap.bucket_sleeve_panel || {}, snap.book || {}),
       () => bindTabs(snap),
       () => renderBorrow(snap.borrow_panel || {}),
       () => renderSqueeze((snap.borrow_panel || {}).squeeze_rows || []),

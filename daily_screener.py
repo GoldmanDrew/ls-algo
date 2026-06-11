@@ -163,6 +163,11 @@ leverage_pairs_leverageshares = [
     ("STXU", "STX"),
     # 2026-05-15 Leverage Shares — 2X long CBRS (post-IPO) + 2X long CRML (CRMX)
     ("CBRG", "CBRS"), ("CRMX", "CRML"),
+    # 2026-06-02 Leverage Shares Themes — 2X long daily (Cboe-listed)
+    ("ONG", "ON"),    # Leverage Shares 2X Long ON Daily ETF (ON Semiconductor)
+    ("NXPG", "NXPI"), # Leverage Shares 2X Long NXPI Daily ETF (NXP Semiconductors)
+    # 2026-06-15 Leverage Shares Themes — 2X long SpaceX (pending SPCX IPO)
+    ("SPCH", "SPCX"),
 ]
 
 new_pairs = [
@@ -220,6 +225,10 @@ new_pairs = [
     ("AMPU", "AMPX"),  # Defiance Daily Target 2X Long AMPX (Amprius Technologies)
     # 2026-05-07 Tradr 2X long (Xanadu Quantum)
     ("XNDX", "XNDU"),  # Tradr 2X Long XNDU Daily ETF (Xanadu Quantum Technologies)
+    # 2026-05-21 Defiance + T-REX 2X long (ASTS, LITE)
+    ("ASTY", "ASTS"),  # Defiance Daily Target 2X Long ASTS (AST SpaceMobile)
+    ("ASUP", "ASTS"),  # T-REX 2X Long ASTS (REX / Tuttle; distinct from Tradr ASTX & Defiance ASTY)
+    ("LITU", "LITE"),  # T-REX 2X Long LITE (REX / Tuttle; distinct from Tradr LITX)
     # 2026-05-27 Defiance 2X long (One Stop Systems)
     ("OSSL", "OSS"),   # Defiance Daily Target 2X Long OSS
     # 2026-05-28 Direxion 2X daily bull — swap-based spot ETP refs (IBIT, ETHA, GLD, SLV)
@@ -228,12 +237,18 @@ new_pairs = [
     ("MCHU", "MCHP"), ("NXPX", "NXPI"), ("ONX", "ON"),
     # 2026-05-28 Tradr 2X long CBRS (Cerebras Systems)
     ("CBRX", "CBRS"),
+    # 2026-06-09 Defiance 2X long VELO (Velo3D)
+    ("VELL", "VELO"),
+    # 2026-06-15 Defiance 2X Long SpaceX (pending SPCX IPO)
+    ("SPCU", "SPCX"),
 ]
 
 proshares_pairs_levered = [
     ("CRCA", "CRCL"), ("NVDB", "NVDA"), ("PLTA", "PLTR"), ("TSLI", "TSLA"),
     ("COIA", "COIN"), ("BITU", "IBIT"), ("ETHT", "ETHA"), ("UXRP", "XRPZ"),
     ("SOLT", "SOEZ"),
+    # 2026-06-12 ProShares Ultra SpaceX (2x daily long vs SPCX IPO)
+    ("SPCF", "SPCX"),
 ]
 
 graniteshares_pairs_leveraged = [
@@ -303,7 +318,7 @@ BENCHMARK_MAP = {
     "IREN": "IREN", "BE": "BE", "NBIS": "NBIS", "SMR": "SMR", "SPHB": "SPHB",
     "AMD": "AMD", "ASTS": "ASTS", "BMNR": "BMNR", "CBRS": "CBRS", "HOOD": "HOOD", "IONQ": "IONQ",
     "OKLO": "OKLO", "PLTR": "PLTR", "QBTS": "QBTS", "RGTI": "RGTI", "RKLB": "RKLB",
-    "SMCI": "SMCI", "TSM": "TSM",
+    "SMCI": "SMCI", "TSM": "TSM", "MU": "MU", "SPCX": "SPCX",
     # Volatility pair: UVIX (−2× daily vs SVIX) hedged to SVIX; both legs short in book.
     "SVIX": "SVIX",
 }
@@ -335,6 +350,10 @@ INVERSE_ETF_UNIVERSE = [
     ("SCBR", -2, "CBRS"),
     # 2026-05-28 Tradr 2X Short CBRS Daily ETF (CBRZ)
     ("CBRZ", -2, "CBRS"),
+    # 2026-06-09 Defiance Daily Target 2X Short MU (Micron Technology)
+    ("MUZ", -2, "MU"),
+    # 2026-06-15 Leverage Shares Themes 2X Short SpaceX Daily (pending SPCX IPO)
+    ("SSPC", -2, "SPCX"),
     ("UVIX", -2, "SVIX"),
 ]
 

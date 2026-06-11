@@ -37,8 +37,26 @@ def load_split_aware_gross_decay_map(
 
     metrics_path = Path(metrics)
     parquet = metrics_path.with_suffix(".parquet")
-    source = parquet if parquet.exists() else metrics_path
-    if not source.exists():
+    csv_path = metrics_path if metrics_path.suffix.lower() == ".csv" else metrics_path.with_suffix(".csv")
+
+    def _parquet_readable() -> bool:
+        try:
+            import pyarrow  # noqa: F401
+            return True
+        except ImportError:
+            try:
+                import fastparquet  # noqa: F401
+                return True
+            except ImportError:
+                return False
+
+    if parquet.exists() and _parquet_readable():
+        source = parquet
+    elif csv_path.exists():
+        source = csv_path
+    elif metrics_path.exists():
+        source = metrics_path
+    else:
         return {}
 
     if str(scripts) not in sys.path:

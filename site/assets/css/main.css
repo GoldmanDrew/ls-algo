@@ -329,6 +329,8 @@ body[data-theme="dark"] td.borrow-cost-3 { color: #ffd0c8 !important; }
   margin: 0 0 6px; font-size: 13px; color: var(--text-primary);
 }
 .slide-strip-scroll { overflow-x: auto; }
+.table-scroll { overflow-x: auto; margin-bottom: 8px; }
+.table-scroll table.tight { min-width: 1100px; }
 table.slide-table {
   border-collapse: collapse; width: 100%; min-width: 760px;
   font-size: 12px;
