@@ -435,7 +435,12 @@ portfolio:
             hedge_ratio_model: v7          # v6 = Opt-2 panel | v7 = VCR closed form (backtest winner)
             opt2_k: 0.05                   # v6: h_star = h_base - opt2_k * z_composite
             # --- v7 hedge only (when hedge_ratio_model: v7): h = clip(h_mid + k_vcr*(VCR-VCR_med), ...)
-            h_mid: 0.55
+            # "v8" recalibration (scripts/bucket4_v8_clip_experiment.py, 213-combo grid,
+            # 45 pairs): performance is monotone in h_mid (h_min/h_max barely bind);
+            # 0.45 picked under a risk budget (vol/dd <= 1.25x the 0.55 baseline).
+            # EW mean CAGR 13.5% vs 5.9%, median 8.1% vs 4.9%; vol 39.9% vs 32.7%.
+            # Unconstrained optimum (0.20) rejected as a regime bet (84% vol).
+            h_mid: 0.45                     # was 0.55 (inherited from v6, never optimized)
             k_vcr: 1.0
             h_min: 0.30
             h_max: 0.80

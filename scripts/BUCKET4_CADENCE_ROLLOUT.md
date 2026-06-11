@@ -189,6 +189,20 @@ All decisions below come from `scripts/bucket4_phase345_backtest.py` (45 pairs,
 * **v7 VCR closed-form hedge ratio** (`hedge_ratio_model: v7`): EW mean CAGR
   **+3.8%** vs **-6.6%** for fixed h=0.75 — a ~10 pp improvement, and positive
   median. The biggest single lever found.
+* **"v8" clip recalibration — `h_mid` 0.55 → 0.45** (`scripts/bucket4_v8_clip_experiment.py`,
+  213-combo grid over h_mid × h_min × h_max, 45 pairs): the old 0.55/0.30/0.80
+  were inherited from the v6 calibration and never jointly optimized. Findings:
+  (a) `h_min`/`h_max` barely bind — performance is a monotone function of
+  `h_mid` alone (lower hedge = more net-short = more return AND more risk);
+  (b) the unconstrained optimum (h_mid 0.20: 51.5% EW mean) was REJECTED as a
+  regime bet — 84% vol, -35% DD, all of the gain from the Feb-Jun half;
+  (c) under a pre-declared risk budget (vol/DD ≤ 1.25× baseline), every top
+  combo is h_mid 0.45, so v8 = (0.45, 0.30, 0.80) by minimal change.
+  EW mean 13.5% vs 5.9%, median 8.1% vs 4.9%, vol 39.9% vs 32.7%, DD -24.4%
+  vs -21.6%, ret/vol 0.34 vs 0.18. Independently corroborated by the h* lab
+  (exp-2 refit also landed on h_mid 0.45). Caveat: slightly worse in the
+  Oct-Jan half (-16.8% vs -15.4% EW mean); 20-fold pair CV win-rate 100%.
+  Full artifacts: `notebooks/output/b4_v8/`.
 * **`base_days` 10 → 12** (one-knob nudge): the full 3x3x3 theta grid re-run
   UNDER the v7 hedge (`b4_param_scorecard.csv`) ranks (k_tr 2.25, m_vcr 2.5,
   base_days 12) first — EW mean 5.9% / median 4.9% vs 3.3%/3.7% at 10, with the
@@ -261,7 +275,7 @@ The script is the *polling* interval. Each pair has its own `interval_days`; mos
 Yes — at execution. Plan targets move daily; trades fire only when resize bands breach (12%/4%) **and** cadence says due. `h` itself is smoothed by EMA so targets do not jump daily.
 
 **What if TR/VCR signals are missing?**  
-Neutral policy: `h ≈ h_mid (0.55)`, `interval ≈ base_days (10)`.
+Neutral policy: `h ≈ h_mid (0.45, v8 recalibration)`, `interval ≈ base_days (12)`.
 
 **Merge policy**  
 Stay on `feat/bucket4-hedge-cadence-engine` until Stage 3 sign-off. Do not merge to `main` early.
