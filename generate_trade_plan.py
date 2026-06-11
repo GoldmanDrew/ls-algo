@@ -1930,9 +1930,32 @@ def main() -> None:
     b4_min_edge = float(b4_rules.get("min_net_edge_annual", 0.0))
     b4_partial_hedge_ratio = _clamp01(b4_rules.get("partial_hedge_ratio", 1.0))
     b4_max_shares_outstanding_frac = _clamp01(b4_rules.get("max_shares_outstanding_frac", 0.20))
-    # Universe-entry floor on underlying realized volatility (annualized).
-    b4_min_underlying_vol = float(b4_rules.get("min_underlying_vol", 0.50))
+    # Underlying-vol floors: NEW pairs must clear ``min_underlying_vol_entry``;
+    # pairs already tracked by the lifecycle state (i.e. held) may stay down to
+    # ``min_underlying_vol_keep``. Legacy single-floor ``min_underlying_vol``
+    # remains the fallback for both.
+    _b4_vol_floor_legacy = float(b4_rules.get("min_underlying_vol", 0.50))
+    b4_min_underlying_vol_entry = float(b4_rules.get("min_underlying_vol_entry", _b4_vol_floor_legacy))
+    b4_min_underlying_vol_keep = float(b4_rules.get("min_underlying_vol_keep", _b4_vol_floor_legacy))
     b4_excluded_etfs = {_norm_sym(x) for x in (b4_rules.get("excluded_etfs") or [])}
+    # Pair lifecycle (Phase 2 demotion ladder): half / freeze / exit from monitor flags.
+    from scripts.bucket4_pair_lifecycle import (
+        LifecycleConfig as _B4LifecycleConfig,
+        apply_lifecycle_to_b4 as _b4_apply_lifecycle,
+        held_etfs as _b4_held_etfs,
+        load_state as _b4_load_lifecycle_state,
+    )
+    b4_lifecycle_cfg = _B4LifecycleConfig.from_rules(b4_rules)
+    _lc_path = b4_lifecycle_cfg.state_json
+    if not _lc_path.is_absolute():
+        _lc_path = Path(__file__).resolve().parent / _lc_path
+    b4_lifecycle_state = _b4_load_lifecycle_state(_lc_path) if b4_lifecycle_cfg.enabled else {}
+    if b4_lifecycle_cfg.enabled:
+        _lc_counts: dict[str, int] = {}
+        for _v in b4_lifecycle_state.values():
+            _s = str(_v.get("status", "normal"))
+            _lc_counts[_s] = _lc_counts.get(_s, 0) + 1
+        print(f"[INFO] B4 pair lifecycle ON: state={_lc_path} counts={_lc_counts or '{}'}")
 
     # Borrow entry caps come from the same per-bucket bands that define
     # purgatory keep thresholds in ``daily_screener``.
@@ -2128,7 +2151,12 @@ def main() -> None:
         b4_und_vol = pd.to_numeric(eligible.get("vol_underlying_annual"), errors="coerce")
         # Require realized underlying vol above the configured floor. Missing vol is treated as
         # a rejection: we will not admit a pair whose underlying-vol we cannot measure.
-        b4_vol_ok = np.isfinite(b4_und_vol) & (b4_und_vol >= b4_min_underlying_vol)
+        # Held pairs (present in the lifecycle state) use the lower keep-side floor so
+        # they roll off gradually instead of being cleaned up the day vol dips.
+        _b4_held_set = _b4_held_etfs(b4_lifecycle_state) if b4_lifecycle_cfg.enabled else set()
+        _b4_is_held = eligible["ETF"].astype(str).map(_norm_sym).isin(_b4_held_set)
+        _b4_vol_floor_row = np.where(_b4_is_held, b4_min_underlying_vol_keep, b4_min_underlying_vol_entry)
+        b4_vol_ok = np.isfinite(b4_und_vol) & (b4_und_vol >= _b4_vol_floor_row)
         core_pre_decay = (
             positive_beta
             & eligible["delta_abs"].ge(core_delta_min)
@@ -2322,6 +2350,14 @@ def main() -> None:
                 w = np.ones(len(b4c)) / len(b4c)
             else:
                 w = _decay_score_weights(b4c, b4_weighting_cfg, sleeve_name="inverse_decay_bucket4")
+            if b4_lifecycle_cfg.enabled:
+                b4c, w, _lc_info = _b4_apply_lifecycle(b4c, w, b4_lifecycle_state, b4_lifecycle_cfg)
+                if any(_lc_info.values()):
+                    print(
+                        f"[INFO] B4 lifecycle ladder: exit={_lc_info['n_exit']} "
+                        f"freeze={_lc_info['n_freeze']} half={_lc_info['n_half']} "
+                        f"({len(b4c)} pairs remain in core slice)"
+                    )
             b4c["gross_target_usd"] = b4_core_cash * w
             # ``_pre_cap_score_weight`` here is the b4-core-slice-internal weight; combined-sleeve
             # baseline is normalized below in the ``b4_names`` concat once all slices are merged.

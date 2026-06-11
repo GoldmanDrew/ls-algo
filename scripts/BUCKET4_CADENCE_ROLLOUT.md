@@ -140,6 +140,45 @@ Directional net-exposure correction on `core_leveraged` + `yieldboost`. **B4 is 
 
 ---
 
+## Optimization plan — Phases 1 & 2 (this branch)
+
+### Phase 1 — Measure (report-only, always on)
+* `scripts/bucket4_pair_monitor.py` — per-pair trailing 20/60bd realized PnL,
+  annualized return on pair gross, borrow paid vs gross decay captured, and
+  `edge_capture_ratio` vs the screener's `bucket4_net_edge_annual`. Emits the
+  demotion-ladder flags (half/freeze/exit/vol-floor) WITHOUT acting on them.
+  Writes `data/runs/<date>/b4_monitor/b4_pair_monitor.csv` and appends one
+  summary line per run to `data/b4_observations.jsonl` (knobs + EW results —
+  the raw material for the nudge loop).
+* `scripts/bucket4_param_scorecard.py` — replays the real pair backtest over a
+  theta-grid around the current `(k_tr, m_vcr, base_days)` and ranks every theta
+  on the same fixed metrics (winsorized mean CAGR, median CAGR, vol, max DD).
+  Current knobs are marked `is_current`; the script prints HOLD or a one-knob
+  nudge suggestion and appends to `data/b4_param_scorecard_history.jsonl`.
+  Use `--quick` weekly (7 thetas), full 3x3x3 grid monthly.
+
+### Phase 2 — Cut losers (gated by `pair_lifecycle.enabled`)
+* Demotion ladder `normal -> half -> freeze -> exit` in
+  `scripts/bucket4_pair_lifecycle.py`; state in `data/b4_pair_lifecycle_state.json`.
+  - **half**: edge capture < 0.25 and realized < +10% ann -> 0.5x decay-score weight.
+  - **freeze**: trailing 60bd < -15% ann (or vol < keep floor) -> weight 0,
+    `purgatory=True` (keep-open, no auto-close).
+  - **exit**: trailing 60bd < -30% ann OR material borrow>decay (>= 5% ann drag
+    on gross) -> row dropped from plan; Phase 1 cleanup closes it; 45bd re-entry
+    cooldown.
+  - Escalation is immediate; recovery promotes ONE level per 10 consecutive
+    clean monitor runs.
+* Underlying-vol floors split into entry/keep: new pairs need >= 0.5 annual vol,
+  held pairs (tracked in lifecycle state) may stay down to 0.4 — index-like
+  pairs roll off instead of being churned.
+* `generate_trade_plan.py` applies the ladder inside the B4 core slice after
+  decay-score weights, renormalizing so the budget shifts to surviving pairs.
+
+Rollout: run monitor + lifecycle `--dry-run` daily for ~1 week alongside Stage 1
+shadow mode; sanity-check the flagged names; then set `pair_lifecycle.enabled: true`.
+
+---
+
 ## Operator commands
 
 ```powershell
@@ -154,8 +193,15 @@ python rebalance_strategy.py --run-date 2026-06-03
 # Inspect cadence (human-readable)
 python -m scripts.bucket4_hedge_cadence --run-date 2026-06-03 --plots
 
+# Phase 1: monitor + lifecycle shadow (daily, after ibkr_accounting.py)
+python -m scripts.bucket4_pair_monitor
+python -m scripts.bucket4_pair_lifecycle --dry-run     # drop --dry-run once enabled
+
+# Phase 1: parameter scorecard (weekly quick, monthly full grid)
+python -m scripts.bucket4_param_scorecard --quick
+
 # Tests
-python -m pytest tests/test_bucket4_hedge_cadence.py tests/test_bucket4_cadence_gate.py -q
+python -m pytest tests/test_bucket4_hedge_cadence.py tests/test_bucket4_cadence_gate.py tests/test_bucket4_pair_lifecycle.py -q
 ```
 
 ---
