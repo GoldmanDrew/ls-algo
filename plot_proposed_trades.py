@@ -5,7 +5,9 @@ plot_proposed_trades.py — Visualise bucket-level proposed trades for a run dat
 Also appends **screened** ETFs with IBKR ``shares_available``≈0 (or ``exclude_no_shares``) that
 do not appear in the sized plan (often purgatory / no-locate): they get a **proxy** hatched
 optimal bar (median structural gross in the bucket × edge rank) so you can see where the
-sleeve would like to be if inventory existed — see plot footnote †. Bucket 4 includes both
+sleeve would like to be if inventory existed — see plot footnote †. Proxy rows are gated on
+the same config eligibility rules as ``generate_trade_plan`` (entry borrow caps, min net
+edge, B4 underlying-vol floor, B4 excluded_etfs). Bucket 4 includes both
 inverse-shortable negative-β names and **volatility ETP** rows (same classification as
 ``generate_trade_plan``), even when ``inverse_shortable`` is false on screened data. Disable
 with ``--skip-no-ibkr-proxy``.
@@ -89,6 +91,87 @@ def load_screened(run_date: str) -> pd.DataFrame | None:
     return None
 
 
+def _load_proxy_eligibility_gates() -> dict[str, dict]:
+    """Per-bucket entry gates from strategy_config so proxy bars respect real eligibility.
+
+    Mirrors ``generate_trade_plan`` semantics: NaN borrow passes (unknown -> allow);
+    B4 underlying vol NaN rejects (unmeasurable vol is not admitted); B4 edge NaN
+    passes (same as the GTP ``b4_edge_ok`` predicate); B2 edge NaN rejects.
+    Falls back to permissive gates if config is unavailable (chart still renders).
+    """
+    try:
+        from strategy_config import load_config
+
+        cfg = load_config()
+    except Exception:
+        return {}
+    per_bucket = (cfg.get("screener", {}) or {}).get("per_bucket", {}) or {}
+    sleeves = (cfg.get("portfolio", {}) or {}).get("sleeves", {}) or {}
+    b4_rules = (sleeves.get("inverse_decay_bucket4", {}) or {}).get("rules", {}) or {}
+    yb_rules = (sleeves.get("yieldboost", {}) or {}).get("rules", {}) or {}
+    core_rules = (sleeves.get("core_leveraged", {}) or {}).get("rules", {}) or {}
+
+    def _cap(bucket: str) -> float:
+        try:
+            return float((per_bucket.get(bucket) or {}).get("entry_borrow_cap", np.inf))
+        except (TypeError, ValueError):
+            return float("inf")
+
+    _b4_vol_legacy = float(b4_rules.get("min_underlying_vol", 0.0) or 0.0)
+    return {
+        "b1": {
+            "borrow_cap": _cap("bucket_1"),
+            "min_net_decay": float(core_rules.get("min_net_decay_annual", 0.0) or 0.0),
+        },
+        "b2": {
+            "borrow_cap": _cap("bucket_2"),
+            "min_edge": float(yb_rules.get("min_net_edge_annual", 0.0) or 0.0),
+        },
+        "b4": {
+            "borrow_cap": _cap("bucket_4"),
+            "min_edge": float(b4_rules.get("min_net_edge_annual", 0.0) or 0.0),
+            "min_und_vol": float(b4_rules.get("min_underlying_vol_entry", _b4_vol_legacy) or 0.0),
+            "excluded_etfs": {str(x).strip().upper() for x in (b4_rules.get("excluded_etfs") or [])},
+        },
+    }
+
+
+def _proxy_eligible_mask(sc: pd.DataFrame, bucket: str, gates: dict[str, dict]) -> pd.Series:
+    """Rows that would pass the bucket's config entry gates if locate inventory existed."""
+    ok = pd.Series(True, index=sc.index)
+    g = gates.get(bucket)
+    if not g:
+        return ok
+
+    borrow = pd.to_numeric(sc.get("borrow_current"), errors="coerce")
+    cap = float(g.get("borrow_cap", np.inf))
+    ok &= (~np.isfinite(borrow)) | (borrow <= cap)  # NaN borrow = unknown -> allow (GTP parity)
+
+    if bucket == "b4":
+        edge = pd.to_numeric(sc.get("net_edge_p50_annual"), errors="coerce")
+        min_edge = float(g.get("min_edge", 0.0))
+        ok &= (~np.isfinite(edge)) | (edge >= min_edge)  # GTP b4_edge_ok parity
+        und_vol = pd.to_numeric(sc.get("vol_underlying_annual"), errors="coerce")
+        min_vol = float(g.get("min_und_vol", 0.0))
+        if min_vol > 0:
+            ok &= np.isfinite(und_vol) & (und_vol >= min_vol)  # NaN vol rejects (GTP parity)
+        excl = g.get("excluded_etfs") or set()
+        if excl:
+            ok &= ~sc["ETF"].astype(str).str.strip().str.upper().isin(excl)
+    elif bucket == "b2":
+        edge = pd.to_numeric(sc.get("net_edge_p50_annual"), errors="coerce")
+        min_edge = float(g.get("min_edge", 0.0))
+        if min_edge > 0:
+            ok &= np.isfinite(edge) & (edge >= min_edge)  # GTP yieldboost_edge_ok parity
+    elif bucket == "b1":
+        nd = pd.to_numeric(sc.get("net_decay_annual"), errors="coerce")
+        min_nd = float(g.get("min_net_decay", 0.0))
+        if min_nd > 0:
+            ok &= np.isfinite(nd) & (nd >= min_nd)
+
+    return ok
+
+
 def _no_ibkr_shares_mask(df: pd.DataFrame) -> pd.Series:
     """True when FTP/screener reports no shortable inventory (or ``exclude_no_shares`` is set)."""
     sh = pd.to_numeric(df.get("shares_available"), errors="coerce")
@@ -164,6 +247,11 @@ def append_no_ibkr_share_screened_rows(
     **proxy** optimal (hatched bar): median structural gross in this bucket × (edge signal /
     median edge among appended rows), capped at 2× the bucket median — strictly a visualization
     aid until ``generate_trade_plan`` emits true optimal targets for no-locate names.
+
+    Proxy rows must also pass the bucket's config entry gates (borrow cap, min net
+    edge, B4 underlying-vol floor, B4 excluded_etfs) — a name that would be rejected
+    by ``generate_trade_plan`` even WITH inventory gets no bar, so the chart never
+    advertises size for ineligible names.
     """
     if screened is None or screened.empty:
         return bucket_df
@@ -202,7 +290,8 @@ def append_no_ibkr_share_screened_rows(
     else:
         return bucket_df
 
-    no_loc = _no_ibkr_shares_mask(sc) & bucket_mask
+    gates = _load_proxy_eligibility_gates()
+    no_loc = _no_ibkr_shares_mask(sc) & bucket_mask & _proxy_eligible_mask(sc, bucket, gates)
     if not bool(no_loc.any()):
         return bucket_df
 
@@ -468,7 +557,8 @@ def plot_allocation(ax: plt.Axes, df: pd.DataFrame, title: str, *, bucket4: bool
         if n_proxy > 0:
             foot += (
                 f"  |  † {n_proxy} name(s) with IBKR locate≈0: green/red 'xxx' hatch = **proxy** "
-                f"structural scale (median bucket optimal × edge rank); not from live sizing CSV."
+                f"structural scale (median bucket optimal × edge rank, config-gated on borrow/edge/vol); "
+                f"not from live sizing CSV."
             )
         ax.text(
             0.005,

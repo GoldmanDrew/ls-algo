@@ -60,7 +60,6 @@ from delta_estimator import (
 from decay_distribution import enrich_with_decay_distribution
 from expense_ratios import fetch_expense_ratios
 from screener_v2_fields import enrich_screener_v2_fields, load_borrow_history_json
-from metrics_gross_decay import overlay_gross_decay_from_metrics
 from vol_shape import resolve_etf_metrics_daily_path
 from strategy_config import load_config
 from splits import (
@@ -642,6 +641,7 @@ def build_full_universe(skip_scrape: bool = False, skip_inverse: bool = False) -
         "MDBX",   # MDB  — liquidated 2026-04-27
         "SNPX",   # SNPS — liquidated 2026-04-27
         "VOYX",   # VOYG — liquidated 2026-04-27
+        "MSDD",   # MSTR -2x — delisting announced (operator flag 2026-06-12); still trading, exit early
         # T-REX / Tuttle Capital — plan of liquidation; last trade 2026-05-04,
         # final distribution on/about 2026-05-11 (SEC 497, 2026-04-21).
         "SOLX",   # GSOL — liquidated 2026-05-11
@@ -1700,9 +1700,9 @@ def recompute_purgatory_by_bucket(
     pb = sc.get("per_bucket") or {}
 
     defaults: dict[str, dict[str, float]] = {
-        "bucket_1": {"entry_borrow_cap": 0.60, "keep_borrow_cap": 0.75},
-        "bucket_2": {"entry_borrow_cap": 0.35, "keep_borrow_cap": 0.50},
-        "bucket_4": {"entry_borrow_cap": 0.95, "keep_borrow_cap": 1.20},
+        "bucket_1": {"entry_borrow_cap": 0.55, "keep_borrow_cap": 0.75},
+        "bucket_2": {"entry_borrow_cap": 0.20, "keep_borrow_cap": 0.35},
+        "bucket_4": {"entry_borrow_cap": 0.90, "keep_borrow_cap": 1.20},
     }
 
     def _borrow_band(tag: str) -> tuple[float, float]:
@@ -1720,7 +1720,7 @@ def recompute_purgatory_by_bucket(
     fl_set = {_norm_sym(x) for x in fl if str(x).strip()}
     protected = fl_set.copy()
     flow_rules = ((sl.get("flow_program", {}) or {}).get("rules", {}) or {})
-    flow_hard = float(flow_rules.get("hard_borrow_cap", 0.30))
+    flow_hard = float(flow_rules.get("hard_borrow_cap", 0.40))
 
     borrow = pd.to_numeric(out.get("borrow_current"), errors="coerce")
     ftp_miss = out.get("borrow_missing_from_ftp", pd.Series(False, index=out.index))
@@ -3577,14 +3577,6 @@ def main() -> int:
         underlying_borrow_map=underlying_borrow_map,
     )
 
-    metrics_daily_path = resolve_etf_metrics_daily_path(
-        getattr(args, "etf_metrics_daily", None)
-    )
-    screened = overlay_gross_decay_from_metrics(
-        screened,
-        metrics_daily_path=metrics_daily_path,
-    )
-
     # Step 5b — Distributional forecast of gross decay. Runs *before* the
     # schema-v2 enrichment so the bootstrap below can anchor-shift its
     # realized-drag draws onto the model-based ``expected_gross_decay_p50_annual``.
@@ -3604,6 +3596,9 @@ def main() -> int:
     # from Step 5b to forward-anchor its realized block-bootstrap draws; rows
     # without a meaningful expected forecast (passive_low_delta) skip the shift
     # via the ``expected_decay_available`` gate inside enrich_screener_v2_fields.
+    metrics_daily_path = resolve_etf_metrics_daily_path(
+        getattr(args, "etf_metrics_daily", None)
+    )
     if metrics_daily_path is not None:
         builtins.print(
             f"  Vol-shape: joint etf_metrics_daily when available ({metrics_daily_path})"
