@@ -54,6 +54,13 @@ class V6PfParams:
     max_weight: float = 0.35
     collinear_rho: float = 0.80
     collinear_damp: float = 0.60
+    #: Flat haircut on the FINAL weight of volatility-ETP pairs (VIX complex):
+    #: w_vol *= (1 - penalty), then renormalize so the freed weight flows to the
+    #: other pairs. Applied after the tail-risk + covariance stack because those
+    #: penalties are *relative* (median-normalized) and the B4 book is full of
+    #: 100%-vol crypto names, so vol ETPs don't stand out enough on their own.
+    #: 0.0 = off.
+    vol_etp_weight_penalty: float = 0.0
 
     def __post_init__(self) -> None:
         if self.tail_risk_symbol_overrides is None:
@@ -158,6 +165,50 @@ def _tail_risk_raw(
     down_vol_ann = float(down.std(ddof=1) * np.sqrt(252.0)) if len(down) >= 5 else 0.0
 
     return float(tail_loss + params.downside_vol_blend * down_vol_ann)
+
+
+# Fallback VIX-complex universe; the live set is daily_screener.VOLATILITY_ETP_SYMBOLS.
+_VOL_ETP_SYMBOLS_FALLBACK = frozenset(
+    {"UVIX", "SVIX", "UVXY", "SVXY", "VXX", "VIXY", "VIXM", "VIX", "VIX1D", "VIX3M"}
+)
+
+
+def _vol_etp_symbols() -> frozenset[str]:
+    try:
+        from daily_screener import VOLATILITY_ETP_SYMBOLS
+
+        return frozenset(str(s).strip().upper() for s in VOLATILITY_ETP_SYMBOLS)
+    except ImportError:
+        return _VOL_ETP_SYMBOLS_FALLBACK
+
+
+def is_vol_etp_pair(etf: str, underlying: str, *, symbols: frozenset[str] | None = None) -> bool:
+    syms = symbols if symbols is not None else _vol_etp_symbols()
+    e = str(etf).strip().upper().replace(".", "-")
+    u = str(underlying).strip().upper().replace(".", "-")
+    return e in syms or u in syms
+
+
+def apply_vol_etp_weight_penalty(
+    w: pd.Series,
+    is_vol: pd.Series,
+    *,
+    penalty: float,
+) -> pd.Series:
+    """Haircut vol-ETP weights by ``penalty`` and renormalize to sum to 1.
+
+    The freed weight is redistributed pro-rata to ALL pairs by the renormalize,
+    which is the desired behavior: non-vol pairs scale up, and the vol pairs'
+    final share is slightly above ``(1-penalty) * original`` only via that same
+    pro-rata factor (a fixed point would over-penalize).
+    """
+    pen = float(np.clip(penalty, 0.0, 1.0))
+    if pen <= 0.0 or not bool(is_vol.any()):
+        return w
+    z = w.astype(float).copy()
+    z.loc[is_vol] = z.loc[is_vol] * (1.0 - pen)
+    s = float(z.sum())
+    return z / s if s > 0 else w
 
 
 def _apply_weight_bounds(w: pd.Series, *, lo: float, hi: float) -> pd.Series:
@@ -409,6 +460,19 @@ def compute_v6_b4_pf_weight_dict(
     if float(w_cov_raw.sum()) > 0:
         w_cov_raw = w_cov_raw / float(w_cov_raw.sum())
     w_cov = _apply_weight_bounds(w_cov_raw, lo=p.min_weight, hi=p.max_weight)
+
+    # Flat vol-ETP haircut (VIX complex): w *= (1 - penalty), renormalized so the
+    # other pairs absorb the freed weight; bounds re-applied afterwards.
+    vsyms = _vol_etp_symbols()
+    wdf["is_vol_etp"] = [
+        is_vol_etp_pair(e, u, symbols=vsyms)
+        for e, u in zip(wdf["etf"].astype(str), wdf["underlying"].astype(str))
+    ]
+    if float(p.vol_etp_weight_penalty) > 0.0 and bool(wdf["is_vol_etp"].any()):
+        w_cov = apply_vol_etp_weight_penalty(
+            w_cov, wdf["is_vol_etp"], penalty=float(p.vol_etp_weight_penalty)
+        )
+        w_cov = _apply_weight_bounds(w_cov, lo=p.min_weight, hi=p.max_weight)
     wdf["new_weight"] = w_cov
 
     wdf = wdf.sort_values("new_weight", ascending=False).set_index("pair")
@@ -425,5 +489,7 @@ def compute_v6_b4_pf_weight_dict(
         "corr_risk_borrow": corr_risk_borrow,
         "lambda_eff": lambda_eff,
         "uvix_borrow_ftp_annual": uvix_borrow_annual_base,
+        "vol_etp_weight_penalty": float(p.vol_etp_weight_penalty),
+        "n_vol_etp_pairs": int(wdf["is_vol_etp"].sum()),
     }
     return weight_by_key, wdf.reset_index(), meta
