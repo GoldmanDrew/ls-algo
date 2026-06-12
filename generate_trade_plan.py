@@ -2003,7 +2003,7 @@ def main() -> None:
         f"flow hard cap={fmt_cap(flow_borrow_cap)}"
     )
     print(
-        f"[INFO] b4 universe filters: min_underlying_vol={b4_min_underlying_vol:.0%} | "
+        f"[INFO] b4 universe filters: min_underlying_vol entry={b4_min_underlying_vol_entry:.0%} keep={b4_min_underlying_vol_keep:.0%} | "
         f"min_net_edge_annual={b4_min_edge:.0%}"
     )
     if b4_excluded_etfs:
@@ -2418,7 +2418,7 @@ def main() -> None:
                         slippage_bps=float(b4_opt2.get("slippage_bps", 20.0)),
                         borrow_multiplier=float(b4_opt2.get("borrow_multiplier", 1.0)),
                         excluded_inverse_etfs=excl_inv,
-                        min_underlying_vol=float(b4_opt2.get("min_underlying_vol", b4_min_underlying_vol)),
+                        min_underlying_vol=float(b4_opt2.get("min_underlying_vol", b4_min_underlying_vol_entry)),
                         min_net_decay=float(b4_opt2.get("min_net_decay", b4_min_edge)),
                         use_ibkr_uvix_borrow=bool(b4_opt2.get("use_ibkr_uvix_borrow", False)),
                         pf_params=V6PfParams(
