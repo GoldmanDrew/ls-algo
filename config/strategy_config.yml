@@ -229,13 +229,13 @@ screener:
   #   entry_borrow_cap < borrow_current <= keep_borrow_cap
   per_bucket:
     bucket_1:
-      entry_borrow_cap: 0.55      # new B1 exposure when borrow cost <= this
+      entry_borrow_cap: 0.60      # new B1 exposure when borrow cost <= this
       keep_borrow_cap: 0.75       # keep-open purgatory band ends above this borrow cost
     bucket_2:
-      entry_borrow_cap: 0.40
+      entry_borrow_cap: 0.35
       keep_borrow_cap: 0.50
     bucket_4:
-      entry_borrow_cap: 0.90
+      entry_borrow_cap: 0.95
       keep_borrow_cap: 1.20
   min_delta_days: 30
   max_stale_days: 5             # drop ETFs with no trade in last N calendar days (delisted/liquidated)
@@ -416,7 +416,7 @@ portfolio:
         # raise target_weight / max_name_weight as comfort grows).
         # ------------------------------------------------------------------
         bucket4_weekly_opt2:
-          enabled: false
+          enabled: true                   # v9 engine LIVE (2026-06-11): v7 closed form + k_z xsec tilt
           history_start: "2018-01-01"
           weekly_rebalance_freq: "W-FRI"   # used only when hedge_cadence_policy.source = v6_panel
           warmup_bdays: 65
@@ -435,10 +435,19 @@ portfolio:
           # reverse-engineerable from the printed inputs (TR, VCR, VCR_med).
           hedge_cadence_policy:
             source: tr_vcr                 # tr_vcr cadence + hedge | v6_panel (weekly v6 for both)
-            hedge_ratio_model: v6          # v6 = Opt-2 panel (default) | v7 = VCR closed form
+            # Phase-3/4/5 backtest lab (scripts/bucket4_phase345_backtest.py, 45 pairs,
+            # 2025-10 -> 2026-06, 20bps slip): v7 VCR closed-form h beat fixed 0.75 by
+            # ~+10pp EW mean CAGR; h-hysteresis and regime bump both HURT (not adopted);
+            # realized-20d beta was noise (+0.5pp mean, -0.1pp median; not adopted).
+            hedge_ratio_model: v7          # v6 = Opt-2 panel | v7 = VCR closed form (backtest winner)
             opt2_k: 0.05                   # v6: h_star = h_base - opt2_k * z_composite
             # --- v7 hedge only (when hedge_ratio_model: v7): h = clip(h_mid + k_vcr*(VCR-VCR_med), ...)
-            h_mid: 0.55
+            # "v8" recalibration (scripts/bucket4_v8_clip_experiment.py, 213-combo grid,
+            # 45 pairs): performance is monotone in h_mid (h_min/h_max barely bind);
+            # 0.45 picked under a risk budget (vol/dd <= 1.25x the 0.55 baseline).
+            # EW mean CAGR 13.5% vs 5.9%, median 8.1% vs 4.9%; vol 39.9% vs 32.7%.
+            # Unconstrained optimum (0.20) rejected as a regime bet (84% vol).
+            h_mid: 0.45                     # was 0.55 (inherited from v6, never optimized)
             k_vcr: 1.0
             h_min: 0.30
             h_max: 0.80
@@ -452,7 +461,8 @@ portfolio:
             # vol/DD unchanged; broad plateau k_z 0.10-0.60. 0 = off (pure v8).
             k_z: 0.20
             # --- cadence: days = clip(round(base_days / (1 + k_tr*(TR-1) + m_vcr*(VCR-VCR_med))), min, max)
-            base_days: 10.0                 # risk-aware default (sweep: ~median CAGR of 21d, lower vol)
+            base_days: 12.0                 # full theta-grid under v7 hedge: (2.25,2.5,12) EW mean 5.9%
+                                            # vs 3.3% at 10, same vol/DD (b4_param_scorecard.csv 2026-06-10)
             k_tr: 2.25
             m_vcr: 2.5                      # mean-best A7 cadence sensitivity (39.4% CAGR @ 20bps)
             min_interval: 1
@@ -479,7 +489,38 @@ portfolio:
           dd_hedge_bump: 0.10              # additive bump toward h_max when derisking
           state_json: data/b4_governor_state.json
         min_net_edge_annual: 0.35      # require bucket4_net_edge_annual >= this
-        min_underlying_vol: 0.4      # universe entry: annual vol floor (aligned with DCQ bucket_4)
+        min_underlying_vol: 0.4      # legacy single floor (fallback for entry/keep below)
+        min_underlying_vol_entry: 0.5  # NEW pairs need >= this annual underlying vol
+        min_underlying_vol_keep: 0.4   # held pairs may stay down to this; below -> freeze flag
+        # Pair lifecycle demotion ladder (Phase 2 of the B4 optimization plan).
+        # Driven by scripts/bucket4_pair_monitor.py (report-only metrics); state is
+        # advanced by scripts/bucket4_pair_lifecycle.py and applied in
+        # generate_trade_plan when enabled:
+        #   normal -> half (0.5x weight) -> freeze (keep-open, no new size) -> exit
+        # Escalation is immediate; recovery requires recover_obs_days consecutive
+        # clean monitor runs per level. Exits sit out reentry_cooldown_days.
+        pair_lifecycle:
+          enabled: false               # flip true after a week of report-only shadowing
+          state_json: data/b4_pair_lifecycle_state.json
+          min_obs_days: 20             # min trailing observations before any demotion
+          half_capture_lt: 0.25        # edge capture below this -> half weight ...
+          half_ret_ok: 0.10            # ... unless realized >= +10% annualized
+          half_weight_mult: 0.5
+          freeze_ret_lt: -0.15         # trailing 60d annualized below -> freeze
+          exit_ret_lt: -0.30           # below this OR material borrow>decay -> exit pair
+          exit_borrow_floor_annual: 0.05  # borrow kill needs >= 5% annualized borrow drag on gross
+          recover_obs_days: 10         # clean runs needed to promote one level
+          reentry_cooldown_days: 45    # business days an exited pair stays out
+        # WS4 concentration (Stage C backtest: top-10/15 by (net_edge - borrow)/und_vol
+        # with EQUAL weights beat all-45 and beat Kelly tilts; cluster cap is cheap
+        # insurance, neutral in the test window).
+        concentration:
+          enabled: false             # flip true after shadow review of the kept list
+          top_n_pairs: 15            # keep best N by (net_edge - borrow) / underlying vol
+        cluster_caps:
+          crypto:
+            cap: 0.35                # max share of B4 core weight in this cluster
+            members: [MSTR, COIN, IBIT, CLSK, IREN, BMNR, CRCL, RIOT, MARA, XRPZ, BLSH]
         excluded_etfs:                # never allocate inverse_decay_bucket4 to these tickers
           - KOLD
           - SCO
@@ -491,12 +532,12 @@ portfolio:
           share_of_b4_budget: 0.01    # 1% of total inverse_decay_bucket4 gross when vol rows exist
       weighting:
         <<: *weighting_defaults
-        max_name_weight: 0.15
+        max_name_weight: 0.20        # raised with WS4 concentration (was 0.15)
         eq_blend: 0.05
         borrow_aversion: .6
     flow_program:
       rules:
-        hard_borrow_cap: 0.40        # weekly flow adds only when borrow <= 40% and net_edge_p50 > 0
+        hard_borrow_cap: 0.30        # weekly flow adds only when borrow <= 30% and net_edge_p50 > 0
       frequency: "W"
       deployment_base: "fixed_usd_per_week"
       fixed_usd_per_week: 1300
