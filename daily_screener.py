@@ -240,6 +240,10 @@ new_pairs = [
     ("VELL", "VELO"),
     # 2026-06-15 Defiance 2X Long SpaceX (pending SPCX IPO)
     ("SPCU", "SPCX"),
+    # 2026-06-15 Tradr 2X long SpaceX (Cboe-listed)
+    ("SPCM", "SPCX"),
+    # 2026-06-15 Defiance 2X long Infleqtion
+    ("INFH", "INFQ"),
 ]
 
 proshares_pairs_levered = [
@@ -343,6 +347,7 @@ INVERSE_ETF_UNIVERSE = [
     ("RGTZ", -2, "RGTI"), ("PLTZ", -2, "PLTR"), ("SMST", -2, "MSTR"), ("SMCZ", -2, "SMCI"),
     ("BMNZ", -2, "BMNR"), ("HOOZ", -2, "HOOD"), ("DAMD", -2, "AMD"), ("RKLZ", -2, "RKLB"),
     ("STSM", -2, "TSM"), ("OKLS", -2, "OKLO"),     ("ASTN", -2, "ASTS"),
+    ("SPCG", -2, "SPCX"),
     # 2026-04-23 Tradr 2X inverse (Lumentum, SanDisk — underlying SNDK)
     ("LITZ", -2, "LITE"), ("SNDQ", -2, "SNDK"),
     # 2026-05-15 Leverage Shares 2X Short CBRS Daily ETF (SCBR)
