@@ -1,0 +1,82 @@
+sources:
+  # Issuer catalogs are used to identify product intent, leverage, and the
+  # reference asset. Exchange pages are used as an independent listing signal.
+  - name: tradr
+    kind: issuer
+    url: https://www.tradretfs.com/
+  - name: tradr-news
+    kind: issuer
+    url: https://www.tradretfs.com/news-and-media
+  - name: defiance
+    kind: issuer
+    url: https://www.defianceetfs.com/etfs/
+  - name: direxion-single-stock
+    kind: issuer
+    url: https://www.direxion.com/single-stock-etfs
+  - name: leverage-shares-us
+    kind: issuer
+    url: https://leverageshares.com/us/
+  - name: graniteshares-us
+    kind: issuer
+    url: https://graniteshares.com/institutional/us/en-us/etfs/
+  - name: proshares
+    kind: issuer
+    url: https://www.proshares.com/our-etfs/leveraged-and-inverse
+  - name: cboe-new-listings
+    kind: exchange
+    url: https://www.cboe.com/us/equities/notices/new_listings/
+  - name: nasdaq-etf-definitions
+    kind: exchange
+    url: https://www.nasdaqtrader.com/trader.aspx?id=etf_definitions
+
+underlying_aliases:
+  # Add product-name aliases here when issuer copy names the company instead
+  # of the tradable underlying/proxy symbol.
+  21SHARES CORE ETHEREUM: ETHA
+  21SHARES CORE XRP: XRPZ
+  AAPL: AAPL
+  ADOBE: ADBE
+  ADVANCED MICRO DEVICES: AMD
+  AIRBNB: ABNB
+  ALPHABET: GOOGL
+  AMAZON: AMZN
+  AMD: AMD
+  APPLE: AAPL
+  AST SPACEMOBILE: ASTS
+  BITCOIN: IBIT
+  BITWISE BITCOIN: IBIT
+  BITWISE ETHEREUM: ETHA
+  BLOOM ENERGY: BE
+  BROADCOM: AVGO
+  CEREBRAS: CBRS
+  COINBASE: COIN
+  CRCL: CRCL
+  CIRCLE: CRCL
+  CRWV: CRWV
+  COREWEAVE: CRWV
+  ETHER: ETHA
+  ETHEREUM: ETHA
+  GOLD: GLD
+  GOOGLE: GOOGL
+  IBIT: IBIT
+  INFLEQTION: INFQ
+  META: META
+  MICROSOFT: MSFT
+  MICROSTRATEGY: MSTR
+  MSTR: MSTR
+  NVIDIA: NVDA
+  NVDA: NVDA
+  ORACLE: ORCL
+  PALANTIR: PLTR
+  POET: POET
+  ROBINHOOD: HOOD
+  SILVER: SLV
+  SOFI: SOFI
+  SPACEX: SPCX
+  TESLA: TSLA
+  XRP: XRPZ
+
+denylist:
+  # Symbols can be blocked here if a source advertises them after a known
+  # closure, merger, ticker change, or listing cancellation.
+  etfs: []

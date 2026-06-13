@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+data/discovery*/
 
 # Local v6 B4 bootstrap cache (large pickle; regenerate from Buckets notebook)
 notebooks/v6_b4_gtp_cache.pkl

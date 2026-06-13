@@ -1,0 +1,125 @@
+name: Levered ETF Universe Discovery
+
+on:
+  schedule:
+    # Weekly after exchanges and issuers have had time to publish new listings.
+    - cron: "30 12 * * 1"
+  workflow_dispatch:
+    inputs:
+      allow_issuer_only:
+        description: "Allow candidates without an exchange-source match"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      skip_market_data:
+        description: "Skip live yfinance trading verification"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout ls-algo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || github.token }}
+          path: ls-algo
+          ref: main
+
+      - name: Checkout Diamond-Creek-Quant
+        uses: actions/checkout@v4
+        with:
+          repository: GoldmanDrew/Diamond-Creek-Quant
+          token: ${{ secrets.GH_PAT || github.token }}
+          path: Diamond-Creek-Quant
+          ref: master
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: ls-algo/requirements.txt
+
+      - name: Install dependencies
+        working-directory: ls-algo
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Discover and patch candidate pairs
+        working-directory: ls-algo
+        run: |
+          FLAGS=""
+          if [ "${{ inputs.allow_issuer_only || 'false' }}" = "true" ]; then
+            FLAGS="$FLAGS --allow-issuer-only"
+          fi
+          if [ "${{ inputs.skip_market_data || 'false' }}" = "true" ]; then
+            FLAGS="$FLAGS --skip-market-data"
+          fi
+          python scripts/discover_single_stock_etfs.py \
+            --repo-root . \
+            --mirror-repo-root ../Diamond-Creek-Quant \
+            --output-dir "$RUNNER_TEMP/discovery" \
+            --write-patches \
+            $FLAGS
+          cp "$RUNNER_TEMP/discovery/pr_body.md" "$RUNNER_TEMP/pr_body.md"
+
+      - name: Create ls-algo PR
+        working-directory: ls-algo
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+          BRANCH: codex/universe-discovery-${{ github.run_id }}
+        run: |
+          if git diff --quiet -- daily_screener.py; then
+            echo "No ls-algo universe changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add daily_screener.py
+          git commit -m "screener: add discovered levered ETF pairs"
+          git push origin "$BRANCH"
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "screener: add discovered levered ETF pairs" \
+            --body-file "$RUNNER_TEMP/pr_body.md"
+
+      - name: Create Diamond-Creek-Quant PR
+        working-directory: Diamond-Creek-Quant
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
+          BRANCH: codex/universe-discovery-${{ github.run_id }}
+        run: |
+          if git diff --quiet -- daily_screener.py; then
+            echo "No Diamond-Creek-Quant universe changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add daily_screener.py
+          git commit -m "screener: add discovered levered ETF pairs"
+          git push origin "$BRANCH"
+          gh pr create \
+            --repo GoldmanDrew/Diamond-Creek-Quant \
+            --base master \
+            --head "GoldmanDrew:$BRANCH" \
+            --title "screener: add discovered levered ETF pairs" \
+            --body-file "$RUNNER_TEMP/pr_body.md"

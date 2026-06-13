@@ -250,6 +250,8 @@ Use **workflow_dispatch** to run screener-only, EOD-only, or both.
 
 **`.github/workflows/risk_dashboard.yml`** — runs after the EOD job and rebuilds the risk dashboard (`risk_dashboard/data/latest.json`), then redeploys the static SPA under `site/` to GitHub Pages (snapshot bundled as `site/data/latest.json`). Optional **login id + password** via `site/data/investors.json` (same pattern as etf-dashboard). See [`risk_dashboard/README.md`](risk_dashboard/README.md) for setup.
 
+**`.github/workflows/universe_discovery.yml`** -- weekly/manual discovery for new single-stock leveraged ETFs. It crawls configured issuer and exchange sources in `config/levered_etf_discovery.yml`, verifies issuer + exchange evidence, resolves the underlying/proxy, checks live market data, patches `daily_screener.py` in this repo and sibling `GoldmanDrew/Diamond-Creek-Quant`, then opens PRs only when new verified pairs are found. Manual dispatch supports `allow_issuer_only` and `skip_market_data` for operator review runs. Cross-repo PRs require `GH_PAT` with write access to both repositories.
+
 ---
 
 ## Data layout
