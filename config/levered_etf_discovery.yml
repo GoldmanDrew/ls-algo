@@ -13,12 +13,21 @@ sources:
   - name: direxion-single-stock
     kind: issuer
     url: https://www.direxion.com/single-stock-etfs
+  - name: direxion-loff
+    kind: issuer
+    url: https://www.direxion.com/product/daily-spacex-bull-leveraged-single-stock-etf
   - name: leverage-shares-us
     kind: issuer
     url: https://leverageshares.com/us/
   - name: graniteshares-us
     kind: issuer
     url: https://graniteshares.com/institutional/us/en-us/etfs/
+  - name: graniteshares-spal
+    kind: issuer
+    url: https://graniteshares.com/etfs/spal/
+  - name: graniteshares-snk
+    kind: issuer
+    url: https://graniteshares.com/etfs/snk/
   - name: proshares
     kind: issuer
     url: https://www.proshares.com/our-etfs/leveraged-and-inverse
@@ -29,6 +38,12 @@ sources:
     kind: exchange
     url: https://www.nasdaqtrader.com/trader.aspx?id=etf_definitions
 
+cboe_detail_urls:
+  # Cboe's new-listings index is rendered client-side. Detail pages are static
+  # enough for requests/pandas parsing and act as exchange-confirmation inputs.
+  - https://www.cboe.com/us/equities/notices/new_listings/details/?early_trading_ipo=false&etf=true&firm_name=GraniteShares&first_trade_dt=2026-06-15&ipo=true&symbols=SNK%2CSPAL
+  - https://www.cboe.com/us/equities/notices/new_listings/details/?early_trading_ipo=false&etf=true&firm_name=LP+Leverage+Shares&first_trade_dt=2026-06-16&ipo=true&symbols=ADIU%2CAPHG%2CAXTL%2CFNG%2CKEYG%2CMCHG%2CTELG%2CTSEG
+
 underlying_aliases:
   # Add product-name aliases here when issuer copy names the company instead
   # of the tradable underlying/proxy symbol.
@@ -36,13 +51,16 @@ underlying_aliases:
   21SHARES CORE XRP: XRPZ
   AAPL: AAPL
   ADOBE: ADBE
+  ADI: ADI
   ADVANCED MICRO DEVICES: AMD
   AIRBNB: ABNB
   ALPHABET: GOOGL
   AMAZON: AMZN
   AMD: AMD
   APPLE: AAPL
+  APH: APH
   AST SPACEMOBILE: ASTS
+  AXTI: AXTI
   BITCOIN: IBIT
   BITWISE BITCOIN: IBIT
   BITWISE ETHEREUM: ETHA
@@ -56,12 +74,15 @@ underlying_aliases:
   COREWEAVE: CRWV
   ETHER: ETHA
   ETHEREUM: ETHA
+  FN: FN
   GOLD: GLD
   GOOGLE: GOOGL
   IBIT: IBIT
   INFLEQTION: INFQ
+  KEYS: KEYS
   META: META
   MICROSOFT: MSFT
+  MCHP: MCHP
   MICROSTRATEGY: MSTR
   MSTR: MSTR
   NVIDIA: NVDA
@@ -74,6 +95,8 @@ underlying_aliases:
   SOFI: SOFI
   SPACEX: SPCX
   TESLA: TSLA
+  TEL: TEL
+  TSEM: TSEM
   XRP: XRPZ
 
 denylist:

@@ -167,6 +167,9 @@ leverage_pairs_leverageshares = [
     ("NXPG", "NXPI"), # Leverage Shares 2X Long NXPI Daily ETF (NXP Semiconductors)
     # 2026-06-15 Leverage Shares Themes — 2X long SpaceX (pending SPCX IPO)
     ("SPCH", "SPCX"),
+    # 2026-06-16 Leverage Shares Themes — 2X long daily (Cboe-listed)
+    ("ADIU", "ADI"), ("APHG", "APH"),  ("AXTL", "AXTI"), ("FNG",  "FN"),
+    ("KEYG", "KEYS"), ("MCHG", "MCHP"), ("TELG", "TEL"),  ("TSEG", "TSEM"),
 ]
 
 new_pairs = [

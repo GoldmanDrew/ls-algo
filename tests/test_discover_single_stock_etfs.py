@@ -4,8 +4,10 @@ from scripts.discover_single_stock_etfs import (
     Candidate,
     Source,
     candidates_from_tables,
+    candidates_from_text,
     load_screener_symbols,
     patch_daily_screener,
+    rejection_summary,
     verify_candidates,
 )
 
@@ -34,6 +36,44 @@ def test_candidates_from_table_extracts_long_and_inverse_products() -> None:
     assert by_ticker["SPCM"].underlying == "SPCX"
     assert by_ticker["SPCG"].direction == "inverse"
     assert by_ticker["SPCG"].underlying == "SPCX"
+
+
+def test_candidates_from_cboe_detail_table_extracts_underlying_from_name() -> None:
+    html = """
+    <table>
+      <thead><tr><th>Symbol</th><th>Name</th><th>First date of trading</th></tr></thead>
+      <tbody>
+        <tr><td>ADIU</td><td>Leverage Shares 2X Long ADI Daily ETF</td><td>Tuesday, June 16, 2026</td></tr>
+        <tr><td>SNK</td><td>GraniteShares 2x Short SpaceX Daily ETF</td><td>Monday, June 15, 2026</td></tr>
+      </tbody>
+    </table>
+    """
+    source = Source(name="cboe-detail", kind="exchange", url="https://example.test")
+
+    rows = candidates_from_tables(html, source, ALIASES)
+
+    by_ticker = {row.etf: row for row in rows}
+    assert by_ticker["ADIU"].underlying == "ADI"
+    assert by_ticker["ADIU"].direction == "long"
+    assert by_ticker["SNK"].underlying == "SPCX"
+    assert by_ticker["SNK"].direction == "inverse"
+
+
+def test_issuer_product_page_prefers_ticker_from_url_slug() -> None:
+    html = """
+    <main>
+      <h1>SPAL GraniteShares 2x Long SpaceX Daily ETF</h1>
+      <p>The Fund seeks 200% daily exposure to SpaceX common stock (NASDAQ SPCX).</p>
+    </main>
+    """
+    source = Source(name="graniteshares-spal", kind="issuer", url="https://graniteshares.com/etfs/spal/")
+
+    rows = candidates_from_text(html, source, ALIASES)
+
+    assert len(rows) == 1
+    assert rows[0].etf == "SPAL"
+    assert rows[0].underlying == "SPCX"
+    assert rows[0].direction == "long"
 
 
 def test_patch_daily_screener_adds_missing_long_and_inverse(tmp_path: Path) -> None:
@@ -114,3 +154,18 @@ def test_verify_allows_candidate_present_in_only_one_target_repo(tmp_path: Path)
     )
 
     assert [row.etf for row in verified] == ["POEL"]
+
+
+def test_rejection_summary_surfaces_non_duplicate_unresolved_candidates() -> None:
+    duplicate = Candidate("SPCM", "SPCX", "long", 2.0, "tradr")
+    duplicate.status = "rejected"
+    duplicate.rejection_reasons = ["already_in_all_universes"]
+    missing = Candidate("LOFF", "SPCX", "long", 2.0, "direxion")
+    missing.status = "pending_market_data"
+    missing.rejection_reasons = ["market_data_empty"]
+
+    summary = rejection_summary([duplicate, missing])
+
+    assert summary["status_counts"]["pending_market_data"] == 1
+    assert summary["reason_counts"]["market_data_empty"] == 1
+    assert [row["etf"] for row in summary["unresolved_candidates"]] == ["LOFF"]

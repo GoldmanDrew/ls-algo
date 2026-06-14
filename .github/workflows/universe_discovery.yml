@@ -2,8 +2,8 @@ name: Levered ETF Universe Discovery
 
 on:
   schedule:
-    # Weekly after exchanges and issuers have had time to publish new listings.
-    - cron: "30 12 * * 1"
+    # Weekdays after the U.S. close so first-day listings have a chance to print data.
+    - cron: "30 21 * * 1-5"
   workflow_dispatch:
     inputs:
       allow_issuer_only:
@@ -16,6 +16,22 @@ on:
           - "true"
       skip_market_data:
         description: "Skip live yfinance trading verification"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      allow_pending_market_data:
+        description: "Allow same-day listings with issuer/exchange proof but no yfinance bars yet"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      allow_future_listings:
+        description: "Allow future-dated official listings"
         required: false
         default: "false"
         type: choice
@@ -71,6 +87,12 @@ jobs:
           if [ "${{ inputs.skip_market_data || 'false' }}" = "true" ]; then
             FLAGS="$FLAGS --skip-market-data"
           fi
+          if [ "${{ inputs.allow_pending_market_data || 'false' }}" = "true" ]; then
+            FLAGS="$FLAGS --allow-pending-market-data"
+          fi
+          if [ "${{ inputs.allow_future_listings || 'false' }}" = "true" ]; then
+            FLAGS="$FLAGS --allow-future-listings"
+          fi
           python scripts/discover_single_stock_etfs.py \
             --repo-root . \
             --mirror-repo-root ../Diamond-Creek-Quant \
@@ -78,6 +100,20 @@ jobs:
             --write-patches \
             $FLAGS
           cp "$RUNNER_TEMP/discovery/pr_body.md" "$RUNNER_TEMP/pr_body.md"
+          cat "$RUNNER_TEMP/discovery/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload discovery report
+        uses: actions/upload-artifact@v4
+        with:
+          name: levered-etf-discovery-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/discovery/candidates.json
+            ${{ runner.temp }}/discovery/verified.json
+            ${{ runner.temp }}/discovery/added_by_repo.json
+            ${{ runner.temp }}/discovery/source_errors.json
+            ${{ runner.temp }}/discovery/summary.json
+            ${{ runner.temp }}/discovery/summary.md
+            ${{ runner.temp }}/discovery/pr_body.md
 
       - name: Create ls-algo PR
         working-directory: ls-algo

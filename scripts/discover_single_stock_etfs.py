@@ -8,7 +8,7 @@ The script has two jobs:
 
 It is intentionally conservative. A candidate is patchable only when it is
 seen on at least one issuer page, one exchange page, has a known underlying,
-and has live market data unless --skip-market-data is passed.
+and has live market data unless an explicit operator override is passed.
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import urlparse
 
 import pandas as pd
 import requests
@@ -105,13 +106,47 @@ def compact_text(value: Any) -> str:
 
 def detect_direction_and_leverage(text: str) -> tuple[str | None, float | None]:
     upper = text.upper()
-    if not re.search(r"\b(?:2X|200%|-200%)\b", upper):
+    if not re.search(r"(?:\b(?:2X|200%|-200%)\b|-2X\b)", upper):
         return None, None
-    if re.search(r"\b(?:SHORT|INVERSE|BEAR|-200%)\b", upper):
+    explicit: list[tuple[int, str]] = []
+    for pat in [
+        r"\b2X\s+SHORT\b",
+        r"\bSHORT\s+[A-Z0-9 .-]{0,40}\s+2X\b",
+        r"\bBEAR\s+[A-Z0-9 .-]{0,40}\s+2X\b",
+        r"(?:\b-200%\b|-2X\b)",
+    ]:
+        m = re.search(pat, upper)
+        if m:
+            explicit.append((m.start(), "inverse"))
+    for pat in [
+        r"\b2X\s+LONG\b",
+        r"\bLONG\s+[A-Z0-9 .-]{0,40}\s+2X\b",
+        r"\bBULL\s+[A-Z0-9 .-]{0,40}\s+2X\b",
+        r"\b200%\b",
+    ]:
+        m = re.search(pat, upper)
+        if m:
+            explicit.append((m.start(), "long"))
+    if explicit:
+        return ("inverse", -2.0) if min(explicit)[1] == "inverse" else ("long", 2.0)
+    if re.search(r"\b(?:SHORT|INVERSE|BEAR)\b", upper):
         return "inverse", -2.0
-    if re.search(r"\b(?:LONG|BULL|200%)\b", upper):
+    if re.search(r"\b(?:LONG|BULL)\b", upper):
         return "long", 2.0
     return None, None
+
+
+def ticker_from_source_url(url: str) -> str | None:
+    parts = [p for p in urlparse(url).path.strip("/").split("/") if p]
+    if not parts:
+        return None
+    token = parts[-1].upper()
+    blocked = {"ETF", "ETFS", "US", "PRODUCT", "PRODUCTS", "LEVERAGED-AND-INVERSE"}
+    if token in blocked:
+        return None
+    if re.fullmatch(r"[A-Z][A-Z0-9]{1,5}", token):
+        return token
+    return None
 
 
 def ticker_from_labeled_text(text: str) -> str | None:
@@ -164,6 +199,7 @@ def parse_underlying(text: str, aliases: dict[str, str]) -> str | None:
         r"\bUNDERLYING(?:\s+STOCK|\s+SECURITY)?\s*[:\-]\s*([A-Z][A-Z0-9.-]{1,5})\b",
         r"\bREFERENCE(?:\s+ASSET|\s+STOCK)?\s*[:\-]\s*([A-Z][A-Z0-9.-]{1,5})\b",
         r"\bOF\s+([A-Z][A-Z0-9.-]{1,5})\s+COMMON STOCK\b",
+        r"\b2X\s+(?:LONG|SHORT)\s+([A-Z][A-Z0-9.-]{1,5})\s+DAILY ETF\b",
     ]
     for pat in labeled_patterns:
         m = re.search(pat, upper)
@@ -261,11 +297,37 @@ def candidates_from_text(
     soup = BeautifulSoup(html, "lxml")
     text = compact_text(soup.get_text(" "))
     out: list[Candidate] = []
+    url_ticker = ticker_from_source_url(source.url) if source.kind == "issuer" else None
+    if url_ticker:
+        idx = text.upper().find(url_ticker)
+        if idx >= 0:
+            window = compact_text(text[max(0, idx - 220): idx + 500])
+            direction, leverage = detect_direction_and_leverage(window)
+            underlying = parse_underlying(window, aliases)
+            if direction is not None and leverage is not None and underlying:
+                return [
+                    Candidate(
+                        etf=url_ticker,
+                        underlying=underlying,
+                        direction=direction,
+                        leverage=leverage,
+                        issuer=source.name,
+                        exchange=exchange_from_text(window),
+                        first_trade_date=first_trade_date_from_text(window),
+                        source_urls=[source.url],
+                        source_kinds=[source.kind],
+                        evidence=[window[:500]],
+                    )
+                ]
     for window in nearby_windows(text):
         direction, leverage = detect_direction_and_leverage(window)
         if direction is None or leverage is None:
             continue
-        etf = ticker_from_labeled_text(window)
+        etf = url_ticker
+        if etf and etf not in window.upper():
+            continue
+        if not etf:
+            etf = ticker_from_labeled_text(window)
         if not etf:
             continue
         underlying = parse_underlying(window, aliases)
@@ -295,6 +357,24 @@ def discover_candidates(cfg: dict[str, Any]) -> tuple[list[Candidate], list[dict
             name=str(item["name"]),
             kind=str(item["kind"]),
             url=str(item["url"]),
+        )
+        try:
+            html = fetch_html(source.url)
+            candidates.extend(candidates_from_tables(html, source, aliases))
+            candidates.extend(candidates_from_text(html, source, aliases))
+        except Exception as exc:
+            errors.append(
+                {
+                    "source": source.name,
+                    "url": source.url,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+    for url in cfg.get("cboe_detail_urls", []) or []:
+        source = Source(
+            name="cboe-new-listings-detail",
+            kind="exchange",
+            url=str(url),
         )
         try:
             html = fetch_html(source.url)
@@ -394,6 +474,8 @@ def verify_candidates(
     cfg: dict[str, Any],
     skip_market_data: bool = False,
     require_exchange_source: bool = True,
+    allow_pending_market_data: bool = False,
+    allow_future_listings: bool = False,
 ) -> list[Candidate]:
     known_by_repo = [load_screener_symbols(repo_root)["all"] for repo_root in repo_roots]
     deny_etfs = {norm_sym(x) for x in (cfg.get("denylist", {}) or {}).get("etfs", [])}
@@ -419,21 +501,29 @@ def verify_candidates(
             cand.rejection_reasons.append("missing_issuer_source")
         if require_exchange_source and "exchange" not in cand.source_kinds:
             cand.rejection_reasons.append("missing_exchange_source")
+        future_listing = False
         if cand.first_trade_date:
             try:
                 if datetime.strptime(cand.first_trade_date, "%Y-%m-%d").date() > today:
-                    cand.rejection_reasons.append("future_first_trade_date")
+                    future_listing = True
+                    if not allow_future_listings:
+                        cand.rejection_reasons.append("future_first_trade_date")
             except ValueError:
                 cand.rejection_reasons.append("invalid_first_trade_date")
         if not skip_market_data:
             ok, reason = market_data_ok(etf)
             cand.evidence.append(reason)
-            if not ok:
+            if not ok and not (allow_pending_market_data and not future_listing):
                 cand.rejection_reasons.append(reason)
 
         cand.rejection_reasons = sorted(set(cand.rejection_reasons))
         if cand.rejection_reasons:
-            cand.status = "rejected"
+            if "future_first_trade_date" in cand.rejection_reasons:
+                cand.status = "pending_first_trade"
+            elif any(r.startswith("market_data_") for r in cand.rejection_reasons):
+                cand.status = "pending_market_data"
+            else:
+                cand.status = "rejected"
         else:
             verified.append(cand)
     return verified
@@ -509,6 +599,62 @@ def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def rejection_summary(candidates: list[Candidate]) -> dict[str, Any]:
+    status_counts: dict[str, int] = {}
+    reason_counts: dict[str, int] = {}
+    for cand in candidates:
+        status_counts[cand.status] = status_counts.get(cand.status, 0) + 1
+        for reason in cand.rejection_reasons:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    missing = [
+        {
+            "etf": cand.etf,
+            "underlying": cand.underlying,
+            "status": cand.status,
+            "reasons": cand.rejection_reasons,
+            "sources": cand.source_urls,
+        }
+        for cand in candidates
+        if cand.status != "verified"
+        and "already_in_all_universes" not in cand.rejection_reasons
+    ]
+    return {
+        "status_counts": dict(sorted(status_counts.items())),
+        "reason_counts": dict(sorted(reason_counts.items(), key=lambda kv: (-kv[1], kv[0]))),
+        "unresolved_candidates": sorted(missing, key=lambda x: (x["status"], x["etf"])),
+    }
+
+
+def write_summary_markdown(path: Path, candidates: list[Candidate], errors: list[dict[str, str]]) -> None:
+    summary = rejection_summary(candidates)
+    lines = ["# Levered ETF Discovery Report", ""]
+    lines.append("## Status Counts")
+    lines.append("")
+    for status, count in summary["status_counts"].items():
+        lines.append(f"- `{status}`: {count}")
+    lines.append("")
+    lines.append("## Top Rejection Reasons")
+    lines.append("")
+    for reason, count in list(summary["reason_counts"].items())[:25]:
+        lines.append(f"- `{reason}`: {count}")
+    lines.append("")
+    unresolved = summary["unresolved_candidates"][:100]
+    if unresolved:
+        lines.append("## Unresolved Non-Duplicate Candidates")
+        lines.append("")
+        for row in unresolved:
+            reasons = ", ".join(row["reasons"]) if row["reasons"] else "none"
+            lines.append(f"- `{row['etf']}` -> `{row['underlying']}`: `{row['status']}` ({reasons})")
+    if errors:
+        lines.append("")
+        lines.append("## Source Fetch Warnings")
+        lines.append("")
+        for err in errors:
+            lines.append(f"- `{err['source']}`: {err['error']}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def write_pr_body(path: Path, added_by_repo: dict[str, list[Candidate]], errors: list[dict[str, str]]) -> None:
     lines = [
         "## Summary",
@@ -567,6 +713,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--write-patches", action="store_true")
     ap.add_argument("--skip-market-data", action="store_true")
     ap.add_argument("--allow-issuer-only", action="store_true")
+    ap.add_argument("--allow-pending-market-data", action="store_true")
+    ap.add_argument("--allow-future-listings", action="store_true")
     args = ap.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -578,6 +726,8 @@ def main(argv: list[str] | None = None) -> int:
         cfg=cfg,
         skip_market_data=args.skip_market_data,
         require_exchange_source=not args.allow_issuer_only,
+        allow_pending_market_data=args.allow_pending_market_data,
+        allow_future_listings=args.allow_future_listings,
     )
 
     added_by_repo: dict[str, list[Candidate]] = {}
@@ -596,6 +746,8 @@ def main(argv: list[str] | None = None) -> int:
         {repo: [asdict(c) for c in rows] for repo, rows in added_by_repo.items()},
     )
     write_json(output_dir / "source_errors.json", errors)
+    write_json(output_dir / "summary.json", rejection_summary(candidates))
+    write_summary_markdown(output_dir / "summary.md", candidates, errors)
     write_pr_body(output_dir / "pr_body.md", added_by_repo, errors)
 
     total_added = sum(len(v) for v in added_by_repo.values())
