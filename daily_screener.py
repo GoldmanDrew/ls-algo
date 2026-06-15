@@ -249,6 +249,9 @@ new_pairs = [
     ("SPCL", "SPCX"),
     # 2026-06-15 Defiance 2X long Infleqtion
     ("INFH", "INFQ"),
+
+    # Auto-discovered single-stock leveraged ETFs (2026-06-15)
+    ("SPAL", "SPCX"),
 ]
 
 proshares_pairs_levered = [
@@ -364,6 +367,9 @@ INVERSE_ETF_UNIVERSE = [
     # 2026-06-15 Leverage Shares Themes 2X Short SpaceX Daily (pending SPCX IPO)
     ("SSPC", -2, "SPCX"),
     ("UVIX", -2, "SVIX"),
+
+    # Auto-discovered inverse single-stock leveraged ETFs (2026-06-15)
+    ("SNK", -2, "SPCX"),
 ]
 
 
