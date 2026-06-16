@@ -9,6 +9,12 @@ name: Risk Dashboard
 #               and gates the UI with login id + password (investors.json).
 
 on:
+  # Mirror the EOD pipeline cadence so the dashboard rebuilds even if
+  # the upstream workflow_run path does not fire.
+  schedule:
+    # 06:00 UTC = 02:00 America/New_York during EDT; 01:00 during EST.
+    - cron: "0 6 * * 2-6"
+
   # Run after the existing EOD pipeline (eod_pnl_email.yml) succeeds.
   workflow_run:
     workflows: ["EOD PnL Email + Daily Screener"]
@@ -61,6 +67,7 @@ jobs:
     timeout-minutes: 20
     if: >-
       github.event_name == 'workflow_dispatch' && inputs.skip_build != 'true'
+      || github.event_name == 'schedule'
       || github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
 
     outputs:

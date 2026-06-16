@@ -247,6 +247,8 @@ new_pairs = [
     # 2026-06-15 Tradr 2X long SpaceX (Cboe-listed)
     ("SPCM", "SPCX"),
     ("SPCL", "SPCX"),
+    ("LOFF", "SPCX"),
+    ("SPAX", "SPCX"),
     # 2026-06-15 Defiance 2X long Infleqtion
     ("INFH", "INFQ"),
 
