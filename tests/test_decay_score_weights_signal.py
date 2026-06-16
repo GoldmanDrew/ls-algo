@@ -1,7 +1,12 @@
 import numpy as np
 import pandas as pd
 
-from generate_trade_plan import _decay_score_weights, _sizing_signal_column
+from generate_trade_plan import (
+    _decay_score_weights,
+    _sizing_signal_column,
+    _trend_percentile_signal,
+    _with_b1_trend_audit_columns,
+)
 
 
 def test_sizing_signal_column_defaults():
@@ -82,3 +87,70 @@ def test_net_edge_falls_back_when_column_missing():
         sleeve_name="core_leveraged",
     )
     np.testing.assert_allclose(w, [1.0])
+
+
+def _trend_cfg() -> dict:
+    return {
+        "trend_percentile_multiplier": {
+            "enabled": True,
+            "column": "und_trend_ratio_60d",
+            "percentile_mode": "cross_sectional",
+            "alpha": 1.0,
+            "neutral_pctile": 0.5,
+            "floor": 0.5,
+            "ceiling": 1.5,
+            "missing": "neutral",
+        }
+    }
+
+
+def test_b1_trend_multiplier_uses_raw_cross_sectional_rank():
+    df = pd.DataFrame(
+        {
+            "und_trend_ratio_60d": [0.70, 1.00, 1.30],
+            "und_trend_ratio_60d_pctile": [1.0, 0.5, 0.0],
+        }
+    )
+    pctile, mult = _trend_percentile_signal(df, _trend_cfg())
+    np.testing.assert_allclose(pctile, [1.0 / 3.0, 2.0 / 3.0, 1.0])
+    assert mult[0] > mult[1] > mult[2]
+
+
+def test_b1_trend_multiplier_missing_raw_trend_is_neutral():
+    df = pd.DataFrame({"und_trend_ratio_60d": [0.70, np.nan, 1.30]})
+    pctile, mult = _trend_percentile_signal(df, _trend_cfg())
+    assert pctile[1] == 0.5
+    assert mult[1] == 1.0
+
+
+def test_b1_trend_sizing_ignores_historical_pctile_column():
+    df = pd.DataFrame(
+        {
+            "delta_abs": [2.0, 2.0],
+            "net_edge_p50_annual": [0.20, 0.20],
+            "borrow_current": [0.0, 0.0],
+            "und_trend_ratio_60d": [0.75, 1.25],
+            # Deliberately inverted: this historical diagnostic must not drive B1 sizing.
+            "und_trend_ratio_60d_pctile": [1.0, 0.0],
+        }
+    )
+    w = _decay_score_weights(
+        df,
+        {
+            **_trend_cfg(),
+            "sizing_signal": "net_edge",
+            "borrow_aversion": 0.0,
+            "eq_blend": 0.0,
+            "margin_efficiency_power": 0.0,
+            "max_name_weight": 1.0,
+        },
+        sleeve_name="core_leveraged",
+    )
+    assert w[0] > w[1]
+
+
+def test_b1_trend_audit_columns_are_attached_for_core_frame():
+    df = pd.DataFrame({"und_trend_ratio_60d": [0.75, 1.25]})
+    out = _with_b1_trend_audit_columns(df, _trend_cfg())
+    assert {"b1_trend_xsec_pctile", "b1_trend_multiplier"}.issubset(out.columns)
+    assert out.loc[0, "b1_trend_multiplier"] > out.loc[1, "b1_trend_multiplier"]

@@ -23,6 +23,14 @@ PRICE_BASIS_UNDERLYING_TR = "underlying_total_return"
 
 
 def vol_shape_columns_for_window(window: int) -> tuple[str, ...]:
+    """Exported vol-shape diagnostics for a rolling window.
+
+    ``und_trend_ratio_{window}d`` is the raw trend-ratio value. The matching
+    ``*_pctile`` columns are historical percentiles of the latest value within
+    that same underlying's rolling history; they are diagnostics, not same-day
+    cross-sectional ranks. B1 sizing computes its own cross-sectional rank from
+    raw ``und_trend_ratio_60d`` inside ``generate_trade_plan``.
+    """
     return (
         f"und_rv_{window}d_daily_annual",
         f"und_rv_{window}d_weekly_annual",

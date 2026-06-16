@@ -411,6 +411,66 @@ def _b4_eligibility_edge_column(df: pd.DataFrame) -> str:
     return "net_decay_annual"
 
 
+def _trend_percentile_signal(df: pd.DataFrame, weighting_cfg: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Return optional trend percentile + multiplier arrays for sizing.
+
+    For B1, the configured production input is raw ``und_trend_ratio_60d`` with
+    ``percentile_mode: cross_sectional``. The historical vol-shape percentile
+    columns (for example ``und_trend_ratio_60d_pctile``) are diagnostics, not B1
+    sizing inputs.
+    """
+    cfg = weighting_cfg.get("trend_percentile_multiplier") or {}
+    if not isinstance(cfg, dict) or not bool(cfg.get("enabled", False)):
+        return np.full(len(df), np.nan, dtype=float), np.ones(len(df), dtype=float)
+
+    col = str(cfg.get("column", "und_trend_ratio_60d") or "").strip()
+    if not col:
+        return np.full(len(df), np.nan, dtype=float), np.ones(len(df), dtype=float)
+
+    alpha = float(cfg.get("alpha", 1.0) or 0.0)
+    neutral = float(cfg.get("neutral_pctile", 0.5) or 0.5)
+    floor = float(cfg.get("floor", 0.5) or 0.5)
+    ceiling = float(cfg.get("ceiling", 1.5) or 1.5)
+    if floor > ceiling:
+        floor, ceiling = ceiling, floor
+
+    percentile_mode = str(cfg.get("percentile_mode", "as_is") or "as_is").lower().strip()
+    if col in df.columns:
+        raw = pd.to_numeric(df[col], errors="coerce")
+        if percentile_mode in ("cross_sectional", "xsec", "rank"):
+            pctile = raw.rank(pct=True, method="average")
+        else:
+            pctile = raw.clip(lower=0.0, upper=1.0)
+    else:
+        pctile = pd.Series(np.nan, index=df.index)
+
+    missing_mode = str(cfg.get("missing", "neutral") or "neutral").lower().strip()
+    if missing_mode in ("floor", "min"):
+        pctile = pctile.fillna(1.0)
+    elif missing_mode in ("ceiling", "max"):
+        pctile = pctile.fillna(0.0)
+    else:
+        pctile = pctile.fillna(neutral)
+
+    mult = 1.0 + alpha * (neutral - pctile.to_numpy(dtype=float))
+    return pctile.to_numpy(dtype=float), np.clip(mult, floor, ceiling)
+
+
+def _trend_percentile_multiplier(df: pd.DataFrame, weighting_cfg: dict) -> np.ndarray:
+    """Optional continuous trend tilt multiplier; see ``_trend_percentile_signal``."""
+    _pctile, mult = _trend_percentile_signal(df, weighting_cfg)
+    return mult
+
+
+def _with_b1_trend_audit_columns(df: pd.DataFrame, weighting_cfg: dict) -> pd.DataFrame:
+    """Attach B1 trend sizing audit columns to a sized core-leveraged frame."""
+    out = df.copy()
+    pctile, mult = _trend_percentile_signal(out, weighting_cfg)
+    out["b1_trend_xsec_pctile"] = pctile
+    out["b1_trend_multiplier"] = mult
+    return out
+
+
 def _decay_score_weights(
     df: pd.DataFrame,
     weighting_cfg: dict,
@@ -475,6 +535,13 @@ def _decay_score_weights(
     # --- blend with equal weight -----------------------------------------
     eq_w = np.ones(n) / n
     final_w = eq_blend * eq_w + (1.0 - eq_blend) * signal_w
+
+    # --- optional trend-percentile tilt ----------------------------------
+    _trend_pctile, trend_mult = _trend_percentile_signal(df, weighting_cfg)
+    if not np.allclose(trend_mult, 1.0):
+        final_w = final_w * trend_mult
+        fw_sum = final_w.sum()
+        final_w = final_w / fw_sum if fw_sum > 0 else eq_w
 
     # --- max-name-weight cap with redistribution -------------------------
     for _ in range(10):
@@ -2096,6 +2163,8 @@ def main() -> None:
     keep["underlying_internalized_usd"] = 0.0
     keep["underlying_external_trade_usd"] = 0.0
     keep["sleeve"] = ""
+    keep["b1_trend_xsec_pctile"] = np.nan
+    keep["b1_trend_multiplier"] = np.nan
 
     # SIZING set: not purgatory (borrow + net-edge soft band in daily_screener) and
     # net_edge_p50_annual >= 0 when present (NaN treated as ineligible).
@@ -2316,13 +2385,16 @@ def main() -> None:
                 w = np.ones(len(core_names_fit)) / len(core_names_fit)
             core_names_fit["gross_target_usd"] = core_budget * w
             core_names_fit["sleeve"] = "core_leveraged"
-            # Frozen pre-cap sleeve-internal weight (sums to 1) — used by the gross-cap stack as
-            # the haircut baseline so covariance + sleeve rebalance can't widen the per-row cap.
+        # Frozen pre-cap sleeve-internal weight (sums to 1) — used by the gross-cap stack as
+        # the haircut baseline so covariance + sleeve rebalance can't widen the per-row cap.
             core_names_fit["_pre_cap_score_weight"] = w
+            core_names_fit = _with_b1_trend_audit_columns(core_names_fit, core_weighting_cfg)
         elif not core_names_fit.empty:
             core_names_fit["gross_target_usd"] = 0.0
             core_names_fit["sleeve"] = "core_leveraged"
             core_names_fit["_pre_cap_score_weight"] = 0.0
+            core_names_fit["b1_trend_xsec_pctile"] = np.nan
+            core_names_fit["b1_trend_multiplier"] = np.nan
 
         # -----------------------------
         # Allocate YIELDBOOST sleeve (bucket‑2 candidates only)
@@ -2881,6 +2953,9 @@ def main() -> None:
         keep.loc[sized.index, "underlying_target_usd"] = sized["underlying_target_usd"]
         keep.loc[sized.index, "etf_target_usd"] = sized["etf_target_usd"]
         keep.loc[sized.index, "sleeve"] = sized["sleeve"]
+        for col in ("b1_trend_xsec_pctile", "b1_trend_multiplier"):
+            if col in sized.columns:
+                keep.loc[sized.index, col] = pd.to_numeric(sized[col], errors="coerce")
 
         # ---- Optimal (structural-only) target columns: parallel set written next to executable.
         # ``optimal_*`` reflects "where the position should sit" if today's IBKR shares_available

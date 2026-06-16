@@ -387,6 +387,17 @@ portfolio:
         eq_blend: 0.0                 # v16 selected: pure score weight
         borrow_aversion: 0.25         # v16 selected B1 borrow aversion
         score_concavity_p: 2.0        # v16 selected B1 score shape
+        # B1 trend sizing uses raw TR and computes a same-day cross-sectional rank.
+        # Do not point this at und_trend_ratio_60d_pctile; that column is a historical diagnostic.
+        trend_percentile_multiplier:
+          enabled: true
+          column: und_trend_ratio_60d
+          percentile_mode: cross_sectional
+          alpha: 1.0                  # xsec pctile 0.10 -> 1.40x; xsec pctile 0.90 -> 0.60x before clipping
+          neutral_pctile: 0.50
+          floor: 0.50
+          ceiling: 1.50
+          missing: neutral
 
     yieldboost:
       enabled: true

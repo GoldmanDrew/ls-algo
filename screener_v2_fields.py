@@ -931,6 +931,10 @@ def enrich_screener_v2_fields(
     out["gross_sigma_realized_annual"] = sigma_realized_arr
     out["gross_blend_weight_forward"] = blend_weight_forward_arr
     out["gross_realized_mean_annual"] = realized_mean_arr
+    # Vol-shape ``*_pctile`` exports are historical percentiles within each
+    # underlying's own rolling history. They are dashboard diagnostics; B1
+    # sizing computes a same-day cross-sectional rank from raw
+    # ``und_trend_ratio_60d`` in ``generate_trade_plan``.
     vol_shape_cols = list(_all_vol_shape_columns()) + ["und_vol_shape_price_basis"]
     vol_shape_label_cols = {f"und_vol_shape_{w}d" for w in _VOL_SHAPE_WINDOWS} | {"und_vol_shape_price_basis"}
     metrics_path = resolve_etf_metrics_daily_path(metrics_daily_path)
