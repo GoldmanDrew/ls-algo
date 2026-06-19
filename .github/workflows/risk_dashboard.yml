@@ -83,7 +83,7 @@ jobs:
       - name: Checkout etf-dashboard (squeeze liquidity metrics)
         uses: actions/checkout@v4
         with:
-          repository: GoldmanDrew/etf-dashboard
+          repository: magis-capital-partners/etf-dashboard
           ref: main
           path: etf-dashboard
           token: ${{ secrets.GH_PAT || github.token }}
