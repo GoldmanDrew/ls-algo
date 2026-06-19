@@ -35,7 +35,7 @@ INVERSE_LIST_NAME = "INVERSE_ETF_UNIVERSE"
 DEFAULT_CONFIG = Path("config/levered_etf_discovery.yml")
 USER_AGENT = (
     "Mozilla/5.0 (compatible; ls-algo-universe-discovery/1.0; "
-    "+https://github.com/GoldmanDrew/ls-algo)"
+    "+https://github.com/magis-capital-partners/ls-algo)"
 )
 
 STOP_UNDERLYING_WORDS = {

@@ -270,7 +270,7 @@ Use **workflow_dispatch** to run screener-only, EOD-only, or both.
 | **`risk_dashboard/data/<YYYY-MM-DD>.json`** | Historical per-day snapshots. |
 | **`site/`** | Static SPA shell (HTML/CSS/JS); deployed to Pages with bundled `site/data/latest.json` and optional investor login. |
 
-**`data/borrow_history.json` (optional):** If present before `daily_screener.py` runs, it is **auto-loaded** (no CLI flag required) from, in order: `BORROW_HISTORY_PATH` / `--borrow-history-path`, `ETF_DASHBOARD_ROOT/data/borrow_history.json`, sibling `../etf-dashboard/data/borrow_history.json`, or this repo’s `data/borrow_history.json`. The scheduled **GitHub Action** downloads it from `GoldmanDrew/etf-dashboard` raw when the curl succeeds. That enables **weighted borrow resampling** for `net_edge_*` plus `net_edge_hist_json` / p25 / p75 on the CSV.
+**`data/borrow_history.json` (optional):** If present before `daily_screener.py` runs, it is **auto-loaded** (no CLI flag required) from, in order: `BORROW_HISTORY_PATH` / `--borrow-history-path`, `ETF_DASHBOARD_ROOT/data/borrow_history.json`, sibling `../etf-dashboard/data/borrow_history.json`, or this repo’s `data/borrow_history.json`. The scheduled **GitHub Action** downloads it from private `magis-capital-partners/etf-dashboard` through the authenticated GitHub API when the token succeeds. That enables **weighted borrow resampling** for `net_edge_*` plus `net_edge_hist_json` / p25 / p75 on the CSV.
 
 ---
 
