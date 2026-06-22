@@ -204,7 +204,7 @@ new_pairs = [
     ("COHX", "COHR"), ("AXPG", "AXP"),  ("FCXG", "FCX"), ("GLWG", "GLW"),
     ("SNDU", "SNDK"), ("PAAU", "PAAS"),
     ("BITX", "IBIT"), ("ETHU", "ETHA"), ("XXRP", "XRPZ"),
-    ("TXXD", "TDOG"), ("TXXS", "TSUI"),  # 21shares 2X vs spot crypto ETFs (TDOG, TSUI)
+    ("TXXD", "TDOG"), ("TXXS", "TSUI"), ("SUIL", "TSUI"), ("AVAZ", "VAVX"), ("TXXH", "THYP"),  # 21shares 2X vs spot crypto ETFs
     # Tradr 2X long
     ("ONDL", "ONDS"), ("MSTX", "MSTR"), ("SMCX", "SMCI"), ("ORCX", "ORCL"),
     ("IONX", "IONQ"), ("HIMZ", "HIMS"), ("IRE", "IREN"), ("AVGX", "AVGO"),
