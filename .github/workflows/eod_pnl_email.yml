@@ -65,19 +65,15 @@ jobs:
           pip install -r requirements.txt
 
       - name: Fetch borrow history (etf-dashboard) for weighted net edge
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
         run: |
           mkdir -p data
           if curl -fsSL --connect-timeout 15 --max-time 120 \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github.raw" \
             -o data/borrow_history.json \
-            "https://api.github.com/repos/magis-capital-partners/etf-dashboard/contents/data/borrow_history.json?ref=main"
+            "https://raw.githubusercontent.com/GoldmanDrew/etf-dashboard/main/data/borrow_history.json"
           then
             echo "borrow_history.json: $(wc -c < data/borrow_history.json) bytes"
           else
-            echo "Note: private etf-dashboard borrow_history fetch failed; screener uses point-in-time borrow for net edge"
+            echo "Note: etf-dashboard borrow_history fetch failed; screener uses point-in-time borrow for net edge"
             rm -f data/borrow_history.json
           fi
 
