@@ -389,7 +389,9 @@ portfolio:
         borrow_aversion: 0.25         # v16 selected B1 borrow aversion
         score_concavity_p: 2.0        # v16 selected B1 score shape
         # B1 trend sizing uses raw TR and computes a same-day cross-sectional rank.
-        # Do not point this at und_trend_ratio_60d_pctile; that column is a historical diagnostic.
+        # To experiment with the persistence-adjusted estimator, change this to
+        # und_trend_ratio_fwd_60d. Do not point this at und_trend_ratio_60d_pctile;
+        # that column is a historical diagnostic.
         trend_percentile_multiplier:
           enabled: true
           column: und_trend_ratio_60d

@@ -37,12 +37,15 @@ def _default_norm(x: str) -> str:
 # --------------------------------------------------------------------------------------
 # Signal loading
 # --------------------------------------------------------------------------------------
+SIGNAL_COLUMNS = ["tr", "tr_est", "cadence_score", "vcr", "vcr_med", "rv_daily", "rv_weekly"]
+
+
 def load_vol_shape_history(
     path: str | Path,
     *,
     norm_sym: Callable[[str], str] = _default_norm,
 ) -> dict[str, pd.DataFrame]:
-    """Parse ``vol_shape_history.json`` into ``{ETF: DataFrame[tr, vcr, vcr_med, rv_daily, rv_weekly]}``.
+    """Parse ``vol_shape_history.json`` into vol-shape signal frames.
 
     Each frame is indexed by (tz-naive, normalized) date. Returns an empty dict if the file
     is missing or unparseable.
@@ -74,6 +77,8 @@ def load_vol_shape_history(
         df = df[~df.index.duplicated(keep="last")]
         keep = {}
         keep["tr"] = pd.to_numeric(df.get("trend_ratio"), errors="coerce")
+        keep["tr_est"] = pd.to_numeric(df.get("trend_ratio_fwd"), errors="coerce")
+        keep["cadence_score"] = pd.to_numeric(df.get("rebalance_cadence_score"), errors="coerce")
         keep["vcr"] = pd.to_numeric(df.get("vcr"), errors="coerce")
         keep["vcr_med"] = pd.to_numeric(df.get("vcr_median"), errors="coerce")
         keep["rv_daily"] = pd.to_numeric(df.get("rv_daily"), errors="coerce")
@@ -91,11 +96,11 @@ def _recompute_signal_from_prices(
     try:
         from vol_shape import build_underlying_vol_shape_history
     except Exception:
-        return pd.DataFrame(columns=["tr", "vcr", "vcr_med", "rv_daily", "rv_weekly"])
+        return pd.DataFrame(columns=SIGNAL_COLUMNS)
     hist = build_underlying_vol_shape_history(pd.Series(prices).astype(float), window=int(window), max_points=0)
     series = hist.get("series") or []
     if not series:
-        return pd.DataFrame(columns=["tr", "vcr", "vcr_med", "rv_daily", "rv_weekly"])
+        return pd.DataFrame(columns=SIGNAL_COLUMNS)
     df = pd.DataFrame(series)
     ix = pd.to_datetime(df["date"], errors="coerce")
     if getattr(ix, "tz", None) is not None:
@@ -105,6 +110,8 @@ def _recompute_signal_from_prices(
     return pd.DataFrame(
         {
             "tr": pd.to_numeric(df.get("trend_ratio"), errors="coerce"),
+            "tr_est": pd.to_numeric(df.get("trend_ratio_fwd"), errors="coerce"),
+            "cadence_score": pd.to_numeric(df.get("rebalance_cadence_score"), errors="coerce"),
             "vcr": pd.to_numeric(df.get("vcr"), errors="coerce"),
             "vcr_med": pd.to_numeric(df.get("vcr_median"), errors="coerce"),
             "rv_daily": pd.to_numeric(df.get("rv_daily"), errors="coerce"),
@@ -165,7 +172,7 @@ def get_pair_signal(
 
     if df is None or df.empty:
         empty = pd.DataFrame(
-            {"tr": np.nan, "vcr": np.nan, "vcr_med": np.nan},
+            {c: np.nan for c in SIGNAL_COLUMNS},
             index=cal,
         )
         empty.attrs["signal_source"] = "missing"
@@ -198,6 +205,7 @@ def policy_continuous_interval(
     calendar: pd.DatetimeIndex,
     signal: pd.DataFrame,
     *,
+    signal_col: str = "tr",
     base_days: float = 4.0,
     k_tr: float = 2.25,
     m_vcr: float = 2.75,
@@ -207,13 +215,19 @@ def policy_continuous_interval(
 ) -> tuple[pd.DatetimeIndex, pd.DataFrame]:
     """Cadence as a smooth function of TR & VCR.
 
-    ``interval = clip(base_days / (1 + k_tr*(TR-1) + m_vcr*(VCR-VCR_med)), min, max)`` trading days.
-    Higher TR (trend) and elevated VCR (concentration) shorten the interval -> hedge more often.
+    ``interval = clip(base_days / (1 + k_tr*(signal-1) + m_vcr*(VCR-VCR_med)), min, max)``.
+
+    ``signal_col`` defaults to raw ``tr`` for backward compatibility. Newer
+    pipelines can pass ``signal_col="cadence_score"`` to use the cadence-specific
+    estimator exported by ``vol_shape``.
     """
     cal = _calendar_after_warmup(calendar, warmup_bdays)
     if len(cal) == 0:
         return pd.DatetimeIndex([]), pd.DataFrame()
-    tr = signal.get("tr") if signal is not None else None
+    tr = signal.get(signal_col) if signal is not None and signal_col in signal else None
+    raw_tr = signal.get("tr") if signal is not None and "tr" in signal else None
+    tr_est = signal.get("tr_est") if signal is not None and "tr_est" in signal else None
+    cadence_score = signal.get("cadence_score") if signal is not None and "cadence_score" in signal else None
     vcr = signal.get("vcr") if signal is not None else None
     vcr_med = signal.get("vcr_med") if signal is not None else None
 
@@ -224,6 +238,9 @@ def policy_continuous_interval(
         d = pd.Timestamp(cal[i])
         dates.append(d)
         t = float(tr.get(d, np.nan)) if tr is not None else np.nan
+        rt = float(raw_tr.get(d, np.nan)) if raw_tr is not None else np.nan
+        te = float(tr_est.get(d, np.nan)) if tr_est is not None else np.nan
+        cs = float(cadence_score.get(d, np.nan)) if cadence_score is not None else np.nan
         v = float(vcr.get(d, np.nan)) if vcr is not None else np.nan
         vm = float(vcr_med.get(d, np.nan)) if vcr_med is not None else np.nan
         denom = 1.0
@@ -235,7 +252,19 @@ def policy_continuous_interval(
         if not np.isfinite(interval):
             interval = float(max_interval)
         interval = int(np.clip(round(interval), int(min_interval), int(max_interval)))
-        diag.append({"date": d, "tr": t, "vcr": v, "vcr_med": vm, "interval_days": interval})
+        diag.append(
+            {
+                "date": d,
+                "signal_col": signal_col,
+                "signal": t,
+                "tr": rt,
+                "tr_est": te,
+                "cadence_score": cs,
+                "vcr": v,
+                "vcr_med": vm,
+                "interval_days": interval,
+            }
+        )
         i += max(1, interval)
     return pd.DatetimeIndex(dates), pd.DataFrame(diag)
 
