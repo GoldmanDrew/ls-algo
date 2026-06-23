@@ -170,6 +170,10 @@ leverage_pairs_leverageshares = [
     # 2026-06-16 Leverage Shares Themes — 2X long daily (Cboe-listed)
     ("ADIU", "ADI"), ("APHG", "APH"),  ("AXTL", "AXTI"), ("FNG",  "FN"),
     ("KEYG", "KEYS"), ("MCHG", "MCHP"), ("TELG", "TEL"),  ("TSEG", "TSEM"),
+    # 2026-06-23 Leverage Shares Themes - 2X long daily (Cboe-listed)
+    ("CDNG", "CDNS"), ("FOMG", "FORM"), ("ENTL", "ENTG"), ("FPSX", "FPS"),
+    ("ASTS", "ASTG"), ("GFSG", "GFS"),  ("HPEL", "HPE"),  ("MTSG", "MTSI"),
+    ("SMTG", "SMTC"),
 ]
 
 new_pairs = [
