@@ -2637,6 +2637,8 @@ def send_email(
             maintype, subtype = "application", "json"
         elif suffix == ".png":
             maintype, subtype = "image", "png"
+        elif suffix == ".pdf":
+            maintype, subtype = "application", "pdf"
         else:
             maintype, subtype = "application", "octet-stream"
 
@@ -2751,11 +2753,11 @@ def main() -> int:
             run_date,
             runs_root=RUNS_ROOT,
             out_dir=LEDGER_DIR,
-            max_pairs=int(os.environ.get("EOD_B4_PAIR_CHART_MAX", "12")),
+            max_pairs=int(os.environ.get("EOD_B4_PAIR_CHART_MAX", "0")),
         )
         if b4_pair_chart_path is not None and "bucket_4" in BUCKET_KEYS:
             bucket_email_sections[BUCKET_KEYS.index("bucket_4")] += (
-                f"\nPer-pair PnL + hedge-ratio charts attached: {b4_pair_chart_path.name}\n"
+                f"\nPer-pair PnL + hedge-ratio PDF attached: {b4_pair_chart_path.name}\n"
             )
 
     discrepancy_df = load_position_discrepancies(run_date)
@@ -2869,7 +2871,7 @@ def main() -> int:
         f"- {discrepancy_plot_path.name}\n"
         f"- {discrepancy_csv_path.name}\n"
         + (
-            f"- {b4_pair_chart_path.name}  (B4 per-pair PnL by leg + underlying price with model/book hedge ratio)\n"
+            f"- {b4_pair_chart_path.name}  (B4 per-pair actual/model PnL, hedge ratios, model/actual rebalance markers)\n"
             if b4_pair_chart_path is not None else ""
         )
         + (f"- {b4_pair_csv_path.name}\n" if b4_pair_csv_path is not None else "")
