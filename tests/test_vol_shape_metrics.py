@@ -28,6 +28,9 @@ def test_vol_shape_constant_grind_has_high_trend_ratio_low_vcr():
 
     assert out["und_vol_shape_20d"] == "quiet_trend"
     assert np.isclose(out["und_trend_ratio_20d"], math.sqrt(5.0), atol=1e-6)
+    assert out["und_trend_ratio_fwd_20d"] > 1.10
+    assert out["und_trend_persistence_20d"] > 0.80
+    assert out["und_rebalance_cadence_score_20d"] > 1.05
     assert np.isclose(out["und_vcr_20d"], 0.05, atol=1e-6)
     assert np.isclose(out["und_return_20d"], 0.20, atol=1e-6)
 
@@ -47,6 +50,8 @@ def test_vol_shape_alternating_path_is_mean_reverting():
 
     assert out["und_vol_shape_20d"] == "quiet_chop"
     assert out["und_trend_ratio_20d"] < 0.5
+    assert out["und_trend_ratio_fwd_20d"] < 1.0
+    assert out["und_trend_persistence_20d"] < 0.60
 
 
 def test_vol_shape_60d_constant_grind_matches_analytic_form():
@@ -82,6 +87,9 @@ def test_vol_shape_panel_emits_both_windows():
 
     for w in _VOL_SHAPE_WINDOWS:
         assert f"und_trend_ratio_{w}d" in panel
+        assert f"und_trend_ratio_fwd_{w}d" in panel
+        assert f"und_trend_persistence_{w}d" in panel
+        assert f"und_rebalance_cadence_score_{w}d" in panel
         assert f"und_vcr_{w}d" in panel
         assert f"und_vcr_{w}d_median" in panel
         assert f"und_vol_shape_{w}d" in panel

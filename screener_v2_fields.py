@@ -15,6 +15,7 @@ import pandas as pd
 from vol_shape import (
     PRICE_BASIS_JOINT_METRICS,
     PRICE_BASIS_UNDERLYING_TR,
+    TREND_ESTIMATOR_SOURCE,
     VOL_SHAPE_PRIMARY_WINDOW as _VOL_SHAPE_PRIMARY_WINDOW,
     VOL_SHAPE_WINDOWS as _VOL_SHAPE_WINDOWS,
     all_vol_shape_columns as _all_vol_shape_columns,
@@ -935,8 +936,14 @@ def enrich_screener_v2_fields(
     # underlying's own rolling history. They are dashboard diagnostics; B1
     # sizing computes a same-day cross-sectional rank from raw
     # ``und_trend_ratio_60d`` in ``generate_trade_plan``.
-    vol_shape_cols = list(_all_vol_shape_columns()) + ["und_vol_shape_price_basis"]
-    vol_shape_label_cols = {f"und_vol_shape_{w}d" for w in _VOL_SHAPE_WINDOWS} | {"und_vol_shape_price_basis"}
+    vol_shape_cols = list(_all_vol_shape_columns()) + [
+        "und_vol_shape_price_basis",
+        "und_trend_estimator_source",
+    ]
+    vol_shape_label_cols = (
+        {f"und_vol_shape_{w}d" for w in _VOL_SHAPE_WINDOWS}
+        | {"und_vol_shape_price_basis", "und_trend_estimator_source"}
+    )
     metrics_path = resolve_etf_metrics_daily_path(metrics_daily_path)
     etf_symbols = {
         str(row.get("ETF") or row.get("symbol") or "").strip().upper()
@@ -960,6 +967,7 @@ def enrich_screener_v2_fields(
             elif und and und in tr_map:
                 panel = _underlying_vol_shape_panel(tr_map[und])
                 panel["und_vol_shape_price_basis"] = PRICE_BASIS_UNDERLYING_TR
+                panel["und_trend_estimator_source"] = TREND_ESTIMATOR_SOURCE
                 vol_shape_cache[etf] = panel
             else:
                 vol_shape_cache[etf] = empty_panel

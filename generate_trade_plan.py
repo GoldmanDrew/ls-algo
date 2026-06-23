@@ -415,9 +415,10 @@ def _trend_percentile_signal(df: pd.DataFrame, weighting_cfg: dict) -> tuple[np.
     """Return optional trend percentile + multiplier arrays for sizing.
 
     For B1, the configured production input is raw ``und_trend_ratio_60d`` with
-    ``percentile_mode: cross_sectional``. The historical vol-shape percentile
-    columns (for example ``und_trend_ratio_60d_pctile``) are diagnostics, not B1
-    sizing inputs.
+    ``percentile_mode: cross_sectional``. ``und_trend_ratio_fwd_60d`` is available
+    as an opt-in persistence-adjusted experiment. The historical vol-shape
+    percentile columns (for example ``und_trend_ratio_60d_pctile``) are
+    diagnostics, not B1 sizing inputs.
     """
     cfg = weighting_cfg.get("trend_percentile_multiplier") or {}
     if not isinstance(cfg, dict) or not bool(cfg.get("enabled", False)):
