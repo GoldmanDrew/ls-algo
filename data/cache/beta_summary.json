@@ -1,6 +1,6 @@
 {
-  "snapshot_date": "2026-06-23",
-  "generated_at_utc": "2026-06-23T21:42:42.568415+00:00",
+  "snapshot_date": "2026-06-24",
+  "generated_at_utc": "2026-06-24T09:23:35.360895+00:00",
   "window_days": 252,
   "regime_vol_window_days": 60,
   "min_obs_for_trust": 60,
@@ -28,7 +28,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.016860797140333388
+      "cache_age_hours": 0.017451348039839002
     },
     {
       "underlying": "AAPL",
@@ -51,7 +51,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.0168704934252633
+      "cache_age_hours": 0.017460828423500063
     },
     {
       "underlying": "ACHR",
@@ -74,7 +74,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.016879995399051242
+      "cache_age_hours": 0.017470127410358853
     },
     {
       "underlying": "ADBE",
@@ -97,7 +97,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.016889411674605476
+      "cache_age_hours": 0.01747937911086612
     },
     {
       "underlying": "AFRM",
@@ -120,7 +120,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.016898719204796686
+      "cache_age_hours": 0.017488392525249058
     },
     {
       "underlying": "ALAB",
@@ -143,7 +143,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.016907866067356534
+      "cache_age_hours": 0.017497443026966517
     },
     {
       "underlying": "ALB",
@@ -166,7 +166,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.016914773252275254
+      "cache_age_hours": 0.01750421623388926
     },
     {
       "underlying": "AMD",
@@ -189,7 +189,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01692422091960907
+      "cache_age_hours": 0.0175134715769026
     },
     {
       "underlying": "AMZN",
@@ -212,7 +212,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.016933720972802904
+      "cache_age_hours": 0.017522739503118726
     },
     {
       "underlying": "ANET",
@@ -235,7 +235,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.016943138970269098
+      "cache_age_hours": 0.017531949480374655
     },
     {
       "underlying": "APH",
@@ -258,7 +258,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.016952258944511415
+      "cache_age_hours": 0.017540965212715996
     },
     {
       "underlying": "APP",
@@ -281,7 +281,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.016961694028642442
+      "cache_age_hours": 0.017550287776523166
     },
     {
       "underlying": "ARKK",
@@ -304,7 +304,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.016971129973729453
+      "cache_age_hours": 0.017559738821453518
     },
     {
       "underlying": "ARM",
@@ -327,7 +327,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.016980634530385334
+      "cache_age_hours": 0.01756905840502845
     },
     {
       "underlying": "ASML",
@@ -350,7 +350,30 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.016987995306650797
+      "cache_age_hours": 0.01757631394598219
+    },
+    {
+      "underlying": "ASTG",
+      "beta_to_spy": 1.2,
+      "beta_to_ndx": 1.08,
+      "beta_to_rut": 1.02,
+      "beta_to_btc": null,
+      "beta_to_spy_raw": null,
+      "beta_to_ndx_raw": null,
+      "beta_to_rut_raw": null,
+      "beta_to_btc_raw": null,
+      "beta_se": null,
+      "n_obs": 0,
+      "n_eff": 0,
+      "r2": null,
+      "regime_vol_pct": null,
+      "sector": "other",
+      "prior_used_spy": 1.2,
+      "prior_source": "default",
+      "shrinkage_weight": null,
+      "provenance": "default_fallback",
+      "shrinkage_applied": false,
+      "cache_age_hours": 0.00014144314659966364
     },
     {
       "underlying": "ASTS",
@@ -373,7 +396,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.016997172170215184
+      "cache_age_hours": 0.017589285108778212
     },
     {
       "underlying": "AVAV",
@@ -396,7 +419,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017006587319903902
+      "cache_age_hours": 0.017598666813638475
     },
     {
       "underlying": "AVGO",
@@ -419,7 +442,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01701607671048906
+      "cache_age_hours": 0.01760796586672465
     },
     {
       "underlying": "BA",
@@ -442,7 +465,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01702548603216807
+      "cache_age_hours": 0.017616973982916936
     },
     {
       "underlying": "BABA",
@@ -465,7 +488,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017034662365913392
+      "cache_age_hours": 0.017626272903548346
     },
     {
       "underlying": "BBAI",
@@ -488,7 +511,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017044043276045057
+      "cache_age_hours": 0.017635538114441764
     },
     {
       "underlying": "BE",
@@ -511,7 +534,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017053431338734097
+      "cache_age_hours": 0.017644844783676995
     },
     {
       "underlying": "BIDU",
@@ -534,7 +557,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017062856886121962
+      "cache_age_hours": 0.01765387667549981
     },
     {
       "underlying": "BLSH",
@@ -557,7 +580,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017072001629405552
+      "cache_age_hours": 0.017663131819831
     },
     {
       "underlying": "BMNR",
@@ -580,7 +603,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017077918847401938
+      "cache_age_hours": 0.01766899287700653
     },
     {
       "underlying": "BULL",
@@ -603,7 +626,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017083718842930265
+      "cache_age_hours": 0.017674700286653307
     },
     {
       "underlying": "CEG",
@@ -626,7 +649,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017092035677697924
+      "cache_age_hours": 0.017682886322339376
     },
     {
       "underlying": "CHNL",
@@ -649,7 +672,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01710086246331533
+      "cache_age_hours": 0.01769168277581533
     },
     {
       "underlying": "CIFR",
@@ -672,7 +695,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017105823225445217
+      "cache_age_hours": 0.0176966044637892
     },
     {
       "underlying": "CLS",
@@ -695,7 +718,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017115027772055733
+      "cache_age_hours": 0.017705660925971138
     },
     {
       "underlying": "CLSK",
@@ -718,7 +741,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01712441239092085
+      "cache_age_hours": 0.017715675234794618
     },
     {
       "underlying": "CMG",
@@ -741,7 +764,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01713400940100352
+      "cache_age_hours": 0.01772495541307661
     },
     {
       "underlying": "CNC",
@@ -764,7 +787,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017143441571129694
+      "cache_age_hours": 0.017733920481469895
     },
     {
       "underlying": "COHR",
@@ -787,7 +810,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017152588367462158
+      "cache_age_hours": 0.017743300530645583
     },
     {
       "underlying": "COIN",
@@ -810,7 +833,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017162065505981445
+      "cache_age_hours": 0.017752632432513765
     },
     {
       "underlying": "COPX",
@@ -833,7 +856,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017171602845191956
+      "cache_age_hours": 0.01776199241479238
     },
     {
       "underlying": "CORZ",
@@ -856,7 +879,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017180989185969036
+      "cache_age_hours": 0.017771355509757995
     },
     {
       "underlying": "CRCL",
@@ -879,7 +902,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017187992533047994
+      "cache_age_hours": 0.01777831474939982
     },
     {
       "underlying": "CRDO",
@@ -902,7 +925,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017194040417671204
+      "cache_age_hours": 0.017784327533509996
     },
     {
       "underlying": "CRM",
@@ -925,7 +948,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01720284488466051
+      "cache_age_hours": 0.01779274112648434
     },
     {
       "underlying": "CRML",
@@ -948,7 +971,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01721197704474131
+      "cache_age_hours": 0.01780203104019165
     },
     {
       "underlying": "CRWD",
@@ -971,7 +994,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017220733629332647
+      "cache_age_hours": 0.017810718086030748
     },
     {
       "underlying": "CRWV",
@@ -994,7 +1017,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017230124274889628
+      "cache_age_hours": 0.0178201820453008
     },
     {
       "underlying": "DELL",
@@ -1017,7 +1040,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017236084871821933
+      "cache_age_hours": 0.01782606687810686
     },
     {
       "underlying": "DKNG",
@@ -1040,7 +1063,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017245184116893346
+      "cache_age_hours": 0.017835061616367765
     },
     {
       "underlying": "DNN",
@@ -1063,7 +1086,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01725457615322537
+      "cache_age_hours": 0.017844340801239013
     },
     {
       "underlying": "DUOL",
@@ -1086,7 +1109,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017263938850826686
+      "cache_age_hours": 0.017853570249345568
     },
     {
       "underlying": "EOSE",
@@ -1109,7 +1132,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017273240354326036
+      "cache_age_hours": 0.017862821883625455
     },
     {
       "underlying": "ETHA",
@@ -1132,30 +1155,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017282417085435656
-    },
-    {
-      "underlying": "ETOR",
-      "beta_to_spy": 1.9789682986234562,
-      "beta_to_ndx": 1.3866023476435327,
-      "beta_to_rut": 1.117632127054237,
-      "beta_to_btc": 0.4847075218261581,
-      "beta_to_spy_raw": 1.9789682986234562,
-      "beta_to_ndx_raw": 1.3866023476435327,
-      "beta_to_rut_raw": 1.117632127054237,
-      "beta_to_btc_raw": 0.4847075218261581,
-      "beta_se": 0.2732915052501634,
-      "n_obs": 252,
-      "n_eff": 217,
-      "r2": 0.17337746247954533,
-      "regime_vol_pct": 43.04300365606941,
-      "sector": "fintech",
-      "prior_used_spy": null,
-      "prior_source": null,
-      "shrinkage_weight": null,
-      "provenance": "computed",
-      "shrinkage_applied": false,
-      "cache_age_hours": 0.017289089759190877
+      "cache_age_hours": 0.017871823178397285
     },
     {
       "underlying": "EWW",
@@ -1178,7 +1178,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.0172949571079678
+      "cache_age_hours": 0.017878356046146817
     },
     {
       "underlying": "EWY",
@@ -1201,7 +1201,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01730447378423479
+      "cache_age_hours": 0.01788780450820923
     },
     {
       "underlying": "FCX",
@@ -1224,7 +1224,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01731397012869517
+      "cache_age_hours": 0.017897163695759243
     },
     {
       "underlying": "FIG",
@@ -1247,7 +1247,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01732344819439782
+      "cache_age_hours": 0.01790615810288323
     },
     {
       "underlying": "FIGR",
@@ -1270,7 +1270,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017329116662343342
+      "cache_age_hours": 0.01791197703944312
     },
     {
       "underlying": "FLY",
@@ -1293,7 +1293,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017334939903683132
+      "cache_age_hours": 0.017917699482705857
     },
     {
       "underlying": "FXI",
@@ -1316,7 +1316,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01734089169237349
+      "cache_age_hours": 0.01792352901564704
     },
     {
       "underlying": "GDX",
@@ -1339,7 +1339,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017350300749142965
+      "cache_age_hours": 0.017932753165562948
     },
     {
       "underlying": "GDXJ",
@@ -1362,7 +1362,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01735973013771905
+      "cache_age_hours": 0.01794202705224355
     },
     {
       "underlying": "GEMI",
@@ -1385,7 +1385,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017369124359554716
+      "cache_age_hours": 0.01795127120282915
     },
     {
       "underlying": "GEV",
@@ -1408,7 +1408,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017374655339452955
+      "cache_age_hours": 0.017956734167204964
     },
     {
       "underlying": "GLW",
@@ -1431,7 +1431,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017381531397501628
+      "cache_age_hours": 0.01796346882979075
     },
     {
       "underlying": "GLXY",
@@ -1454,7 +1454,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01739100111855401
+      "cache_age_hours": 0.017972751922077604
     },
     {
       "underlying": "GOOGL",
@@ -1477,7 +1477,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01739684694343143
+      "cache_age_hours": 0.017978568077087403
     },
     {
       "underlying": "HIMS",
@@ -1500,30 +1500,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017406002746687996
-    },
-    {
-      "underlying": "HL",
-      "beta_to_spy": 1.9362726456116781,
-      "beta_to_ndx": 1.4764662570020242,
-      "beta_to_rut": 1.311202789253359,
-      "beta_to_btc": 0.45950101530080245,
-      "beta_to_spy_raw": 1.9362726456116781,
-      "beta_to_ndx_raw": 1.4764662570020242,
-      "beta_to_rut_raw": 1.311202789253359,
-      "beta_to_btc_raw": 0.45950101530080245,
-      "beta_se": 0.3658090113014725,
-      "n_obs": 242,
-      "n_eff": 242,
-      "r2": 0.1045349722681922,
-      "regime_vol_pct": 66.78035436777911,
-      "sector": "other",
-      "prior_used_spy": null,
-      "prior_source": null,
-      "shrinkage_weight": null,
-      "provenance": "computed",
-      "shrinkage_applied": false,
-      "cache_age_hours": 0.017415395776430767
+      "cache_age_hours": 0.017987632817692226
     },
     {
       "underlying": "HOOD",
@@ -1546,7 +1523,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01742532577779558
+      "cache_age_hours": 0.017996631529596116
     },
     {
       "underlying": "HUT",
@@ -1569,7 +1546,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017434351444244385
+      "cache_age_hours": 0.01800577335887485
     },
     {
       "underlying": "IBIT",
@@ -1592,7 +1569,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017443779442045424
+      "cache_age_hours": 0.01801500717798869
     },
     {
       "underlying": "IBM",
@@ -1615,7 +1592,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01745085186428494
+      "cache_age_hours": 0.018021982908248902
     },
     {
       "underlying": "INTC",
@@ -1638,7 +1615,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017460604243808322
+      "cache_age_hours": 0.01803158680597941
     },
     {
       "underlying": "IONQ",
@@ -1661,7 +1638,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017469716270764667
+      "cache_age_hours": 0.018040542271402147
     },
     {
       "underlying": "IREN",
@@ -1684,7 +1661,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.0174791329436832
+      "cache_age_hours": 0.01804982582728068
     },
     {
       "underlying": "IWM",
@@ -1707,7 +1684,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017488126556078593
+      "cache_age_hours": 0.018058663407961528
     },
     {
       "underlying": "JOBY",
@@ -1730,7 +1707,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017497561375300088
+      "cache_age_hours": 0.018067944513426887
     },
     {
       "underlying": "KEEL",
@@ -1753,7 +1730,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017507007784313626
+      "cache_age_hours": 0.0180771490600374
     },
     {
       "underlying": "KLAC",
@@ -1776,7 +1753,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017516158554289077
+      "cache_age_hours": 0.01808612326780955
     },
     {
       "underlying": "KTOS",
@@ -1799,7 +1776,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017525599400202433
+      "cache_age_hours": 0.018095355166329277
     },
     {
       "underlying": "KWEB",
@@ -1822,7 +1799,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017535082234276664
+      "cache_age_hours": 0.018104605674743653
     },
     {
       "underlying": "LAC",
@@ -1845,7 +1822,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017544505265023973
+      "cache_age_hours": 0.018113979829682245
     },
     {
       "underlying": "LEU",
@@ -1868,7 +1845,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017551800608634947
+      "cache_age_hours": 0.018121211263868543
     },
     {
       "underlying": "LITE",
@@ -1891,7 +1868,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01756129999955495
+      "cache_age_hours": 0.01813057084878286
     },
     {
       "underlying": "LLY",
@@ -1914,7 +1891,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01757047090265486
+      "cache_age_hours": 0.018140211767620512
     },
     {
       "underlying": "LMND",
@@ -1937,7 +1914,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017579861018392776
+      "cache_age_hours": 0.018149650626712376
     },
     {
       "underlying": "LRCX",
@@ -1960,7 +1937,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01758935550848643
+      "cache_age_hours": 0.01815894345442454
     },
     {
       "underlying": "LUNR",
@@ -1983,7 +1960,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01759875734647115
+      "cache_age_hours": 0.018168230387899612
     },
     {
       "underlying": "MARA",
@@ -2006,7 +1983,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017607735064294604
+      "cache_age_hours": 0.01817707743909624
     },
     {
       "underlying": "META",
@@ -2029,7 +2006,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01761717783080207
+      "cache_age_hours": 0.01818610668182373
     },
     {
       "underlying": "MP",
@@ -2052,7 +2029,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017626426882214018
+      "cache_age_hours": 0.01819537301858266
     },
     {
       "underlying": "MRNA",
@@ -2075,7 +2052,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017635824415418836
+      "cache_age_hours": 0.018204651210043166
     },
     {
       "underlying": "MRVL",
@@ -2098,7 +2075,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017645291421148512
+      "cache_age_hours": 0.018213930527369183
     },
     {
       "underlying": "MSFT",
@@ -2121,7 +2098,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01765468955039978
+      "cache_age_hours": 0.018223265277014837
     },
     {
       "underlying": "MSTR",
@@ -2144,7 +2121,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017664163046413
+      "cache_age_hours": 0.018232207232051427
     },
     {
       "underlying": "MU",
@@ -2167,7 +2144,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017673278186056348
+      "cache_age_hours": 0.018241491582658555
     },
     {
       "underlying": "NBIS",
@@ -2190,7 +2167,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017682760026719833
+      "cache_age_hours": 0.018250773350397747
     },
     {
       "underlying": "NEM",
@@ -2213,7 +2190,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017689128518104554
+      "cache_age_hours": 0.018257012565930684
     },
     {
       "underlying": "NET",
@@ -2236,7 +2213,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01769855088657803
+      "cache_age_hours": 0.018266251219643488
     },
     {
       "underlying": "NFLX",
@@ -2259,7 +2236,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017707976831330192
+      "cache_age_hours": 0.018277622924910652
     },
     {
       "underlying": "NIO",
@@ -2282,7 +2259,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017717412246598136
+      "cache_age_hours": 0.01828689502345191
     },
     {
       "underlying": "NOW",
@@ -2305,7 +2282,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017726578381326463
+      "cache_age_hours": 0.018296722769737244
     },
     {
       "underlying": "NU",
@@ -2328,7 +2305,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017735997041066487
+      "cache_age_hours": 0.018306450645128886
     },
     {
       "underlying": "NVDA",
@@ -2351,7 +2328,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017744952506489223
+      "cache_age_hours": 0.01831553320089976
     },
     {
       "underlying": "NVO",
@@ -2374,7 +2351,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01775411009788513
+      "cache_age_hours": 0.018324639399846396
     },
     {
       "underlying": "NVTS",
@@ -2397,7 +2374,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01776359412405226
+      "cache_age_hours": 0.018333901630507576
     },
     {
       "underlying": "OKLO",
@@ -2420,7 +2397,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01777270217736562
+      "cache_age_hours": 0.018342816564771863
     },
     {
       "underlying": "OKTA",
@@ -2443,7 +2420,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01778200215763516
+      "cache_age_hours": 0.01835200786590576
     },
     {
       "underlying": "ONDS",
@@ -2466,7 +2443,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017791470289230348
+      "cache_age_hours": 0.018361200160450404
     },
     {
       "underlying": "OPEN",
@@ -2489,7 +2466,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017800905770725673
+      "cache_age_hours": 0.01837016761302948
     },
     {
       "underlying": "ORCL",
@@ -2512,7 +2489,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01781004415618049
+      "cache_age_hours": 0.018386676708857217
     },
     {
       "underlying": "OSCR",
@@ -2535,7 +2512,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01781979269451565
+      "cache_age_hours": 0.018395917614301045
     },
     {
       "underlying": "PAAS",
@@ -2558,7 +2535,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01782921552658081
+      "cache_age_hours": 0.018405136201116775
     },
     {
       "underlying": "PANW",
@@ -2581,7 +2558,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017838713261816238
+      "cache_age_hours": 0.018415643109215632
     },
     {
       "underlying": "PL",
@@ -2604,7 +2581,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.0178478518459532
+      "cache_age_hours": 0.018425524830818177
     },
     {
       "underlying": "PLTR",
@@ -2627,7 +2604,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01785728282398648
+      "cache_age_hours": 0.01843502124150594
     },
     {
       "underlying": "PLUG",
@@ -2650,7 +2627,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017866734200053747
+      "cache_age_hours": 0.018444730771912467
     },
     {
       "underlying": "PONY",
@@ -2673,7 +2650,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017876173191600377
+      "cache_age_hours": 0.0184541869825787
     },
     {
       "underlying": "PYPL",
@@ -2696,7 +2673,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01788244108359019
+      "cache_age_hours": 0.01846042037010193
     },
     {
       "underlying": "QBTS",
@@ -2719,7 +2696,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017891613642374675
+      "cache_age_hours": 0.01847173677550422
     },
     {
       "underlying": "QCOM",
@@ -2742,7 +2719,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017901074555185106
+      "cache_age_hours": 0.018482113348113165
     },
     {
       "underlying": "QQQ",
@@ -2765,7 +2742,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017910531626807318
+      "cache_age_hours": 0.018491435911920335
     },
     {
       "underlying": "QS",
@@ -2788,7 +2765,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01791996737321218
+      "cache_age_hours": 0.018501475784513687
     },
     {
       "underlying": "QUBT",
@@ -2811,7 +2788,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017929413782225716
+      "cache_age_hours": 0.01851086563534207
     },
     {
       "underlying": "RBLX",
@@ -2834,7 +2811,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01793889343738556
+      "cache_age_hours": 0.018520289460817973
     },
     {
       "underlying": "RCAT",
@@ -2857,7 +2834,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017948350575235156
+      "cache_age_hours": 0.018529691365030077
     },
     {
       "underlying": "RDDT",
@@ -2880,7 +2857,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017957569228278267
+      "cache_age_hours": 0.018539056645499336
     },
     {
       "underlying": "RDW",
@@ -2903,7 +2880,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017964502374331157
+      "cache_age_hours": 0.018545876807636686
     },
     {
       "underlying": "RGTI",
@@ -2926,7 +2903,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01797402064005534
+      "cache_age_hours": 0.018555178377363417
     },
     {
       "underlying": "RIOT",
@@ -2949,7 +2926,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017983485062917075
+      "cache_age_hours": 0.018564467363887362
     },
     {
       "underlying": "RKLB",
@@ -2972,7 +2949,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.017992920610639784
+      "cache_age_hours": 0.018573823306295607
     },
     {
       "underlying": "RKT",
@@ -2995,7 +2972,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018002312315834892
+      "cache_age_hours": 0.018583188123173184
     },
     {
       "underlying": "SATS",
@@ -3018,7 +2995,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018011730710665384
+      "cache_age_hours": 0.01859252327018314
     },
     {
       "underlying": "SBET",
@@ -3041,7 +3018,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018021160099241467
+      "cache_age_hours": 0.018601948486434088
     },
     {
       "underlying": "SBUX",
@@ -3064,7 +3041,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018030300206608244
+      "cache_age_hours": 0.01861097620593177
     },
     {
       "underlying": "SHOP",
@@ -3087,7 +3064,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01803976959652371
+      "cache_age_hours": 0.018621454040209453
     },
     {
       "underlying": "SMCI",
@@ -3110,7 +3087,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018049191302723356
+      "cache_age_hours": 0.018630797266960143
     },
     {
       "underlying": "SNAP",
@@ -3133,7 +3110,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018058620227707756
+      "cache_age_hours": 0.01864013605647617
     },
     {
       "underlying": "SNDK",
@@ -3156,7 +3133,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018068120413356356
+      "cache_age_hours": 0.018649419214990404
     },
     {
       "underlying": "SNOW",
@@ -3179,7 +3156,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018074140548706055
+      "cache_age_hours": 0.018655194110340542
     },
     {
       "underlying": "SOEZ",
@@ -3202,7 +3179,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01808359854751163
+      "cache_age_hours": 0.018664535217814974
     },
     {
       "underlying": "SOFI",
@@ -3225,7 +3202,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018088940580685935
+      "cache_age_hours": 0.018670191566149394
     },
     {
       "underlying": "SOUN",
@@ -3248,7 +3225,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.0180984048710929
+      "cache_age_hours": 0.018679530024528504
     },
     {
       "underlying": "SOXX",
@@ -3271,7 +3248,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018106987675031026
+      "cache_age_hours": 0.01868827998638153
     },
     {
       "underlying": "SPOT",
@@ -3294,7 +3271,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018116513358222112
+      "cache_age_hours": 0.01869785726070404
     },
     {
       "underlying": "SPY",
@@ -3317,30 +3294,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01812595307826996
-    },
-    {
-      "underlying": "SRPT",
-      "beta_to_spy": 2.225355375887832,
-      "beta_to_ndx": 1.62344726343817,
-      "beta_to_rut": 1.7471355163634772,
-      "beta_to_btc": 0.6717291843753538,
-      "beta_to_spy_raw": 2.225355375887832,
-      "beta_to_ndx_raw": 1.62344726343817,
-      "beta_to_rut_raw": 1.7471355163634772,
-      "beta_to_btc_raw": 0.6717291843753538,
-      "beta_se": 0.5854370578560117,
-      "n_obs": 252,
-      "n_eff": 252,
-      "r2": 0.054638198600792554,
-      "regime_vol_pct": 83.06648123999912,
-      "sector": "healthcare",
-      "prior_used_spy": null,
-      "prior_source": null,
-      "shrinkage_weight": null,
-      "provenance": "computed",
-      "shrinkage_applied": false,
-      "cache_age_hours": 0.018135114510854086
+      "cache_age_hours": 0.018707047237290275
     },
     {
       "underlying": "SVIX",
@@ -3363,7 +3317,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018144537144237093
+      "cache_age_hours": 0.01871645212173462
     },
     {
       "underlying": "TDOG",
@@ -3386,7 +3340,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018153208825323317
+      "cache_age_hours": 0.018725057310528224
     },
     {
       "underlying": "TEM",
@@ -3409,7 +3363,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018158736692534552
+      "cache_age_hours": 0.018730532195832993
     },
     {
       "underlying": "TER",
@@ -3432,7 +3386,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018165394332673813
+      "cache_age_hours": 0.01873719486925337
     },
     {
       "underlying": "TSLA",
@@ -3455,7 +3409,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018174573315514458
+      "cache_age_hours": 0.018746184640460545
     },
     {
       "underlying": "TSM",
@@ -3478,7 +3432,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01818396594789293
+      "cache_age_hours": 0.01875551316473219
     },
     {
       "underlying": "TSUI",
@@ -3501,7 +3455,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018193403349982366
+      "cache_age_hours": 0.01876478777991401
     },
     {
       "underlying": "TTD",
@@ -3524,7 +3478,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018198857373661465
+      "cache_age_hours": 0.018770158953136867
     },
     {
       "underlying": "U",
@@ -3547,7 +3501,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01820830080244276
+      "cache_age_hours": 0.018779159718089633
     },
     {
       "underlying": "UEC",
@@ -3570,7 +3524,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018217490182982552
+      "cache_age_hours": 0.018788457711537677
     },
     {
       "underlying": "UNH",
@@ -3593,7 +3547,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018226951095792983
+      "cache_age_hours": 0.0187977616654502
     },
     {
       "underlying": "UPST",
@@ -3616,7 +3570,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018236365450753106
+      "cache_age_hours": 0.018806841969490052
     },
     {
       "underlying": "URA",
@@ -3639,7 +3593,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01824552277723948
+      "cache_age_hours": 0.01881613579061296
     },
     {
       "underlying": "USAR",
@@ -3662,7 +3616,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018254934085739985
+      "cache_age_hours": 0.018825467228889465
     },
     {
       "underlying": "UUUU",
@@ -3685,7 +3639,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01826245837741428
+      "cache_age_hours": 0.018832853767606947
     },
     {
       "underlying": "VRT",
@@ -3708,7 +3662,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01827191796567705
+      "cache_age_hours": 0.01884219851758745
     },
     {
       "underlying": "VST",
@@ -3731,7 +3685,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018281368083424038
+      "cache_age_hours": 0.018851686053805883
     },
     {
       "underlying": "WDC",
@@ -3754,7 +3708,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018290543887350293
+      "cache_age_hours": 0.01886076205306583
     },
     {
       "underlying": "WULF",
@@ -3777,7 +3731,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018299989567862617
+      "cache_age_hours": 0.018870082762506273
     },
     {
       "underlying": "XOP",
@@ -3800,7 +3754,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018309418161710105
+      "cache_age_hours": 0.018879385590553285
     },
     {
       "underlying": "XPEV",
@@ -3823,7 +3777,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018318868610594008
+      "cache_age_hours": 0.01888868623309665
     },
     {
       "underlying": "XRPZ",
@@ -3846,7 +3800,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.01832830607891083
+      "cache_age_hours": 0.018897943629158868
     },
     {
       "underlying": "XYZ",
@@ -3869,7 +3823,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.018333934876653885
+      "cache_age_hours": 0.01890352719359928
     },
     {
       "underlying": "ZETA",
@@ -3892,7 +3846,7 @@
       "shrinkage_weight": null,
       "provenance": "computed",
       "shrinkage_applied": false,
-      "cache_age_hours": 0.0183433547284868
+      "cache_age_hours": 0.018912777370876738
     }
   ]
 }
