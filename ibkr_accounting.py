@@ -4219,6 +4219,16 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
 
     # Resolve use_yfinance from config if not explicitly passed
     cfg = yaml.safe_load(config_yml_path.read_text(encoding="utf-8")) or {}
+    # Accounting knobs live in config/accounting_config.yml (split out of the
+    # main strategy file). Merge them over any inline ``accounting`` block so
+    # this module keeps working regardless of where the block resides.
+    _acct_path = config_yml_path.parent / "accounting_config.yml"
+    if _acct_path.exists():
+        _acct_file = (yaml.safe_load(_acct_path.read_text(encoding="utf-8")) or {}).get("accounting")
+        if isinstance(_acct_file, dict):
+            _merged_acct = dict(cfg.get("accounting") or {})
+            _merged_acct.update(_acct_file)
+            cfg["accounting"] = _merged_acct
     portfolio_cfg = cfg.get("portfolio", {}) or {}
     sleeves_cfg = portfolio_cfg.get("sleeves", {}) or {}
     flow_cfg = sleeves_cfg.get("flow_program", {}) or {}

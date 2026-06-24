@@ -322,7 +322,28 @@ def load_active_b4_pairs_from_proposed(
     d = d.drop_duplicates(subset=["etf", "underlying"], keep="first")
     d["sleeve"] = sleeve.reindex(d.index).fillna("")
     d["sizing_tr_fwd"] = pd.to_numeric(d.get("und_trend_ratio_fwd_60d", np.nan), errors="coerce")
-    cols = ["etf", "underlying", "pair", "gross_target_usd", "delta", "borrow_current", "sleeve", "sizing_tr_fwd"]
+    # Operator pair-override audit columns (config/pair_overrides.yml). Absent on
+    # older proposed_trades.csv -> default to no-override values.
+    if "pair_override_gross_mult" in d.columns:
+        d["pair_override_gross_mult"] = pd.to_numeric(d["pair_override_gross_mult"], errors="coerce").fillna(1.0)
+    else:
+        d["pair_override_gross_mult"] = 1.0
+    if "pair_override_hedge_add" in d.columns:
+        d["pair_override_hedge_add"] = pd.to_numeric(d["pair_override_hedge_add"], errors="coerce").fillna(0.0)
+    else:
+        d["pair_override_hedge_add"] = 0.0
+    if "pair_override_note" in d.columns:
+        d["pair_override_note"] = d["pair_override_note"].fillna("").astype(str)
+    else:
+        d["pair_override_note"] = ""
+    if "b4_opt2_hedge_ratio" in d.columns:
+        d["applied_hedge_ratio"] = pd.to_numeric(d["b4_opt2_hedge_ratio"], errors="coerce")
+    else:
+        d["applied_hedge_ratio"] = np.nan
+    cols = [
+        "etf", "underlying", "pair", "gross_target_usd", "delta", "borrow_current", "sleeve", "sizing_tr_fwd",
+        "pair_override_gross_mult", "pair_override_hedge_add", "pair_override_note", "applied_hedge_ratio",
+    ]
     return d[cols].sort_values("gross_target_usd", ascending=False).reset_index(drop=True)
 
 
@@ -955,9 +976,17 @@ def _plot_pair_page(
         model_reb_dates = pd.DatetimeIndex(model.bt.index[model.bt["rebalance"].astype(bool)])
 
     fig, axes = plt.subplots(5, 1, figsize=(13, 12), sharex=False, constrained_layout=True)
+    _ovr_gm = _scalar_float(row.get("pair_override_gross_mult", 1.0), 1.0)
+    _ovr_ha = _scalar_float(row.get("pair_override_hedge_add", 0.0), 0.0)
+    _ovr_note = str(row.get("pair_override_note", "") or "")
+    _ovr_active = (abs(_ovr_gm - 1.0) > 1e-9) or (abs(_ovr_ha) > 1e-9)
+    _ovr_txt = ""
+    if _ovr_active:
+        _ovr_txt = f" | OVERRIDE gross×{_ovr_gm:g} h{_ovr_ha:+g}" + (f" ({_ovr_note})" if _ovr_note else "")
     fig.suptitle(
-        f"Bucket 4/5 {etf}/{und} | {row.get('sleeve', '')} | proposed gross ${float(row['gross_target_usd']):,.0f} | run {run_date}",
+        f"Bucket 4/5 {etf}/{und} | {row.get('sleeve', '')} | proposed gross ${float(row['gross_target_usd']):,.0f} | run {run_date}{_ovr_txt}",
         fontsize=12,
+        color=("#b91c1c" if _ovr_active else "black"),
     )
     risk_free = _scalar_float(os.environ.get("EOD_B4_RISK_FREE_RATE", 0.0), 0.0)
     risk = compute_risk_metrics(model.bt["equity"], risk_free_rate=risk_free) if model is not None and not model.bt.empty else {}
@@ -1057,6 +1086,12 @@ def _plot_pair_page(
                 label="book/realized h")
     if np.isfinite(current_model_h):
         ax.scatter([pd.Timestamp(run_date)], [current_model_h], color="#d62728", s=36, zorder=5)
+    # Operator override: draw the applied hedge ratio (h after additive offset).
+    if _ovr_active and abs(_ovr_ha) > 1e-9:
+        _applied_h = _scalar_float(row.get("applied_hedge_ratio", np.nan), np.nan)
+        if np.isfinite(_applied_h):
+            ax.axhline(_applied_h, color="#b91c1c", lw=1.4, ls="--",
+                       label=f"applied h (override {_ovr_ha:+g})")
     _plot_marker_lines(ax, model_reb_dates, etf_trade_dates, und_trade_dates)
     ax.set_ylim(0.0, 1.05)
     ax.set_title("Hedge ratio over time", loc="left", fontsize=10)
@@ -1096,6 +1131,10 @@ def _plot_pair_page(
         "underlying": und,
         "sleeve": str(row.get("sleeve", "")),
         "gross_target_usd": float(row["gross_target_usd"]),
+        "pair_override_gross_mult": _scalar_float(row.get("pair_override_gross_mult", 1.0), 1.0),
+        "pair_override_hedge_add": _scalar_float(row.get("pair_override_hedge_add", 0.0), 0.0),
+        "pair_override_note": str(row.get("pair_override_note", "") or ""),
+        "applied_hedge_ratio": _scalar_float(row.get("applied_hedge_ratio", np.nan), np.nan),
         "sizing_tr_fwd": _scalar_float(row.get("sizing_tr_fwd"), np.nan),
         "model_status": model.status if model is not None else "missing",
         "model_missing_reason": model.missing_reason if model is not None else "",

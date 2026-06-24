@@ -1,0 +1,85 @@
+# Accounting / PnL-attribution config.
+#
+# Split out of strategy_config.yml (2026-06) to keep the main strategy file
+# focused on sizing/execution. Loaded by:
+#   * strategy_config.load_config()  -> merged into cfg["accounting"]
+#   * ibkr_accounting.py             -> merged over any inline accounting block
+# These knobs drive PnL attribution and net-exposure reporting only; they do not
+# affect trade sizing. Change rarely and re-run accounting after edits.
+accounting:
+  use_yfinance: false           # override Flex markPrice with yfinance close
+  bucket_split_method: held_exposure  # held_exposure | universe_beta
+  # Stable B1/B2 ratio-split (email/dashboard totals): FIFO ledger for spot; B4 pair view unchanged.
+  b12_spot_split_method: ledger_fifo       # legacy PnL ledger split when b12_spot_pnl_method=ledger_fifo
+  b12_spot_exposure_method: sleeve_balance  # net exposure: sleeve_balance | hedge_ratio | sleeve_offset | ledger_fifo | held_exposure_waterfall
+  # Spot PnL sleeve attribution (defaults to b12_spot_exposure_method): long spot → B2/B1 hedge
+  # sleeves, structural short spot → B4. ``ledger_fifo`` keeps the lot-timed FIFO trade-tag
+  # split (realized by lot-close sleeve, unrealized by current cost basis) instead of smearing
+  # cumulative PnL by the *current* sleeve_balance hedge snapshot. Exposure stays sleeve_balance
+  # (current risk); PnL uses lot timing so a recently-grown sleeve cannot retroactively claim
+  # PnL earned while the spot hedged a different sleeve.
+  b12_spot_pnl_method: ledger_fifo
+  b12_hedge_delta_floor: 0.25            # min |β| for hr = 1/|β| on B1/B2 ETF legs
+  b12_pnl_mode: plan_b4_inject           # lot_timed_strict | plan_b4_inject (uses plan_b4_pnl_mode below)
+  plan_b4_pnl_mode: inject_slice    # inject_slice: FIFO realized + plan-split unrealized | full_override (legacy)
+  # Do not retroactively inject plan B4 unrealized before live B4 trading began.
+  plan_b4_inject_start_date: "2026-05-12"
+  # Sleeve-rotation: stale lot tags on closed yieldBOOST sleeves -> live sleeve (NVDA/GOOGL fix).
+  spot_sleeve_rotation_retag: true
+  spot_sleeve_rotation_tol: 0.05
+  spot_sleeve_dead_threshold: 0.05
+  # Capacity cap: lot tags overweight live B2 -> cap spot realized at live sleeve; excess -> B1.
+  spot_sleeve_capacity_cap: true
+  spot_sleeve_capacity_tol: 0.05
+  spot_sleeve_capacity_exclude_underlyings:
+    - AMD   # lot under-tags B2 vs live sleeve; do not pull realized from B2
+  # EOD email: use accounting bucket_pnl as-is (no continuity re-spread). Disable only for
+  # one-off methodology transitions where headline jumps must be smoothed vs prior run.
+  eod_bucket_pnl_continuity: false
+  plan_sleeve_bucketing: sleeve_first  # sleeve_first | delta_first
+  # All bucket-2 underlyings (yieldboost / 0<β≤1.5 ETFs) get full Flex replay by default.
+  ledger_full_replay_include_bucket2: true
+  # Phase 4 restate: replay EVERY underlying from the complete Flex trade history
+  # each run instead of seeding from the prior persisted row. This permanently
+  # eliminates ledger-vs-IBKR drift carried forward from state booked under the
+  # old _is_etf_leg bug (incremental seeding otherwise re-imports stale prior-day
+  # rows). Verified non-regressive: published net-exposure/PnL totals are
+  # method-driven (sleeve_balance), unchanged $0; runtime ~unchanged (~22s).
+  # Current-strategy underlyings reconcile to within a few shares; residual drift
+  # is confined to rotated-out / non-strategy holdings (pre-Flex-window lots).
+  ledger_full_replay_all: true
+  ledger_full_replay_underlyings:
+    - MSTR   # extra full replay (also B1 levered)
+    - INTC   # levered-only (INTW); rebuild spot ledger without orphan B2 lots
+  # Yieldboost names (when override enabled): full spot PnL → B2 if B2 ETF held.
+  # Set pnl_override false to attribute spot PnL from FIFO ledger only (trial / strict).
+  yieldboost_spot_b2_pnl_override: false
+  yieldboost_spot_b2_trade_tag: false
+  yieldboost_spot_b2_underlyings:
+    - SMCI
+    - IONQ
+    - IBIT
+  plan_aware_b4_attribution: true
+  # B4 structural short underlying in pair exposure (plan-implied, not FIFO ledger).
+  b4_underlying_exposure_mode: plan_structural   # ledger_fifo | plan_structural
+  b4_plan_exposure_underlyings: []               # empty = all B4 registry names with plan b4 sleeve
+  b4_plan_exposure_min_usd: 500
+  # Canonical B4 underlying attribution rule. ``etf_implied`` (default) sources
+  # the structural short underlying leg from held inverse ETFs × β ×
+  # ``partial_hedge_ratio`` whenever the latest ``inverse_decay_bucket4`` plan
+  # row is missing — so names like BE / CLSK / CRCL that were already entered
+  # under the sleeve but no longer appear in proposed_trades.csv still get a
+  # negative-signed B4 underlying leg in net_exposure_bucket_4_detail.csv and
+  # their spot PnL reflects the short. ``plan_only`` reverts to the legacy
+  # "plan-row required" behaviour; ``ledger_fifo`` disables structural shorts
+  # entirely and trusts the share ledger only.
+  b4_underlying_attribution: etf_implied         # plan_only | etf_implied | ledger_fifo
+  b4_attribution_min_usd: 500                    # ignore implied shorts below this magnitude
+  b4_partial_hedge_ratio_default: 0.75           # fallback when registry row lacks partial_hedge_ratio
+  # Re-seed physical B1/B2 ledger qty from plan ratios (qty_b4 stays 0 on net spot line).
+  ledger_plan_seed_b4_underlyings: []
+  # Bucket 2: non-flow ETFs with 0 < β ≤ 1.5 (yieldboost, income shorts) + pro-rata spot.
+  # Bucket 3: flow-program overlay (inverse β<0 and low-β yieldBOOST shorts, e.g. NVYY/TSYY).
+  spot_ratio_consistency_gate: true
+  exposure_reconciliation_tol_gross_pct: 0.005
+  exposure_reconciliation_tol_net_abs_usd: 10000

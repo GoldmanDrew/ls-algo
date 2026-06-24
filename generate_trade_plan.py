@@ -53,7 +53,7 @@ from typing import Any, Set, Tuple
 import numpy as np
 import pandas as pd
 
-from strategy_config import load_config
+from strategy_config import load_config, load_pair_overrides
 
 TRADING_DAYS = 252
 VOL_ETP_BUCKET5_SLEEVE = "volatility_etp_bucket5"
@@ -186,6 +186,106 @@ def _norm_sym(x: str) -> str:
 
 def _clamp01(x: float) -> float:
     return max(0.0, min(1.0, float(x)))
+
+
+def apply_pair_overrides_to_sized(
+    frame: pd.DataFrame,
+    overrides: dict[tuple[str, str], dict],
+    *,
+    h_min: float,
+    h_max: float,
+    partial_hedge_ratio: float,
+    delta_floor: float,
+) -> pd.DataFrame:
+    """Apply operator B4/B5 pair tilts to a sized frame (executable or optimal).
+
+    Scope: rows whose ``sleeve`` is ``inverse_decay_bucket4`` or
+    ``volatility_etp_bucket5`` and whose (ETF, Underlying) pair has an override.
+
+    Two independent levers (see config/pair_overrides.yml):
+      * ``gross_mult``      : multiplies ``gross_target_usd`` (and the opt2 legs
+                              proportionally, so the hedge ratio is preserved).
+      * ``hedge_ratio_add`` : h' = clip(h + add, h_min, h_max); the two opt2
+                              short legs are re-solved from h' using the engine
+                              identity inv = gross/(1+h'·β), und = (gross-inv)·phr.
+                              Requires the ``b4_opt2_*`` columns (opt2-sized rows);
+                              ignored with a warning otherwise.
+
+    Audit columns written for every overridden row:
+      pair_override_gross_mult, pair_override_hedge_add, pair_override_note,
+      gross_target_usd_pre_override, b4_opt2_hedge_ratio_pre_override.
+    """
+    if not overrides or frame is None or frame.empty or "sleeve" not in frame.columns:
+        return frame
+    frame = frame.copy()
+    for col, default in (
+        ("pair_override_gross_mult", 1.0),
+        ("pair_override_hedge_add", 0.0),
+        ("pair_override_note", ""),
+    ):
+        if col not in frame.columns:
+            frame[col] = default
+
+    b4m = frame["sleeve"].isin(["inverse_decay_bucket4", VOL_ETP_BUCKET5_SLEEVE])
+    opt2_cols = ("b4_opt2_inverse_etf_short_usd", "b4_opt2_underlying_short_usd", "b4_opt2_hedge_ratio")
+    has_opt2 = all(c in frame.columns for c in opt2_cols)
+    phr = float(partial_hedge_ratio)
+
+    for idx in frame.index[b4m]:
+        etf = _norm_sym(frame.at[idx, "ETF"]) if "ETF" in frame.columns else ""
+        und = _norm_sym(frame.at[idx, "Underlying"]) if "Underlying" in frame.columns else ""
+        ov = overrides.get((etf, und))
+        if not ov:
+            continue
+        g_m = float(ov.get("gross_mult", 1.0) or 1.0)
+        h_a = float(ov.get("hedge_ratio_add", 0.0) or 0.0)
+        note = str(ov.get("note", "") or "")
+
+        gross0 = float(pd.to_numeric(frame.at[idx, "gross_target_usd"], errors="coerce") or 0.0)
+        frame.at[idx, "gross_target_usd_pre_override"] = gross0
+
+        # --- gross multiplier (scales total size; hedge ratio preserved) ----
+        gross = gross0
+        if g_m != 1.0 and np.isfinite(g_m) and g_m > 0:
+            gross = gross0 * g_m
+            frame.at[idx, "gross_target_usd"] = gross
+            frame.at[idx, "pair_override_gross_mult"] = g_m
+            if has_opt2:
+                for leg in ("b4_opt2_inverse_etf_short_usd", "b4_opt2_underlying_short_usd"):
+                    leg_v = pd.to_numeric(frame.at[idx, leg], errors="coerce")
+                    if np.isfinite(leg_v):
+                        frame.at[idx, leg] = float(leg_v) * g_m
+
+        # --- additive hedge ratio (re-solves opt2 legs from h') --------------
+        if h_a != 0.0 and np.isfinite(h_a):
+            if not has_opt2:
+                print(
+                    f"[WARN] pair_overrides: hedge_ratio_add for {etf}/{und} ignored "
+                    "(row not sized by opt2 engine; no b4_opt2_* legs)"
+                )
+            else:
+                h0 = pd.to_numeric(frame.at[idx, "b4_opt2_hedge_ratio"], errors="coerce")
+                h0 = float(h0) if np.isfinite(h0) else 0.0
+                h1 = max(float(h_min), min(float(h_max), h0 + h_a))
+                beta = pd.to_numeric(frame.at[idx, "delta_abs"], errors="coerce") if "delta_abs" in frame.columns else np.nan
+                beta = max(float(beta), float(delta_floor)) if np.isfinite(beta) else 1.0
+                denom = 1.0 + h1 * beta
+                inv = gross / denom if denom > 1e-12 else 0.5 * gross
+                und_usd = max(0.0, gross - inv) * phr
+                frame.at[idx, "b4_opt2_hedge_ratio_pre_override"] = h0
+                frame.at[idx, "b4_opt2_inverse_etf_short_usd"] = inv
+                frame.at[idx, "b4_opt2_underlying_short_usd"] = und_usd
+                frame.at[idx, "b4_opt2_hedge_ratio"] = h1
+                frame.at[idx, "pair_override_hedge_add"] = h_a
+
+        if note:
+            frame.at[idx, "pair_override_note"] = note
+        print(
+            f"[INFO] pair_override applied {etf}/{und}: gross_mult={g_m:g} "
+            f"hedge_add={h_a:+g}" + (f" note='{note}'" if note else "")
+        )
+
+    return frame
 
 
 def _volatility_etp_rows_mask(df: pd.DataFrame) -> pd.Series:
@@ -1998,6 +2098,14 @@ def main() -> None:
     b4_min_edge = float(b4_rules.get("min_net_edge_annual", 0.0))
     b4_partial_hedge_ratio = _clamp01(b4_rules.get("partial_hedge_ratio", 1.0))
     b4_max_shares_outstanding_frac = _clamp01(b4_rules.get("max_shares_outstanding_frac", 0.20))
+    # Operator pair overrides (B4/B5 only). Hedge-add is clipped to the opt2
+    # hedge guardrails so it cannot escape h_min/h_max.
+    _b4_hcp = (b4_rules.get("bucket4_weekly_opt2", {}) or {}).get("hedge_cadence_policy", {}) or {}
+    b4_override_h_min = float(_b4_hcp.get("h_min", 0.30))
+    b4_override_h_max = float(_b4_hcp.get("h_max", 0.80))
+    pair_overrides = load_pair_overrides(cfg)
+    if pair_overrides:
+        print(f"[INFO] loaded {len(pair_overrides)} pair override(s) from config/pair_overrides.yml")
     # Underlying-vol floors: NEW pairs must clear ``min_underlying_vol_entry``;
     # pairs already tracked by the lifecycle state (i.e. held) may stay down to
     # ``min_underlying_vol_keep``. Legacy single-floor ``min_underlying_vol``
@@ -2958,6 +3066,27 @@ def main() -> None:
             frame["etf_target_usd"] = frame["short_usd"]
             return frame
 
+        # Operator B4/B5 pair tilts (gross_mult + additive hedge) applied to the
+        # opt2 legs + gross before the leg split, so proposed_trades.csv reflects
+        # the override and carries audit columns. See config/pair_overrides.yml.
+        if pair_overrides:
+            sized = apply_pair_overrides_to_sized(
+                sized,
+                pair_overrides,
+                h_min=b4_override_h_min,
+                h_max=b4_override_h_max,
+                partial_hedge_ratio=b4_partial_hedge_ratio,
+                delta_floor=delta_floor,
+            )
+            optimal_sized = apply_pair_overrides_to_sized(
+                optimal_sized,
+                pair_overrides,
+                h_min=b4_override_h_min,
+                h_max=b4_override_h_max,
+                partial_hedge_ratio=b4_partial_hedge_ratio,
+                delta_floor=delta_floor,
+            )
+
         sized = _populate_long_short_columns(sized)
         optimal_sized = _populate_long_short_columns(optimal_sized)
 
@@ -2975,6 +3104,16 @@ def main() -> None:
         for col in ("b1_trend_xsec_pctile", "b1_trend_multiplier"):
             if col in sized.columns:
                 keep.loc[sized.index, col] = pd.to_numeric(sized[col], errors="coerce")
+        # Carry pair-override audit columns through to proposed_trades.csv.
+        for col in (
+            "pair_override_gross_mult",
+            "pair_override_hedge_add",
+            "pair_override_note",
+            "gross_target_usd_pre_override",
+            "b4_opt2_hedge_ratio_pre_override",
+        ):
+            if col in sized.columns:
+                keep.loc[sized.index, col] = sized[col]
 
         # ---- Optimal (structural-only) target columns: parallel set written next to executable.
         # ``optimal_*`` reflects "where the position should sit" if today's IBKR shares_available

@@ -6,3 +6,10 @@ data/discovery*/
 
 # Local v6 B4 bootstrap cache (large pickle; regenerate from Buckets notebook)
 notebooks/v6_b4_gtp_cache.pkl
+
+# Research backtest artifacts (large; not part of the production pipeline)
+notebooks/data/backtest/
+
+# Archived EOD bundles + manual accounting restate backups
+data/_eod_zip_*/
+data/accounting/*.backup_*

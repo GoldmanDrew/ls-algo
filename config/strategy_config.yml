@@ -5,83 +5,10 @@ ibkr:
   prefer_delayed: true
   suppress_error_codes: [10089]
 
-accounting:
-  use_yfinance: false           # override Flex markPrice with yfinance close
-  bucket_split_method: held_exposure  # held_exposure | universe_beta
-  # Stable B1/B2 ratio-split (email/dashboard totals): FIFO ledger for spot; B4 pair view unchanged.
-  b12_spot_split_method: ledger_fifo       # legacy PnL ledger split when b12_spot_pnl_method=ledger_fifo
-  b12_spot_exposure_method: sleeve_balance  # net exposure: sleeve_balance | hedge_ratio | sleeve_offset | ledger_fifo | held_exposure_waterfall
-  # Spot PnL sleeve attribution (defaults to b12_spot_exposure_method): long spot → B2/B1 hedge
-  # sleeves, structural short spot → B4. ``ledger_fifo`` keeps the lot-timed FIFO trade-tag
-  # split (realized by lot-close sleeve, unrealized by current cost basis) instead of smearing
-  # cumulative PnL by the *current* sleeve_balance hedge snapshot. Exposure stays sleeve_balance
-  # (current risk); PnL uses lot timing so a recently-grown sleeve cannot retroactively claim
-  # PnL earned while the spot hedged a different sleeve.
-  b12_spot_pnl_method: ledger_fifo
-  b12_hedge_delta_floor: 0.25            # min |β| for hr = 1/|β| on B1/B2 ETF legs
-  b12_pnl_mode: plan_b4_inject           # lot_timed_strict | plan_b4_inject (uses plan_b4_pnl_mode below)
-  plan_b4_pnl_mode: inject_slice    # inject_slice: FIFO realized + plan-split unrealized | full_override (legacy)
-  # Do not retroactively inject plan B4 unrealized before live B4 trading began.
-  plan_b4_inject_start_date: "2026-05-12"
-  # Sleeve-rotation: stale lot tags on closed yieldBOOST sleeves -> live sleeve (NVDA/GOOGL fix).
-  spot_sleeve_rotation_retag: true
-  spot_sleeve_rotation_tol: 0.05
-  spot_sleeve_dead_threshold: 0.05
-  # Capacity cap: lot tags overweight live B2 -> cap spot realized at live sleeve; excess -> B1.
-  spot_sleeve_capacity_cap: true
-  spot_sleeve_capacity_tol: 0.05
-  spot_sleeve_capacity_exclude_underlyings:
-    - AMD   # lot under-tags B2 vs live sleeve; do not pull realized from B2
-  # EOD email: use accounting bucket_pnl as-is (no continuity re-spread). Disable only for
-  # one-off methodology transitions where headline jumps must be smoothed vs prior run.
-  eod_bucket_pnl_continuity: false
-  plan_sleeve_bucketing: sleeve_first  # sleeve_first | delta_first
-  # All bucket-2 underlyings (yieldboost / 0<β≤1.5 ETFs) get full Flex replay by default.
-  ledger_full_replay_include_bucket2: true
-  # Phase 4 restate: replay EVERY underlying from the complete Flex trade history
-  # each run instead of seeding from the prior persisted row. This permanently
-  # eliminates ledger-vs-IBKR drift carried forward from state booked under the
-  # old _is_etf_leg bug (incremental seeding otherwise re-imports stale prior-day
-  # rows). Verified non-regressive: published net-exposure/PnL totals are
-  # method-driven (sleeve_balance), unchanged $0; runtime ~unchanged (~22s).
-  # Current-strategy underlyings reconcile to within a few shares; residual drift
-  # is confined to rotated-out / non-strategy holdings (pre-Flex-window lots).
-  ledger_full_replay_all: true
-  ledger_full_replay_underlyings:
-    - MSTR   # extra full replay (also B1 levered)
-    - INTC   # levered-only (INTW); rebuild spot ledger without orphan B2 lots
-  # Yieldboost names (when override enabled): full spot PnL → B2 if B2 ETF held.
-  # Set pnl_override false to attribute spot PnL from FIFO ledger only (trial / strict).
-  yieldboost_spot_b2_pnl_override: false
-  yieldboost_spot_b2_trade_tag: false
-  yieldboost_spot_b2_underlyings:
-    - SMCI
-    - IONQ
-    - IBIT
-  plan_aware_b4_attribution: true
-  # B4 structural short underlying in pair exposure (plan-implied, not FIFO ledger).
-  b4_underlying_exposure_mode: plan_structural   # ledger_fifo | plan_structural
-  b4_plan_exposure_underlyings: []               # empty = all B4 registry names with plan b4 sleeve
-  b4_plan_exposure_min_usd: 500
-  # Canonical B4 underlying attribution rule. ``etf_implied`` (default) sources
-  # the structural short underlying leg from held inverse ETFs × β ×
-  # ``partial_hedge_ratio`` whenever the latest ``inverse_decay_bucket4`` plan
-  # row is missing — so names like BE / CLSK / CRCL that were already entered
-  # under the sleeve but no longer appear in proposed_trades.csv still get a
-  # negative-signed B4 underlying leg in net_exposure_bucket_4_detail.csv and
-  # their spot PnL reflects the short. ``plan_only`` reverts to the legacy
-  # "plan-row required" behaviour; ``ledger_fifo`` disables structural shorts
-  # entirely and trusts the share ledger only.
-  b4_underlying_attribution: etf_implied         # plan_only | etf_implied | ledger_fifo
-  b4_attribution_min_usd: 500                    # ignore implied shorts below this magnitude
-  b4_partial_hedge_ratio_default: 0.75           # fallback when registry row lacks partial_hedge_ratio
-  # Re-seed physical B1/B2 ledger qty from plan ratios (qty_b4 stays 0 on net spot line).
-  ledger_plan_seed_b4_underlyings: []
-  # Bucket 2: non-flow ETFs with 0 < β ≤ 1.5 (yieldboost, income shorts) + pro-rata spot.
-  # Bucket 3: flow-program overlay (inverse β<0 and low-β yieldBOOST shorts, e.g. NVYY/TSYY).
-  spot_ratio_consistency_gate: true
-  exposure_reconciliation_tol_gross_pct: 0.005
-  exposure_reconciliation_tol_net_abs_usd: 10000
+# Accounting / PnL-attribution knobs moved to config/accounting_config.yml
+# (2026-06). They are merged back into cfg["accounting"] by
+# strategy_config.load_config() and by ibkr_accounting.py, so behaviour is
+# unchanged. Edit accounting_config.yml for those settings.
 
 strategy:
   tag: ETF_LS
@@ -159,7 +86,6 @@ strategy:
 
 paths:
   screened_csv: data/etf_screened_today.csv
-  blacklist_txt: config/strategy_blacklist.txt
   baseline_csv: data/baseline_snapshot.csv
   proposed_trades_csv: data/proposed_trades.csv
   flow_ledger_csv: data/flow_ledger.csv
@@ -438,46 +364,27 @@ portfolio:
           slippage_bps: 20.0               # realistic IBKR fill assumption from the A7 backtest
           borrow_multiplier: 1.0
           pf_min_pairs: 5
-          # Flat sizing haircut on volatility-ETP pairs (VIX complex: UVIX/SVIX etc).
-          # Final weight *= (1 - penalty), renormalized so other pairs absorb the
-          # freed budget. Rationale (2026-06-12): the tail-risk penalty is relative
-          # (median-normalized) and the B4 book is full of ~100%-vol crypto names,
-          # so the short-vol blowup risk (gap risk on a -1x VIX product) doesn't
-          # stand out enough; this is an explicit operator prior on top.
+          # Flat sizing haircut on volatility-ETP pairs (VIX complex). Final weight
+          # *= (1 - penalty), renormalized. Rationale: docs/b4_engine_notes.md.
           vol_etp_weight_penalty: 0.333
           # Hedge ratio (h) + rebalance cadence (days) engine. Every output is
           # reverse-engineerable from the printed inputs (TR, VCR, VCR_med).
+          # Backtest rationale for every knob below: docs/b4_engine_notes.md.
           hedge_cadence_policy:
             source: tr_vcr                 # tr_vcr cadence + hedge | v6_panel (weekly v6 for both)
-            # Phase-3/4/5 backtest lab (scripts/bucket4_phase345_backtest.py, 45 pairs,
-            # 2025-10 -> 2026-06, 20bps slip): v7 VCR closed-form h beat fixed 0.75 by
-            # ~+10pp EW mean CAGR; h-hysteresis and regime bump both HURT (not adopted);
-            # realized-20d beta was noise (+0.5pp mean, -0.1pp median; not adopted).
             hedge_ratio_model: v7          # v6 = Opt-2 panel | v7 = VCR closed form (backtest winner)
             opt2_k: 0.05                   # v6: h_star = h_base - opt2_k * z_composite
-            # --- v7 hedge only (when hedge_ratio_model: v7): h = clip(h_mid + k_vcr*(VCR-VCR_med), ...)
-            # "v8" recalibration (scripts/bucket4_v8_clip_experiment.py, 213-combo grid,
-            # 45 pairs): performance is monotone in h_mid (h_min/h_max barely bind);
-            # 0.45 picked under a risk budget (vol/dd <= 1.25x the 0.55 baseline).
-            # EW mean CAGR 13.5% vs 5.9%, median 8.1% vs 4.9%; vol 39.9% vs 32.7%.
-            # Unconstrained optimum (0.20) rejected as a regime bet (84% vol).
+            # v7 hedge: h = clip(h_mid + k_vcr*(VCR-VCR_med), h_min, h_max)
             h_mid: 0.45                     # was 0.55 (inherited from v6, never optimized)
             k_vcr: 1.0
             h_min: 0.30
             h_max: 0.80
             alpha: 0.25                     # EMA on v7 daily h series (0 = off)
-            # "v9" cross-sectional tilt ported from the v6 panel (scripts/
-            # bucket4_v9_xsec_experiment.py): h_raw -= k_z * z_composite where
-            # z_composite = 0.5*(-z(r10d)) + 0.5*(+z(sig5/sig63)) ranked daily
-            # across B4 underlyings, shifted 1d. v6 SIGN confirmed (rally ->
-            # hedge up, vol expansion -> hedge down). At k_z=0.20: EW mean
-            # 16.4% vs 13.5% (v8), median 11.0% vs 8.1%, better in BOTH halves,
-            # vol/DD unchanged; broad plateau k_z 0.10-0.60. 0 = off (pure v8).
+            # v9 cross-sectional tilt: h_raw -= k_z * z_composite (0 = off -> pure v8)
             k_z: 0.20
-            # --- cadence: days = clip(round(base_days / (1 + k_tr*(cadence_signal-1) + m_vcr*(VCR-VCR_med))), min, max)
+            # cadence: days = clip(round(base_days / (1 + k_tr*(cadence_signal-1) + m_vcr*(VCR-VCR_med))), min, max)
             cadence_signal_col: tr_est        # persistence-adjusted forward-looking trend ratio
-            base_days: 12.0                 # full theta-grid under v7 hedge: (2.25,2.5,12) EW mean 5.9%
-                                            # vs 3.3% at 10, same vol/DD (b4_param_scorecard.csv 2026-06-10)
+            base_days: 12.0
             k_tr: 2.25
             m_vcr: 2.5                      # mean-best A7 cadence sensitivity (39.4% CAGR @ 20bps)
             min_interval: 1
@@ -489,14 +396,13 @@ portfolio:
             # by h_min/h_max and min/max_interval regardless of values here.
             name_tilt: {}
             #   UVIX: { h_mult: 0.9, interval_mult: 1.0, note: "vol ETP tail-cap" }
-        # Grow-only ratchet: inverse-ETF short leg is floored at max(solved, held,
-        # persisted_floor); delta reduction flows through the underlying leg only.
+        # Disabled B4 subsystems (ratchet / drawdown_governor / pair_lifecycle /
+        # concentration). Kept OFF; full behaviour + status in docs/b4_engine_notes.md.
+        # NOTE: drawdown_governor is a config stub only — no Python reads it yet.
         ratchet:
           enabled: false
           state_json: data/b4_inverse_ratchet_state.json
           reconcile_tolerance_usd: 250.0
-        # Sleeve-level drawdown governor: pause inverse adds + bias underlying hedge
-        # toward h_max on worst-DD pairs when trailing DD breaches thresholds.
         drawdown_governor:
           enabled: false
           dd_freeze: 0.12                  # trailing DD that freezes new inverse adds
@@ -507,13 +413,6 @@ portfolio:
         min_underlying_vol: 0.45      # legacy single floor (fallback for entry/keep below)
         min_underlying_vol_entry: 0.55  # NEW pairs need >= this annual underlying vol
         min_underlying_vol_keep: 0.45   # held pairs may stay down to this; below -> freeze flag
-        # Pair lifecycle demotion ladder (Phase 2 of the B4 optimization plan).
-        # Driven by scripts/bucket4_pair_monitor.py (report-only metrics); state is
-        # advanced by scripts/bucket4_pair_lifecycle.py and applied in
-        # generate_trade_plan when enabled:
-        #   normal -> half (0.5x weight) -> freeze (keep-open, no new size) -> exit
-        # Escalation is immediate; recovery requires recover_obs_days consecutive
-        # clean monitor runs per level. Exits sit out reentry_cooldown_days.
         pair_lifecycle:
           enabled: false               # flip true after a week of report-only shadowing
           state_json: data/b4_pair_lifecycle_state.json
@@ -526,9 +425,6 @@ portfolio:
           exit_borrow_floor_annual: 0.05  # borrow kill needs >= 5% annualized borrow drag on gross
           recover_obs_days: 10         # clean runs needed to promote one level
           reentry_cooldown_days: 45    # business days an exited pair stays out
-        # WS4 concentration (Stage C backtest: top-10/15 by (net_edge - borrow)/und_vol
-        # with EQUAL weights beat all-45 and beat Kelly tilts; cluster cap is cheap
-        # insurance, neutral in the test window).
         concentration:
           enabled: false             # flip true after shadow review of the kept list
           top_n_pairs: 15            # keep best N by (net_edge - borrow) / underlying vol

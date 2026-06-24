@@ -1,0 +1,35 @@
+# Operator pair-level tilts — Bucket 4 (inverse_decay_bucket4) and Bucket 5
+# (volatility_etp_bucket5) ONLY. This is a deliberate, hand-audited override on
+# top of the engine; it is intentionally simple and easy to change.
+#
+# Key   = "ETF/UNDERLYING" (exact pair, case-insensitive, e.g. "BITX/IBIT").
+# Fields (all optional; omit for no change):
+#   hedge_ratio_add : float  additive offset to the model hedge ratio h.
+#                            Applied as h' = clip(h + hedge_ratio_add, h_min, h_max)
+#                            then both short legs are re-solved from h'
+#                            (inv = gross/(1+h'·β), und = (gross-inv)·phr).
+#                            Only affects pairs sized by the opt2 engine (B4 core;
+#                            B5 if opt2-sized). Positive = more underlying hedge.
+#   gross_mult      : float  multiplicative scale on the pair's gross_target_usd
+#                            (applied after sleeve sizing + caps — a deliberate
+#                            operator tilt that can exceed the usual caps).
+#                            1.0 = no change.
+#   note            : str    free-text audit note; shown in proposed_trades.csv,
+#                            the EOD B4 pair PDF title, and the summary CSV.
+#
+# Audit trail: every applied override writes pair_override_gross_mult,
+# pair_override_hedge_add, pair_override_note (plus *_pre_override) columns into
+# proposed_trades.csv, and is annotated on the EOD pair charts.
+#
+# Example (commented out — uncomment / edit to use):
+# pair_overrides:
+#   BITX/IBIT:
+#     hedge_ratio_add: 0.05
+#     gross_mult: 1.15
+#     note: "operator tilt: larger, slightly more hedged"
+#   UVIX/SVIX:
+#     hedge_ratio_add: -0.10
+#     gross_mult: 0.85
+#     note: "vol-ETP tail-risk trim"
+
+pair_overrides: {}
