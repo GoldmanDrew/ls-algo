@@ -85,7 +85,7 @@ accounting:
 
 strategy:
   tag: ETF_LS
-  capital_usd: 900000
+  capital_usd: 1000000
   gross_leverage: 4
   blacklist:
     - JPM
@@ -231,14 +231,14 @@ screener:
   #   entry_borrow_cap < borrow_current <= keep_borrow_cap
   per_bucket:
     bucket_1:
-      entry_borrow_cap: 0.60      # new B1 exposure when borrow cost <= this
-      keep_borrow_cap: 0.75       # keep-open purgatory band ends above this borrow cost
+      entry_borrow_cap: 0.50      # new B1 exposure when borrow cost <= this
+      keep_borrow_cap: 0.65       # keep-open purgatory band ends above this borrow cost
     bucket_2:
-      entry_borrow_cap: 0.35
-      keep_borrow_cap: 0.50
+      entry_borrow_cap: 0.25
+      keep_borrow_cap: 0.40
     bucket_4:
-      entry_borrow_cap: 0.95
-      keep_borrow_cap: 1.20
+      entry_borrow_cap: 0.90
+      keep_borrow_cap: 1.15
   min_delta_days: 30
   max_stale_days: 5             # drop ETFs with no trade in last N calendar days (delisted/liquidated)
   # Vol-ratio data-quality gate. ``vol_ratio_value = vol_etf / (|β| · vol_und)``;
@@ -366,7 +366,7 @@ portfolio:
   sleeves:
     core_leveraged:
       # Share of gross after inverse_decay_bucket4, split vs ``yieldboost`` (normalized together).
-      target_weight: 0.48
+      target_weight: 0.50
       rules:
         min_delta_used: 1.50
         # Core = accounting bucket-1 style levered longs. Optional net-decay floor (annual fraction).
@@ -405,7 +405,7 @@ portfolio:
       enabled: true
       # Bucket-2 sleeve: screened rows with ``is_yieldboost`` only (see daily_screener). Split vs core
       # is relative — core.target_weight + yieldboost.target_weight is normalized after B4.
-      target_weight: 0.5
+      target_weight: 0.47
       rules:
         min_net_edge_annual: 0.25     # gate on ``net_edge_p50_annual`` for YieldBoost names
       weighting:
@@ -417,7 +417,7 @@ portfolio:
 
     inverse_decay_bucket4:
       enabled: true                  # sleeve split vs stock: inverse_decay_bucket4.target_weight remainder → stock
-      target_weight: 0.02
+      target_weight: 0.03
       # B4 universe = every inverse (β<0, ``inverse_shortable``) ticker in the screener,
       # MINUS ``rules.excluded_etfs`` (per-name overrides like KOLD)
       # MINUS ``flow_program.universe.shorts`` (those are sized in the weekly flow sleeve).
