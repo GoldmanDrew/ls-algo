@@ -540,11 +540,13 @@ portfolio:
           - KOLD
           - SCO
         max_shares_outstanding_frac: 0.3
-        # Volatility ETPs (UVIX/SVIX, etc.) often have β≥0 so they miss ``negative_beta`` B4.
-        # Optional slice: same B4 gates except β<0; capped at ``share_of_b4_budget`` of total B4 dollars.
-        volatility_etp_bucket4:
+        # Volatility ETPs (UVIX/SVIX, etc.) often have beta >= 0 so they miss ``negative_beta`` B4.
+        # Bucket-5 sleeve: same B4 gates except beta < 0; target_weight is total gross book share.
+        volatility_etp_bucket5:
+          # Current mode uses target_weight below; legacy share_of_b4_budget is still
+          # understood by generate_trade_plan.py when target_weight is absent.
           enabled: true
-          share_of_b4_budget: 0.01    # 1% of total inverse_decay_bucket4 gross when vol rows exist
+          target_weight: 0.0025       # 0.25% of total gross book when vol rows exist
       weighting:
         <<: *weighting_defaults
         max_name_weight: 0.20        # raised with WS4 concentration (was 0.15)

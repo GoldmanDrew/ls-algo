@@ -14,7 +14,7 @@ Implements:
   ``min_net_decay_annual`` / hysteresis from YAML.
 
 - Bucket 4: ``inverse_decay_bucket4`` unchanged; core inverse rows still require
-  ``inverse_shortable``. The optional volatility-ETP B4 slice does not (see
+  ``inverse_shortable``. The optional volatility-ETP bucket-5 sleeve does not (see
   ``_in_b4_volatility_etp_sleeve_mask``).
 
 - Purgatory handling (from screened CSV; see daily_screener ``recompute_purgatory_by_bucket``):
@@ -56,6 +56,7 @@ import pandas as pd
 from strategy_config import load_config
 
 TRADING_DAYS = 252
+VOL_ETP_BUCKET5_SLEEVE = "volatility_etp_bucket5"
 
 
 # -----------------------------
@@ -218,10 +219,10 @@ def _in_b4_volatility_etp_sleeve_mask(
     in_flow_program: pd.Series,
     in_b4_core: pd.Series,
 ) -> pd.Series:
-    """Volatility-ETP bucket-4 slice (separate from core inverse ``in_b4``).
+    """Volatility-ETP bucket-5 slice (separate from core inverse ``in_b4``).
 
     Core ``in_b4`` still requires ``inverse_shortable``; VIX-complex ETPs are often flagged
-    false on screened rows despite being the intended B4 vol sleeve, so this path omits it.
+    false on screened rows despite being the intended inverse-vol sleeve, so this path omits it.
     """
     is_volatility_etp = _volatility_etp_rows_mask(eligible)
     return (
@@ -680,7 +681,7 @@ def _short_leg_frac_array(
     hr = 1.0 / b
     sf = hr / (1.0 + hr)
     s = np.asarray(sleeve).astype(str)
-    is_b4 = s == "inverse_decay_bucket4"
+    is_b4 = (s == "inverse_decay_bucket4") | (s == VOL_ETP_BUCKET5_SLEEVE)
     sf = np.where(is_b4, 1.0, sf)
     return np.clip(sf, 1e-12, 1.0)
 
@@ -2329,12 +2330,22 @@ def main() -> None:
             )
 
         # Budgeting:
-        # - Bucket 4 gets ``target_weight`` of total gross when the B4 sleeve (core inverse and/or
-        #   optional volatility-ETP slice) is active.
-        # - Remaining gross is split core vs yieldboost using normalized YAML ``target_weights``.
-        vol_etp_b4_cfg = (b4_rules.get("volatility_etp_bucket4") or {})
+        # - Bucket 4 gets ``target_weight`` of total gross when core inverse rows are active.
+        # - Volatility ETPs are a separate bucket-5 sleeve with a fixed share of total gross.
+        # - Bucket 5 is subtracted from the B4 allocation so the combined inverse-vol budget
+        #   stays at the configured B4 target weight when both slices exist.
+        vol_etp_b4_cfg = (
+            b4_rules.get("volatility_etp_bucket5")
+            or b4_rules.get("volatility_etp_bucket4")
+            or {}
+        )
         vol_etp_b4_enabled = bool(vol_etp_b4_cfg.get("enabled", False))
-        vol_etp_share = _clamp01(float(vol_etp_b4_cfg.get("share_of_b4_budget", 0.0) or 0.0))
+        if "target_weight" in vol_etp_b4_cfg:
+            vol_etp_book_weight = _clamp01(float(vol_etp_b4_cfg.get("target_weight", 0.0) or 0.0))
+        else:
+            vol_etp_book_weight = _clamp01(
+                b4_w * float(vol_etp_b4_cfg.get("share_of_b4_budget", 0.0) or 0.0)
+            )
 
         b4_any = bool(
             b4_enabled
@@ -2347,10 +2358,10 @@ def main() -> None:
         if (
             b4_budget_total > 1e-12
             and vol_etp_b4_enabled
-            and vol_etp_share > 0.0
+            and vol_etp_book_weight > 0.0
             and not b4_vol_names.empty
         ):
-            b4_vol_cash = b4_budget_total * vol_etp_share
+            b4_vol_cash = min(b4_budget_total, target_gross_usd * vol_etp_book_weight)
         b4_core_cash = max(0.0, b4_budget_total - b4_vol_cash)
 
         b4_reserved = 0.0
@@ -2586,8 +2597,8 @@ def main() -> None:
 
         if b4_parts:
             b4_names = pd.concat(b4_parts, axis=0, ignore_index=False)
-            # Re-normalize pre-cap weights across the COMBINED inverse_decay_bucket4 sleeve so
-            # the haircut baseline matches the merged sleeve seen by the cap stack.
+            # Re-normalize pre-cap weights across the combined inverse-vol allocation so
+            # the haircut baseline matches the merged allocation seen by the cap stack.
             if "_pre_cap_score_weight" in b4_names.columns:
                 _b4_g = pd.to_numeric(b4_names["gross_target_usd"], errors="coerce").fillna(0.0)
                 _b4_s = float(_b4_g.sum())
@@ -2617,7 +2628,11 @@ def main() -> None:
                         "[WARN] bucket4 shares-outstanding caps constrained allocated notional: "
                         f"requested=${before_sum:,.0f}, capped=${after_sum:,.0f}"
                     )
-            b4_names["sleeve"] = "inverse_decay_bucket4"
+            b4_names["sleeve"] = np.where(
+                b4_names["_b4_slice"].eq("vol_etp"),
+                VOL_ETP_BUCKET5_SLEEVE,
+                "inverse_decay_bucket4",
+            )
 
             if b4_weight_method == "decay_score":
                 b4c_w = b4_names.loc[b4_names["_b4_slice"].eq("core")]
@@ -2789,7 +2804,8 @@ def main() -> None:
             sleeve_targets = {
                 "core_leveraged": float(core_budget),
                 "yieldboost": float(yb_budget),
-                "inverse_decay_bucket4": float(b4_reserved),
+                "inverse_decay_bucket4": float(b4_core_reserved),
+                VOL_ETP_BUCKET5_SLEEVE: float(b4_vol_reserved),
             }
             sized, sleeve_reb_diag = rescale_gross_targets_to_sleeve_budget_weights(
                 sized,
@@ -2851,7 +2867,8 @@ def main() -> None:
         sleeve_targets_for_opt = {
             "core_leveraged": float(core_budget),
             "yieldboost": float(yb_budget),
-            "inverse_decay_bucket4": float(b4_reserved),
+            "inverse_decay_bucket4": float(b4_core_reserved),
+            VOL_ETP_BUCKET5_SLEEVE: float(b4_vol_reserved),
         }
         try:
             optimal_sized, _optimal_diag = _run_book_cap_pipeline_quiet(
@@ -2897,7 +2914,7 @@ def main() -> None:
             frame = frame.copy()
             frame["beta_used_abs"] = frame["delta_abs"].clip(lower=delta_floor).fillna(1.0)
             frame["hedge_ratio"] = 1.0 / frame["beta_used_abs"]
-            b4m = frame["sleeve"].eq("inverse_decay_bucket4")
+            b4m = frame["sleeve"].isin(["inverse_decay_bucket4", VOL_ETP_BUCKET5_SLEEVE])
             sm = ~b4m
             frame.loc[sm, "long_usd"] = frame.loc[sm, "gross_target_usd"] / (1.0 + frame.loc[sm, "hedge_ratio"])
             frame.loc[sm, "short_usd"] = -(frame.loc[sm, "hedge_ratio"] * frame.loc[sm, "long_usd"])
