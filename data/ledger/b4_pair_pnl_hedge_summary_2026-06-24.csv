@@ -1,13 +1,10 @@
-pair,etf,underlying,gross_target_usd,actual_pair_pnl_cum,model_pair_pnl_cum,current_model_h,current_book_h,model_rebalance_count,actual_etf_trade_count,actual_underlying_trade_count
-UVIX|SVIX,UVIX,SVIX,14399.999999999996,197.0325880703117,,,0.4153091661483385,0,2,2
-LITZ|LITE,LITZ,LITE,13063.05699229361,-1193.6596056829526,,,0.13289273447759667,0,1,8
-SNDQ|SNDK,SNDQ,SNDK,7969.369815034839,-1271.1153623952382,,,,0,0,15
-NBIZ|NBIS,NBIZ,NBIS,7031.308525606364,5639.286155267848,,,0.09360465675574077,0,3,19
-QBTZ|QBTS,QBTZ,QBTS,6342.758122441713,6981.883131011992,,,0.06498243234922192,0,3,15
-CORD|CRWV,CORD,CRWV,5300.764250336484,128.63290074175293,,,0.21593471229021213,0,3,21
-MSTZ|MSTR,MSTZ,MSTR,4207.264396726882,-1930.2668961955237,,,0.09767880409200441,0,2,21
-IREZ|IREN,IREZ,IREN,4185.74673251468,521.3981151296408,,,0.04046578088939055,0,3,20
-RGTZ|RGTI,RGTZ,RGTI,3220.572590184825,-1522.755056264221,,,0.22688430774899823,0,1,10
-CONI|COIN,CONI,COIN,2191.6251728608554,225.7559787024033,,,0.6404935620084135,0,1,19
-RKLZ|RKLB,RKLZ,RKLB,1738.2737999361868,-2346.899121147966,,,0.09770423895216515,0,3,7
-DAMD|AMD,DAMD,AMD,590.3527383326768,-264.8257612600921,,,0.13952648927350988,0,1,20
+pair,etf,underlying,sleeve,gross_target_usd,sizing_tr_fwd,model_status,model_missing_reason,model_config,signal_source,metrics_first_date,metrics_last_date,backtest_rows,price_rows,actual_pair_pnl_cum,model_pair_pnl_cum,borrow_cost_cum,transaction_cost_cum,current_etf_gross,current_underlying_gross,current_total_gross,current_model_h,current_book_h,cagr,vol_annual,sharpe,max_drawdown,daily_hit_rate,model_rebalance_count,actual_etf_trade_count,actual_underlying_trade_count
+LITZ|LITE,LITZ,LITE,inverse_decay_bucket4,22000.000000000007,0.90026,missing_metrics_file,/home/runner/work/ls-algo/Levered ETFs/etf-dashboard/data/etf_metrics_daily.csv,"model h v7+v9 h_mid=0.45 k_z=0.20 clip[0.30,0.80] cadence tr_est base=12d cap=21d",missing,,,0,0,-1128.1107891183942,,,,,,,,0.2674503920764075,,,,,,0,1,8
+SNDQ|SNDK,SNDQ,SNDK,inverse_decay_bucket4,19328.065574738983,1.115597,missing_metrics_file,/home/runner/work/ls-algo/Levered ETFs/etf-dashboard/data/etf_metrics_daily.csv,"model h v7+v9 h_mid=0.45 k_z=0.20 clip[0.30,0.80] cadence tr_est base=12d cap=21d",missing,,,0,0,-3651.502469283562,,,,,,,,,,,,,,0,0,15
+NBIZ|NBIS,NBIZ,NBIS,inverse_decay_bucket4,18174.72787718022,1.072091,missing_metrics_file,/home/runner/work/ls-algo/Levered ETFs/etf-dashboard/data/etf_metrics_daily.csv,"model h v7+v9 h_mid=0.45 k_z=0.20 clip[0.30,0.80] cadence tr_est base=12d cap=21d",missing,,,0,0,3036.944904587055,,,,,,,,0.286607288934636,,,,,,0,3,19
+CORD|CRWV,CORD,CRWV,inverse_decay_bucket4,16718.91056996863,0.999774,missing_metrics_file,/home/runner/work/ls-algo/Levered ETFs/etf-dashboard/data/etf_metrics_daily.csv,"model h v7+v9 h_mid=0.45 k_z=0.20 clip[0.30,0.80] cadence tr_est base=12d cap=21d",missing,,,0,0,-313.8456341867177,,,,,,,,0.9089146512861551,,,,,,0,3,21
+QBTZ|QBTS,QBTZ,QBTS,inverse_decay_bucket4,13527.28497312687,1.035642,missing_metrics_file,/home/runner/work/ls-algo/Levered ETFs/etf-dashboard/data/etf_metrics_daily.csv,"model h v7+v9 h_mid=0.45 k_z=0.20 clip[0.30,0.80] cadence tr_est base=12d cap=21d",missing,,,0,0,7116.135431560615,,,,,,,,0.16192190498142034,,,,,,0,3,15
+UVIX|SVIX,UVIX,SVIX,volatility_etp_bucket5,10000.0,1.092089,missing_metrics_file,/home/runner/work/ls-algo/Levered ETFs/etf-dashboard/data/etf_metrics_daily.csv,"model h v7+v9 h_mid=0.45 k_z=0.20 clip[0.30,0.80] cadence tr_est base=12d cap=21d",missing,,,0,0,0.0,,,,,,,,0.5019979518483566,,,,,,0,2,2
+MSTZ|MSTR,MSTZ,MSTR,inverse_decay_bucket4,7507.805167516637,1.034804,missing_metrics_file,/home/runner/work/ls-algo/Levered ETFs/etf-dashboard/data/etf_metrics_daily.csv,"model h v7+v9 h_mid=0.45 k_z=0.20 clip[0.30,0.80] cadence tr_est base=12d cap=21d",missing,,,0,0,-1476.0660911869877,,,,,,,,0.20822624462089545,,,,,,0,2,21
+CONI|COIN,CONI,COIN,inverse_decay_bucket4,3402.827257840553,0.976283,missing_metrics_file,/home/runner/work/ls-algo/Levered ETFs/etf-dashboard/data/etf_metrics_daily.csv,"model h v7+v9 h_mid=0.45 k_z=0.20 clip[0.30,0.80] cadence tr_est base=12d cap=21d",missing,,,0,0,470.6180472398374,,,,,,,,1.1832472371260891,,,,,,0,1,19
+DAMD|AMD,DAMD,AMD,inverse_decay_bucket4,1085.9322177651525,1.107245,missing_metrics_file,/home/runner/work/ls-algo/Levered ETFs/etf-dashboard/data/etf_metrics_daily.csv,"model h v7+v9 h_mid=0.45 k_z=0.20 clip[0.30,0.80] cadence tr_est base=12d cap=21d",missing,,,0,0,-921.4077738608388,,,,,,,,0.3421978804657452,,,,,,0,1,20
