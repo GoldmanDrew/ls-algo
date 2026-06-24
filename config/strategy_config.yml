@@ -475,7 +475,7 @@ portfolio:
             # vol/DD unchanged; broad plateau k_z 0.10-0.60. 0 = off (pure v8).
             k_z: 0.20
             # --- cadence: days = clip(round(base_days / (1 + k_tr*(cadence_signal-1) + m_vcr*(VCR-VCR_med))), min, max)
-            cadence_signal_col: cadence_score # cadence-specific forward-looking TR regime score
+            cadence_signal_col: tr_est        # persistence-adjusted forward-looking trend ratio
             base_days: 12.0                 # full theta-grid under v7 hedge: (2.25,2.5,12) EW mean 5.9%
                                             # vs 3.3% at 10, same vol/DD (b4_param_scorecard.csv 2026-06-10)
             k_tr: 2.25

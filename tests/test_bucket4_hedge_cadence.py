@@ -160,9 +160,9 @@ def test_build_rebal_dates_steps_by_interval():
     assert gaps.min() >= 1
 
 
-def test_build_rebal_dates_can_use_cadence_score_column():
+def test_build_rebal_dates_can_use_adjusted_tr_column():
     k = HedgeCadenceKnobs(
-        cadence_signal_col="cadence_score",
+        cadence_signal_col="tr_est",
         base_days=6.0,
         k_tr=2.25,
         m_vcr=0.0,
@@ -181,22 +181,22 @@ def test_build_rebal_dates_can_use_cadence_score_column():
     )
     dates, diag = build_rebal_dates(sig, idx, knobs=k)
     assert len(dates) > 0
-    assert diag["cadence_signal_col"].iloc[0] == "cadence_score"
-    assert diag["cadence_signal"].iloc[0] == pytest.approx(1.30)
-    assert "cadence_score" in diag["interval_explain"].iloc[0]
-    assert int(diag["interval_days"].iloc[0]) < 6
+    assert diag["cadence_signal_col"].iloc[0] == "tr_est"
+    assert diag["cadence_signal"].iloc[0] == pytest.approx(0.90)
+    assert "tr_est" in diag["interval_explain"].iloc[0]
+    assert int(diag["interval_days"].iloc[0]) > 6
 
 
 def test_load_name_tilts_and_config():
     block = {
         "source": "tr_vcr",
         "h_mid": 0.50,
-        "cadence_signal_col": "cadence_score",
+        "cadence_signal_col": "tr_est",
         "name_tilt": {"UVIX": {"h_mult": 0.9, "note": "tail-cap"}},
     }
     cfg = {"portfolio": {"sleeves": {"inverse_decay_bucket4": {"rules": {"hedge_cadence_policy": block}}}}}
     knobs, tilts, source = load_policy_from_config(cfg)
     assert source == "tr_vcr"
     assert knobs.h_mid == 0.50
-    assert knobs.cadence_signal_col == "cadence_score"
+    assert knobs.cadence_signal_col == "tr_est"
     assert "UVIX" in tilts and tilts["UVIX"].h_mult == 0.9
