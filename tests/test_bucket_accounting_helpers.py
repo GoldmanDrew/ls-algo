@@ -51,6 +51,7 @@ def test_classify_plan_leg_bucket_sleeve_then_delta() -> None:
     assert classify_plan_leg_bucket(sleeve="core_leveraged") == "b1"
     assert classify_plan_leg_bucket(sleeve="yieldboost") == "b2"
     assert classify_plan_leg_bucket(sleeve="inverse_decay_bucket4") == "b4"
+    assert classify_plan_leg_bucket(sleeve="volatility_etp_bucket5") == "b4"
     assert classify_plan_leg_bucket(sleeve=None, delta=2.0) == "b1"
     assert classify_plan_leg_bucket(sleeve=None, delta=0.5) == "b2"
     assert classify_plan_leg_bucket(sleeve=None, delta=-2.0) == "b4"

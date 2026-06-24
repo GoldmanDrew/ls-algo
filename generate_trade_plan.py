@@ -2288,6 +2288,7 @@ def main() -> None:
                 f"B2↔flow overlap (excluded from stock sleeve)={n_b2_flow_excluded}, "
                 f"B4↔flow overlap={n_b4_flow_excluded}"
             )
+        is_volatility_etp = _volatility_etp_rows_mask(eligible)
         eligible["in_b4"] = (
             negative_beta
             & inverse_shortable
@@ -2296,6 +2297,7 @@ def main() -> None:
             & b4_vol_ok
             & b4_not_excluded
             & ~in_flow_program
+            & ~is_volatility_etp
         )
         in_b4_volatility_etp = _in_b4_volatility_etp_sleeve_mask(
             eligible,

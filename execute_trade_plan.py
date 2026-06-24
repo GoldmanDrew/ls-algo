@@ -484,6 +484,9 @@ _PLAN_SLEEVE_TO_BUCKET: Dict[str, str] = {
     "core_leveraged": "b1",
     "yieldboost": "b2",
     "inverse_decay_bucket4": "b4",
+    # Bucket-5 VOL ETPs are sized separately in generate_trade_plan, but execution
+    # and current accounting order tags still use the B4 inverse-decay path.
+    "volatility_etp_bucket5": "b4",
 }
 
 

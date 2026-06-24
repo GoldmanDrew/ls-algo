@@ -418,7 +418,7 @@ def build_resize_trades(
             # the hard-to-relocate inverse inventory and manage delta via the
             # underlying leg instead. SELL (grow the short) is always allowed.
             _sleeve_name = str(row.get("sleeve", "") or "").strip().lower()
-            if _sleeve_name == "inverse_decay_bucket4" and e_dec.action == "BUY":
+            if _sleeve_name in {"inverse_decay_bucket4", "volatility_etp_bucket5"} and e_dec.action == "BUY":
                 e_dec.decision = "skip"
                 e_dec.action = None
                 e_dec.trade_usd = 0.0

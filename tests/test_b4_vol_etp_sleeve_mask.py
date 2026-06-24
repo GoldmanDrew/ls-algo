@@ -1,11 +1,11 @@
-"""Vol-B4 sleeve mask: volatility ETPs need not pass ``inverse_shortable``."""
+"""Vol bucket-5 sleeve mask: volatility ETPs need not pass ``inverse_shortable``."""
 
 import pandas as pd
 
 from generate_trade_plan import _in_b4_volatility_etp_sleeve_mask
 
 
-def test_vol_etp_b4_slice_true_when_inverse_shortable_false():
+def test_vol_etp_bucket5_slice_true_when_inverse_shortable_false():
     eligible = pd.DataFrame(
         {
             "ETF": ["UVIX"],
@@ -29,7 +29,7 @@ def test_vol_etp_b4_slice_true_when_inverse_shortable_false():
     assert bool(mask.iloc[0])
 
 
-def test_vol_etp_b4_slice_false_when_already_in_b4_core():
+def test_vol_etp_bucket5_slice_true_when_inverse_shortable_true_after_core_exclusion():
     eligible = pd.DataFrame(
         {
             "ETF": ["UVIX"],
@@ -48,6 +48,6 @@ def test_vol_etp_b4_slice_false_when_already_in_b4_core():
         b4_vol_ok=all_true,
         b4_not_excluded=all_true,
         in_flow_program=pd.Series(False, index=idx),
-        in_b4_core=pd.Series(True, index=idx),
+        in_b4_core=pd.Series(False, index=idx),
     )
-    assert not bool(mask.iloc[0])
+    assert bool(mask.iloc[0])

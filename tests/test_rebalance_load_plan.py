@@ -37,6 +37,10 @@ def plan_csv(tmp_path):
         {"strategy_tag": "ls", "sleeve": "inverse_decay_bucket4",
          "Underlying": "AAPL", "ETF": "AAPS",
          "long_usd": -3_000, "short_usd": -1_500, "purgatory": False},
+        # Bucket 5 VOL ETP: same inverse-decay execution shape, separate sizing sleeve.
+        {"strategy_tag": "ls", "sleeve": "volatility_etp_bucket5",
+         "Underlying": "VIX", "ETF": "UVIX",
+         "long_usd": -250, "short_usd": -250, "purgatory": False},
         # Purgatory row — must be excluded from BOTH hedgeable and resize.
         {"strategy_tag": "ls", "sleeve": "core_leveraged",
          "Underlying": "MSFT", "ETF": "MSFU",
@@ -86,7 +90,12 @@ class TestLoadPlanContract:
         # Stage A core invariant: Phase 2b sees B4 rows.
         _, _, resize = load_plan(plan_csv, "ls", flow_etfs={"GOOGS"})
         sleeves = set(resize["sleeve"])
-        assert sleeves == {"core_leveraged", "yieldboost", "inverse_decay_bucket4"}, (
+        assert sleeves == {
+            "core_leveraged",
+            "yieldboost",
+            "inverse_decay_bucket4",
+            "volatility_etp_bucket5",
+        }, (
             f"resize_df must include all three live sleeves; got {sleeves}"
         )
 

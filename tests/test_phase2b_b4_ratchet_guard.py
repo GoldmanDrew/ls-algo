@@ -44,6 +44,21 @@ def test_b4_inverse_cover_is_blocked():
     assert not any(t["leg_side"] == "short_etf" and t["action"] == "BUY" for t in trades)
 
 
+def test_bucket5_vol_etp_cover_is_blocked():
+    plan = _plan("volatility_etp_bucket5")
+    trades, decisions = build_resize_trades(
+        hedgeable_plan=plan,
+        strat_pos={"TSTZ": -8000.0, "TSTU": -3000.0},
+        prices={"TSTZ": 10.0, "TSTU": 10.0},
+        purgatory_etfs=set(), flow_etfs=set(), cfg=_cfg(),
+        target_basis="executable",
+    )
+    short_legs = [d for d in decisions if d.leg_side == "short_etf"]
+    assert short_legs and short_legs[0].decision == "skip"
+    assert "b4_ratchet_no_cover" in (short_legs[0].reason or "")
+    assert not any(t["leg_side"] == "short_etf" and t["action"] == "BUY" for t in trades)
+
+
 def test_b4_inverse_grow_is_allowed():
     # we are LESS short than target (-20k vs -50k) -> band wants to SELL (grow) the short
     plan = _plan("inverse_decay_bucket4")
