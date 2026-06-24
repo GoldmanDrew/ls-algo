@@ -947,7 +947,13 @@ def _build_hedge_cadence_engine(
 
         last = sig.dropna(subset=["vcr"]).tail(1) if (sig is not None and not sig.empty) else None
         if last is not None and len(last):
+            cadence_col = str(block.get("cadence_signal_col", getattr(knobs, "cadence_signal_col", "tr")) or "tr")
+            if cadence_col not in last:
+                cadence_col = "tr"
+            cadence_signal = float(last[cadence_col].iloc[-1]) if cadence_col in last else float("nan")
             tr = float(last["tr"].iloc[-1]) if "tr" in last else float("nan")
+            tr_est = float(last["tr_est"].iloc[-1]) if "tr_est" in last else float("nan")
+            cadence_score = float(last["cadence_score"].iloc[-1]) if "cadence_score" in last else float("nan")
             vcr = float(last["vcr"].iloc[-1])
             vm = float(last["vcr_med"].iloc[-1]) if "vcr_med" in last else float("nan")
             prev_h = None
@@ -955,9 +961,10 @@ def _build_hedge_cadence_engine(
                 hh = h_ser.dropna()
                 prev_h = float(hh.iloc[-2]) if len(hh) >= 2 else None
             pol = compute_pair_policy(
-                tr, vcr, vm, knobs=knobs, name_tilt=tilt,
+                cadence_signal, vcr, vm, knobs=knobs, name_tilt=tilt,
                 prev_h=prev_h, etf=etf_by_und.get(u, ""), underlying=u,
                 xsec_z=float(last["xsec_z"].iloc[-1]) if "xsec_z" in last else float("nan"),
+                cadence_signal_col=cadence_col,
             )
             h_explain = (
                 pol.h_explain
@@ -968,7 +975,11 @@ def _build_hedge_cadence_engine(
                 "interval_days": pol.interval_days,
                 "hedge_ratio": round(h_now, 4),
                 "hedge_ratio_model": hedge_model,
-                "tr": round(pol.tr, 4) if np.isfinite(pol.tr) else None,
+                "cadence_signal_col": cadence_col,
+                "cadence_signal": round(pol.cadence_signal, 4) if pol.cadence_signal is not None and np.isfinite(pol.cadence_signal) else None,
+                "tr": round(tr, 4) if np.isfinite(tr) else None,
+                "tr_est": round(tr_est, 4) if np.isfinite(tr_est) else None,
+                "cadence_score": round(cadence_score, 4) if np.isfinite(cadence_score) else None,
                 "vcr": round(pol.vcr, 5) if np.isfinite(pol.vcr) else None,
                 "vcr_med": round(pol.vcr_med, 5) if np.isfinite(pol.vcr_med) else None,
                 "interval_explain": pol.interval_explain,

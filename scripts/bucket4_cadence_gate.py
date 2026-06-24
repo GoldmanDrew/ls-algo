@@ -299,10 +299,22 @@ def resolve_due_pairs_for_rebalance(
                 row = sig.dropna(subset=["vcr"]).tail(1)
                 if len(row):
                     d = row.index[-1]
-                    tr = float(row["tr"].iloc[-1]) if "tr" in row else np.nan
+                    cadence_col = str(getattr(knobs, "cadence_signal_col", "tr") or "tr")
+                    if cadence_col not in row:
+                        cadence_col = "tr"
+                    tr = float(row[cadence_col].iloc[-1]) if cadence_col in row else np.nan
                     vcr = float(row["vcr"].iloc[-1])
                     vm = float(row["vcr_med"].iloc[-1]) if "vcr_med" in row else np.nan
-                    pol = compute_pair_policy(tr, vcr, vm, knobs=knobs, name_tilt=tilt, etf=etf, underlying=und)
+                    pol = compute_pair_policy(
+                        tr,
+                        vcr,
+                        vm,
+                        knobs=knobs,
+                        name_tilt=tilt,
+                        etf=etf,
+                        underlying=und,
+                        cadence_signal_col=cadence_col,
+                    )
                 else:
                     pol = compute_pair_policy(np.nan, np.nan, np.nan, knobs=knobs, name_tilt=tilt, etf=etf, underlying=und)
             else:
