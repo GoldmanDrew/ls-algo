@@ -211,7 +211,7 @@ execution:
 screener:
   # Authoritative net-edge soft-purgatory band (read by ``recompute_purgatory_by_bucket``).
   # With borrow OK, ``net_edge_p50_annual`` must exceed this to avoid purgatory.
-  purgatory_net_edge_max_annual: 0.05
+  purgatory_net_edge_max_annual: 0.06
   # No-locate purgatory: keep-open semantics (no new entry) for ETFs that the
   # daily IBKR FTP feed says we cannot short. ``exclude_no_shares`` fires when
   # ``shares_available < min_shares_available`` (default 10 sh; set explicitly below);
@@ -231,14 +231,14 @@ screener:
   #   entry_borrow_cap < borrow_current <= keep_borrow_cap
   per_bucket:
     bucket_1:
-      entry_borrow_cap: 0.50      # new B1 exposure when borrow cost <= this
-      keep_borrow_cap: 0.65       # keep-open purgatory band ends above this borrow cost
+      entry_borrow_cap: 0.35      # new B1 exposure when borrow cost <= this
+      keep_borrow_cap: 0.50       # keep-open purgatory band ends above this borrow cost
     bucket_2:
-      entry_borrow_cap: 0.25
-      keep_borrow_cap: 0.40
+      entry_borrow_cap: 0.15
+      keep_borrow_cap: 0.25
     bucket_4:
-      entry_borrow_cap: 0.90
-      keep_borrow_cap: 1.15
+      entry_borrow_cap: 0.7
+      keep_borrow_cap: 0.9
   min_delta_days: 30
   max_stale_days: 5             # drop ETFs with no trade in last N calendar days (delisted/liquidated)
   # Vol-ratio data-quality gate. ``vol_ratio_value = vol_etf / (|β| · vol_und)``;
@@ -374,11 +374,11 @@ portfolio:
         # With hysteresis OFF: require net_decay_annual >= min_net_decay_annual when min > 0.
         # With hysteresis ON: persist per-ETF sticky flag in core_leveraged_decay_state_json — enter
         # only when decay >= enter_above; once in, stay until decay < exit_below (enter_above > exit_below).
-        min_net_decay_annual: 0.06
+        min_net_decay_annual: 0.07
         net_decay_hysteresis:
           enabled: true
           enter_above: 0.12
-          exit_below: 0.08
+          exit_below: 0.07
       weighting:
         <<: *weighting_defaults
         # ``realized_trust_days`` is read only here (daily_screener.add_decay_columns
@@ -412,7 +412,7 @@ portfolio:
         <<: *weighting_defaults
         max_name_weight: 0.20
         eq_blend: 0.02
-        borrow_aversion: 0.6
+        borrow_aversion: 0.7
         score_concavity_p: 1
 
     inverse_decay_bucket4:
@@ -422,7 +422,7 @@ portfolio:
       # MINUS ``rules.excluded_etfs`` (per-name overrides like KOLD)
       # MINUS ``flow_program.universe.shorts`` (those are sized in the weekly flow sleeve).
       rules:
-        partial_hedge_ratio: 0.75      # 1.0 = fully hedge inverse beta exposure
+        partial_hedge_ratio: 1.0      # 1.0 = fully hedge inverse beta exposure
         # ------------------------------------------------------------------
         # Bucket 4 dynamic hedge + cadence engine (scripts/bucket4_hedge_cadence.py)
         # Disabled by default -> sizing falls back to decay_score weighting and the
@@ -504,9 +504,9 @@ portfolio:
           dd_hedge_bump: 0.10              # additive bump toward h_max when derisking
           state_json: data/b4_governor_state.json
         min_net_edge_annual: 0.35      # require bucket4_net_edge_annual >= this
-        min_underlying_vol: 0.4      # legacy single floor (fallback for entry/keep below)
-        min_underlying_vol_entry: 0.5  # NEW pairs need >= this annual underlying vol
-        min_underlying_vol_keep: 0.4   # held pairs may stay down to this; below -> freeze flag
+        min_underlying_vol: 0.45      # legacy single floor (fallback for entry/keep below)
+        min_underlying_vol_entry: 0.55  # NEW pairs need >= this annual underlying vol
+        min_underlying_vol_keep: 0.45   # held pairs may stay down to this; below -> freeze flag
         # Pair lifecycle demotion ladder (Phase 2 of the B4 optimization plan).
         # Driven by scripts/bucket4_pair_monitor.py (report-only metrics); state is
         # advanced by scripts/bucket4_pair_lifecycle.py and applied in
@@ -549,7 +549,7 @@ portfolio:
         <<: *weighting_defaults
         max_name_weight: 0.20        # raised with WS4 concentration (was 0.15)
         eq_blend: 0.05
-        borrow_aversion: .6
+        borrow_aversion: .75
         # B4 uses the same forward-looking underlying TR cross-sectional rank as B1:
         # lower forward TR/choppier underlyings receive more of the inverse decay sleeve.
         trend_percentile_multiplier:
