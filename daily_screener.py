@@ -172,7 +172,7 @@ leverage_pairs_leverageshares = [
     ("KEYG", "KEYS"), ("MCHG", "MCHP"), ("TELG", "TEL"),  ("TSEG", "TSEM"),
     # 2026-06-23 Leverage Shares Themes - 2X long daily (Cboe-listed)
     ("CDNG", "CDNS"), ("FOMG", "FORM"), ("ENTL", "ENTG"), ("FPSX", "FPS"),
-    ("ASTS", "ASTG"), ("GFSG", "GFS"),  ("HPEL", "HPE"),  ("MTSG", "MTSI"),
+    ("ASTG", "ASTS"), ("GFSG", "GFS"),  ("HPEL", "HPE"),  ("MTSG", "MTSI"),
     ("SMTG", "SMTC"),
 ]
 
