@@ -118,6 +118,52 @@ def test_compute_bucket_capital_snapshot_excludes_positions_outside_screened_uni
     assert snap["net_capital_bucket_2"] == pytest.approx(0.0)
 
 
+def test_compute_bucket_capital_snapshot_keeps_bucket5_from_pnl_symbol():
+    positions = pd.DataFrame(
+        [
+            {
+                "symbol": "UVIX",
+                "position": -25.0,
+                "markPrice": 40.0,
+                "fxRateToBase": 1.0,
+                "positionValue_base": -1000.0,
+            },
+            {
+                "symbol": "OUTSIDE",
+                "position": 100.0,
+                "markPrice": 10.0,
+                "fxRateToBase": 1.0,
+                "positionValue_base": 1000.0,
+            },
+        ]
+    )
+    pnl_symbol = pd.DataFrame(
+        [
+            {"symbol": "UVIX", "bucket": "bucket_5"},
+            {"symbol": "OUTSIDE", "bucket": "bucket_1"},
+        ]
+    )
+    screened = pd.DataFrame(
+        [
+            {
+                "ETF": "LETF",
+                "Underlying": "LETF_U",
+                "delta": 2.0,
+                "bucket": "bucket_1",
+                "maint_pct_long": 0.50,
+                "maint_pct_short": 0.60,
+            }
+        ]
+    )
+
+    snap = compute_bucket_capital_snapshot(positions, pnl_symbol, screened, pd.DataFrame())
+
+    assert snap["net_capital_bucket_5"] == pytest.approx(-1000.0)
+    assert snap["gross_capital_bucket_5"] == pytest.approx(1000.0)
+    assert snap["margin_req_bucket_5"] == pytest.approx(300.0)
+    assert snap["net_capital_bucket_1"] == pytest.approx(0.0)
+
+
 def test_compute_bucket_capital_snapshot_splits_spot_and_uses_maintenance_margin():
     positions = pd.DataFrame(
         [
@@ -320,7 +366,7 @@ def test_format_bucket_return_table_includes_return_metrics():
     b3_row = next(line for line in lines if "Bucket 3" in line)
     assert "n/a" in b3_row
     assert "n/a" not in b1_row
-    assert sum("Bucket" in line for line in lines) == 4
+    assert sum("Bucket" in line for line in lines) == 5
 
 
 def test_compute_average_bucket_capital_means_daily_history():
@@ -506,9 +552,10 @@ def test_read_bucket_pnl_from_run_uses_pnl_by_bucket_csv(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr("run_eod_pnl_email.RUNS_ROOT", tmp_path / "data" / "runs")
-    b1, b2, b3, b4 = read_bucket_pnl_from_run("2026-05-18")
+    b1, b2, b3, b4, b5 = read_bucket_pnl_from_run("2026-05-18")
     assert b1 == pytest.approx(25426.75)
     assert b2 == pytest.approx(28552.10)
+    assert b5 == pytest.approx(0.0)
 
 
 def test_format_top_underlying_net_exposure_uses_book_rollup():
@@ -574,28 +621,32 @@ def test_format_bucket_ytd_headline_lists_all_buckets():
             "bucket_2": 200.0,
             "bucket_3": 50.0,
             "bucket_4": -10.0,
+            "bucket_5": 7.0,
         }
     )
     assert "B1" in text
     assert "B2" in text
-    assert "Stock sleeves (B1+B2+B4): 290.00" in text
+    assert "B5" in text
+    assert "Stock sleeves (B1+B2+B4+B5): 297.00" in text
 
 
-def test_format_eod_subject_lists_four_buckets():
+def test_format_eod_subject_lists_all_buckets():
     bucket_pnl = {
         "bucket_1": 22752.45,
         "bucket_2": 73537.07,
         "bucket_3": 9439.03,
         "bucket_4": -3510.76,
+        "bucket_5": 125.0,
     }
     subject = format_eod_subject("2026-05-30", bucket_pnl, total_pnl=102217.79)
     assert "B1:" in subject
     assert "B2:" in subject
     assert "B3:" in subject
     assert "B4:" in subject
+    assert "B5:" in subject
     assert "Total:" in subject
     line = _format_subject_bucket_pnl_line(bucket_pnl, total_pnl=102217.79)
-    assert line.count("|") == 4
+    assert line.count("|") == 5
 
 
 def test_format_bucket_pnl_section_matches_headline_for_fixture_run():

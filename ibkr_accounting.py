@@ -2277,6 +2277,7 @@ _PLAN_SLEEVE_TO_BUCKET: dict[str, str] = {
     "core_leveraged": "b1",
     "yieldboost": "b2",
     "inverse_decay_bucket4": "b4",
+    "volatility_etp_bucket5": "b5",
 }
 
 
@@ -2327,6 +2328,38 @@ def _plan_row_bucket_key(
     if _plan_row_is_yieldboost(row):
         return "b2"
     return None
+
+
+def _load_bucket5_vol_etp_symbols(proposed_trades_csv: Path | None) -> tuple[set[str], set[str]]:
+    """Return (ETF symbols, underlying symbols) for the Bucket-5 volatility ETP sleeve."""
+    if proposed_trades_csv is None or not Path(proposed_trades_csv).exists():
+        return set(), set()
+    try:
+        plan = pd.read_csv(proposed_trades_csv)
+    except Exception:
+        return set(), set()
+    if plan.empty:
+        return set(), set()
+    cols = {c.lower(): c for c in plan.columns}
+    etf_col = cols.get("etf")
+    und_col = cols.get("underlying")
+    sleeve_col = cols.get("sleeve")
+    pc_cols = [cols[c] for c in ("product_class", "delta_product_class") if c in cols]
+    if etf_col is None:
+        return set(), set()
+    sleeve = plan[sleeve_col].astype(str).str.strip().str.lower() if sleeve_col else pd.Series("", index=plan.index)
+    mask = sleeve.eq("volatility_etp_bucket5")
+    for pc_col in pc_cols:
+        mask = mask | plan[pc_col].astype(str).str.strip().str.lower().eq("volatility_etp")
+    if "gross_target_usd" in plan.columns:
+        mask = mask & pd.to_numeric(plan["gross_target_usd"], errors="coerce").fillna(0.0).gt(0.0)
+    etfs = {canonical_symbol(x) for x in plan.loc[mask, etf_col].dropna().astype(str) if str(x).strip()}
+    unds = (
+        {canonical_symbol(x) for x in plan.loc[mask, und_col].dropna().astype(str) if str(x).strip()}
+        if und_col is not None
+        else set()
+    )
+    return etfs, unds
 
 
 def merge_plan_etf_metadata(
@@ -4575,6 +4608,12 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     b4_underlyings = (
         set(b4_registry["underlying"].astype(str).tolist()) if not b4_registry.empty else set()
     )
+    bucket5_etf_syms, bucket5_underlying_syms = _load_bucket5_vol_etp_symbols(proposed_trades_path)
+    if bucket5_etf_syms:
+        print(
+            f"[ACCOUNTING] volatility ETP bucket-5: {len(bucket5_etf_syms)} ETF symbol(s) "
+            f"(e.g. {', '.join(sorted(bucket5_etf_syms)[:8])})"
+        )
     b4_phr_by_etf = _build_b4_phr_by_etf(
         b4_registry,
         partial_hedge_ratio_default=b4_partial_hedge_ratio_default,
@@ -4613,6 +4652,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     b4_underlyings = (
         set(b4_registry["underlying"].astype(str).tolist()) if not b4_registry.empty else set()
     )
+    bucket5_etf_syms -= blocked_symbols
+    bucket5_underlying_syms -= blocked_symbols
 
     # Universe filter — whitelist approach.  A symbol can only appear
     # in PnL if it is a KNOWN part of our strategy universe:
@@ -6192,15 +6233,18 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     # - Spot positions split using lot ledger + unified spot ratios
     df["bucket"] = ""
     df["leg_class"] = ""
+    b5_etf = df["symbol"].isin(bucket5_etf_syms | bucket5_underlying_syms)
+    df.loc[b5_etf, "bucket"] = "bucket_5"
+    df.loc[b5_etf, "leg_class"] = "volatility_etp_bucket5"
     neg_etf = is_etf & (sym_beta < 0)
     neg_flow = neg_etf & df["symbol"].isin(flow_short_set)
-    neg_non_flow = neg_etf & (~df["symbol"].isin(flow_short_set))
+    neg_non_flow = neg_etf & (~df["symbol"].isin(flow_short_set)) & (df["bucket"] == "")
     df.loc[neg_flow, "bucket"] = "bucket_3"
     df.loc[neg_flow, "leg_class"] = "flow_inverse"
     df.loc[neg_non_flow, "bucket"] = "bucket_4"
     df.loc[neg_non_flow, "leg_class"] = "inverse_b4_etf"
-    df.loc[is_etf & df["symbol"].isin(b4_etf_syms), "bucket"] = "bucket_4"
-    df.loc[is_etf & df["symbol"].isin(b4_etf_syms), "leg_class"] = "inverse_b4_etf"
+    df.loc[is_etf & df["symbol"].isin(b4_etf_syms) & (df["bucket"] == ""), "bucket"] = "bucket_4"
+    df.loc[is_etf & df["symbol"].isin(b4_etf_syms) & (df["leg_class"] == ""), "leg_class"] = "inverse_b4_etf"
     # Flow-program low-β yieldBOOST shorts (0 < β ≤ 1.5, e.g. NVYY/TSYY) belong
     # to the flow program -> bucket_3 for P&L and exposure overlay.
     _flow_low_b3 = (
@@ -6475,8 +6519,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         .sort_values("total_pnl", ascending=False)
     )
 
-    # pnl_by_underlying: combined bucket_1 + bucket_2 + bucket_4 (stock sleeves)
-    df_b124 = df[df["bucket"].isin(["bucket_1", "bucket_2", "bucket_4"])]
+    # pnl_by_underlying: combined bucket_1 + bucket_2 + bucket_4 + bucket_5 (stock/structural sleeves)
+    df_b124 = df[df["bucket"].isin(["bucket_1", "bucket_2", "bucket_4", "bucket_5"])]
     _under_agg = df_b124.groupby("underlying", as_index=False)[base_cols].sum()
     _under_syms = (
         df_b124.groupby("underlying")["symbol"]
@@ -6554,6 +6598,23 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     else:
         pnl_bucket_4 = pd.DataFrame(columns=["underlying", "symbols"] + base_cols)
 
+    df_b5 = df[df["bucket"] == "bucket_5"]
+    if not df_b5.empty:
+        _b5_agg = df_b5.groupby("underlying", as_index=False)[base_cols].sum()
+        _b5_syms = (
+            df_b5.groupby("underlying")["symbol"]
+            .apply(lambda s: ", ".join(sorted(set(s.astype(str)))))
+            .reset_index()
+            .rename(columns={"symbol": "symbols"})
+        )
+        pnl_bucket_5 = (
+            _b5_agg.merge(_b5_syms, on="underlying")
+            [["underlying", "symbols"] + base_cols]
+            .sort_values("total_pnl", ascending=False)
+        )
+    else:
+        pnl_bucket_5 = pd.DataFrame(columns=["underlying", "symbols"] + base_cols)
+
     pnl_bucket_4_by_symbol = (
         df[df["bucket"] == "bucket_4"][["symbol", "underlying", "description"] + base_cols]
         .sort_values("total_pnl", ascending=False)
@@ -6609,6 +6670,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     pnl_bucket_2.to_csv(outdir / "pnl_bucket_2.csv", index=False)
     pnl_bucket_3.to_csv(outdir / "pnl_bucket_3.csv", index=False)
     pnl_bucket_4.to_csv(outdir / "pnl_bucket_4.csv", index=False)
+    pnl_bucket_5.to_csv(outdir / "pnl_bucket_5.csv", index=False)
     pnl_bucket_4_by_symbol.to_csv(outdir / "pnl_bucket_4_by_symbol.csv", index=False)
     pnl_bucket_4_by_pair.to_csv(outdir / "pnl_bucket_4_by_pair.csv", index=False)
     if not pnl_by_pair.empty:
@@ -6932,6 +6994,29 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 ~exposure_b4_detail_df["underlying"].astype(str).isin(blocked_underlyings)
             ].copy()
 
+    pos_b5 = pos[pos["symbol"].isin(bucket5_etf_syms | bucket5_underlying_syms)].copy()
+    pos_b5 = _filter_positions_blacklist(
+        pos_b5, blocked_symbols, blocked_underlyings, etf_to_under
+    )
+    if not pos_b5.empty:
+        pos_b5["delta"] = pos_b5["symbol"].map(etf_to_delta_map).fillna(1.0)
+        pos_b5["mv_base"] = pos_b5["position"] * pos_b5["delta"] * pos_b5["markPrice"] * pos_b5["fxRateToBase"]
+        pos_b5["gross_mv_base"] = pos_b5["mv_base"].abs()
+        pos_b5["overlay_type"] = "volatility_etp_bucket5"
+        exposure_b5_df = (
+            pos_b5.groupby(["symbol", "underlying", "overlay_type"], as_index=False)
+            .agg(
+                net_notional_usd=("mv_base", "sum"),
+                gross_notional_usd=("gross_mv_base", "sum"),
+                n_legs=("symbol", "nunique"),
+            )
+            .sort_values("net_notional_usd", ascending=False)
+        )
+    else:
+        exposure_b5_df = pd.DataFrame(
+            columns=["symbol", "underlying", "overlay_type", "net_notional_usd", "gross_notional_usd", "n_legs"]
+        )
+
     exposure_b1_df.to_csv(outdir / "net_exposure_bucket_1.csv", index=False)
     exposure_b2_df.to_csv(outdir / "net_exposure_bucket_2.csv", index=False)
     exposure_b1_full_df.to_csv(outdir / "net_exposure_bucket_1_full.csv", index=False)
@@ -7012,6 +7097,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         ].copy()
     exposure_b3_df.to_csv(outdir / "net_exposure_bucket_3.csv", index=False)
     exposure_b4_df.to_csv(outdir / "net_exposure_bucket_4.csv", index=False)
+    exposure_b5_df.to_csv(outdir / "net_exposure_bucket_5.csv", index=False)
 
     totals = {
         "run_date": run_date,
@@ -7044,6 +7130,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "gross_exposure_bucket_2": float(exposure_b2_df["gross_notional_usd"].sum()) if not exposure_b2_df.empty else 0.0,
         "net_exposure_bucket_3": float(exposure_b3_df["net_notional_usd"].sum()) if not exposure_b3_df.empty else 0.0,
         "gross_exposure_bucket_3": float(exposure_b3_df["gross_notional_usd"].sum()) if not exposure_b3_df.empty else 0.0,
+        "net_exposure_bucket_5": float(exposure_b5_df["net_notional_usd"].sum()) if not exposure_b5_df.empty else 0.0,
+        "gross_exposure_bucket_5": float(exposure_b5_df["gross_notional_usd"].sum()) if not exposure_b5_df.empty else 0.0,
         # Split attribution (b124 ratios) sums to book with b1+b2; pair CSV is separate.
         "net_exposure_bucket_4": float(exposure_b4_from_b124_df["net_notional_usd"].sum())
         if not exposure_b4_from_b124_df.empty
@@ -7104,7 +7192,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "exposure_reconciliation_tol_net_abs_usd": exposure_reconciliation_tol_net_abs_usd,
         "bucket_state_path": str(bucket_state_path),
         "bucket_realized_underlyings_from_trade_timing": int(len(_realized_ratio_from_trades)),
-        "pnl_underlying_scope": "bucket_1_2_4",
+        "pnl_underlying_scope": "bucket_1_2_4_5",
         "bucket4_pairs": int(len(b4_registry)),
         "excluded_underlyings_exposure": sorted(blocked_underlyings),
         "excluded_symbols_exposure": sorted(blocked_symbols),

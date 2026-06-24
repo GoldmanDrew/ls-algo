@@ -13,6 +13,7 @@ from execute_trade_plan import (
 )
 from ibkr_accounting import (
     _bucket_hint_from_order_reference,
+    _load_bucket5_vol_etp_symbols,
     _normalize_bucket_triple,
     bucket_weights_from_order_reference,
     normalize_plan_etf_ticker,
@@ -51,11 +52,48 @@ def test_classify_plan_leg_bucket_sleeve_then_delta() -> None:
     assert classify_plan_leg_bucket(sleeve="core_leveraged") == "b1"
     assert classify_plan_leg_bucket(sleeve="yieldboost") == "b2"
     assert classify_plan_leg_bucket(sleeve="inverse_decay_bucket4") == "b4"
-    assert classify_plan_leg_bucket(sleeve="volatility_etp_bucket5") == "b4"
+    assert classify_plan_leg_bucket(sleeve="volatility_etp_bucket5") == "b5"
     assert classify_plan_leg_bucket(sleeve=None, delta=2.0) == "b1"
     assert classify_plan_leg_bucket(sleeve=None, delta=0.5) == "b2"
     assert classify_plan_leg_bucket(sleeve=None, delta=-2.0) == "b4"
     assert classify_plan_leg_bucket(sleeve=None, delta=None, long_usd=-100.0) == "b4"
+
+
+def test_load_bucket5_vol_etp_symbols_filters_positive_targets(tmp_path) -> None:
+    path = tmp_path / "proposed_trades.csv"
+    pd.DataFrame(
+        [
+            {
+                "ETF": " UVIX ",
+                "Underlying": "VIX",
+                "sleeve": "volatility_etp_bucket5",
+                "gross_target_usd": 1000.0,
+            },
+            {
+                "ETF": "SVIX",
+                "Underlying": "SHORTVOL",
+                "sleeve": "volatility_etp_bucket5",
+                "gross_target_usd": 0.0,
+            },
+            {
+                "ETF": "QBTZ",
+                "Underlying": "QBTS",
+                "sleeve": "inverse_decay_bucket4",
+                "gross_target_usd": 1000.0,
+            },
+            {
+                "ETF": "VXX",
+                "Underlying": "VIX",
+                "product_class": "volatility_etp",
+                "gross_target_usd": 500.0,
+            },
+        ]
+    ).to_csv(path, index=False)
+
+    etfs, underlyings = _load_bucket5_vol_etp_symbols(path)
+
+    assert etfs == {"UVIX", "VXX"}
+    assert underlyings == {"VIX"}
 
 
 def test_resolve_ledger_full_replay_all_triggers() -> None:

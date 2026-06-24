@@ -73,6 +73,34 @@ def test_active_pairs_from_proposed_filters_positive_b4_and_dedupes(tmp_path):
     assert active.iloc[0]["etf"] == "QBTZ"
 
 
+def test_active_pairs_from_proposed_includes_positive_bucket5(tmp_path):
+    _write_proposed(
+        tmp_path,
+        "2026-06-22",
+        [
+            {
+                "ETF": "UVIX",
+                "Underlying": "VIX",
+                "sleeve": "volatility_etp_bucket5",
+                "gross_target_usd": 100.0,
+                "Delta": -1.0,
+                "und_trend_ratio_fwd_60d": 0.72,
+            },
+            {
+                "ETF": "SVIX",
+                "Underlying": "SHORTVOL",
+                "sleeve": "volatility_etp_bucket5",
+                "gross_target_usd": 0.0,
+                "Delta": -1.0,
+            },
+        ],
+    )
+    active = load_active_b4_pairs_from_proposed("2026-06-22", runs_root=tmp_path)
+    assert list(active["pair"]) == ["UVIX|VIX"]
+    assert active.iloc[0]["sleeve"] == "volatility_etp_bucket5"
+    assert active.iloc[0]["sizing_tr_fwd"] == pytest.approx(0.72)
+
+
 def test_leg_history_splits_pair_into_etf_and_underlying(tmp_path):
     _write_run(tmp_path, "2026-06-01", pair_pnl=1000.0, etf_pnl=700.0)
     _write_run(tmp_path, "2026-06-02", pair_pnl=1500.0, etf_pnl=900.0)
@@ -172,3 +200,6 @@ def test_chart_builder_writes_pdf_and_summary_for_active_proposed_pairs(tmp_path
     summary = pd.read_csv(csv)
     assert list(summary["pair"]) == ["QBTZ|QBTS"]
     assert "model_pair_pnl_cum" in summary.columns
+    assert "model_status" in summary.columns
+    assert "borrow_cost_cum" in summary.columns
+    assert "cagr" in summary.columns

@@ -484,9 +484,7 @@ _PLAN_SLEEVE_TO_BUCKET: Dict[str, str] = {
     "core_leveraged": "b1",
     "yieldboost": "b2",
     "inverse_decay_bucket4": "b4",
-    # Bucket-5 VOL ETPs are sized separately in generate_trade_plan, but execution
-    # and current accounting order tags still use the B4 inverse-decay path.
-    "volatility_etp_bucket5": "b4",
+    "volatility_etp_bucket5": "b5",
 }
 
 
@@ -495,7 +493,7 @@ def classify_plan_leg_bucket(
     delta: float | None = None,
     long_usd: float | None = None,
 ) -> str:
-    """Map a plan leg to ``b1`` / ``b2`` / ``b4`` for accounting attribution.
+    """Map a plan leg to ``b1`` / ``b2`` / ``b4`` / ``b5`` for accounting attribution.
 
     Prefers the explicit ``sleeve`` label, then the ETF ``Delta`` (beta) sign
     (<0 -> b4, >1.5 -> b1, else b2), then the signed ``long_usd`` (negative is
