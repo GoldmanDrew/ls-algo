@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.request import urlopen
 
 import matplotlib
 
@@ -27,6 +29,16 @@ if str(REPO) not in sys.path:
 
 DEFAULT_METRICS_CSV = REPO.parent / "Levered ETFs" / "etf-dashboard" / "data" / "etf_metrics_daily.csv"
 DEFAULT_VOL_SHAPE_JSON = REPO.parent / "Levered ETFs" / "etf-dashboard" / "data" / "vol_shape_history.json"
+DASHBOARD_DATA_DIRS = (
+    REPO.parent / "etf-dashboard" / "data",
+    REPO.parent / "Levered ETFs" / "etf-dashboard" / "data",
+)
+DASHBOARD_RAW_BASES = (
+    "https://raw.githubusercontent.com/GoldmanDrew/etf-dashboard/main/data",
+    "https://raw.githubusercontent.com/magis-capital-partners/etf-dashboard/main/data",
+)
+METRICS_FILENAMES = ("etf_metrics_daily.parquet", "etf_metrics_daily.csv")
+VOL_SHAPE_FILENAMES = ("vol_shape_history.json",)
 MODEL_START = "2025-10-07"
 SIGNAL_WINDOW = 45
 ACTIVE_B4_SLEEVES = frozenset({"inverse_decay_bucket4", "volatility_etp_bucket5"})
@@ -50,6 +62,209 @@ def _scalar_float(value: object, default: float = 0.0) -> float:
         return float(out)
     except Exception:
         return default
+
+
+@dataclass(frozen=True)
+class B4ModelInputPaths:
+    metrics: Path
+    vol_shape: Path | None
+    metrics_source: str
+    vol_shape_source: str
+    diagnostics: tuple[str, ...] = ()
+
+
+def _env_path(name: str) -> Path | None:
+    raw = os.environ.get(name, "").strip()
+    return Path(raw) if raw else None
+
+
+def _env_raw_bases() -> tuple[str, ...]:
+    raw = os.environ.get("EOD_B4_DASHBOARD_RAW_BASES", "").strip()
+    if not raw:
+        raw = os.environ.get("EOD_B4_DASHBOARD_RAW_BASE", "").strip()
+    if not raw:
+        return DASHBOARD_RAW_BASES
+    return tuple(x.strip().rstrip("/") for x in raw.split(";") if x.strip())
+
+
+def _allow_github_download() -> bool:
+    return os.environ.get("EOD_B4_ALLOW_GITHUB_DOWNLOAD", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    )
+
+
+def _copy_input_to_run(path: Path, out_dir: Path) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / path.name
+    if path.resolve() != dest.resolve():
+        shutil.copy2(path, dest)
+    return dest
+
+
+def _download_dashboard_file(
+    filename: str,
+    out_dir: Path,
+    *,
+    raw_bases: tuple[str, ...],
+    timeout_s: float = 45.0,
+) -> tuple[Path | None, str]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dest = out_dir / filename
+    errors: list[str] = []
+    for base in raw_bases:
+        url = f"{base.rstrip('/')}/{filename}"
+        try:
+            with urlopen(url, timeout=timeout_s) as resp, dest.open("wb") as fh:
+                shutil.copyfileobj(resp, fh)
+            if dest.stat().st_size > 0:
+                return dest, f"github:{url}"
+        except Exception as exc:  # noqa: BLE001 - diagnostics only
+            errors.append(f"{url}: {type(exc).__name__}: {exc}")
+            try:
+                if dest.exists() and dest.stat().st_size == 0:
+                    dest.unlink()
+            except OSError:
+                pass
+    return None, "; ".join(errors)
+
+
+def _candidate_dashboard_dirs(extra: tuple[Path, ...] = ()) -> tuple[Path, ...]:
+    seen: set[Path] = set()
+    out: list[Path] = []
+    for d in (*extra, *DASHBOARD_DATA_DIRS):
+        p = Path(d)
+        if p in seen:
+            continue
+        seen.add(p)
+        out.append(p)
+    return tuple(out)
+
+
+def _first_existing(base_dirs: tuple[Path, ...], filenames: tuple[str, ...]) -> Path | None:
+    for d in base_dirs:
+        for name in filenames:
+            p = d / name
+            if p.is_file():
+                return p
+    return None
+
+
+def resolve_b4_model_inputs(
+    run_date: str,
+    *,
+    runs_root: Path,
+    metrics_path: Path | None = None,
+    vol_shape_path: Path | None = None,
+    dashboard_data_dirs: tuple[Path, ...] = (),
+    allow_download: bool | None = None,
+    snapshot: bool = True,
+) -> B4ModelInputPaths:
+    """Resolve and optionally snapshot ETF-dashboard inputs for B4 chart backtests.
+
+    Priority:
+      1. run-local ``model_inputs`` snapshots,
+      2. explicit/env paths,
+      3. local sibling ``etf-dashboard`` checkouts,
+      4. GitHub raw download into the run-local snapshot directory.
+    """
+    run_input_dir = runs_root / run_date / "model_inputs"
+    diagnostics: list[str] = []
+    allow_download = _allow_github_download() if allow_download is None else bool(allow_download)
+
+    env_metrics = _env_path("EOD_B4_METRICS_CSV")
+    env_vol = _env_path("EOD_B4_VOL_SHAPE_JSON")
+    explicit_metrics = Path(metrics_path) if metrics_path is not None else env_metrics
+    explicit_vol = Path(vol_shape_path) if vol_shape_path is not None else env_vol
+
+    metric_files = METRICS_FILENAMES
+    run_metrics = _first_existing((run_input_dir,), metric_files)
+    metrics_source = ""
+    metrics = run_metrics
+    if metrics is not None:
+        metrics_source = f"run-local:{metrics}"
+    elif explicit_metrics is not None:
+        if explicit_metrics.is_file():
+            metrics = _copy_input_to_run(explicit_metrics, run_input_dir) if snapshot else explicit_metrics
+            metrics_source = f"explicit:{explicit_metrics}"
+        else:
+            metrics = explicit_metrics
+            metrics_source = f"missing-explicit:{explicit_metrics}"
+            diagnostics.append(f"explicit metrics path missing: {explicit_metrics}")
+    else:
+        local = _first_existing(_candidate_dashboard_dirs(dashboard_data_dirs), metric_files)
+        if local is not None:
+            metrics = _copy_input_to_run(local, run_input_dir) if snapshot else local
+            metrics_source = f"local-dashboard:{local}"
+        elif allow_download:
+            downloaded, source = _download_dashboard_file(
+                "etf_metrics_daily.parquet",
+                run_input_dir,
+                raw_bases=_env_raw_bases(),
+            )
+            if downloaded is None:
+                downloaded, source = _download_dashboard_file(
+                    "etf_metrics_daily.csv",
+                    run_input_dir,
+                    raw_bases=_env_raw_bases(),
+                    timeout_s=120.0,
+                )
+            if downloaded is not None:
+                metrics = downloaded
+                metrics_source = source
+            else:
+                metrics = run_input_dir / "etf_metrics_daily.parquet"
+                metrics_source = f"download_failed:{source}"
+                diagnostics.append(f"metrics download failed: {source}")
+        else:
+            metrics = run_input_dir / "etf_metrics_daily.parquet"
+            metrics_source = "unresolved"
+            diagnostics.append("metrics unresolved and GitHub download disabled")
+
+    run_vol = _first_existing((run_input_dir,), VOL_SHAPE_FILENAMES)
+    vol_source = ""
+    vol_shape = run_vol
+    if vol_shape is not None:
+        vol_source = f"run-local:{vol_shape}"
+    elif explicit_vol is not None:
+        if explicit_vol.is_file():
+            vol_shape = _copy_input_to_run(explicit_vol, run_input_dir) if snapshot else explicit_vol
+            vol_source = f"explicit:{explicit_vol}"
+        else:
+            vol_shape = explicit_vol
+            vol_source = f"missing-explicit:{explicit_vol}"
+            diagnostics.append(f"explicit vol-shape path missing: {explicit_vol}")
+    else:
+        local_vol = _first_existing(_candidate_dashboard_dirs(dashboard_data_dirs), VOL_SHAPE_FILENAMES)
+        if local_vol is not None:
+            vol_shape = _copy_input_to_run(local_vol, run_input_dir) if snapshot else local_vol
+            vol_source = f"local-dashboard:{local_vol}"
+        elif allow_download:
+            downloaded, source = _download_dashboard_file(
+                "vol_shape_history.json",
+                run_input_dir,
+                raw_bases=_env_raw_bases(),
+            )
+            if downloaded is not None:
+                vol_shape = downloaded
+                vol_source = source
+            else:
+                vol_shape = None
+                vol_source = f"download_failed:{source}"
+                diagnostics.append(f"vol-shape download failed: {source}")
+        else:
+            vol_shape = None
+            vol_source = "unresolved"
+            diagnostics.append("vol-shape unresolved and GitHub download disabled")
+
+    return B4ModelInputPaths(
+        metrics=Path(metrics),
+        vol_shape=Path(vol_shape) if vol_shape is not None else None,
+        metrics_source=metrics_source,
+        vol_shape_source=vol_source,
+        diagnostics=tuple(diagnostics),
+    )
 
 
 def _has_conflict_markers(path: Path) -> bool:
@@ -316,6 +531,9 @@ class ModelPairResult:
     metrics_last_date: pd.Timestamp | None
     price_rows: int
     config_tag: str
+    metrics_source: str = ""
+    vol_shape_source: str = ""
+    diagnostics: str = ""
 
 
 @dataclass(frozen=True)
@@ -409,6 +627,28 @@ def _build_prices_flexible(metrics: pd.DataFrame, etf: str, start: pd.Timestamp)
     return prices, "ok", int(len(prices))
 
 
+def _load_metrics_filtered_any(path: Path, tickers: set[str]) -> pd.DataFrame:
+    usecols = ["date", "ticker", "close_price", "nav", "etf_adj_close", "underlying_adj_close"]
+    path = Path(path)
+    if path.suffix.lower() == ".parquet":
+        df = pd.read_parquet(path, columns=usecols)
+        df["ticker"] = df["ticker"].map(_norm)
+        df = df[df["ticker"].isin({_norm(t) for t in tickers})].copy()
+    else:
+        from scripts.bucket4_phase345_backtest import load_metrics_filtered
+
+        df = load_metrics_filtered(path, {_norm(t) for t in tickers})
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    for c in ("close_price", "nav", "etf_adj_close", "underlying_adj_close"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    if "etf_px" not in df.columns:
+        etf = df["etf_adj_close"].where(df["etf_adj_close"] > 0)
+        etf = etf.fillna(df["close_price"].where(df["close_price"] > 0))
+        etf = etf.fillna(df["nav"].where(df["nav"] > 0))
+        df["etf_px"] = etf
+    return df
+
+
 def _add_backtest_derived_columns(bt: pd.DataFrame, initial_capital: float) -> pd.DataFrame:
     out = bt.copy()
     out["a_mv"] = out["a_shares"].astype(float) * out["a_px"].astype(float)
@@ -467,6 +707,9 @@ def build_model_pair_results(
     metrics_csv: Path | None,
     vol_shape_json: Path | None,
     start: str,
+    metrics_source: str = "",
+    vol_shape_source: str = "",
+    diagnostics: tuple[str, ...] = (),
 ) -> tuple[dict[str, ModelPairResult], str]:
     """Run config-exact model backtests for active pairs with per-pair diagnostics."""
     if active_pairs.empty:
@@ -474,7 +717,6 @@ def build_model_pair_results(
     try:
         from scripts.bucket4_dynamic_bt import run_bucket4_backtest_dynamic_h
         from scripts.bucket4_hedge_cadence import build_h_series, build_rebal_dates, build_xsec_z_panel
-        from scripts.bucket4_phase345_backtest import load_metrics_filtered
         from scripts.bucket4_vol_shape_signals import get_pair_signal, load_vol_shape_history
     except Exception:
         return _empty_model_results()
@@ -498,10 +740,13 @@ def build_model_pair_results(
             metrics_last_date=last,
             price_rows=int(nrows),
             config_tag=cfg.tag,
+            metrics_source=metrics_source,
+            vol_shape_source=vol_shape_source,
+            diagnostics=" | ".join(diagnostics),
         )
 
     metrics_csv = _resolve_model_path(Path(metrics_csv) if metrics_csv is not None else DEFAULT_METRICS_CSV, "EOD_B4_METRICS_CSV")
-    vol_shape_json = _resolve_model_path(Path(vol_shape_json) if vol_shape_json is not None else DEFAULT_VOL_SHAPE_JSON, "EOD_B4_VOL_SHAPE_JSON")
+    vol_shape_json = Path(vol_shape_json) if vol_shape_json is not None else None
     if not metrics_csv.is_file():
         return {
             str(r["pair"]): _status_result(r, "missing_metrics_file", str(metrics_csv))
@@ -509,10 +754,10 @@ def build_model_pair_results(
         }, cfg.tag
 
     try:
-        metrics = load_metrics_filtered(metrics_csv, set(active_pairs["etf"].astype(str)))
+        metrics = _load_metrics_filtered_any(metrics_csv, set(active_pairs["etf"].astype(str)))
         metrics["ticker"] = metrics["ticker"].astype(str).map(_norm)
         metrics["date"] = pd.to_datetime(metrics["date"], errors="coerce")
-        vs_hist = load_vol_shape_history(vol_shape_json) if vol_shape_json.is_file() else {}
+        vs_hist = load_vol_shape_history(vol_shape_json) if vol_shape_json is not None and vol_shape_json.is_file() else {}
     except Exception as exc:
         return {
             str(r["pair"]): _status_result(r, "metrics_load_failed", f"{type(exc).__name__}: {exc}")
@@ -624,6 +869,9 @@ def build_model_pair_results(
                 metrics_last_date=last_dt,
                 price_rows=int(len(prices)),
                 config_tag=cfg.tag,
+                metrics_source=metrics_source,
+                vol_shape_source=vol_shape_source,
+                diagnostics=" | ".join(diagnostics),
             )
         except Exception as exc:
             out[pair] = _status_result(
@@ -683,8 +931,16 @@ def _plot_pair_page(
     model_tag: str,
 ) -> dict:
     etf, und, pair = str(row["etf"]), str(row["underlying"]), str(row["pair"])
-    pair_hist = hist[hist["pair"].eq(pair)].sort_values("date")
-    pair_book = book_h[book_h["pair"].eq(pair)].sort_values("date") if not book_h.empty else pd.DataFrame()
+    pair_hist = (
+        hist[hist["pair"].eq(pair)].sort_values("date")
+        if not hist.empty and "pair" in hist.columns
+        else pd.DataFrame()
+    )
+    pair_book = (
+        book_h[book_h["pair"].eq(pair)].sort_values("date")
+        if not book_h.empty and "pair" in book_h.columns
+        else pd.DataFrame()
+    )
     pair_trades = trades[trades["pair"].eq(pair)].copy() if not trades.empty else pd.DataFrame()
     etf_trade_dates = (
         pair_trades.loc[pair_trades["marker_type"].eq("actual_etf_trade"), "date"].drop_duplicates()
@@ -844,6 +1100,9 @@ def _plot_pair_page(
         "model_status": model.status if model is not None else "missing",
         "model_missing_reason": model.missing_reason if model is not None else "",
         "model_config": model.config_tag if model is not None else model_tag,
+        "metrics_source": model.metrics_source if model is not None else "",
+        "vol_shape_source": model.vol_shape_source if model is not None else "",
+        "model_input_diagnostics": model.diagnostics if model is not None else "",
         "signal_source": model.signal_source if model is not None else "",
         "metrics_first_date": model.metrics_first_date if model is not None else None,
         "metrics_last_date": model.metrics_last_date if model is not None else None,
@@ -874,8 +1133,8 @@ def make_b4_pair_pnl_hedge_chart(
     *,
     runs_root: Path,
     out_dir: Path,
-    metrics_csv: Path | None = DEFAULT_METRICS_CSV,
-    vol_shape_json: Path | None = DEFAULT_VOL_SHAPE_JSON,
+    metrics_csv: Path | None = None,
+    vol_shape_json: Path | None = None,
     max_pairs: int = 0,
 ) -> tuple[Path | None, Path | None]:
     """Build the multipage per-pair PDF and companion summary CSV."""
@@ -913,11 +1172,28 @@ def _make_chart_inner(
     hist = load_b4_pair_leg_history(runs_root)
     book_h = load_book_h_history(runs_root)
     trades = load_actual_trade_markers(runs_root, active)
+    model_inputs = resolve_b4_model_inputs(
+        run_date,
+        runs_root=runs_root,
+        metrics_path=metrics_csv,
+        vol_shape_path=vol_shape_json,
+    )
+    if model_inputs.diagnostics:
+        print("[B4-pair-charts] model input diagnostics: " + " | ".join(model_inputs.diagnostics))
+    print(
+        "[B4-pair-charts] model inputs: "
+        f"metrics={model_inputs.metrics.name} ({model_inputs.metrics_source}); "
+        f"vol_shape={model_inputs.vol_shape.name if model_inputs.vol_shape is not None else 'none'} "
+        f"({model_inputs.vol_shape_source})"
+    )
     model_results, model_tag = build_model_pair_results(
         active,
-        metrics_csv=metrics_csv,
-        vol_shape_json=vol_shape_json,
+        metrics_csv=model_inputs.metrics,
+        vol_shape_json=model_inputs.vol_shape,
         start=MODEL_START,
+        metrics_source=model_inputs.metrics_source,
+        vol_shape_source=model_inputs.vol_shape_source,
+        diagnostics=model_inputs.diagnostics,
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)

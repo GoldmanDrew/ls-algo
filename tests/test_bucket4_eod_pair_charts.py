@@ -10,6 +10,7 @@ from scripts.bucket4_eod_pair_charts import (
     load_b4_pair_leg_history,
     load_pair_gross_and_realized_h,
     make_b4_pair_pnl_hedge_chart,
+    resolve_b4_model_inputs,
 )
 
 
@@ -151,6 +152,55 @@ def test_actual_trade_markers_map_etf_and_shared_underlying(tmp_path):
     assert set(shared["pair"]) == {"QBTZ|QBTS", "ABCZ|QBTS"}
 
 
+def test_resolve_b4_model_inputs_snapshots_local_dashboard_data(tmp_path, monkeypatch):
+    monkeypatch.delenv("EOD_B4_METRICS_CSV", raising=False)
+    monkeypatch.delenv("EOD_B4_VOL_SHAPE_JSON", raising=False)
+    dash = tmp_path / "dashboard" / "data"
+    dash.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "date": "2026-01-02",
+                "ticker": "QBTZ",
+                "close_price": 10.0,
+                "nav": 10.0,
+                "etf_adj_close": 10.0,
+                "underlying_adj_close": 20.0,
+            }
+        ]
+    ).to_csv(dash / "etf_metrics_daily.csv", index=False)
+    (dash / "vol_shape_history.json").write_text("{}", encoding="utf-8")
+
+    resolved = resolve_b4_model_inputs(
+        "2026-06-22",
+        runs_root=tmp_path / "runs",
+        dashboard_data_dirs=(dash,),
+        allow_download=False,
+    )
+
+    assert resolved.metrics == tmp_path / "runs" / "2026-06-22" / "model_inputs" / "etf_metrics_daily.csv"
+    assert resolved.metrics.exists()
+    assert resolved.vol_shape == tmp_path / "runs" / "2026-06-22" / "model_inputs" / "vol_shape_history.json"
+    assert resolved.vol_shape.exists()
+    assert resolved.metrics_source.startswith("local-dashboard:")
+    assert resolved.vol_shape_source.startswith("local-dashboard:")
+
+
+def test_resolve_b4_model_inputs_preserves_missing_explicit_path(tmp_path, monkeypatch):
+    monkeypatch.delenv("EOD_B4_METRICS_CSV", raising=False)
+    missing = tmp_path / "missing_metrics.csv"
+    resolved = resolve_b4_model_inputs(
+        "2026-06-22",
+        runs_root=tmp_path / "runs",
+        metrics_path=missing,
+        dashboard_data_dirs=(tmp_path / "empty",),
+        allow_download=False,
+    )
+    assert resolved.metrics == missing
+    assert resolved.metrics_source.startswith("missing-explicit:")
+    assert "explicit metrics path missing" in " | ".join(resolved.diagnostics)
+
+
 def test_chart_builder_fails_soft_on_conflicted_proposed_trades(tmp_path):
     run = tmp_path / "2026-06-01"
     run.mkdir(parents=True)
@@ -203,3 +253,5 @@ def test_chart_builder_writes_pdf_and_summary_for_active_proposed_pairs(tmp_path
     assert "model_status" in summary.columns
     assert "borrow_cost_cum" in summary.columns
     assert "cagr" in summary.columns
+    assert "metrics_source" in summary.columns
+    assert "vol_shape_source" in summary.columns
