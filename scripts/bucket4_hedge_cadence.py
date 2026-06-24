@@ -73,6 +73,7 @@ class HedgeCadenceKnobs:
     # ranked across the B4 underlying universe (see build_xsec_z_panel).
     k_z: float = 0.0
     # --- cadence (continuous TR/VCR) ---
+    cadence_signal_col: str = "tr"
     base_days: float = 10.0
     k_tr: float = 2.25
     m_vcr: float = 2.5                       # mean-best A7 cadence sensitivity
@@ -90,6 +91,7 @@ class HedgeCadenceKnobs:
             h_max=float(b.get("h_max", d.h_max)),
             alpha=float(b.get("alpha", d.alpha)),
             k_z=float(b.get("k_z", d.k_z)),
+            cadence_signal_col=str(b.get("cadence_signal_col", d.cadence_signal_col) or d.cadence_signal_col),
             base_days=float(b.get("base_days", d.base_days)),
             k_tr=float(b.get("k_tr", d.k_tr)),
             m_vcr=float(b.get("m_vcr", d.m_vcr)),
@@ -150,6 +152,8 @@ class PairPolicy:
     interval_days: int
     interval_raw: float
     denom: float
+    cadence_signal_col: str = "tr"
+    cadence_signal: float | None = None
     # provenance
     tilt_note: str = ""
     h_explain: str = ""
@@ -160,6 +164,12 @@ class PairPolicy:
             "ETF": self.etf,
             "Underlying": self.underlying,
             "tr": round(self.tr, 4) if np.isfinite(self.tr) else np.nan,
+            "cadence_signal_col": self.cadence_signal_col,
+            "cadence_signal": (
+                round(float(self.cadence_signal), 4)
+                if self.cadence_signal is not None and np.isfinite(float(self.cadence_signal))
+                else np.nan
+            ),
             "vcr": round(self.vcr, 5) if np.isfinite(self.vcr) else np.nan,
             "vcr_med": round(self.vcr_med, 5) if np.isfinite(self.vcr_med) else np.nan,
             "hedge_ratio": round(self.h, 4),
@@ -191,6 +201,7 @@ def compute_pair_policy(
     etf: str = "",
     underlying: str = "",
     xsec_z: float = float("nan"),
+    cadence_signal_col: str = "tr",
 ) -> PairPolicy:
     """Closed-form hedge ratio + rebalance interval for one pair on one day.
 
@@ -248,7 +259,10 @@ def compute_pair_policy(
     denom_terms = ["1"]
     if np.isfinite(t):
         denom += knobs.k_tr * (t - 1.0)
-        denom_terms.append(f"k_tr({knobs.k_tr:.2f})*(TR({t:.3f})-1)={knobs.k_tr*(t-1.0):+.4f}")
+        sig_label = str(cadence_signal_col or "tr")
+        denom_terms.append(
+            f"k_tr({knobs.k_tr:.2f})*({sig_label}({t:.3f})-1)={knobs.k_tr*(t-1.0):+.4f}"
+        )
     if np.isfinite(v) and np.isfinite(vm):
         denom += knobs.m_vcr * (v - vm)
         denom_terms.append(f"m_vcr({knobs.m_vcr:.2f})*(VCR-VCR_med)={knobs.m_vcr*(v-vm):+.4f}")
@@ -282,6 +296,8 @@ def compute_pair_policy(
         interval_days=int(interval_days),
         interval_raw=float(interval_raw),
         denom=float(denom),
+        cadence_signal_col=str(cadence_signal_col or "tr"),
+        cadence_signal=float(t) if np.isfinite(t) else None,
         tilt_note=tilt.note,
         h_explain=h_explain,
         interval_explain=interval_explain,
@@ -302,7 +318,12 @@ def build_h_series(
     cal = pd.DatetimeIndex(calendar).sort_values()
     if len(cal) == 0:
         return pd.Series(dtype=float)
-    tr = signal.get("tr") if signal is not None else None
+    cadence_col = str(getattr(knobs, "cadence_signal_col", "tr") or "tr")
+    if signal is not None and cadence_col in signal:
+        tr = signal.get(cadence_col)
+    else:
+        cadence_col = "tr"
+        tr = signal.get("tr") if signal is not None else None
     vcr = signal.get("vcr") if signal is not None else None
     vm = signal.get("vcr_med") if signal is not None else None
     zx = signal.get("xsec_z") if signal is not None else None
@@ -317,6 +338,7 @@ def build_h_series(
             name_tilt=name_tilt,
             prev_h=prev_h,
             xsec_z=float(zx.get(d, np.nan)) if zx is not None else np.nan,
+            cadence_signal_col=cadence_col,
         )
         out.loc[d] = pol.h
         prev_h = pol.h
@@ -341,7 +363,12 @@ def build_rebal_dates(
         cal = cal[int(warmup_bdays):]
     if len(cal) == 0:
         return pd.DatetimeIndex([]), pd.DataFrame()
-    tr = signal.get("tr") if signal is not None else None
+    cadence_col = str(getattr(knobs, "cadence_signal_col", "tr") or "tr")
+    if signal is not None and cadence_col in signal:
+        tr = signal.get(cadence_col)
+    else:
+        cadence_col = "tr"
+        tr = signal.get("tr") if signal is not None else None
     vcr = signal.get("vcr") if signal is not None else None
     vm = signal.get("vcr_med") if signal is not None else None
     dates: list[pd.Timestamp] = []
@@ -356,9 +383,21 @@ def build_rebal_dates(
             float(vm.get(d, np.nan)) if vm is not None else np.nan,
             knobs=knobs,
             name_tilt=name_tilt,
+            cadence_signal_col=cadence_col,
         )
         diag.append({
-            "date": d, "tr": pol.tr, "vcr": pol.vcr, "vcr_med": pol.vcr_med,
+            "date": d,
+            "cadence_signal_col": cadence_col,
+            "cadence_signal": pol.cadence_signal,
+            "tr": float(signal.get("tr").get(d, np.nan)) if signal is not None and "tr" in signal else np.nan,
+            "tr_est": float(signal.get("tr_est").get(d, np.nan)) if signal is not None and "tr_est" in signal else np.nan,
+            "cadence_score": (
+                float(signal.get("cadence_score").get(d, np.nan))
+                if signal is not None and "cadence_score" in signal
+                else np.nan
+            ),
+            "vcr": pol.vcr,
+            "vcr_med": pol.vcr_med,
             "interval_days": pol.interval_days, "interval_explain": pol.interval_explain,
         })
         i += max(1, pol.interval_days)
@@ -684,14 +723,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             row = sig.dropna(subset=["vcr"]).tail(1)
             if len(row):
                 d = row.index[-1]
-                tr = float(row["tr"].iloc[-1]) if "tr" in row else np.nan
+                cadence_col = str(getattr(knobs, "cadence_signal_col", "tr") or "tr")
+                if cadence_col not in row:
+                    cadence_col = "tr"
+                tr = float(row[cadence_col].iloc[-1]) if cadence_col in row else np.nan
                 vcr = float(row["vcr"].iloc[-1])
                 vm = float(row["vcr_med"].iloc[-1]) if "vcr_med" in row else np.nan
                 # prev_h from one EMA step behind (build full series, take penultimate)
                 hser = build_h_series(sig, pd.DatetimeIndex(sig.index), knobs=knobs, name_tilt=tilt).dropna()
                 prev_h = float(hser.iloc[-2]) if len(hser) >= 2 else None
                 pol = compute_pair_policy(tr, vcr, vm, knobs=knobs, name_tilt=tilt,
-                                          prev_h=prev_h, etf=etf, underlying=und)
+                                          prev_h=prev_h, etf=etf, underlying=und,
+                                          cadence_signal_col=cadence_col)
             else:
                 pol = compute_pair_policy(np.nan, np.nan, np.nan, knobs=knobs, name_tilt=tilt,
                                           etf=etf, underlying=und)

@@ -160,14 +160,43 @@ def test_build_rebal_dates_steps_by_interval():
     assert gaps.min() >= 1
 
 
+def test_build_rebal_dates_can_use_cadence_score_column():
+    k = HedgeCadenceKnobs(
+        cadence_signal_col="cadence_score",
+        base_days=6.0,
+        k_tr=2.25,
+        m_vcr=0.0,
+        max_interval=10,
+    )
+    idx = pd.date_range("2026-01-01", periods=20, freq="B")
+    sig = pd.DataFrame(
+        {
+            "tr": 0.80,
+            "tr_est": 0.90,
+            "cadence_score": 1.30,
+            "vcr": 0.05,
+            "vcr_med": 0.05,
+        },
+        index=idx,
+    )
+    dates, diag = build_rebal_dates(sig, idx, knobs=k)
+    assert len(dates) > 0
+    assert diag["cadence_signal_col"].iloc[0] == "cadence_score"
+    assert diag["cadence_signal"].iloc[0] == pytest.approx(1.30)
+    assert "cadence_score" in diag["interval_explain"].iloc[0]
+    assert int(diag["interval_days"].iloc[0]) < 6
+
+
 def test_load_name_tilts_and_config():
     block = {
         "source": "tr_vcr",
         "h_mid": 0.50,
+        "cadence_signal_col": "cadence_score",
         "name_tilt": {"UVIX": {"h_mult": 0.9, "note": "tail-cap"}},
     }
     cfg = {"portfolio": {"sleeves": {"inverse_decay_bucket4": {"rules": {"hedge_cadence_policy": block}}}}}
     knobs, tilts, source = load_policy_from_config(cfg)
     assert source == "tr_vcr"
     assert knobs.h_mid == 0.50
+    assert knobs.cadence_signal_col == "cadence_score"
     assert "UVIX" in tilts and tilts["UVIX"].h_mult == 0.9

@@ -388,13 +388,12 @@ portfolio:
         eq_blend: 0.0                 # v16 selected: pure score weight
         borrow_aversion: 0.25         # v16 selected B1 borrow aversion
         score_concavity_p: 2.0        # v16 selected B1 score shape
-        # B1 trend sizing uses raw TR and computes a same-day cross-sectional rank.
-        # To experiment with the persistence-adjusted estimator, change this to
-        # und_trend_ratio_fwd_60d. Do not point this at und_trend_ratio_60d_pctile;
-        # that column is a historical diagnostic.
+        # B1 trend sizing uses the persistence-adjusted, forward-looking TR proxy
+        # and computes a same-day cross-sectional rank. Do not point this at
+        # und_trend_ratio_60d_pctile; that column is a historical diagnostic.
         trend_percentile_multiplier:
           enabled: true
-          column: und_trend_ratio_60d
+          column: und_trend_ratio_fwd_60d
           percentile_mode: cross_sectional
           alpha: 1.0                  # xsec pctile 0.10 -> 1.40x; xsec pctile 0.90 -> 0.60x before clipping
           neutral_pctile: 0.50
@@ -475,7 +474,8 @@ portfolio:
             # 16.4% vs 13.5% (v8), median 11.0% vs 8.1%, better in BOTH halves,
             # vol/DD unchanged; broad plateau k_z 0.10-0.60. 0 = off (pure v8).
             k_z: 0.20
-            # --- cadence: days = clip(round(base_days / (1 + k_tr*(TR-1) + m_vcr*(VCR-VCR_med))), min, max)
+            # --- cadence: days = clip(round(base_days / (1 + k_tr*(cadence_signal-1) + m_vcr*(VCR-VCR_med))), min, max)
+            cadence_signal_col: cadence_score # cadence-specific forward-looking TR regime score
             base_days: 12.0                 # full theta-grid under v7 hedge: (2.25,2.5,12) EW mean 5.9%
                                             # vs 3.3% at 10, same vol/DD (b4_param_scorecard.csv 2026-06-10)
             k_tr: 2.25
@@ -550,6 +550,17 @@ portfolio:
         max_name_weight: 0.20        # raised with WS4 concentration (was 0.15)
         eq_blend: 0.05
         borrow_aversion: .6
+        # B4 uses the same forward-looking underlying TR cross-sectional rank as B1:
+        # lower forward TR/choppier underlyings receive more of the inverse decay sleeve.
+        trend_percentile_multiplier:
+          enabled: true
+          column: und_trend_ratio_fwd_60d
+          percentile_mode: cross_sectional
+          alpha: 1.0
+          neutral_pctile: 0.50
+          floor: 0.50
+          ceiling: 1.50
+          missing: neutral
     flow_program:
       rules:
         hard_borrow_cap: 0.30        # weekly flow adds only when borrow <= 30% and net_edge_p50 > 0
