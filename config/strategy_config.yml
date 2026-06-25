@@ -321,7 +321,7 @@ portfolio:
         max_name_weight: 0.09         # align with per-sleeve pair cap
         eq_blend: 0.0                 # v16 selected: pure score weight
         borrow_aversion: 0.25         # v16 selected B1 borrow aversion
-        score_concavity_p: 1.5        # flatten top tail vs 2.0 (less B1 concentration)
+        score_concavity_p: 1.75       # flatten top tail vs 2.0 (less B1 concentration)
         # B1 trend sizing uses the persistence-adjusted, forward-looking TR proxy
         # and computes a same-day cross-sectional rank. Do not point this at
         # und_trend_ratio_60d_pctile; that column is a historical diagnostic.

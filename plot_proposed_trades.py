@@ -692,7 +692,7 @@ def plot_allocation(ax: plt.Axes, df: pd.DataFrame, title: str, *, bucket4: bool
                 facecolor="none",
                 edgecolor="#1b5e20",
                 hatch="xxx",
-                label="Proxy optimal (IBKR locate≈0; scaled†)",
+                label="Locate≈0 proxy†",
             )
         )
     if n_purg > 0:
@@ -701,38 +701,26 @@ def plot_allocation(ax: plt.Axes, df: pd.DataFrame, title: str, *, bucket4: bool
                 facecolor="none",
                 edgecolor="#e65100",
                 hatch="...",
-                label="Purgatory candidate (elevated borrow; scaled†)",
+                label="Purgatory proxy†",
             )
         )
     ax.legend(handles=handles, fontsize=8, loc="lower right")
 
     if show_optimal:
-        # Bottom annotation: total executable vs optimal gross (sum of |long| + |short|) for the bucket.
         exe_total = float(df["_plot_long"].abs().sum() + df["_plot_short"].abs().sum())
         opt_total = float(df["_plot_opt_long"].abs().sum() + df["_plot_opt_short"].abs().sum())
         pct = 100.0 * exe_total / max(opt_total, 1e-9)
-        foot = (
-            f"Bucket totals — executable=${exe_total/1000:,.0f}k / "
-            f"optimal=${opt_total/1000:,.0f}k ({pct:.0f}%)"
-        )
+        parts = [f"Exe ${exe_total/1e3:,.0f}k / Opt ${opt_total/1e3:,.0f}k ({pct:.0f}%)"]
         if n_proxy > 0:
-            foot += (
-                f"  |  † {n_proxy} name(s) with IBKR locate≈0: green/red 'xxx' hatch = **proxy** "
-                f"structural scale (median bucket optimal × edge rank, config-gated on borrow/edge/vol); "
-                f"not from live sizing CSV."
-            )
+            parts.append(f"† {n_proxy} locate≈0 proxy (xxx; not sized)")
         if n_purg > 0:
-            foot += (
-                f"  |  {n_purg} purgatory candidate(s): amber '...' hatch = proxy scale for names held "
-                f"out by elevated borrow (keep-band); shown so strong-edge names one borrow-normalization "
-                f"away stay visible. Not sized in the live CSV."
-            )
+            parts.append(f"{n_purg} purgatory (...; elevated borrow)")
         ax.text(
             0.005,
-            -0.10,
-            foot,
+            -0.08,
+            "  |  ".join(parts),
             transform=ax.transAxes,
-            fontsize=8,
+            fontsize=7.5,
             ha="left",
             va="top",
             color="dimgray",
