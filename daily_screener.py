@@ -60,7 +60,7 @@ from delta_estimator import (
 from decay_distribution import enrich_with_decay_distribution
 from expense_ratios import fetch_expense_ratios
 from screener_v2_fields import enrich_screener_v2_fields, load_borrow_history_json
-from vol_shape import resolve_etf_metrics_daily_path
+from vol_shape import resolve_etf_metrics_daily_path, underlying_vol_shape_panel
 from strategy_config import load_config
 from splits import (
     SplitEvent,
@@ -2158,6 +2158,17 @@ def _compute_gross_decay_weekly(
 
 
 _MIN_DAYS_DECAY = 40  # min aligned daily returns for realized gross decay (daily × 252)
+# Shorter-history listings (e.g. CBRZ/CBRS) may have 10–29 aligned days — enough for a
+# noisy σ probe and Itô expected decay, but not for the full min_delta_days vol panel.
+_LOW_HISTORY_VOL_MIN_DAYS = 10
+
+
+def _effective_vol_min_days(n_obs: int, configured_min: int) -> int:
+    """Relax σ estimation window for newer listings without abandoning the floor."""
+    n = int(n_obs or 0)
+    if n < _LOW_HISTORY_VOL_MIN_DAYS:
+        return int(configured_min)
+    return min(int(configured_min), max(_LOW_HISTORY_VOL_MIN_DAYS, n))
 
 
 def _compute_gross_decay_daily(
@@ -2348,11 +2359,20 @@ def enrich_with_decay_and_vol(
         # Itô-aligned σ: √(mean(log-return²) · 252). Matches the measure
         # used by the realized-decay estimator (daily log returns), so the
         # Itô identity 0.5·|β|·|β−1|·σ² ≡ mean(daily_drag)·252 holds.
-        vol_etf = _annualized_second_moment_log(tr_map[etf], min_days) if etf in tr_map else None
+        vol_min_i = _effective_vol_min_days(n_obs_i, min_days)
+        vol_etf = (
+            _annualized_second_moment_log(tr_map[etf], min_days=vol_min_i)
+            if etf in tr_map
+            else None
+        )
         vols_etf_raw.append(vol_etf)
 
         # Keep the legacy centered-simple σ in parallel for diagnostics.
-        vol_etf_legacy = _annualized_vol(tr_map[etf], min_days) if etf in tr_map else None
+        vol_etf_legacy = (
+            _annualized_vol(tr_map[etf], min_days=vol_min_i)
+            if etf in tr_map
+            else None
+        )
         vols_etf_legacy.append(vol_etf_legacy)
 
         # Realized gross decay — daily log-return form (aliased via
@@ -2427,21 +2447,32 @@ def enrich_with_decay_and_vol(
     sigma_real_med_map: dict[str, float | None] = {}
 
     for und in und_syms:
-        raw_vol = _annualized_second_moment_log(tr_map[und], min_days) if und in tr_map else None
-
         mask = df["Underlying"].apply(
             lambda x: _norm_sym(x) == und if pd.notna(x) else False)
+        max_n_on_und = int(
+            pd.to_numeric(df.loc[mask, "Delta_n_obs"], errors="coerce").fillna(0).max() or 0
+        )
+        vol_min_und = _effective_vol_min_days(max_n_on_und, min_days)
+        raw_vol = (
+            _annualized_second_moment_log(tr_map[und], min_days=vol_min_und)
+            if und in tr_map
+            else None
+        )
 
         implied_candidates: list[tuple[float, float, str]] = []
         realized_implied: list[float] = []
         for idx in df.index[mask]:
             b = deltas_out[idx]
             ve = vols_etf_raw[idx]
-            nobs = delta_nobs_out[idx]
+            nobs = int(delta_nobs_out[idx] or 0)
+            etf_name_row = _norm_sym(df.at[idx, "ETF"]) if pd.notna(df.at[idx, "ETF"]) else None
+            if (ve is None or ve <= 0) and etf_name_row and etf_name_row in tr_map:
+                vol_min_row = _effective_vol_min_days(nobs, min_days)
+                ve = _annualized_second_moment_log(tr_map[etf_name_row], min_days=vol_min_row)
             if b and abs(b) >= 0.5 and ve and ve > 0 and nobs:
                 implied = float(ve) / abs(float(b))
                 weight = float(nobs) * abs(float(b))
-                etf_name = _norm_sym(df.at[idx, "ETF"]) if pd.notna(df.at[idx, "ETF"]) else "?"
+                etf_name = etf_name_row or "?"
                 implied_candidates.append((implied, weight, etf_name))
 
             g_real = decays[idx]
@@ -2469,6 +2500,26 @@ def enrich_with_decay_and_vol(
         )
 
         if not implied_candidates and (raw_vol is None or raw_vol <= 0):
+            vs_vol = None
+            if und in tr_map:
+                panel = underlying_vol_shape_panel(tr_map[und])
+                for col in ("und_rv_60d_daily_annual", "und_rv_20d_daily_annual"):
+                    v = panel.get(col)
+                    if v is not None and np.isfinite(float(v)) and float(v) > 0:
+                        vs_vol = float(v)
+                        break
+            if vs_vol is not None:
+                resolved_vol_und[und] = round(vs_vol, 6)
+                sigma_und_source[und] = {
+                    "method": "vol_shape_rv_fallback",
+                    "n_probes": 0,
+                    "n_outliers_dropped": 0,
+                    "sigma_real_implied_median": sigma_real_med,
+                    "sigma_pool": round(vs_vol, 6),
+                    "sigma_capped_to": None,
+                    "vol_min_days": vol_min_und,
+                }
+                continue
             resolved_vol_und[und] = raw_vol
             sigma_und_source[und] = {
                 "method": "no_data",
@@ -2477,6 +2528,7 @@ def enrich_with_decay_and_vol(
                 "sigma_real_implied_median": sigma_real_med,
                 "sigma_pool": raw_vol,
                 "sigma_capped_to": None,
+                "vol_min_days": vol_min_und,
             }
             continue
 
@@ -2592,9 +2644,13 @@ def enrich_with_decay_and_vol(
     # pre-Itô behaviour. Uses the same robust weighted-median + realized-decay
     # ceiling as the production path, just on legacy probes.
     for und in und_syms:
-        raw_vol_legacy = _annualized_vol(tr_map[und], min_days) if und in tr_map else None
         mask = df["Underlying"].apply(
             lambda x, u=und: _norm_sym(x) == u if pd.notna(x) else False)
+        max_n_on_und = int(
+            pd.to_numeric(df.loc[mask, "Delta_n_obs"], errors="coerce").fillna(0).max() or 0
+        )
+        vol_min_und = _effective_vol_min_days(max_n_on_und, min_days)
+        raw_vol_legacy = _annualized_vol(tr_map[und], min_days=vol_min_und) if und in tr_map else None
         implied_legacy: list[tuple[float, float]] = []
         for idx in df.index[mask]:
             b = deltas_out[idx]
@@ -3712,9 +3768,13 @@ def main() -> int:
         axis=1,
     )
     screened.loc[is_vol_etp & delta.lt(0.0), "bucket"] = "bucket_5"
+    _prim_edge = pd.to_numeric(screened.get("primary_edge_annual"), errors="coerce")
+    _net_decay = pd.to_numeric(screened.get("net_decay_annual"), errors="coerce")
+    _decay_score = pd.to_numeric(screened.get("decay_score"), errors="coerce")
+    b4_edge_src = _prim_edge.where(_prim_edge.notna(), _net_decay.where(_net_decay.notna(), _decay_score))
     screened["bucket4_net_edge_annual"] = np.where(
         screened["bucket"].isin(["bucket_4", "bucket_5"]),
-        pd.to_numeric(screened.get("net_decay_annual"), errors="coerce"),
+        b4_edge_src,
         np.nan,
     )
     shares_avail = pd.to_numeric(screened.get("shares_available"), errors="coerce")
