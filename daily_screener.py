@@ -1725,6 +1725,7 @@ def recompute_purgatory_by_bucket(
         "bucket_1": {"entry_borrow_cap": 0.55, "keep_borrow_cap": 0.75},
         "bucket_2": {"entry_borrow_cap": 0.20, "keep_borrow_cap": 0.35},
         "bucket_4": {"entry_borrow_cap": 0.90, "keep_borrow_cap": 1.20},
+        "bucket_5": {"entry_borrow_cap": 0.90, "keep_borrow_cap": 1.20},
     }
 
     def _borrow_band(tag: str) -> tuple[float, float]:
@@ -1737,6 +1738,7 @@ def recompute_purgatory_by_bucket(
     entry1, keep1 = _borrow_band("bucket_1")
     entry2, keep2 = _borrow_band("bucket_2")
     entry4, keep4 = _borrow_band("bucket_4")
+    entry5, keep5 = _borrow_band("bucket_5")
 
     fl = sl.get("flow_program", {}).get("universe", {}).get("shorts", []) or []
     fl_set = {_norm_sym(x) for x in fl if str(x).strip()}
@@ -1757,13 +1759,13 @@ def recompute_purgatory_by_bucket(
 
     bkt = out.get("bucket", pd.Series("", index=out.index)).astype(str)
     entry_sel = np.select(
-        [bkt.eq("bucket_1"), bkt.eq("bucket_2"), bkt.eq("bucket_4")],
-        [entry1, entry2, entry4],
+        [bkt.eq("bucket_1"), bkt.eq("bucket_2"), bkt.eq("bucket_4"), bkt.eq("bucket_5")],
+        [entry1, entry2, entry4, entry5],
         default=np.nan,
     )
     keep_sel = np.select(
-        [bkt.eq("bucket_1"), bkt.eq("bucket_2"), bkt.eq("bucket_4")],
-        [keep1, keep2, keep4],
+        [bkt.eq("bucket_1"), bkt.eq("bucket_2"), bkt.eq("bucket_4"), bkt.eq("bucket_5")],
+        [keep1, keep2, keep4, keep5],
         default=np.nan,
     )
     borrow_purg = (
@@ -3704,8 +3706,14 @@ def main() -> int:
         ["bucket_4", "bucket_1", "bucket_2"],
         default="",
     )
+    delta = pd.to_numeric(screened.get("Delta"), errors="coerce")
+    is_vol_etp = screened.apply(
+        lambda r: _is_volatility_etp_symbol(r.get("ETF"), r.get("Underlying")),
+        axis=1,
+    )
+    screened.loc[is_vol_etp & delta.lt(0.0), "bucket"] = "bucket_5"
     screened["bucket4_net_edge_annual"] = np.where(
-        screened["bucket"].eq("bucket_4"),
+        screened["bucket"].isin(["bucket_4", "bucket_5"]),
         pd.to_numeric(screened.get("net_decay_annual"), errors="coerce"),
         np.nan,
     )

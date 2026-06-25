@@ -19,9 +19,6 @@ strategy:
     - BRK-B
     - AXP
     - APLD
-    - SMR
-    - CBRS
-    - SPCX
   # Gross caps after sleeve budgets. With ``per_sleeve``, pair / underlying limits apply **within
   # each sleeve's gross**; root caps are fallbacks for
   # unknown sleeves. Liquidity clips implied book weights using ``liquidity_book_reference``
@@ -69,6 +66,10 @@ strategy:
         max_pair_weight: 0.20
         max_underlying_weight: 0.30
         pre_cap_score_haircut_multiplier: 1
+      volatility_etp_bucket5:
+        max_pair_weight: 0.50
+        max_underlying_weight: 0.30
+        pre_cap_score_haircut_multiplier: 1
   # One-shot covariance penalty on final post-cap gross_target_usd; tilts mass away from
   # underlyings with high marginal contribution to portfolio variance (within sleeve when
   # ``per_sleeve_scopes`` set), then re-applies gross_sizing_caps so pair /
@@ -86,6 +87,7 @@ strategy:
       - core_leveraged
       - yieldboost
       - inverse_decay_bucket4
+      - volatility_etp_bucket5
 
 paths:
   screened_csv: data/etf_screened_today.csv
@@ -166,6 +168,9 @@ screener:
       entry_borrow_cap: 0.15
       keep_borrow_cap: 0.25
     bucket_4:
+      entry_borrow_cap: 0.7
+      keep_borrow_cap: 0.9
+    bucket_5:
       entry_borrow_cap: 0.7
       keep_borrow_cap: 0.9
   min_delta_days: 30

@@ -7,15 +7,13 @@ do not appear in the sized plan (often purgatory / no-locate): they get a **prox
 optimal bar (median structural gross in the bucket × edge rank) so you can see where the
 sleeve would like to be if inventory existed — see plot footnote †. Proxy rows are gated on
 the same config eligibility rules as ``generate_trade_plan`` (entry borrow caps, min net
-edge, B4 underlying-vol floor, B4 excluded_etfs). Bucket 4 includes both
-inverse-shortable negative-β names and **volatility ETP** rows (same classification as
-``generate_trade_plan``), even when ``inverse_shortable`` is false on screened data. Disable
-with ``--skip-no-ibkr-proxy``.
+edge, B4/B5 underlying-vol floor, B4 excluded_etfs). Disable with ``--skip-no-ibkr-proxy``.
 
 Outputs:
-  - proposed_trades_bucket_1_plot.png   (beta > 1.5, stock sleeves only)
+  - proposed_trades_bucket_1_plot.png   (core_leveraged sleeve)
   - proposed_trades_bucket_2_plot.png   (yieldboost sleeve)
-  - proposed_trades_bucket_4_plot.png   (inverse_decay_bucket4 sleeve: short ETF + hedge)
+  - proposed_trades_bucket_4_plot.png   (inverse_decay_bucket4: short ETF + hedge)
+  - proposed_trades_bucket_5_plot.png   (volatility_etp_bucket5: VIX-complex vol ETP)
 """
 from __future__ import annotations
 
@@ -36,7 +34,9 @@ from generate_trade_plan import _volatility_etp_rows_mask
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 RUNS_DIR = PROJECT_ROOT / "data" / "runs"
-B4_SLEEVE = "inverse_decay_bucket4"
+B4_CORE_SLEEVE = "inverse_decay_bucket4"
+B5_SLEEVE = "volatility_etp_bucket5"
+B4_SLEEVE = B4_CORE_SLEEVE  # backwards-compatible alias
 BETA_FLOOR_PLOT = 0.1
 B4_PARTIAL_HEDGE_DEFAULT = 1.0
 
@@ -118,6 +118,12 @@ def _load_proxy_eligibility_gates() -> dict[str, dict]:
             return float("inf")
 
     _b4_vol_legacy = float(b4_rules.get("min_underlying_vol", 0.0) or 0.0)
+    b4_gates = {
+        "borrow_cap": _cap("bucket_4"),
+        "min_edge": float(b4_rules.get("min_net_edge_annual", 0.0) or 0.0),
+        "min_und_vol": float(b4_rules.get("min_underlying_vol_entry", _b4_vol_legacy) or 0.0),
+        "excluded_etfs": {str(x).strip().upper() for x in (b4_rules.get("excluded_etfs") or [])},
+    }
     return {
         "b1": {
             "borrow_cap": _cap("bucket_1"),
@@ -127,11 +133,12 @@ def _load_proxy_eligibility_gates() -> dict[str, dict]:
             "borrow_cap": _cap("bucket_2"),
             "min_edge": float(yb_rules.get("min_net_edge_annual", 0.0) or 0.0),
         },
-        "b4": {
-            "borrow_cap": _cap("bucket_4"),
-            "min_edge": float(b4_rules.get("min_net_edge_annual", 0.0) or 0.0),
-            "min_und_vol": float(b4_rules.get("min_underlying_vol_entry", _b4_vol_legacy) or 0.0),
-            "excluded_etfs": {str(x).strip().upper() for x in (b4_rules.get("excluded_etfs") or [])},
+        "b4": dict(b4_gates),
+        # B5 uses the same entry gates as B4 core in generate_trade_plan; borrow band from
+        # screener.per_bucket.bucket_5 when present, else bucket_4.
+        "b5": {
+            **b4_gates,
+            "borrow_cap": _cap("bucket_5") if "bucket_5" in per_bucket else _cap("bucket_4"),
         },
     }
 
@@ -147,7 +154,7 @@ def _proxy_eligible_mask(sc: pd.DataFrame, bucket: str, gates: dict[str, dict]) 
     cap = float(g.get("borrow_cap", np.inf))
     ok &= (~np.isfinite(borrow)) | (borrow <= cap)  # NaN borrow = unknown -> allow (GTP parity)
 
-    if bucket == "b4":
+    if bucket in ("b4", "b5"):
         edge = pd.to_numeric(sc.get("net_edge_p50_annual"), errors="coerce")
         min_edge = float(g.get("min_edge", 0.0))
         ok &= (~np.isfinite(edge)) | (edge >= min_edge)  # GTP b4_edge_ok parity
@@ -280,13 +287,10 @@ def append_no_ibkr_share_screened_rows(
         bucket_mask = (~yb) & (delta_abs > 1.5) & (beta > 0)
     elif bucket == "b4":
         # Core B4 proxy: negative β + inverse_shortable (matches ``in_b4`` spirit).
-        # Volatility ETPs (UVIX/SVIX/VIX complex) often have ``inverse_shortable`` false on
-        # screened rows but still use the B4 vol sleeve in GTP when eligible — include them
-        # here for chart parity only (still a hatched proxy, not live sizing).
+        bucket_mask = (~yb) & (beta < 0) & inv_ok
+    elif bucket == "b5":
         vol_etp = _volatility_etp_rows_mask(sc)
-        b4_core_proxy = (~yb) & (beta < 0) & inv_ok
-        b4_vol_etp_proxy = vol_etp & (~yb) & (beta < 0)
-        bucket_mask = b4_core_proxy | b4_vol_etp_proxy
+        bucket_mask = vol_etp & (~yb) & (beta < 0)
     else:
         return bucket_df
 
@@ -315,9 +319,9 @@ def append_no_ibkr_share_screened_rows(
         proxy_gross = med_g * (edge / med_edge)
         proxy_gross = float(np.clip(proxy_gross, 5_000.0, 2.0 * med_g))
         b = float(row["Delta"])
-        if bucket == "b4":
+        if bucket in ("b4", "b5"):
             olg, osg = _legs_from_gross_b4(gross=proxy_gross, beta=b)
-            sleeve = B4_SLEEVE
+            sleeve = B5_SLEEVE if bucket == "b5" else B4_CORE_SLEEVE
         else:
             olg, osg = _legs_from_gross_stock(gross=proxy_gross, beta=b)
             sleeve = "yieldboost" if bucket == "b2" else "core_leveraged"
@@ -370,22 +374,28 @@ def active_rows(df: pd.DataFrame) -> pd.DataFrame:
     ].copy()
 
 
-def split_buckets(df_active: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def split_buckets(
+    df_active: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if "sleeve" not in df_active.columns:
         stock = df_active.copy()
         b4 = df_active.iloc[0:0].copy()
+        b5 = df_active.iloc[0:0].copy()
         b = pd.to_numeric(stock["Delta"], errors="coerce")
         b1 = stock[b > 1.5].copy()
         b2 = stock[(b > 0) & (b <= 1.5)].copy()
-        return b1, b2, b4
+        return b1, b2, b4, b5
 
-    is_b4 = df_active["sleeve"].astype(str).eq(B4_SLEEVE)
-    stock = df_active[~is_b4].copy()
+    slv = df_active["sleeve"].astype(str)
+    is_b4 = slv.eq(B4_CORE_SLEEVE)
+    is_b5 = slv.eq(B5_SLEEVE)
+    stock = df_active[~is_b4 & ~is_b5].copy()
     b4 = df_active[is_b4].copy()
-    slv = stock["sleeve"].astype(str)
-    b1 = stock[slv.eq("core_leveraged")].copy()
-    b2 = stock[slv.eq("yieldboost")].copy()
-    return b1, b2, b4
+    b5 = df_active[is_b5].copy()
+    slv_stock = stock["sleeve"].astype(str)
+    b1 = stock[slv_stock.eq("core_leveraged")].copy()
+    b2 = stock[slv_stock.eq("yieldboost")].copy()
+    return b1, b2, b4, b5
 
 
 def _has_optimal(df: pd.DataFrame) -> bool:
@@ -641,24 +651,27 @@ def render_stock_bucket(
 def make_bucket_plots(run_date: str, *, include_no_ibkr_proxy: bool = True) -> list[Path]:
     proposed = load_proposed(run_date)
     act = active_rows(proposed)
-    b1, b2, b4 = split_buckets(act)
+    b1, b2, b4, b5 = split_buckets(act)
     screened = load_screened(run_date) if include_no_ibkr_proxy else None
     if include_no_ibkr_proxy:
         b1 = append_no_ibkr_share_screened_rows(b1, screened, bucket="b1")
         b2 = append_no_ibkr_share_screened_rows(b2, screened, bucket="b2")
         b4 = append_no_ibkr_share_screened_rows(b4, screened, bucket="b4")
+        b5 = append_no_ibkr_share_screened_rows(b5, screened, bucket="b5")
 
     out_dir = RUNS_DIR / run_date
     out_dir.mkdir(parents=True, exist_ok=True)
     out_b1 = out_dir / "proposed_trades_bucket_1_plot.png"
     out_b2 = out_dir / "proposed_trades_bucket_2_plot.png"
     out_b4 = out_dir / "proposed_trades_bucket_4_plot.png"
+    out_b5 = out_dir / "proposed_trades_bucket_5_plot.png"
 
     render_stock_bucket(run_date, b1, "Bucket 1 (core_leveraged)", out_b1)
     render_stock_bucket(run_date, b2, "Bucket 2 (yieldboost sleeve)", out_b2)
     render_stock_bucket(run_date, b4, "Bucket 4 (inverse decay)", out_b4, bucket4=True)
+    render_stock_bucket(run_date, b5, "Bucket 5 (volatility ETP)", out_b5, bucket4=True)
 
-    return [out_b1, out_b2, out_b4]
+    return [out_b1, out_b2, out_b4, out_b5]
 
 
 def main() -> int:

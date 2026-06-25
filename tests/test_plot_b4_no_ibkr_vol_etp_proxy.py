@@ -1,11 +1,11 @@
-"""B4 no-IBKR proxy rows include volatility ETPs without requiring inverse_shortable."""
+"""Vol ETP no-IBKR proxy rows route to Bucket 5, not Bucket 4."""
 
 import pandas as pd
 
-from plot_proposed_trades import append_no_ibkr_share_screened_rows
+from plot_proposed_trades import B5_SLEEVE, append_no_ibkr_share_screened_rows
 
 
-def test_b4_proxy_includes_vol_etp_when_inverse_shortable_false():
+def test_b5_proxy_includes_vol_etp_when_inverse_shortable_false():
     screened = pd.DataFrame(
         [
             {
@@ -18,6 +18,39 @@ def test_b4_proxy_includes_vol_etp_when_inverse_shortable_false():
                 "shares_available": 0.0,
                 "exclude_no_shares": True,
                 "net_decay_annual": 0.1,
+                "net_edge_p50_annual": 0.40,
+                "vol_underlying_annual": 0.80,
+                "borrow_current": 0.5,
+            }
+        ]
+    )
+    out = append_no_ibkr_share_screened_rows(
+        pd.DataFrame(),
+        screened,
+        bucket="b5",
+    )
+    assert not out.empty
+    assert (out["ETF"] == "UVIX").any()
+    assert bool(out.loc[out["ETF"] == "UVIX", "_no_ibkr_shares_proxy"].iloc[0])
+    assert out.loc[out["ETF"] == "UVIX", "sleeve"].iloc[0] == B5_SLEEVE
+
+
+def test_b4_proxy_excludes_vol_etp():
+    screened = pd.DataFrame(
+        [
+            {
+                "ETF": "UVIX",
+                "Underlying": "VIX",
+                "Delta": -1.98,
+                "is_yieldboost": False,
+                "inverse_shortable": False,
+                "Delta_product_class": "volatility_etp",
+                "shares_available": 0.0,
+                "exclude_no_shares": True,
+                "net_decay_annual": 0.1,
+                "net_edge_p50_annual": 0.40,
+                "vol_underlying_annual": 0.80,
+                "borrow_current": 0.5,
             }
         ]
     )
@@ -26,7 +59,4 @@ def test_b4_proxy_includes_vol_etp_when_inverse_shortable_false():
         screened,
         bucket="b4",
     )
-    assert not out.empty
-    assert (out["ETF"] == "UVIX").any()
-    assert bool(out.loc[out["ETF"] == "UVIX", "_no_ibkr_shares_proxy"].iloc[0])
-    assert out.loc[out["ETF"] == "UVIX", "sleeve"].iloc[0] == "inverse_decay_bucket4"
+    assert out.empty
