@@ -54,8 +54,11 @@ strategy:
     weight_hysteresis_rel: 0.0       # OR |delta| <= rel * prev, e.g. 0.10
     per_sleeve:
       core_leveraged:
-        max_pair_weight: 0.10
+        max_pair_weight: 0.09
         max_underlying_weight: 0.2
+        # Cap-projector: under-scored rows cannot grow beyond 1× their score weight when
+        # excess is redistributed from over-cap top names (prevents tail lift).
+        pre_cap_score_haircut_multiplier: 1
       yieldboost:
         max_pair_weight: 0.20
         max_underlying_weight: 0.2
@@ -75,7 +78,7 @@ strategy:
     lookback_days: 252
     min_obs: 60
     shrink: 0.5
-    penalty_strength: .5
+    penalty_strength: 0.65
     max_relative_shift: 0.5
     # Run covariance_balance separately per sleeve (Bucket 1 core, Bucket 2 YieldBoost, Bucket 4 inverse).
     # Omit or leave empty → legacy: one pass across the combined book.
@@ -310,10 +313,10 @@ portfolio:
         # ``realized_trust_days`` is read only here (daily_screener.add_decay_columns
         # ~3468). Defaults to 252 if absent. Other sleeves don't read it.
         realized_trust_days: 252
-        max_name_weight: 0.10         # align with per-sleeve pair cap
+        max_name_weight: 0.09         # align with per-sleeve pair cap
         eq_blend: 0.0                 # v16 selected: pure score weight
         borrow_aversion: 0.25         # v16 selected B1 borrow aversion
-        score_concavity_p: 2.0        # v16 selected B1 score shape
+        score_concavity_p: 1.5        # flatten top tail vs 2.0 (less B1 concentration)
         # B1 trend sizing uses the persistence-adjusted, forward-looking TR proxy
         # and computes a same-day cross-sectional rank. Do not point this at
         # und_trend_ratio_60d_pctile; that column is a historical diagnostic.
