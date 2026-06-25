@@ -62,7 +62,7 @@ def load_b4_cadence_explain(run_date: str) -> pd.DataFrame:
     return pd.read_csv(path) if path.is_file() else pd.DataFrame()
 
 
-def _b4_hedge_knobs() -> tuple[object, dict]:
+def _b4_hedge_knobs() -> tuple[object, dict, str]:
     try:
         from strategy_config import load_config
         from scripts.bucket4_hedge_cadence import load_policy_from_config
@@ -72,9 +72,168 @@ def _b4_hedge_knobs() -> tuple[object, dict]:
         try:
             from scripts.bucket4_hedge_cadence import HedgeCadenceKnobs
 
-            return HedgeCadenceKnobs(), {}, "default"
+            return HedgeCadenceKnobs(), {}, "tr_vcr"
         except Exception:
-            return None, {}, "default"
+            return None, {}, "tr_vcr"
+
+
+def _configure_b4_price_caches() -> None:
+    from scripts.bucket4_price_loading import configure_price_cache_dirs
+
+    dirs = [
+        PROJECT_ROOT / "data/cache/beta_history",
+        PROJECT_ROOT / "data/notebook_price_cache",
+        PROJECT_ROOT / "data/price_cache_v6",
+    ]
+    configure_price_cache_dirs([d for d in dirs if d.is_dir()])
+
+
+def _load_underlying_close(sym: str, start: str, end: str | None) -> pd.Series | None:
+    """Underlying close for cadence signals: CSV cache first, then Yahoo TR fallback."""
+    from scripts.bucket4_price_loading import load_single_close
+
+    _configure_b4_price_caches()
+    try:
+        s = load_single_close(sym, start, end)
+        if s is not None and len(s.dropna()) > 0:
+            return pd.to_numeric(s, errors="coerce").dropna().rename(sym)
+    except Exception:
+        pass
+    try:
+        from daily_screener import _get_total_return_series
+
+        tr = _get_total_return_series(sym, period="2y")
+        tr = pd.to_numeric(tr, errors="coerce").dropna()
+        tr.index = pd.to_datetime(tr.index).tz_localize(None)
+        s = tr.loc[tr.index >= pd.Timestamp(start)]
+        if end:
+            s = s.loc[: pd.Timestamp(end)]
+        return s.rename(sym) if len(s) > 0 else None
+    except Exception:
+        return None
+
+
+def _b4_pairs_from_df(df: pd.DataFrame) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for _, row in df.iterrows():
+        etf, und = _norm_sym(row.get("ETF")), _norm_sym(row.get("Underlying"))
+        if etf and und and (etf, und) not in seen:
+            seen.add((etf, und))
+            pairs.append((etf, und))
+    return pairs
+
+
+def _b4_opt2_rules() -> dict:
+    try:
+        from strategy_config import load_config
+
+        return (
+            (load_config().get("portfolio") or {})
+            .get("sleeves", {})
+            .get("inverse_decay_bucket4", {})
+            .get("rules", {})
+            .get("bucket4_weekly_opt2", {})
+            or {}
+        )
+    except Exception:
+        return {}
+
+
+def _b4_weekly_config(run_date: str):
+    from scripts.bucket4_weekly_opt2 import Bucket4WeeklyConfig
+
+    b4_opt2 = _b4_opt2_rules()
+    hcp = dict(b4_opt2.get("hedge_cadence_policy") or {})
+    screened = PROJECT_ROOT / "data" / "etf_screened_today.csv"
+    if not screened.is_file():
+        screened = RUNS_DIR / run_date / "etf_screened_today.csv"
+    return Bucket4WeeklyConfig(
+        screened_csv=str(screened),
+        start=str(b4_opt2.get("history_start", "2018-01-01")),
+        end=str(run_date),
+        weekly_rebalance_freq=str(b4_opt2.get("weekly_rebalance_freq", "W-FRI")),
+        warmup_bdays=int(b4_opt2.get("warmup_bdays", 65)),
+        hedge_source=str(hcp.get("source", "v6_panel")),
+        hedge_cadence_policy=hcp,
+    )
+
+
+def _build_closes_for_b4_plot(pairs: list[tuple[str, str]], cfg) -> pd.DataFrame:
+    """Underlying closes for cadence backfill (cache → Yahoo → screener TR)."""
+    from scripts.bucket4_price_loading import load_single_close
+
+    _configure_b4_price_caches()
+    cols: dict[str, pd.Series] = {}
+    for und in sorted({u for _, u in pairs}):
+        s: pd.Series | None = None
+        try:
+            raw = load_single_close(und, cfg.start, cfg.end)
+            if raw is not None and len(raw.dropna()) > 0:
+                s = pd.to_numeric(raw, errors="coerce").dropna().rename(und)
+        except Exception:
+            pass
+        if s is None or len(s) == 0:
+            s = _load_underlying_close(und, cfg.start, cfg.end)
+        if s is not None and len(s.dropna()) > 0:
+            cols[und] = s
+    if not cols:
+        return pd.DataFrame()
+    out = pd.DataFrame(cols).sort_index()
+    out.index = pd.to_datetime(out.index).tz_localize(None)
+    return out
+
+
+def build_b4_hedge_series_by_underlying(run_date: str, df: pd.DataFrame) -> dict[str | tuple[str, str], pd.Series]:
+    """Daily h(t) per pair/underlying via GTP ``_build_hedge_cadence_engine`` (tr_vcr / v7)."""
+    pairs = _b4_pairs_from_df(df)
+    if not pairs:
+        return {}
+
+    try:
+        from scripts.bucket4_weekly_opt2 import (
+            _build_hedge_cadence_engine,
+            build_hedge_panel_opt2,
+            panel_to_hedge_by_underlying,
+        )
+    except Exception:
+        return {}
+
+    cfg = _b4_weekly_config(run_date)
+    closes = _build_closes_for_b4_plot(pairs, cfg)
+    if closes.empty:
+        return {}
+
+    master = closes.index.sort_values()
+    b4_unds = sorted({u for _, u in pairs} & set(closes.columns))
+    if not b4_unds:
+        return {}
+
+    hedge_source = str(cfg.hedge_source).strip().lower()
+    block = dict(cfg.hedge_cadence_policy or {})
+    if hedge_source == "tr_vcr":
+        hedge_map, _, _, _ = _build_hedge_cadence_engine(
+            closes, pairs, b4_unds, master, cfg,
+        )
+    else:
+        panel, _, _ = build_hedge_panel_opt2(
+            closes,
+            pairs,
+            weekly_rebalance_freq=cfg.weekly_rebalance_freq,
+            warmup_bdays=cfg.warmup_bdays,
+            hedge_base=cfg.hedge_base,
+            opt2_k=float(block.get("opt2_k", 0.05)),
+        )
+        hedge_map = panel_to_hedge_by_underlying(panel, master, b4_unds, cfg.hedge_base)
+
+    out: dict[str | tuple[str, str], pd.Series] = {}
+    for etf, und in pairs:
+        ser = hedge_map.get(und)
+        if ser is None or len(ser.dropna()) < 1:
+            continue
+        out[(etf, und)] = ser
+        out.setdefault(und, ser)
+    return out
 
 
 def current_hedge_ratio_by_pair(run_date: str, df: pd.DataFrame) -> dict[tuple[str, str], float]:
@@ -107,43 +266,11 @@ def current_hedge_ratio_by_pair(run_date: str, df: pd.DataFrame) -> dict[tuple[s
     return out
 
 
-def build_b4_hedge_series_by_underlying(run_date: str, df: pd.DataFrame) -> dict[str, pd.Series]:
-    """Daily h series keyed by underlying (cadence engine; empty if unavailable)."""
-    pairs: set[tuple[str, str]] = set()
-    for _, row in df.iterrows():
-        etf, und = _norm_sym(row.get("ETF")), _norm_sym(row.get("Underlying"))
-        if etf and und:
-            pairs.add((etf, und))
-    if not pairs:
-        return {}
-    try:
-        from scripts.bucket4_hedge_cadence import _signal_for_underlying, build_h_series
-    except Exception:
-        return {}
-
-    knobs, tilts, _ = _b4_hedge_knobs()
-    if knobs is None:
-        return {}
-
-    out: dict[str, pd.Series] = {}
-    for etf, und in sorted(pairs):
-        if und in out:
-            continue
-        tilt = (tilts or {}).get(etf) or (tilts or {}).get(und)
-        sig = _signal_for_underlying(und, "2023-01-01", run_date, window=60)
-        if sig is None or sig.empty:
-            continue
-        hser = build_h_series(sig, pd.DatetimeIndex(sig.index), knobs=knobs, name_tilt=tilt).dropna()
-        if len(hser):
-            out[und] = hser
-    return out
-
-
 def plot_b4_hedge_ratio(
     ax: plt.Axes,
     df: pd.DataFrame,
     *,
-    hedge_series: dict[str, pd.Series],
+    hedge_series: dict[str | tuple[str, str], pd.Series],
     current_h: dict[tuple[str, str], float],
     h_min: float = 0.30,
     h_max: float = 0.80,
@@ -164,10 +291,15 @@ def plot_b4_hedge_ratio(
     for i, (_, row) in enumerate(df.iterrows()):
         k = (_norm_sym(row.get("ETF")), _norm_sym(row.get("Underlying")))
         und = k[1]
-        ser = hedge_series.get(und)
+        ser = hedge_series.get(k)
+        if ser is None:
+            ser = hedge_series.get(und)
         h_now = pd.to_numeric(current_h.get(k), errors="coerce")
         if ser is not None and len(ser.dropna()) >= 2:
             tail = ser.dropna().tail(int(lookback))
+            h_end = float(tail.iloc[-1])
+            if np.isfinite(h_end):
+                h_now = h_end
             xs = np.linspace(0.0, x_max, len(tail))
             y_norm = np.clip((tail.values.astype(float) - h_min) / span, 0.0, 1.0)
             ys = i + (y_norm - 0.5) * 2.0 * row_half
@@ -196,7 +328,9 @@ def plot_b4_hedge_ratio(
     ax.set_xlim(-x_max * 0.02, x_max * 1.18)
     ax.set_ylim(-0.5, n - 0.5)
     ax.set_xlabel(f"h history ({lookback}d)", fontsize=8)
-    ax.set_title("Hedge ratio h", fontsize=11, pad=6)
+    hcp = _b4_opt2_rules().get("hedge_cadence_policy") or {}
+    model = str(hcp.get("hedge_ratio_model", "v7")).strip().lower()
+    ax.set_title(f"Hedge ratio h ({model} cadence)", fontsize=11, pad=6)
     ax.xaxis.grid(True, alpha=0.25, linestyle="--")
     ax.set_axisbelow(True)
 

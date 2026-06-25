@@ -37,7 +37,7 @@
 
 pair_overrides:
   # ---- Bucket 4 (inverse_decay_bucket4) — core inverse ----
-  SMZ/SMR:    { hedge_ratio_add: 0.0, gross_mult: 1.0 }
+  SMZ/SMR:    { hedge_ratio_add: 0., gross_mult: 1.0 }
   LITZ/LITE:  { hedge_ratio_add: 0.0, gross_mult: 1.0 }
   QBTZ/QBTS:  { hedge_ratio_add: 0.0, gross_mult: 1.0 }
   NBIZ/NBIS:  { hedge_ratio_add: 0.0, gross_mult: 1.0 }
@@ -51,6 +51,6 @@ pair_overrides:
   SSPC/SPCX:  { hedge_ratio_add: 0.0, gross_mult: 1.0 }
   SNK/SPCX:   { hedge_ratio_add: 0.0, gross_mult: 1.0 }
   MUZ/MU:     { hedge_ratio_add: 0.0, gross_mult: 1.0 }
-  CBRZ/CBRS:  { hedge_ratio_add: 0.0, gross_mult: 1.0 }
+  CBRZ/CBRS:  { hedge_ratio_add: -0.20, gross_mult: 12.0}
   # ---- Bucket 5 (volatility_etp_bucket5) ----
   UVIX/SVIX:  { hedge_ratio_add: 0.0, gross_mult: 1.0 }
