@@ -18,7 +18,7 @@ re-entering visible on the chart.
 Outputs:
   - proposed_trades_bucket_1_plot.png   (core_leveraged sleeve)
   - proposed_trades_bucket_2_plot.png   (yieldboost sleeve)
-  - proposed_trades_bucket_4_plot.png   (inverse_decay_bucket4: short ETF + hedge)
+  - proposed_trades_bucket_4_plot.png   (inverse_decay_bucket4: short ETF + hedge + hedge-ratio panel)
   - proposed_trades_bucket_5_plot.png   (volatility_etp_bucket5: VIX-complex vol ETP)
 """
 from __future__ import annotations
@@ -45,7 +45,160 @@ B5_SLEEVE = "volatility_etp_bucket5"
 B4_SLEEVE = B4_CORE_SLEEVE  # backwards-compatible alias
 BETA_FLOOR_PLOT = 0.1
 B4_PARTIAL_HEDGE_DEFAULT = 1.0
+B4_HEDGE_LOOKBACK_DAYS = 126
 
+
+def _norm_sym(x: object) -> str:
+    return str(x).strip().upper().replace(".", "-")
+
+
+def load_b4_hedge_targets(run_date: str) -> pd.DataFrame:
+    path = RUNS_DIR / run_date / "b4_hedge_cadence" / "b4_ratchet_targets.csv"
+    return pd.read_csv(path) if path.is_file() else pd.DataFrame()
+
+
+def load_b4_cadence_explain(run_date: str) -> pd.DataFrame:
+    path = RUNS_DIR / run_date / "b4_hedge_cadence" / "b4_cadence_explain.csv"
+    return pd.read_csv(path) if path.is_file() else pd.DataFrame()
+
+
+def _b4_hedge_knobs() -> tuple[object, dict]:
+    try:
+        from strategy_config import load_config
+        from scripts.bucket4_hedge_cadence import load_policy_from_config
+
+        return load_policy_from_config(load_config())
+    except Exception:
+        try:
+            from scripts.bucket4_hedge_cadence import HedgeCadenceKnobs
+
+            return HedgeCadenceKnobs(), {}, "default"
+        except Exception:
+            return None, {}, "default"
+
+
+def current_hedge_ratio_by_pair(run_date: str, df: pd.DataFrame) -> dict[tuple[str, str], float]:
+    """Per (ETF, Underlying) hedge ratio from GTP ratchet targets, else cadence explain."""
+    out: dict[tuple[str, str], float] = {}
+    tgt = load_b4_hedge_targets(run_date)
+    if not tgt.empty:
+        for _, r in tgt.iterrows():
+            k = (_norm_sym(r.get("ETF")), _norm_sym(r.get("Underlying")))
+            h = pd.to_numeric(r.get("hedge_ratio"), errors="coerce")
+            if np.isfinite(h):
+                out[k] = float(h)
+
+    by_und: dict[str, float] = {}
+    cad = load_b4_cadence_explain(run_date)
+    if not cad.empty:
+        for _, r in cad.iterrows():
+            und = _norm_sym(r.get("Underlying"))
+            h = pd.to_numeric(r.get("hedge_ratio"), errors="coerce")
+            if np.isfinite(h):
+                by_und[und] = float(h)
+
+    for _, row in df.iterrows():
+        k = (_norm_sym(row.get("ETF")), _norm_sym(row.get("Underlying")))
+        if k in out:
+            continue
+        und = k[1]
+        if und in by_und:
+            out[k] = by_und[und]
+    return out
+
+
+def build_b4_hedge_series_by_underlying(run_date: str, df: pd.DataFrame) -> dict[str, pd.Series]:
+    """Daily h series keyed by underlying (cadence engine; empty if unavailable)."""
+    pairs: set[tuple[str, str]] = set()
+    for _, row in df.iterrows():
+        etf, und = _norm_sym(row.get("ETF")), _norm_sym(row.get("Underlying"))
+        if etf and und:
+            pairs.add((etf, und))
+    if not pairs:
+        return {}
+    try:
+        from scripts.bucket4_hedge_cadence import _signal_for_underlying, build_h_series
+    except Exception:
+        return {}
+
+    knobs, tilts, _ = _b4_hedge_knobs()
+    if knobs is None:
+        return {}
+
+    out: dict[str, pd.Series] = {}
+    for etf, und in sorted(pairs):
+        if und in out:
+            continue
+        tilt = (tilts or {}).get(etf) or (tilts or {}).get(und)
+        sig = _signal_for_underlying(und, "2023-01-01", run_date, window=60)
+        if sig is None or sig.empty:
+            continue
+        hser = build_h_series(sig, pd.DatetimeIndex(sig.index), knobs=knobs, name_tilt=tilt).dropna()
+        if len(hser):
+            out[und] = hser
+    return out
+
+
+def plot_b4_hedge_ratio(
+    ax: plt.Axes,
+    df: pd.DataFrame,
+    *,
+    hedge_series: dict[str, pd.Series],
+    current_h: dict[tuple[str, str], float],
+    h_min: float = 0.30,
+    h_max: float = 0.80,
+    lookback: int = B4_HEDGE_LOOKBACK_DAYS,
+) -> None:
+    """Sparkline panel: h(t) per row + current h marker (aligned with allocation y order)."""
+    if df.empty:
+        ax.text(0.5, 0.5, "No B4 pairs", ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return
+
+    n = len(df)
+    y = np.arange(n)
+    span = max(h_max - h_min, 1e-6)
+    row_half = 0.34
+    x_max = float(lookback)
+
+    for i, (_, row) in enumerate(df.iterrows()):
+        k = (_norm_sym(row.get("ETF")), _norm_sym(row.get("Underlying")))
+        und = k[1]
+        ser = hedge_series.get(und)
+        h_now = pd.to_numeric(current_h.get(k), errors="coerce")
+        if ser is not None and len(ser.dropna()) >= 2:
+            tail = ser.dropna().tail(int(lookback))
+            xs = np.linspace(0.0, x_max, len(tail))
+            y_norm = np.clip((tail.values.astype(float) - h_min) / span, 0.0, 1.0)
+            ys = i + (y_norm - 0.5) * 2.0 * row_half
+            ax.plot(xs, ys, color="#2a7f62", lw=1.15, alpha=0.92, zorder=2)
+            ax.plot(xs[-1], ys[-1], "o", color="#c62828", ms=3.5, zorder=3)
+        elif np.isfinite(h_now):
+            y_now = i + np.clip((float(h_now) - h_min) / span, 0.0, 1.0) * 2.0 * row_half - row_half
+            ax.plot([0.0, x_max], [y_now, y_now], color="#78909c", lw=1.0, ls="--", alpha=0.85, zorder=1)
+            ax.plot(x_max, y_now, "o", color="#c62828", ms=3.5, zorder=3)
+
+        if np.isfinite(h_now):
+            ax.text(
+                x_max + x_max * 0.02,
+                i,
+                f"h={float(h_now):.2f}",
+                va="center",
+                ha="left",
+                fontsize=6.5,
+                color="#37474f",
+            )
+        else:
+            ax.text(x_max + x_max * 0.02, i, "h=n/a", va="center", ha="left", fontsize=6.5, color="#9e9e9e")
+
+    ax.set_yticks(y)
+    ax.set_yticklabels([])
+    ax.set_xlim(-x_max * 0.02, x_max * 1.18)
+    ax.set_ylim(-0.5, n - 0.5)
+    ax.set_xlabel(f"h history ({lookback}d)", fontsize=8)
+    ax.set_title("Hedge ratio h", fontsize=11, pad=6)
+    ax.xaxis.grid(True, alpha=0.25, linestyle="--")
+    ax.set_axisbelow(True)
 
 def _to_bool_series(s: pd.Series) -> pd.Series:
     return s.astype(str).str.strip().str.lower().map(
@@ -532,12 +685,12 @@ def _has_optimal(df: pd.DataFrame) -> bool:
     return bool((o_l + o_s).sum() > 1.0)
 
 
-def plot_allocation(ax: plt.Axes, df: pd.DataFrame, title: str, *, bucket4: bool = False) -> None:
+def plot_allocation(ax: plt.Axes, df: pd.DataFrame, title: str, *, bucket4: bool = False) -> pd.DataFrame:
     if df.empty:
         ax.text(0.5, 0.5, "No proposed trades in this bucket", ha="center", va="center", transform=ax.transAxes)
         ax.set_title(title, fontsize=11, pad=6)
         ax.set_axis_off()
-        return
+        return df
 
     show_optimal = _has_optimal(df)
     if bucket4:
@@ -725,6 +878,7 @@ def plot_allocation(ax: plt.Axes, df: pd.DataFrame, title: str, *, bucket4: bool
             va="top",
             color="dimgray",
         )
+    return df
 
 
 def plot_decay_score(ax: plt.Axes, df: pd.DataFrame) -> None:
@@ -772,19 +926,42 @@ def render_stock_bucket(
     out_path: Path,
     *,
     bucket4: bool = False,
+    hedge_panel: bool = False,
 ) -> Path:
     n = len(bucket_df)
     row_height = 0.22
     panel_h = max(7, n * row_height)
-    fig, ax = plt.subplots(1, 1, figsize=(20, panel_h + 1.5))
-
-    # Keep only the proposed position allocation panel.
     subtitle = (
         "Allocation — inverse ETF (short) vs underlying hedge (short)"
         if bucket4
         else "Allocation — ETF short vs Underlying long"
     )
-    plot_allocation(ax, bucket_df, f"{bucket_label} {subtitle}", bucket4=bucket4)
+
+    if hedge_panel:
+        fig, (ax_alloc, ax_hr) = plt.subplots(
+            1, 2, figsize=(28, panel_h + 1.5), gridspec_kw={"width_ratios": [2.35, 1.0]}
+        )
+        ax_hr.sharey(ax_alloc)
+        sorted_df = plot_allocation(
+            ax_alloc, bucket_df, f"{bucket_label} {subtitle}", bucket4=True
+        )
+        knobs, _, _ = _b4_hedge_knobs()
+        h_min = float(getattr(knobs, "h_min", 0.30) or 0.30)
+        h_max = float(getattr(knobs, "h_max", 0.80) or 0.80)
+        hedge_series = build_b4_hedge_series_by_underlying(run_date, sorted_df)
+        current_h = current_hedge_ratio_by_pair(run_date, sorted_df)
+        plot_b4_hedge_ratio(
+            ax_hr,
+            sorted_df,
+            hedge_series=hedge_series,
+            current_h=current_h,
+            h_min=h_min,
+            h_max=h_max,
+        )
+        ax_alloc.set_ylabel("")
+    else:
+        fig, ax_alloc = plt.subplots(1, 1, figsize=(20, panel_h + 1.5))
+        plot_allocation(ax_alloc, bucket_df, f"{bucket_label} {subtitle}", bucket4=bucket4)
 
     fig.suptitle(f"{bucket_label} Proposed Trades — {run_date} ({n} rows)", fontsize=13, fontweight="bold", y=1.002)
     fig.tight_layout(pad=2.2)
@@ -818,7 +995,7 @@ def make_bucket_plots(run_date: str, *, include_no_ibkr_proxy: bool = True) -> l
 
     render_stock_bucket(run_date, b1, "Bucket 1 (core_leveraged)", out_b1)
     render_stock_bucket(run_date, b2, "Bucket 2 (yieldboost sleeve)", out_b2)
-    render_stock_bucket(run_date, b4, "Bucket 4 (inverse decay)", out_b4, bucket4=True)
+    render_stock_bucket(run_date, b4, "Bucket 4 (inverse decay)", out_b4, bucket4=True, hedge_panel=True)
     render_stock_bucket(run_date, b5, "Bucket 5 (volatility ETP)", out_b5, bucket4=True)
 
     return [out_b1, out_b2, out_b4, out_b5]
