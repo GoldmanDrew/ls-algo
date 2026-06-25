@@ -188,6 +188,99 @@ def _clamp01(x: float) -> float:
     return max(0.0, min(1.0, float(x)))
 
 
+def _coalesce_numeric_from_row(row: pd.Series, cols: list[str]) -> float:
+    """First finite numeric value among *cols* on a screener row."""
+    for c in cols:
+        if c not in row.index:
+            continue
+        v = pd.to_numeric(row.get(c), errors="coerce")
+        if np.isfinite(v):
+            return float(v)
+    return float("nan")
+
+
+def _low_n_mechanical_net_edge(row: pd.Series, *, vol: float) -> float:
+    """Simple Itô gross decay minus borrow — last-resort edge for low-N rows."""
+    beta = pd.to_numeric(row.get("Delta"), errors="coerce")
+    if not np.isfinite(beta) or not np.isfinite(vol) or vol <= 0:
+        return float("nan")
+    abs_b = abs(float(beta))
+    expense = float(pd.to_numeric(row.get("expense_ratio_annual"), errors="coerce") or 0.0)
+    borrow = float(pd.to_numeric(row.get("borrow_current"), errors="coerce") or 0.0)
+    gross = 0.5 * abs_b * abs(abs_b - 1.0) * vol ** 2 + expense
+    return gross - borrow
+
+
+def _resolve_low_n_fallback_edge(
+    row: pd.Series,
+    *,
+    edge_cols: list[str],
+    vol_cols: list[str],
+    use_mechanical: bool,
+) -> float:
+    """Resolve a conservative net-edge proxy for a short-history inverse row."""
+    for c in edge_cols:
+        if c not in row.index:
+            continue
+        v = pd.to_numeric(row.get(c), errors="coerce")
+        if np.isfinite(v):
+            return float(v)
+    if use_mechanical:
+        vol = _coalesce_numeric_from_row(row, vol_cols)
+        return _low_n_mechanical_net_edge(row, vol=vol)
+    return float("nan")
+
+
+def apply_low_n_size_haircut(
+    frame: pd.DataFrame,
+    low_n_keys: set[tuple[str, str]],
+    size_mult: float,
+) -> pd.DataFrame:
+    """Scale down gross for admitted short-history (low-N) inverse names.
+
+    These names are admitted via a fallback edge (see ``low_n_inclusion``) despite
+    lacking a bootstrapped net_edge_p50_annual; sizing them at ``size_mult`` of the
+    engine target reflects the higher estimation uncertainty. Applied at the same
+    post-cap stage as operator pair overrides, so the haircut composes with them.
+
+    ``_populate_long_short_columns`` re-derives both legs from ``gross_target_usd``
+    (via ``cap_scale``), so scaling gross is sufficient; the opt2 legs are scaled too
+    for audit consistency. Writes ``low_n_included`` / ``low_n_size_mult`` columns.
+    """
+    if (
+        not low_n_keys
+        or frame is None
+        or frame.empty
+        or "sleeve" not in frame.columns
+        or not np.isfinite(size_mult)
+        or abs(float(size_mult) - 1.0) < 1e-12
+    ):
+        return frame
+    frame = frame.copy()
+    if "low_n_size_mult" not in frame.columns:
+        frame["low_n_size_mult"] = 1.0
+    if "low_n_included" not in frame.columns:
+        frame["low_n_included"] = False
+    m = float(size_mult)
+    b4m = frame["sleeve"].isin(["inverse_decay_bucket4", VOL_ETP_BUCKET5_SLEEVE])
+    for idx in frame.index[b4m]:
+        etf = _norm_sym(frame.at[idx, "ETF"]) if "ETF" in frame.columns else ""
+        und = _norm_sym(frame.at[idx, "Underlying"]) if "Underlying" in frame.columns else ""
+        if (etf, und) not in low_n_keys:
+            continue
+        g0 = float(pd.to_numeric(frame.at[idx, "gross_target_usd"], errors="coerce") or 0.0)
+        frame.at[idx, "gross_target_usd"] = g0 * m
+        for leg in ("b4_opt2_inverse_etf_short_usd", "b4_opt2_underlying_short_usd"):
+            if leg in frame.columns:
+                leg_v = pd.to_numeric(frame.at[idx, leg], errors="coerce")
+                if np.isfinite(leg_v):
+                    frame.at[idx, leg] = float(leg_v) * m
+        frame.at[idx, "low_n_size_mult"] = m
+        frame.at[idx, "low_n_included"] = True
+        print(f"[INFO] low_n size haircut applied {etf}/{und}: gross_mult={m:g}")
+    return frame
+
+
 def apply_pair_overrides_to_sized(
     frame: pd.DataFrame,
     overrides: dict[tuple[str, str], dict],
@@ -240,6 +333,10 @@ def apply_pair_overrides_to_sized(
         g_m = float(ov.get("gross_mult", 1.0) or 1.0)
         h_a = float(ov.get("hedge_ratio_add", 0.0) or 0.0)
         note = str(ov.get("note", "") or "")
+
+        # Pure no-op template entry (defaults, no note): nothing to apply or log.
+        if abs(g_m - 1.0) < 1e-12 and abs(h_a) < 1e-12 and not note:
+            continue
 
         gross0 = float(pd.to_numeric(frame.at[idx, "gross_target_usd"], errors="coerce") or 0.0)
         frame.at[idx, "gross_target_usd_pre_override"] = gross0
@@ -2281,10 +2378,78 @@ def main() -> None:
         screened["net_edge_p50_annual"] = pd.to_numeric(
             screened["net_edge_p50_annual"], errors="coerce"
         )
-        _ne_ok = screened["net_edge_p50_annual"].fillna(-1.0).ge(0.0)
+        _ne_eff = screened["net_edge_p50_annual"].copy()
+    else:
+        _ne_eff = pd.Series(np.nan, index=screened.index)
+
+    # Short-history (low-N) inverse inclusion: admit negative-beta names that lack a
+    # bootstrapped net_edge_p50_annual using a conservative fallback edge column, then
+    # size them smaller downstream (``apply_low_n_size_haircut``). See B4 rules
+    # ``low_n_inclusion``. Scoped to inverse names so B1/B2 NaN-edge rows stay excluded.
+    low_n_cfg = (b4_rules.get("low_n_inclusion") or {})
+    low_n_enabled = bool(low_n_cfg.get("enabled", False))
+    low_n_min_obs = int(low_n_cfg.get("min_n_obs", 1) or 0)
+    low_n_size_mult = float(low_n_cfg.get("size_mult", 0.50) or 0.0)
+    _legacy_edge_col = str(low_n_cfg.get("edge_fallback_column", "primary_edge_annual") or "primary_edge_annual")
+    low_n_edge_cols = [
+        str(c).strip()
+        for c in (low_n_cfg.get("edge_fallback_columns") or [_legacy_edge_col])
+        if str(c).strip()
+    ]
+    low_n_vol_cols = [
+        str(c).strip()
+        for c in (
+            low_n_cfg.get("vol_fallback_columns")
+            or ["vol_underlying_annual_legacy", "und_rv_60d_daily_annual", "und_rv_20d_daily_annual"]
+        )
+        if str(c).strip()
+    ]
+    low_n_mechanical = bool(low_n_cfg.get("mechanical_edge_when_missing", True))
+    low_n_keys: set[tuple[str, str]] = set()
+    if low_n_enabled and "net_edge_p50_annual" in screened.columns:
+        _n_obs = pd.to_numeric(screened.get("Delta_n_obs"), errors="coerce")
+        _qual = screened.get("Delta_quality", pd.Series("", index=screened.index)).astype(str).str.lower()
+        _neg = pd.to_numeric(screened.get("Delta"), errors="coerce") < 0
+        _ne_nan = ~np.isfinite(pd.to_numeric(screened["net_edge_p50_annual"], errors="coerce"))
+        low_n_cand = _neg & _qual.eq("low_n") & _ne_nan & _n_obs.fillna(0).ge(low_n_min_obs)
+        if bool(low_n_cand.any()):
+            _ne_eff = _ne_eff.copy()
+            for idx in screened.index[low_n_cand]:
+                fb = _resolve_low_n_fallback_edge(
+                    screened.loc[idx],
+                    edge_cols=low_n_edge_cols,
+                    vol_cols=low_n_vol_cols,
+                    use_mechanical=low_n_mechanical,
+                )
+                if np.isfinite(fb) and fb > 0:
+                    _ne_eff.loc[idx] = fb
+                    low_n_keys.add(
+                        (_norm_sym(str(screened.at[idx, "ETF"])), _norm_sym(str(screened.at[idx, "Underlying"])))
+                    )
+            if low_n_keys:
+                print(
+                    f"[INFO] low_n_inclusion: admitting {len(low_n_keys)} short-history inverse "
+                    f"name(s) (size_mult={low_n_size_mult:g}): "
+                    + ", ".join(sorted(f"{e}/{u}" for e, u in low_n_keys))
+                )
+
+    if "net_edge_p50_annual" in screened.columns:
+        _ne_ok = _ne_eff.fillna(-1.0).ge(0.0)
     else:
         _ne_ok = pd.Series(True, index=screened.index)
     eligible = screened.loc[(screened["purgatory"] != True) & _ne_ok].copy()  # noqa: E712
+    # Low-N vol fallback: brand-new underlyings may lack vol_underlying_annual but have
+    # shorter-window realized vol on the screener row — enough for the B4 entry floor.
+    if low_n_keys and low_n_vol_cols:
+        for idx in eligible.index:
+            key = (_norm_sym(str(eligible.at[idx, "ETF"])), _norm_sym(str(eligible.at[idx, "Underlying"])))
+            if key not in low_n_keys:
+                continue
+            vu = pd.to_numeric(eligible.at[idx, "vol_underlying_annual"], errors="coerce")
+            if not np.isfinite(vu):
+                vf = _coalesce_numeric_from_row(eligible.loc[idx], low_n_vol_cols)
+                if np.isfinite(vf):
+                    eligible.at[idx, "vol_underlying_annual"] = vf
     if eligible.empty:
         print("[WARN] No eligible rows to size (all rows are purgatory).")
         proposed = keep.copy()
@@ -3066,6 +3231,12 @@ def main() -> None:
             frame["etf_target_usd"] = frame["short_usd"]
             return frame
 
+        # Short-history (low-N) uncertainty haircut: scale admitted low-N inverse names
+        # down before the leg split (composes with operator overrides below).
+        if low_n_keys and abs(low_n_size_mult - 1.0) > 1e-12:
+            sized = apply_low_n_size_haircut(sized, low_n_keys, low_n_size_mult)
+            optimal_sized = apply_low_n_size_haircut(optimal_sized, low_n_keys, low_n_size_mult)
+
         # Operator B4/B5 pair tilts (gross_mult + additive hedge) applied to the
         # opt2 legs + gross before the leg split, so proposed_trades.csv reflects
         # the override and carries audit columns. See config/pair_overrides.yml.
@@ -3111,6 +3282,8 @@ def main() -> None:
             "pair_override_note",
             "gross_target_usd_pre_override",
             "b4_opt2_hedge_ratio_pre_override",
+            "low_n_included",
+            "low_n_size_mult",
         ):
             if col in sized.columns:
                 keep.loc[sized.index, col] = sized[col]

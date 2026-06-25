@@ -3,11 +3,17 @@
 plot_proposed_trades.py — Visualise bucket-level proposed trades for a run date.
 
 Also appends **screened** ETFs with IBKR ``shares_available``≈0 (or ``exclude_no_shares``) that
-do not appear in the sized plan (often purgatory / no-locate): they get a **proxy** hatched
-optimal bar (median structural gross in the bucket × edge rank) so you can see where the
+do not appear in the sized plan (often no-locate): they get a **proxy** hatched optimal bar
+(green/red 'xxx', median structural gross in the bucket × edge rank) so you can see where the
 sleeve would like to be if inventory existed — see plot footnote †. Proxy rows are gated on
 the same config eligibility rules as ``generate_trade_plan`` (entry borrow caps, min net
 edge, B4/B5 underlying-vol floor, B4 excluded_etfs). Disable with ``--skip-no-ibkr-proxy``.
+
+Additionally appends **purgatory candidates** for every bucket (amber '...' hatch): screened
+names zeroed out of the sized book by elevated borrow (per-bucket keep band). Borrow is
+relaxed for their eligibility (it is the purgatory reason itself); edge / vol / excluded
+gates still apply. This keeps strong-edge names that are one borrow-normalization away from
+re-entering visible on the chart.
 
 Outputs:
   - proposed_trades_bucket_1_plot.png   (core_leveraged sleeve)
@@ -143,16 +149,23 @@ def _load_proxy_eligibility_gates() -> dict[str, dict]:
     }
 
 
-def _proxy_eligible_mask(sc: pd.DataFrame, bucket: str, gates: dict[str, dict]) -> pd.Series:
-    """Rows that would pass the bucket's config entry gates if locate inventory existed."""
+def _proxy_eligible_mask(
+    sc: pd.DataFrame, bucket: str, gates: dict[str, dict], *, borrow_relax: bool = False
+) -> pd.Series:
+    """Rows that would pass the bucket's config entry gates if locate inventory existed.
+
+    ``borrow_relax=True`` skips the borrow-cap test (used for purgatory candidates, whose
+    elevated borrow is exactly why they sit in purgatory — we still want to show the edge).
+    """
     ok = pd.Series(True, index=sc.index)
     g = gates.get(bucket)
     if not g:
         return ok
 
-    borrow = pd.to_numeric(sc.get("borrow_current"), errors="coerce")
-    cap = float(g.get("borrow_cap", np.inf))
-    ok &= (~np.isfinite(borrow)) | (borrow <= cap)  # NaN borrow = unknown -> allow (GTP parity)
+    if not borrow_relax:
+        borrow = pd.to_numeric(sc.get("borrow_current"), errors="coerce")
+        cap = float(g.get("borrow_cap", np.inf))
+        ok &= (~np.isfinite(borrow)) | (borrow <= cap)  # NaN borrow = unknown -> allow (GTP parity)
 
     if bucket in ("b4", "b5"):
         edge = pd.to_numeric(sc.get("net_edge_p50_annual"), errors="coerce")
@@ -360,6 +373,119 @@ def append_no_ibkr_share_screened_rows(
     return out
 
 
+def append_purgatory_screened_rows(
+    bucket_df: pd.DataFrame,
+    screened: pd.DataFrame | None,
+    *,
+    bucket: str,
+) -> pd.DataFrame:
+    """Append screened **purgatory** candidates for the bucket as distinct proxy bars.
+
+    Purgatory names (typically elevated borrow inside the per-bucket keep band) are zeroed
+    out of the sized book, so they never appear in ``proposed_trades.csv`` with structural
+    dollars. We still surface them so the operator can see strong-edge names that are one
+    borrow-normalization away from re-entering. They render as a separate hatched style
+    (``_purgatory_proxy``) and are gated on edge / vol / excluded rules (borrow relaxed,
+    since elevated borrow is the purgatory reason itself).
+    """
+    if screened is None or screened.empty:
+        return bucket_df
+    need = {"ETF", "Underlying", "Delta"}
+    if not need.issubset(set(screened.columns)) or "purgatory" not in screened.columns:
+        return bucket_df
+
+    sc = screened.copy()
+    sc["ETF"] = sc["ETF"].astype(str).str.strip()
+    sc["Underlying"] = sc["Underlying"].astype(str).str.strip()
+    beta = pd.to_numeric(sc["Delta"], errors="coerce")
+    delta_abs = beta.abs()
+    yb = sc.get("is_yieldboost", False)
+    if hasattr(yb, "fillna"):
+        yb = yb.fillna(False).astype(bool)
+    else:
+        yb = pd.Series(False, index=sc.index)
+    if "inverse_shortable" in sc.columns:
+        inv_ok = sc["inverse_shortable"].fillna(False).astype(bool)
+    else:
+        inv_ok = beta < 0
+
+    if bucket == "b2":
+        bucket_mask = yb & (beta > 0)
+    elif bucket == "b1":
+        bucket_mask = (~yb) & (delta_abs > 1.5) & (beta > 0)
+    elif bucket == "b4":
+        bucket_mask = (~yb) & (beta < 0) & inv_ok
+    elif bucket == "b5":
+        bucket_mask = _volatility_etp_rows_mask(sc) & (~yb) & (beta < 0)
+    else:
+        return bucket_df
+
+    is_purg = _to_bool_series(sc["purgatory"]) if "purgatory" in sc.columns else pd.Series(False, index=sc.index)
+    gates = _load_proxy_eligibility_gates()
+    sel = is_purg & bucket_mask & _proxy_eligible_mask(sc, bucket, gates, borrow_relax=True)
+    if not bool(sel.any()):
+        return bucket_df
+
+    have = set()
+    if not bucket_df.empty and "ETF" in bucket_df.columns and "Underlying" in bucket_df.columns:
+        for _, r in bucket_df.iterrows():
+            have.add((str(r["ETF"]).strip(), str(r["Underlying"]).strip()))
+
+    med_g = _bucket_median_structural_gross(bucket_df)
+    edge_list = [_edge_signal(sc.loc[i]) for i in sc.index[sel]]
+    med_edge = max(float(np.median(edge_list)) if edge_list else 1.0, 1e-9)
+
+    extras: list[dict[str, object]] = []
+    for idx in sc.index[sel]:
+        row = sc.loc[idx]
+        key = (str(row["ETF"]).strip(), str(row["Underlying"]).strip())
+        if key in have:
+            continue
+        edge = _edge_signal(row)
+        proxy_gross = float(np.clip(med_g * (edge / med_edge), 5_000.0, 2.0 * med_g))
+        b = float(row["Delta"])
+        if bucket in ("b4", "b5"):
+            olg, osg = _legs_from_gross_b4(gross=proxy_gross, beta=b)
+            sleeve = B5_SLEEVE if bucket == "b5" else B4_CORE_SLEEVE
+        else:
+            olg, osg = _legs_from_gross_stock(gross=proxy_gross, beta=b)
+            sleeve = "yieldboost" if bucket == "b2" else "core_leveraged"
+        extras.append(
+            {
+                "ETF": key[0],
+                "Underlying": key[1],
+                "Delta": b,
+                "sleeve": sleeve,
+                "long_usd": 0.0,
+                "short_usd": 0.0,
+                "gross_target_usd": 0.0,
+                "optimal_long_usd": olg,
+                "optimal_short_usd": osg,
+                "optimal_gross_target_usd": proxy_gross,
+                "liquidity_gap_usd": proxy_gross,
+                "executable_pct_of_optimal": 0.0,
+                "shares_available": float(pd.to_numeric(row.get("shares_available"), errors="coerce") or 0.0),
+                "borrow_current": float(pd.to_numeric(row.get("borrow_current"), errors="coerce") or np.nan),
+                "_purgatory_proxy": True,
+            }
+        )
+        have.add(key)
+
+    if not extras:
+        return bucket_df
+    add = pd.DataFrame(extras)
+    add["_purgatory_proxy"] = np.ones(len(add), dtype=bool)
+    if bucket_df.empty:
+        return add
+    bucket_df = bucket_df.copy()
+    if "_purgatory_proxy" not in bucket_df.columns:
+        bucket_df["_purgatory_proxy"] = np.zeros(len(bucket_df), dtype=bool)
+    out = pd.concat([bucket_df, add], axis=0, ignore_index=True)
+    out.loc[out["_purgatory_proxy"].isna(), "_purgatory_proxy"] = False
+    out["_purgatory_proxy"] = out["_purgatory_proxy"].astype(bool)
+    return out
+
+
 def active_rows(df: pd.DataFrame) -> pd.DataFrame:
     """Rows that are either being traded **today** (executable nonzero) OR have a
     standing **optimal** position (so we render the hatched bar even when day-liquidity
@@ -452,20 +578,31 @@ def plot_allocation(ax: plt.Axes, df: pd.DataFrame, title: str, *, bucket4: bool
     )
     pad = xmax * 0.012
 
-    if "_no_ibkr_shares_proxy" not in df.columns:
-        df["_no_ibkr_shares_proxy"] = False
-    else:
-        df.loc[df["_no_ibkr_shares_proxy"].isna(), "_no_ibkr_shares_proxy"] = False
-        df["_no_ibkr_shares_proxy"] = df["_no_ibkr_shares_proxy"].astype(bool)
+    for _flag in ("_no_ibkr_shares_proxy", "_purgatory_proxy"):
+        if _flag not in df.columns:
+            df[_flag] = False
+        else:
+            df.loc[df[_flag].isna(), _flag] = False
+            df[_flag] = df[_flag].astype(bool)
     n_proxy = int(df["_no_ibkr_shares_proxy"].sum())
+    n_purg = int(df["_purgatory_proxy"].sum())
 
     if show_optimal:
         for yi, (_, row) in enumerate(df.iterrows()):
             pr = bool(row["_no_ibkr_shares_proxy"])
-            h_pat = "xxx" if pr else "///"
-            ec_l, ec_s = (("#1b5e20", "#b71c1c") if pr else ("steelblue", "tomato"))
-            lw = 1.35 if pr else 1.0
-            alpha_h = 0.75 if pr else 0.55
+            pg = bool(row["_purgatory_proxy"])
+            if pg:
+                h_pat = "..."
+                ec_l, ec_s = ("#e65100", "#bf360c")  # amber: purgatory candidate
+                lw, alpha_h = 1.35, 0.85
+            elif pr:
+                h_pat = "xxx"
+                ec_l, ec_s = ("#1b5e20", "#b71c1c")
+                lw, alpha_h = 1.35, 0.75
+            else:
+                h_pat = "///"
+                ec_l, ec_s = ("steelblue", "tomato")
+                lw, alpha_h = 1.0, 0.55
             ax.barh(
                 yi,
                 row["_plot_opt_long"],
@@ -522,7 +659,12 @@ def plot_allocation(ax: plt.Axes, df: pd.DataFrame, title: str, *, bucket4: bool
     for _, r in df.iterrows():
         base = f"{r.ETF} -> {r.Underlying}"
         gap = float(r.get("liquidity_gap_usd", 0.0) or 0.0)
-        if bool(r.get("_no_ibkr_shares_proxy", False)):
+        if bool(r.get("_purgatory_proxy", False)):
+            og = float(r.get("optimal_gross_target_usd", 0.0) or 0.0)
+            bc = float(pd.to_numeric(r.get("borrow_current"), errors="coerce") or np.nan)
+            bc_txt = f"borrow {bc*100:,.0f}%" if np.isfinite(bc) else "borrow n/a"
+            base += f"  [purgatory: {bc_txt}; proxy opt ${og/1000:,.0f}k*]"
+        elif bool(r.get("_no_ibkr_shares_proxy", False)):
             og = float(r.get("optimal_gross_target_usd", 0.0) or 0.0)
             base += f"  [IBKR avail≈0; proxy opt ${og/1000:,.0f}k*]"
         elif show_optimal and abs(gap) > 1000:
@@ -553,6 +695,15 @@ def plot_allocation(ax: plt.Axes, df: pd.DataFrame, title: str, *, bucket4: bool
                 label="Proxy optimal (IBKR locate≈0; scaled†)",
             )
         )
+    if n_purg > 0:
+        handles.append(
+            mpatches.Patch(
+                facecolor="none",
+                edgecolor="#e65100",
+                hatch="...",
+                label="Purgatory candidate (elevated borrow; scaled†)",
+            )
+        )
     ax.legend(handles=handles, fontsize=8, loc="lower right")
 
     if show_optimal:
@@ -569,6 +720,12 @@ def plot_allocation(ax: plt.Axes, df: pd.DataFrame, title: str, *, bucket4: bool
                 f"  |  † {n_proxy} name(s) with IBKR locate≈0: green/red 'xxx' hatch = **proxy** "
                 f"structural scale (median bucket optimal × edge rank, config-gated on borrow/edge/vol); "
                 f"not from live sizing CSV."
+            )
+        if n_purg > 0:
+            foot += (
+                f"  |  {n_purg} purgatory candidate(s): amber '...' hatch = proxy scale for names held "
+                f"out by elevated borrow (keep-band); shown so strong-edge names one borrow-normalization "
+                f"away stay visible. Not sized in the live CSV."
             )
         ax.text(
             0.005,
@@ -658,6 +815,11 @@ def make_bucket_plots(run_date: str, *, include_no_ibkr_proxy: bool = True) -> l
         b2 = append_no_ibkr_share_screened_rows(b2, screened, bucket="b2")
         b4 = append_no_ibkr_share_screened_rows(b4, screened, bucket="b4")
         b5 = append_no_ibkr_share_screened_rows(b5, screened, bucket="b5")
+        # Purgatory candidates (elevated borrow keep-band) shown as distinct proxy bars.
+        b1 = append_purgatory_screened_rows(b1, screened, bucket="b1")
+        b2 = append_purgatory_screened_rows(b2, screened, bucket="b2")
+        b4 = append_purgatory_screened_rows(b4, screened, bucket="b4")
+        b5 = append_purgatory_screened_rows(b5, screened, bucket="b5")
 
     out_dir = RUNS_DIR / run_date
     out_dir.mkdir(parents=True, exist_ok=True)

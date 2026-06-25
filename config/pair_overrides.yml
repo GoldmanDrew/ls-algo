@@ -21,15 +21,36 @@
 # pair_override_hedge_add, pair_override_note (plus *_pre_override) columns into
 # proposed_trades.csv, and is annotated on the EOD pair charts.
 #
-# Example (commented out — uncomment / edit to use):
-# pair_overrides:
+# Example:
 #   BITX/IBIT:
 #     hedge_ratio_add: 0.05
 #     gross_mult: 1.15
 #     note: "operator tilt: larger, slightly more hedged"
-#   UVIX/SVIX:
-#     hedge_ratio_add: -0.10
-#     gross_mult: 0.85
-#     note: "vol-ETP tail-risk trim"
+#
+# TEMPLATE below: every pair that currently qualifies for Bucket 4 / Bucket 5 is
+# pre-listed with no-op defaults (hedge_ratio_add: 0.0, gross_mult: 1.0). Entries left
+# at these defaults are ignored by the engine (no tilt, no log) — edit a value to apply
+# a tilt. Refresh this list with the qualifying set whenever the universe changes
+# (snapshot date: 2026-06-24). Low-N (short-history) names are admitted via the
+# strategy_config ``low_n_inclusion`` fallback and are ALSO auto-scaled by
+# ``low_n_inclusion.size_mult`` — gross_mult here stacks multiplicatively on that.
 
-pair_overrides: {}
+pair_overrides:
+  # ---- Bucket 4 (inverse_decay_bucket4) — core inverse ----
+  SMZ/SMR:    { hedge_ratio_add: 0.0, gross_mult: 1.0 }
+  LITZ/LITE:  { hedge_ratio_add: 0.0, gross_mult: 1.0 }
+  QBTZ/QBTS:  { hedge_ratio_add: 0.0, gross_mult: 1.0 }
+  NBIZ/NBIS:  { hedge_ratio_add: 0.0, gross_mult: 1.0 }
+  CORD/CRWV:  { hedge_ratio_add: 0.0, gross_mult: 1.0 }
+  SNDQ/SNDK:  { hedge_ratio_add: 0.0, gross_mult: 1.0 }
+  MSTZ/MSTR:  { hedge_ratio_add: 0.0, gross_mult: 1.0 }
+  DAMD/AMD:   { hedge_ratio_add: 0.0, gross_mult: 1.0 }
+  CONI/COIN:  { hedge_ratio_add: 0.0, gross_mult: 1.0 }
+  # ---- Bucket 4 — low-N (short-history) inverse names ----
+  SPCG/SPCX:  { hedge_ratio_add: 0.0, gross_mult: 1.0 }
+  SSPC/SPCX:  { hedge_ratio_add: 0.0, gross_mult: 1.0 }
+  SNK/SPCX:   { hedge_ratio_add: 0.0, gross_mult: 1.0 }
+  MUZ/MU:     { hedge_ratio_add: 0.0, gross_mult: 1.0 }
+  CBRZ/CBRS:  { hedge_ratio_add: 0.0, gross_mult: 1.0 }
+  # ---- Bucket 5 (volatility_etp_bucket5) ----
+  UVIX/SVIX:  { hedge_ratio_add: 0.0, gross_mult: 1.0 }

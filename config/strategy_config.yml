@@ -417,10 +417,31 @@ portfolio:
           dd_derisk: 0.18                  # trailing DD that biases underlying hedge to h_max
           dd_hedge_bump: 0.10              # additive bump toward h_max when derisking
           state_json: data/b4_governor_state.json
-        min_net_edge_annual: 0.35      # require bucket4_net_edge_annual >= this
-        min_underlying_vol: 0.45      # legacy single floor (fallback for entry/keep below)
-        min_underlying_vol_entry: 0.55  # NEW pairs need >= this annual underlying vol
-        min_underlying_vol_keep: 0.45   # held pairs may stay down to this; below -> freeze flag
+        min_net_edge_annual: 0.30      # require bucket4_net_edge_annual >= this (lowered 5pp 2026-06-24)
+        min_underlying_vol: 0.40      # legacy single floor (fallback for entry/keep below) (lowered 5pp)
+        min_underlying_vol_entry: 0.50  # NEW pairs need >= this annual underlying vol (lowered 5pp 2026-06-24)
+        min_underlying_vol_keep: 0.40   # held pairs may stay down to this; below -> freeze flag (lowered 5pp)
+        # Short-history (low-N) inverse inclusion. Names with too few delta observations
+        # (Delta_quality == "low_n") cannot get a bootstrapped net_edge_p50_annual, so the
+        # GTP edge gate (net_edge_p50_annual >= 0) drops them even when expected decay is
+        # large. When enabled, such NEGATIVE-beta names are admitted using a conservative
+        # fallback edge column, then sized SMALLER via ``size_mult`` to reflect the higher
+        # estimation uncertainty. Underlying-vol / borrow / excluded gates still apply, so a
+        # name with no usable underlying vol (e.g. brand-new underlying) stays excluded.
+        low_n_inclusion:
+          enabled: true
+          min_n_obs: 1                 # require at least this many delta observations
+          size_mult: 0.50              # uncertainty haircut on gross for admitted low-N names
+          edge_fallback_columns:       # tried in order when net_edge_p50_annual is NaN
+            - primary_edge_annual
+            - net_decay_annual
+            - blended_gross_decay
+            - expected_gross_decay_annual
+          vol_fallback_columns:        # when vol_underlying_annual missing on low-N rows
+            - vol_underlying_annual_legacy
+            - und_rv_60d_daily_annual
+            - und_rv_20d_daily_annual
+          mechanical_edge_when_missing: true  # Itô proxy from |β| + vol fallback − borrow
         pair_lifecycle:
           enabled: false               # flip true after a week of report-only shadowing
           state_json: data/b4_pair_lifecycle_state.json
