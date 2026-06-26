@@ -12,7 +12,7 @@ ibkr:
 
 strategy:
   tag: ETF_LS
-  capital_usd: 1100000
+  capital_usd: 1050000
   gross_leverage: 4
   blacklist:
     - JPM
@@ -20,6 +20,7 @@ strategy:
     - AXP
     - APLD
     - SMR
+    - CBRS
   # Gross caps after sleeve budgets. With ``per_sleeve``, pair / underlying limits apply **within
   # each sleeve's gross**; root caps are fallbacks for
   # unknown sleeves. Liquidity clips implied book weights using ``liquidity_book_reference``
@@ -301,7 +302,7 @@ portfolio:
   sleeves:
     core_leveraged:
       # Share of gross after inverse_decay_bucket4, split vs ``yieldboost`` (normalized together).
-      target_weight: 0.54
+      target_weight: 0.51
       rules:
         min_delta_used: 1.50
         # Core = accounting bucket-1 style levered longs. Optional net-decay floor (annual fraction).
@@ -340,7 +341,7 @@ portfolio:
       enabled: true
       # Bucket-2 sleeve: screened rows with ``is_yieldboost`` only (see daily_screener). Split vs core
       # is relative — core.target_weight + yieldboost.target_weight is normalized after B4.
-      target_weight: 0.40
+      target_weight: 0.46
       rules:
         min_net_edge_annual: 0.25     # gate on ``net_edge_p50_annual`` for YieldBoost names
       weighting:
@@ -352,7 +353,7 @@ portfolio:
 
     inverse_decay_bucket4:
       enabled: true                  # sleeve split vs stock: inverse_decay_bucket4.target_weight remainder → stock
-      target_weight: 0.06
+      target_weight: 0.03
       # B4 universe = every inverse (β<0, ``inverse_shortable``) ticker in the screener,
       # MINUS ``rules.excluded_etfs`` (per-name overrides like KOLD)
       # MINUS ``flow_program.universe.shorts`` (those are sized in the weekly flow sleeve).
