@@ -47,6 +47,63 @@ class AdvancingClock:
         self.t += float(sec)
 
 
+def test_send_request_with_backoff_retries_transient_1001(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ibkr_flex.random, "uniform", lambda _a, _b: 0.0)
+    clock = AdvancingClock(1_000_000.0)
+    send_request = Mock(
+        side_effect=[
+            ibkr_flex.FlexResponseError(
+                query_id="1376356",
+                code="1001",
+                message="Statement could not be generated at this time. Please try again shortly.",
+                operation="SendRequest",
+            ),
+            "REFOK",
+        ]
+    )
+
+    with (
+        patch.object(ibkr_flex, "send_request", send_request),
+        patch.object(ibkr_flex.time, "sleep", clock.sleep),
+    ):
+        ref = ibkr_flex.send_request_with_backoff(
+            ibkr_flex.DEFAULT_BASE_URL,
+            "tok",
+            "1376356",
+            max_attempts=2,
+            base_sleep=1.0,
+            max_sleep=1.0,
+        )
+
+    assert ref == "REFOK"
+    assert send_request.call_count == 2
+    assert clock.t == 1_000_001.0
+
+
+def test_send_request_with_backoff_fails_fast_on_invalid_token() -> None:
+    send_request = Mock(
+        side_effect=ibkr_flex.FlexResponseError(
+            query_id="1376356",
+            code="1015",
+            message="Token is invalid",
+            operation="SendRequest",
+        )
+    )
+
+    with patch.object(ibkr_flex, "send_request", send_request):
+        with pytest.raises(ibkr_flex.FlexResponseError, match="1015"):
+            ibkr_flex.send_request_with_backoff(
+                ibkr_flex.DEFAULT_BASE_URL,
+                "bad",
+                "1376356",
+                max_attempts=3,
+                base_sleep=1.0,
+                max_sleep=1.0,
+            )
+
+    assert send_request.call_count == 1
+
+
 def test_fetch_and_save_stuck_1019_renews_reference(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """After IBKR_FLEX_1019_STUCK_RENEW_AFTER_SEC, flex_trades-style fetch issues a new SendRequest."""
     monkeypatch.setenv("IBKR_FLEX_1019_STUCK_RENEW_AFTER_SEC", "1")

@@ -110,6 +110,10 @@ _FLEX_PENDING_CODES = frozenset(
 # Error codes where a fresh SendRequest reference is required
 _FLEX_RENEW_REF_CODES = frozenset({"1017", "1020"})
 
+# SendRequest can return these before IBKR issues a reference code. They are
+# still server-side generation / load states, so retry the request gently.
+_FLEX_SEND_RETRY_CODES = _FLEX_PENDING_CODES | frozenset({"1018"})
+
 
 def today_str() -> str:
     return date.today().isoformat()
@@ -125,11 +129,28 @@ class FlexError(RuntimeError):
     pass
 
 
+class FlexResponseError(FlexError):
+    def __init__(self, *, query_id: str, code: str, message: str, operation: str) -> None:
+        self.query_id = query_id
+        self.code = code
+        self.message = message
+        self.operation = operation
+        super().__init__(f"{operation} failed for q={query_id}: {code} {message}")
+
+
 def _env_required(key: str) -> str:
     v = os.getenv(key)
     if not v:
         raise FlexError(f"Missing required environment variable: {key}")
     return v.strip()
+
+
+def _env_query_id(key: str, default: str) -> str:
+    v = os.getenv(key, "").strip()
+    if v:
+        return v
+    print(f"[FLEX][warn] {key} is not set; using built-in default query_id={default}")
+    return default
 
 
 def _extract_tag(xml_text: str, tag: str) -> Optional[str]:
@@ -279,7 +300,7 @@ def send_request(base_url: str, token: str, query_id: str, version: int = 3) -> 
     if "<Status>Success</Status>" not in text:
         err_code = _extract_tag(text, "ErrorCode") or "UNKNOWN"
         err_msg = _extract_tag(text, "ErrorMessage") or text[:400]
-        raise FlexError(f"SendRequest failed for q={query_id}: {err_code} {err_msg}")
+        raise FlexResponseError(query_id=query_id, code=err_code, message=err_msg, operation="SendRequest")
 
     ref = _extract_tag(text, "ReferenceCode")
     if not ref:
@@ -292,23 +313,39 @@ def send_request_with_backoff(
     token: str,
     query_id: str,
     version: int = 3,
-    max_attempts: int = 8,
-    base_sleep: float = 5.0,
+    max_attempts: int | None = None,
+    base_sleep: float | None = None,
+    max_sleep: float | None = None,
 ) -> str:
     """Retains explicit SendRequest backoff behavior."""
+    if max_attempts is None:
+        max_attempts = int(os.getenv("IBKR_FLEX_SEND_MAX_ATTEMPTS", "8"))
+    if base_sleep is None:
+        base_sleep = float(os.getenv("IBKR_FLEX_SEND_BASE_SLEEP_SEC", "5.0"))
+    if max_sleep is None:
+        max_sleep = float(os.getenv("IBKR_FLEX_SEND_MAX_SLEEP_SEC", "120.0"))
+
     last_err = None
     for attempt in range(1, max_attempts + 1):
         try:
             return send_request(base_url, token, query_id, version=version)
-        except FlexError as e:
-            msg = str(e)
+        except FlexResponseError as e:
             last_err = e
 
-            if " 1018 " in msg or "ErrorCode>1018" in msg or "Too many requests" in msg:
+            if e.code in _FLEX_SEND_RETRY_CODES:
+                if attempt >= max_attempts:
+                    break
                 sleep = base_sleep * (2 ** (attempt - 1))
-                sleep = min(sleep, 120.0)
+                sleep = min(sleep, max_sleep)
                 sleep += random.uniform(0, 2.0)
-                print(f"[FLEX] Throttled (1018). Backing off {sleep:.1f}s (attempt {attempt}/{max_attempts})")
+                if e.code == "1018":
+                    label = "Throttled"
+                else:
+                    label = "SendRequest transient"
+                print(
+                    f"[FLEX] {label} ({e.code}: {e.message[:120]}). "
+                    f"Backing off {sleep:.1f}s (attempt {attempt}/{max_attempts})"
+                )
                 time.sleep(sleep)
                 continue
 
@@ -530,21 +567,11 @@ def main() -> int:
     token = _env_required("IBKR_FLEX_TOKEN")
     base_url = os.getenv("IBKR_FLEX_BASE_URL", DEFAULT_BASE_URL).strip()
 
-    # You can override these via env vars if you prefer
-    q_trades = os.getenv("IBKR_FLEX_Q_TRADES", "").strip()
-    q_cash = os.getenv("IBKR_FLEX_Q_CASH", "").strip()
-    q_positions = os.getenv("IBKR_FLEX_Q_POSITIONS", "").strip()
-    q_borrow_details = os.getenv("IBKR_FLEX_Q_BORROW_DETAILS", "").strip()
-
-    # For local/manual runs, these defaults can be overridden by env vars.
-    if not q_trades:
-        q_trades = "1376360"
-    if not q_cash:
-        q_cash = "1376356"
-    if not q_positions:
-        q_positions = "1376362"
-    if not q_borrow_details:
-        q_borrow_details = "1408970"
+    # For local/manual runs, built-in defaults can be overridden by env vars.
+    q_trades = _env_query_id("IBKR_FLEX_Q_TRADES", "1376360")
+    q_cash = _env_query_id("IBKR_FLEX_Q_CASH", "1376356")
+    q_positions = _env_query_id("IBKR_FLEX_Q_POSITIONS", "1376362")
+    q_borrow_details = _env_query_id("IBKR_FLEX_Q_BORROW_DETAILS", "1408970")
     # Trades last: largest / slowest Flex job; smaller snapshots first (same total time if all
     # succeed, but avoids tying up the only slow slot before cash & positions land).
     queries = [
