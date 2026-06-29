@@ -9,19 +9,19 @@
       "info": {}
     },
     "AAOI": {
-      "fetched_at_epoch": 1780328606.69045,
+      "fetched_at_epoch": 1782446404.9327412,
       "info": {}
     },
     "SVIX": {
-      "fetched_at_epoch": 1780328606.69045,
+      "fetched_at_epoch": 1782446404.9327412,
       "info": {}
     },
     "SBUX": {
-      "fetched_at_epoch": 1780328606.69045,
+      "fetched_at_epoch": 1782446404.9327412,
       "info": {}
     },
     "BIDU": {
-      "fetched_at_epoch": 1780328606.69045,
+      "fetched_at_epoch": 1782446404.9327412,
       "info": {}
     },
     "XOM": {
@@ -141,13 +141,21 @@
       "info": {}
     },
     "CHNL": {
-      "fetched_at_epoch": 1780327610.5519783,
+      "fetched_at_epoch": 1782446404.9327412,
       "info": {}
     },
     "IBM": {
-      "fetched_at_epoch": 1780327610.5519783,
+      "fetched_at_epoch": 1782446404.9327412,
+      "info": {}
+    },
+    "CBRS": {
+      "fetched_at_epoch": 1782446404.9327412,
+      "info": {}
+    },
+    "SPCX": {
+      "fetched_at_epoch": 1782446404.9327412,
       "info": {}
     }
   },
-  "updated_at_epoch": 1780328606.69045
+  "updated_at_epoch": 1782446404.9327412
 }

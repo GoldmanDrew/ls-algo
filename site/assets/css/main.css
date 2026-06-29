@@ -438,3 +438,20 @@ table.borrow-ladder tr.row-focus td {
 .delta-flat { background: var(--border); color: var(--text-muted); }
 .spark-row { margin-top: 4px; }
 svg.spark { display: block; }
+
+/* ============================================================ */
+/* Bucket 4 risk simulator                                       */
+/* ============================================================ */
+.b4sim-controls { align-items: flex-end; }
+.b4sim-ctl {
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: 11.5px; color: var(--text-muted); font-weight: 600;
+}
+.b4sim-ctl select,
+.b4sim-ctl input[type="number"] {
+  background: var(--bg-panel); color: var(--text-primary);
+  border: 1px solid var(--border-strong); border-radius: 4px;
+  padding: 5px 8px; font-size: 13px; min-width: 130px;
+}
+.b4sim-ctl input[type="range"] { min-width: 150px; }
+#b4sim-chart svg { border: 1px solid var(--border); border-radius: 4px; background: var(--bg-soft); }

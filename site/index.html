@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="referrer" content="no-referrer">
 <title>ls-algo Risk Dashboard</title>
-<link rel="stylesheet" href="./assets/css/main.css?v=2026-05-19-action-squeeze">
+<link rel="stylesheet" href="./assets/css/main.css?v=2026-06-25-b4-risk-sim">
 </head>
 <body>
 
@@ -28,6 +28,7 @@
   <a href="#cockpit-section">Cockpit</a>
   <a href="#actions-section">Actions</a>
   <a href="#slide-risk-section">Slide risk</a>
+  <a href="#b4sim-section">B4 risk sim</a>
   <a href="#borrow-shock-section">Borrow shocks</a>
   <a href="#concentration-section">Concentration</a>
   <a href="#factor-section">Factor</a>
@@ -92,6 +93,15 @@
         <div id="slide-risk-meta" class="quality-line"></div>
       </div>
       <div id="slide-risk-content"></div>
+    </section>
+
+    <!-- Bucket 4 risk simulator -->
+    <section id="b4sim-section" class="panel">
+      <div class="panel-head">
+        <h2>Bucket 4 risk simulator &mdash; fat-tailed drawdown Monte Carlo</h2>
+        <div id="b4sim-meta" class="quality-line"></div>
+      </div>
+      <div id="b4sim-content"></div>
     </section>
 
     <!-- Borrow rate shock sensitivity -->
@@ -190,6 +200,6 @@
 
 <script src="./assets/js/config.js?v=2026-05-19-login-fix"></script>
 <script src="./assets/js/auth.js?v=2026-05-19-login-fix"></script>
-<script src="./assets/js/app.js?v=2026-06-02-bucket-sleeve"></script>
+<script src="./assets/js/app.js?v=2026-06-25-b4-risk-sim"></script>
 </body>
 </html>

@@ -331,7 +331,10 @@ portfolio:
           enabled: true
           column: und_trend_ratio_fwd_60d
           percentile_mode: cross_sectional
-          alpha: 1.0                  # xsec pctile 0.10 -> 1.40x; xsec pctile 0.90 -> 0.60x before clipping
+          alpha: 1.25                 # xsec pctile 0.10 -> 1.50x (ceiling); 0.90 -> 0.50x (floor). Raised from 1.0:
+                                      # sizing_tilt_cadence_bt.py (2023-06..2026-06) showed low-TR tilt monotonically
+                                      # lifts B1 gross-book CAGR (48.9% no-tilt -> 51.9% a1.0 -> 52.7% a1.5); 1.25 is
+                                      # the mid-point trading the extra CAGR against rising turnover.
           neutral_pctile: 0.50
           floor: 0.50
           ceiling: 1.50
@@ -394,9 +397,13 @@ portfolio:
             k_z: 0.20
             # cadence: days = clip(round(base_days / (1 + k_tr*(cadence_signal-1) + m_vcr*(VCR-VCR_med))), min, max)
             cadence_signal_col: tr_est        # persistence-adjusted forward-looking trend ratio
-            base_days: 12.0
-            k_tr: 2.25
-            m_vcr: 2.5                      # mean-best A7 cadence sensitivity (39.4% CAGR @ 20bps)
+            # base_days/k_tr updated 2026-06-25 from bucket4_cadence_risk_opt.py (risk-aware sweep on the live
+            # B4 proposed book, 2024-01..2026-06): base_days 12->14, k_tr +2.25->-1.0 was the clear winner on the
+            # PnL-vs-tail-drawdown frontier (CAGR -4.1%->+12.1%, Calmar -0.09->+0.33, P(1y dd>40%) 32%->23%).
+            # Drops the old "trending->rebalance faster" rule, consistent with TR mean-reversion (Section A).
+            base_days: 14.0
+            k_tr: -1.0
+            m_vcr: 2.5                      # unchanged; cranking VCR sensitivity added churn without cutting the tail
             min_interval: 1
             max_interval: 21                # allow calm regimes to stretch toward 3-week spacing
             operator_check_days: 5          # run rebalance_strategy.py every N business days; per-pair due gate inside

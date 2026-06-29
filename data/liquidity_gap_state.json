@@ -1,0 +1,3008 @@
+{
+  "AAOX|AAOI": {
+    "ETF": "AAOX",
+    "Underlying": "AAOI",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 165177.79159452286,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 165177.79159452286
+  },
+  "AAPB|AAPL": {
+    "ETF": "AAPB",
+    "Underlying": "AAPL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 177.9436290797638,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 177.9436290797638
+  },
+  "AAPU|AAPL": {
+    "ETF": "AAPU",
+    "Underlying": "AAPL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "AAPW|AAPL": {
+    "ETF": "AAPW",
+    "Underlying": "AAPL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "AAPX|AAPL": {
+    "ETF": "AAPX",
+    "Underlying": "AAPL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "ABNG|ABNB": {
+    "ETF": "ABNG",
+    "Underlying": "ABNB",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "ADBG|ADBE": {
+    "ETF": "ADBG",
+    "Underlying": "ADBE",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 481.267533603888,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 481.267533603888
+  },
+  "ADBU|ADBE": {
+    "ETF": "ADBU",
+    "Underlying": "ADBE",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "AFRU|AFRM": {
+    "ETF": "AFRU",
+    "Underlying": "AFRM",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2548.886263939435,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2548.886263939435
+  },
+  "ALBG|ALB": {
+    "ETF": "ALBG",
+    "Underlying": "ALB",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1230.015002435474,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1230.015002435474
+  },
+  "AMDG|AMD": {
+    "ETF": "AMDG",
+    "Underlying": "AMD",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 4222.197515997376,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 4222.197515997376
+  },
+  "AMDL|AMD": {
+    "ETF": "AMDL",
+    "Underlying": "AMD",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 4318.852418568322,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 4318.852418568322
+  },
+  "AMUU|AMD": {
+    "ETF": "AMUU",
+    "Underlying": "AMD",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 4112.746916014281,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 4112.746916014281
+  },
+  "AMYY|AMD": {
+    "ETF": "AMYY",
+    "Underlying": "AMD",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "AMZO|AMZN": {
+    "ETF": "AMZO",
+    "Underlying": "AMZN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "AMZU|AMZN": {
+    "ETF": "AMZU",
+    "Underlying": "AMZN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 228.72092605558694,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 228.72092605558694
+  },
+  "AMZZ|AMZN": {
+    "ETF": "AMZZ",
+    "Underlying": "AMZN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 247.58228336729744,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 247.58228336729744
+  },
+  "ANEL|ANET": {
+    "ETF": "ANEL",
+    "Underlying": "ANET",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3318.8443173807495,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3318.8443173807495
+  },
+  "APHU|APH": {
+    "ETF": "APHU",
+    "Underlying": "APH",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 375.03271516519686,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 375.03271516519686
+  },
+  "APPX|APP": {
+    "ETF": "APPX",
+    "Underlying": "APP",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 14423.491256870897,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 14423.491256870897
+  },
+  "ARCX|ACHR": {
+    "ETF": "ARCX",
+    "Underlying": "ACHR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 10585.242903102171,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 10585.242903102171
+  },
+  "ARMG|ARM": {
+    "ETF": "ARMG",
+    "Underlying": "ARM",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 4006.930151889466,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 4006.930151889466
+  },
+  "ASMG|ASML": {
+    "ETF": "ASMG",
+    "Underlying": "ASML",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 306.69213288908645,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 306.69213288908645
+  },
+  "ASMU|ASML": {
+    "ETF": "ASMU",
+    "Underlying": "ASML",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 630.049303385016,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 630.049303385016
+  },
+  "ASTG|ASTS": {
+    "ETF": "ASTG",
+    "Underlying": "ASTS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "ASTN|ASTS": {
+    "ETF": "ASTN",
+    "Underlying": "ASTS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "ASTX|ASTS": {
+    "ETF": "ASTX",
+    "Underlying": "ASTS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 55638.71546432377,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 55638.71546432377
+  },
+  "AVAZ|VAVX": {
+    "ETF": "AVAZ",
+    "Underlying": "VAVX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "AVGG|AVGO": {
+    "ETF": "AVGG",
+    "Underlying": "AVGO",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1940.6001235434746,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1940.6001235434746
+  },
+  "AVGU|AVGO": {
+    "ETF": "AVGU",
+    "Underlying": "AVGO",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 250.2523241243704,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 250.2523241243704
+  },
+  "AVGX|AVGO": {
+    "ETF": "AVGX",
+    "Underlying": "AVGO",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 772.8747067457493,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 772.8747067457493
+  },
+  "AVL|AVGO": {
+    "ETF": "AVL",
+    "Underlying": "AVGO",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1689.8574807911787,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1689.8574807911787
+  },
+  "AVXX|AVAV": {
+    "ETF": "AVXX",
+    "Underlying": "AVAV",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 17039.922064763618,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 17039.922064763618
+  },
+  "AXTX|AXTI": {
+    "ETF": "AXTX",
+    "Underlying": "AXTI",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 187977.2054609421,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 187977.2054609421
+  },
+  "BABO|BABA": {
+    "ETF": "BABO",
+    "Underlying": "BABA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "BABU|BABA": {
+    "ETF": "BABU",
+    "Underlying": "BABA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 585.4650596280336,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 585.4650596280336
+  },
+  "BABX|BABA": {
+    "ETF": "BABX",
+    "Underlying": "BABA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2229.112419479274,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2229.112419479274
+  },
+  "BAIG|BBAI": {
+    "ETF": "BAIG",
+    "Underlying": "BBAI",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 20249.919915650542,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 20249.919915650542
+  },
+  "BBYY|BABA": {
+    "ETF": "BBYY",
+    "Underlying": "BABA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "BEG|BE": {
+    "ETF": "BEG",
+    "Underlying": "BE",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "BEX|BE": {
+    "ETF": "BEX",
+    "Underlying": "BE",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 27729.872958056738,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 27729.872958056738
+  },
+  "BIDG|BIDU": {
+    "ETF": "BIDG",
+    "Underlying": "BIDU",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 306.19984400731283,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 306.19984400731283
+  },
+  "BITU|IBIT": {
+    "ETF": "BITU",
+    "Underlying": "IBIT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1227.5035674291287,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1227.5035674291287
+  },
+  "BITX|IBIT": {
+    "ETF": "BITX",
+    "Underlying": "IBIT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2364.7070739583223,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2364.7070739583223
+  },
+  "BLSG|BLSH": {
+    "ETF": "BLSG",
+    "Underlying": "BLSH",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 10886.629785507432,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 10886.629785507432
+  },
+  "BMNG|BMNR": {
+    "ETF": "BMNG",
+    "Underlying": "BMNR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 19002.81079360836,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 19002.81079360836
+  },
+  "BMNU|BMNR": {
+    "ETF": "BMNU",
+    "Underlying": "BMNR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 20805.621106039598,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 20805.621106039598
+  },
+  "BOEG|BA": {
+    "ETF": "BOEG",
+    "Underlying": "BA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 375.8067305514876,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 375.8067305514876
+  },
+  "BOEU|BA": {
+    "ETF": "BOEU",
+    "Underlying": "BA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 444.9594519923428,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 444.9594519923428
+  },
+  "BTCL|IBIT": {
+    "ETF": "BTCL",
+    "Underlying": "IBIT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2172.6318011695666,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2172.6318011695666
+  },
+  "BULG|BULL": {
+    "ETF": "BULG",
+    "Underlying": "BULL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3108.45657801489,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3108.45657801489
+  },
+  "CBRZ|CBRS": {
+    "ETF": "CBRZ",
+    "Underlying": "CBRS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 238930.30207851465,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 238930.30207851465
+  },
+  "CCUP|CRCL": {
+    "ETF": "CCUP",
+    "Underlying": "CRCL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 18408.102782029007,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 18408.102782029007
+  },
+  "CDNG|CDNS": {
+    "ETF": "CDNG",
+    "Underlying": "CDNS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "CEGX|CEG": {
+    "ETF": "CEGX",
+    "Underlying": "CEG",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1652.6387051345819,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1652.6387051345819
+  },
+  "CHAU|ASHR": {
+    "ETF": "CHAU",
+    "Underlying": "ASHR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "CHNU|CHNL": {
+    "ETF": "CHNU",
+    "Underlying": "CHNL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "CIEG|CIEN": {
+    "ETF": "CIEG",
+    "Underlying": "CIEN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "CIFG|CIFR": {
+    "ETF": "CIFG",
+    "Underlying": "CIFR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 14968.611690221382,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 14968.611690221382
+  },
+  "CLSX|CLSK": {
+    "ETF": "CLSX",
+    "Underlying": "CLSK",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 14594.71885926669,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 14594.71885926669
+  },
+  "CMGG|CMG": {
+    "ETF": "CMGG",
+    "Underlying": "CMG",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 398.6642997031654,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 398.6642997031654
+  },
+  "CNCG|CNC": {
+    "ETF": "CNCG",
+    "Underlying": "CNC",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1576.7700832310425,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1576.7700832310425
+  },
+  "COHX|COHR": {
+    "ETF": "COHX",
+    "Underlying": "COHR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 11946.299250379448,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 11946.299250379448
+  },
+  "COIA|COIN": {
+    "ETF": "COIA",
+    "Underlying": "COIN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 9048.173419664121,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 9048.173419664121
+  },
+  "COIG|COIN": {
+    "ETF": "COIG",
+    "Underlying": "COIN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 6976.955015119255,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 6976.955015119255
+  },
+  "COIO|COIN": {
+    "ETF": "COIO",
+    "Underlying": "COIN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "COIW|COIN": {
+    "ETF": "COIW",
+    "Underlying": "COIN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "CONI|COIN": {
+    "ETF": "CONI",
+    "Underlying": "COIN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 19530.602697467897,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 19530.602697467897
+  },
+  "CONL|COIN": {
+    "ETF": "CONL",
+    "Underlying": "COIN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 10749.839768977843,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 10749.839768977843
+  },
+  "CONX|COIN": {
+    "ETF": "CONX",
+    "Underlying": "COIN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 8923.74138588955,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 8923.74138588955
+  },
+  "CONY|COIN": {
+    "ETF": "CONY",
+    "Underlying": "COIN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "COPZ|COPX": {
+    "ETF": "COPZ",
+    "Underlying": "COPX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3431.160682847802,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3431.160682847802
+  },
+  "CORD|CRWV": {
+    "ETF": "CORD",
+    "Underlying": "CRWV",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 34754.832245387566,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 34754.832245387566
+  },
+  "COYY|COIN": {
+    "ETF": "COYY",
+    "Underlying": "COIN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 155318.76104196804,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 155318.76104196804
+  },
+  "COZX|CORZ": {
+    "ETF": "COZX",
+    "Underlying": "CORZ",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 4145.710617215779,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 4145.710617215779
+  },
+  "CPNX|CPNG": {
+    "ETF": "CPNX",
+    "Underlying": "CPNG",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2846.6124885892323,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2846.6124885892323
+  },
+  "CRCA|CRCL": {
+    "ETF": "CRCA",
+    "Underlying": "CRCL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 26745.938571695733,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 26745.938571695733
+  },
+  "CRCG|CRCL": {
+    "ETF": "CRCG",
+    "Underlying": "CRCL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 33109.02849279252,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 33109.02849279252
+  },
+  "CRDU|CRDO": {
+    "ETF": "CRDU",
+    "Underlying": "CRDO",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 13817.92178975896,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 13817.92178975896
+  },
+  "CRMG|CRM": {
+    "ETF": "CRMG",
+    "Underlying": "CRM",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1583.9535029660485,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1583.9535029660485
+  },
+  "CRMU|CRML": {
+    "ETF": "CRMU",
+    "Underlying": "CRML",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 130926.02873666117,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 130926.02873666117
+  },
+  "CRMX|CRML": {
+    "ETF": "CRMX",
+    "Underlying": "CRML",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "CRWG|CRWV": {
+    "ETF": "CRWG",
+    "Underlying": "CRWV",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 26032.15076838208,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 26032.15076838208
+  },
+  "CRWL|CRWD": {
+    "ETF": "CRWL",
+    "Underlying": "CRWD",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "CRWU|CRWV": {
+    "ETF": "CRWU",
+    "Underlying": "CRWV",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 19125.266471229905,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 19125.266471229905
+  },
+  "CRY|CRCL": {
+    "ETF": "CRY",
+    "Underlying": "CRCL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "CSCL|CSCO": {
+    "ETF": "CSCL",
+    "Underlying": "CSCO",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "CSEX|CLS": {
+    "ETF": "CSEX",
+    "Underlying": "CLS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 17046.800214961517,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 17046.800214961517
+  },
+  "CWEB|KWEB": {
+    "ETF": "CWEB",
+    "Underlying": "KWEB",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 980.7460606395316,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 980.7460606395316
+  },
+  "CWVX|CRWV": {
+    "ETF": "CWVX",
+    "Underlying": "CRWV",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 24565.373558865136,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 24565.373558865136
+  },
+  "CWY|CRWV": {
+    "ETF": "CWY",
+    "Underlying": "CRWV",
+    "days_open": 2,
+    "gap": 346810.34385505354,
+    "last_executable": 2522.156790206336,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 349332.50064525986
+  },
+  "DAMD|AMD": {
+    "ETF": "DAMD",
+    "Underlying": "AMD",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2446.8616512585454,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2446.8616512585454
+  },
+  "DKNX|DKNG": {
+    "ETF": "DKNX",
+    "Underlying": "DKNG",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2172.59293836161,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2172.59293836161
+  },
+  "DLLL|DELL": {
+    "ETF": "DLLL",
+    "Underlying": "DELL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2858.505238080785,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2858.505238080785
+  },
+  "DNNG|DNN": {
+    "ETF": "DNNG",
+    "Underlying": "DNN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3239.347261015839,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3239.347261015839
+  },
+  "DRAY|DKNG": {
+    "ETF": "DRAY",
+    "Underlying": "DKNG",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "DRIP|XOP": {
+    "ETF": "DRIP",
+    "Underlying": "XOP",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "DUOG|DUOL": {
+    "ETF": "DUOG",
+    "Underlying": "DUOL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 6499.686188944582,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 6499.686188944582
+  },
+  "ELIL|LLY": {
+    "ETF": "ELIL",
+    "Underlying": "LLY",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "ENTL|ENTG": {
+    "ETF": "ENTL",
+    "Underlying": "ENTG",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "EOSU|EOSE": {
+    "ETF": "EOSU",
+    "Underlying": "EOSE",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 36889.70637350422,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 36889.70637350422
+  },
+  "ERX|XLE": {
+    "ETF": "ERX",
+    "Underlying": "XLE",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "ETHT|ETHA": {
+    "ETF": "ETHT",
+    "Underlying": "ETHA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 7829.359347821136,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 7829.359347821136
+  },
+  "ETHU|ETHA": {
+    "ETF": "ETHU",
+    "Underlying": "ETHA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 10745.5298570774,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 10745.5298570774
+  },
+  "ETU|ETHA": {
+    "ETF": "ETU",
+    "Underlying": "ETHA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 9188.47921181198,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 9188.47921181198
+  },
+  "FBL|META": {
+    "ETF": "FBL",
+    "Underlying": "META",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1362.0527846643458,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1362.0527846643458
+  },
+  "FBYY|META": {
+    "ETF": "FBYY",
+    "Underlying": "META",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "FCXG|FCX": {
+    "ETF": "FCXG",
+    "Underlying": "FCX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2104.8151971708844,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2104.8151971708844
+  },
+  "FGRU|FIGR": {
+    "ETF": "FGRU",
+    "Underlying": "FIGR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "FIGG|FIG": {
+    "ETF": "FIGG",
+    "Underlying": "FIG",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 14633.337243763515,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 14633.337243763515
+  },
+  "FINY|XLF": {
+    "ETF": "FINY",
+    "Underlying": "XLF",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "FIYY|TLT": {
+    "ETF": "FIYY",
+    "Underlying": "TLT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "FLYT|FLY": {
+    "ETF": "FLYT",
+    "Underlying": "FLY",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 55299.555583394904,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 55299.555583394904
+  },
+  "FNGD|XLK": {
+    "ETF": "FNGD",
+    "Underlying": "XLK",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "FOMG|FORM": {
+    "ETF": "FOMG",
+    "Underlying": "FORM",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "GDXU|GDX": {
+    "ETF": "GDXU",
+    "Underlying": "GDX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3962.7284806911207,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3962.7284806911207
+  },
+  "GEMG|GEMI": {
+    "ETF": "GEMG",
+    "Underlying": "GEMI",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "GEVG|GEV": {
+    "ETF": "GEVG",
+    "Underlying": "GEV",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2436.0167479770203,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2436.0167479770203
+  },
+  "GEVX|GEV": {
+    "ETF": "GEVX",
+    "Underlying": "GEV",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3854.7818488597786,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3854.7818488597786
+  },
+  "GFSG|GFS": {
+    "ETF": "GFSG",
+    "Underlying": "GFS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "GGLL|GOOGL": {
+    "ETF": "GGLL",
+    "Underlying": "GOOGL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 252.67921643916006,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 252.67921643916006
+  },
+  "GLGG|GLXY": {
+    "ETF": "GLGG",
+    "Underlying": "GLXY",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 8837.389887401641,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 8837.389887401641
+  },
+  "GLWG|GLW": {
+    "ETF": "GLWG",
+    "Underlying": "GLW",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 5233.460262170127,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 5233.460262170127
+  },
+  "GLXU|GLXY": {
+    "ETF": "GLXU",
+    "Underlying": "GLXY",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 23436.7182752513,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 23436.7182752513
+  },
+  "GOOW|GOOGL": {
+    "ETF": "GOOW",
+    "Underlying": "GOOGL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "GOOX|GOOGL": {
+    "ETF": "GOOX",
+    "Underlying": "GOOGL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 443.1867004799716,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 443.1867004799716
+  },
+  "GOU|GOOGL": {
+    "ETF": "GOU",
+    "Underlying": "GOOGL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "GRAG|GRAB": {
+    "ETF": "GRAG",
+    "Underlying": "GRAB",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "GUSH|XOP": {
+    "ETF": "GUSH",
+    "Underlying": "XOP",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 445.33543224891065,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 445.33543224891065
+  },
+  "HIMZ|HIMS": {
+    "ETF": "HIMZ",
+    "Underlying": "HIMS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 13796.091533130631,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 13796.091533130631
+  },
+  "HMYY|HIMS": {
+    "ETF": "HMYY",
+    "Underlying": "HIMS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "HODU|HOOD": {
+    "ETF": "HODU",
+    "Underlying": "HOOD",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 9269.355198757965,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 9269.355198757965
+  },
+  "HOOG|HOOD": {
+    "ETF": "HOOG",
+    "Underlying": "HOOD",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 7524.937571669642,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 7524.937571669642
+  },
+  "HOOX|HOOD": {
+    "ETF": "HOOX",
+    "Underlying": "HOOD",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 7773.830750013204,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 7773.830750013204
+  },
+  "HOYY|HOOD": {
+    "ETF": "HOYY",
+    "Underlying": "HOOD",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "HPEL|HPE": {
+    "ETF": "HPEL",
+    "Underlying": "HPE",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "HUTG|HUT": {
+    "ETF": "HUTG",
+    "Underlying": "HUT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 18332.490908534015,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 18332.490908534015
+  },
+  "IBX|IBM": {
+    "ETF": "IBX",
+    "Underlying": "IBM",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1585.9680748648009,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1585.9680748648009
+  },
+  "INTW|INTC": {
+    "ETF": "INTW",
+    "Underlying": "INTC",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 6851.775285711382,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 6851.775285711382
+  },
+  "IONL|IONQ": {
+    "ETF": "IONL",
+    "Underlying": "IONQ",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 9853.164150289243,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 9853.164150289243
+  },
+  "IONX|IONQ": {
+    "ETF": "IONX",
+    "Underlying": "IONQ",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 11839.408354050463,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 11839.408354050463
+  },
+  "IOYY|IONQ": {
+    "ETF": "IOYY",
+    "Underlying": "IONQ",
+    "days_open": 0,
+    "gap": 291574.703198359,
+    "last_executable": 1029.8902271022796,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 292604.59342546127
+  },
+  "IREG|IREN": {
+    "ETF": "IREG",
+    "Underlying": "IREN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 25168.61679021627,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 25168.61679021627
+  },
+  "IREX|IREN": {
+    "ETF": "IREX",
+    "Underlying": "IREN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 22708.131770305175,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 22708.131770305175
+  },
+  "IREZ|IREN": {
+    "ETF": "IREZ",
+    "Underlying": "IREN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "IRE|IREN": {
+    "ETF": "IRE",
+    "Underlying": "IREN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 21876.666146476415,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 21876.666146476415
+  },
+  "JNUG|GDXJ": {
+    "ETF": "JNUG",
+    "Underlying": "GDXJ",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3208.87030815665,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3208.87030815665
+  },
+  "JOBX|JOBY": {
+    "ETF": "JOBX",
+    "Underlying": "JOBY",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2942.191894167219,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2942.191894167219
+  },
+  "KEEX|KEEL": {
+    "ETF": "KEEX",
+    "Underlying": "KEEL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 20257.911737739923,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 20257.911737739923
+  },
+  "KLAG|KLAC": {
+    "ETF": "KLAG",
+    "Underlying": "KLAC",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3920.4508874962994,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3920.4508874962994
+  },
+  "KORU|EWY": {
+    "ETF": "KORU",
+    "Underlying": "EWY",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 11102.682047834696,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 11102.682047834696
+  },
+  "KTUP|KTOS": {
+    "ETF": "KTUP",
+    "Underlying": "KTOS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 4255.817987488055,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 4255.817987488055
+  },
+  "LABU|XBI": {
+    "ETF": "LABU",
+    "Underlying": "XBI",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 25.234159803733018,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 25.234159803733018
+  },
+  "LABX|ALAB": {
+    "ETF": "LABX",
+    "Underlying": "ALAB",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 14991.06668417883,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 14991.06668417883
+  },
+  "LACG|LAC": {
+    "ETF": "LACG",
+    "Underlying": "LAC",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 9218.98637289127,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 9218.98637289127
+  },
+  "LEUX|LEU": {
+    "ETF": "LEUX",
+    "Underlying": "LEU",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 10409.840339757216,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 10409.840339757216
+  },
+  "LINT|INTC": {
+    "ETF": "LINT",
+    "Underlying": "INTC",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2432.6309974048195,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2432.6309974048195
+  },
+  "LITX|LITE": {
+    "ETF": "LITX",
+    "Underlying": "LITE",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 31982.020250419737,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 31982.020250419737
+  },
+  "LITZ|LITE": {
+    "ETF": "LITZ",
+    "Underlying": "LITE",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 39443.10674541025,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 39443.10674541025
+  },
+  "LLYX|LLY": {
+    "ETF": "LLYX",
+    "Underlying": "LLY",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 571.2855731932054,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 571.2855731932054
+  },
+  "LMNX|LMND": {
+    "ETF": "LMNX",
+    "Underlying": "LMND",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 5655.065946157064,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 5655.065946157064
+  },
+  "LRCU|LRCX": {
+    "ETF": "LRCU",
+    "Underlying": "LRCX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 892.7075940319037,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 892.7075940319037
+  },
+  "LUNL|LUNR": {
+    "ETF": "LUNL",
+    "Underlying": "LUNR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "MAAY|MARA": {
+    "ETF": "MAAY",
+    "Underlying": "MARA",
+    "days_open": 2,
+    "gap": 276094.24587024667,
+    "last_executable": 7716.054859972572,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 283810.3007302192
+  },
+  "METU|META": {
+    "ETF": "METU",
+    "Underlying": "META",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 954.3956324240867,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 954.3956324240867
+  },
+  "MEXX|EWW": {
+    "ETF": "MEXX",
+    "Underlying": "EWW",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1455.1797737048705,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1455.1797737048705
+  },
+  "MPG|MP": {
+    "ETF": "MPG",
+    "Underlying": "MP",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "MPL|MP": {
+    "ETF": "MPL",
+    "Underlying": "MP",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2570.44931834588,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2570.44931834588
+  },
+  "MPWX|MPWR": {
+    "ETF": "MPWX",
+    "Underlying": "MPWR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 6372.301879155136,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 6372.301879155136
+  },
+  "MRAL|MARA": {
+    "ETF": "MRAL",
+    "Underlying": "MARA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1868.8764621613548,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1868.8764621613548
+  },
+  "MRNX|MRNA": {
+    "ETF": "MRNX",
+    "Underlying": "MRNA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "MSFU|MSFT": {
+    "ETF": "MSFU",
+    "Underlying": "MSFT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 491.1942805748884,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 491.1942805748884
+  },
+  "MSFW|MSFT": {
+    "ETF": "MSFW",
+    "Underlying": "MSFT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "MSFX|MSFT": {
+    "ETF": "MSFX",
+    "Underlying": "MSFT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "MSOO|MSTR": {
+    "ETF": "MSOO",
+    "Underlying": "MSTR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "MSTP|MSTR": {
+    "ETF": "MSTP",
+    "Underlying": "MSTR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 858.7282131902482,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 858.7282131902482
+  },
+  "MSTU|MSTR": {
+    "ETF": "MSTU",
+    "Underlying": "MSTR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3122.4649866958016,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3122.4649866958016
+  },
+  "MSTX|MSTR": {
+    "ETF": "MSTX",
+    "Underlying": "MSTR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3293.100676020291,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3293.100676020291
+  },
+  "MSTY|MSTR": {
+    "ETF": "MSTY",
+    "Underlying": "MSTR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "MSTZ|MSTR": {
+    "ETF": "MSTZ",
+    "Underlying": "MSTR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 30878.491037490847,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 30878.491037490847
+  },
+  "MTSG|MTSI": {
+    "ETF": "MTSG",
+    "Underlying": "MTSI",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "MTYY|MSTR": {
+    "ETF": "MTYY",
+    "Underlying": "MSTR",
+    "days_open": 0,
+    "gap": 226911.39452285104,
+    "last_executable": 10536.351102646639,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 237447.7456254977
+  },
+  "MULL|MU": {
+    "ETF": "MULL",
+    "Underlying": "MU",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 5525.135521733754,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 5525.135521733754
+  },
+  "MUU|MU": {
+    "ETF": "MUU",
+    "Underlying": "MU",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 7261.536358119242,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 7261.536358119242
+  },
+  "MUYY|MU": {
+    "ETF": "MUYY",
+    "Underlying": "MU",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "MUZ|MU": {
+    "ETF": "MUZ",
+    "Underlying": "MU",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "MVLL|MRVL": {
+    "ETF": "MVLL",
+    "Underlying": "MRVL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3498.0209979256088,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3498.0209979256088
+  },
+  "NBIG|NBIS": {
+    "ETF": "NBIG",
+    "Underlying": "NBIS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 18454.481198110545,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 18454.481198110545
+  },
+  "NBIL|NBIS": {
+    "ETF": "NBIL",
+    "Underlying": "NBIS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 15549.496195774109,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 15549.496195774109
+  },
+  "NBIZ|NBIS": {
+    "ETF": "NBIZ",
+    "Underlying": "NBIS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 21272.61944705864,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 21272.61944705864
+  },
+  "NEBX|NBIS": {
+    "ETF": "NEBX",
+    "Underlying": "NBIS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 17821.099458005967,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 17821.099458005967
+  },
+  "NEMG|NEM": {
+    "ETF": "NEMG",
+    "Underlying": "NEM",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1632.8280488839075,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1632.8280488839075
+  },
+  "NETG|NET": {
+    "ETF": "NETG",
+    "Underlying": "NET",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2494.2316657860783,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2494.2316657860783
+  },
+  "NFLU|NFLX": {
+    "ETF": "NFLU",
+    "Underlying": "NFLX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 243.42577752307264,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 243.42577752307264
+  },
+  "NFLW|NFLX": {
+    "ETF": "NFLW",
+    "Underlying": "NFLX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "NFXL|NFLX": {
+    "ETF": "NFXL",
+    "Underlying": "NFLX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 411.76096930387865,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 411.76096930387865
+  },
+  "NIOG|NIO": {
+    "ETF": "NIOG",
+    "Underlying": "NIO",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1335.344065340415,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1335.344065340415
+  },
+  "NOWL|NOW": {
+    "ETF": "NOWL",
+    "Underlying": "NOW",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2738.620203041364,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2738.620203041364
+  },
+  "NUGT|GDX": {
+    "ETF": "NUGT",
+    "Underlying": "GDX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2514.4069964463065,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2514.4069964463065
+  },
+  "NVDB|NVDA": {
+    "ETF": "NVDB",
+    "Underlying": "NVDA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 334.2092137801933,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 334.2092137801933
+  },
+  "NVDG|NVDA": {
+    "ETF": "NVDG",
+    "Underlying": "NVDA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 945.589252778016,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 945.589252778016
+  },
+  "NVDL|NVDA": {
+    "ETF": "NVDL",
+    "Underlying": "NVDA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 806.2696965503787,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 806.2696965503787
+  },
+  "NVDO|NVDA": {
+    "ETF": "NVDO",
+    "Underlying": "NVDA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "NVDQ|NVDA": {
+    "ETF": "NVDQ",
+    "Underlying": "NVDA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "NVDS|NVDA": {
+    "ETF": "NVDS",
+    "Underlying": "NVDA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "NVDU|NVDA": {
+    "ETF": "NVDU",
+    "Underlying": "NVDA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 731.3403054829696,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 731.3403054829696
+  },
+  "NVDX|NVDA": {
+    "ETF": "NVDX",
+    "Underlying": "NVDA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "NVOX|NVO": {
+    "ETF": "NVOX",
+    "Underlying": "NVO",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1260.225773012567,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1260.225773012567
+  },
+  "NVTX|NVTS": {
+    "ETF": "NVTX",
+    "Underlying": "NVTS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 48752.32762473967,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 48752.32762473967
+  },
+  "OKLL|OKLO": {
+    "ETF": "OKLL",
+    "Underlying": "OKLO",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 36417.999306547164,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 36417.999306547164
+  },
+  "OKTG|OKTA": {
+    "ETF": "OKTG",
+    "Underlying": "OKTA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1772.236847706128,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1772.236847706128
+  },
+  "ONDG|ONDS": {
+    "ETF": "ONDG",
+    "Underlying": "ONDS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 41969.424675918075,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 41969.424675918075
+  },
+  "ONDL|ONDS": {
+    "ETF": "ONDL",
+    "Underlying": "ONDS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 33190.228695765465,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 33190.228695765465
+  },
+  "OPEG|OPEN": {
+    "ETF": "OPEG",
+    "Underlying": "OPEN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 18710.171621333502,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 18710.171621333502
+  },
+  "OPEX|OPEN": {
+    "ETF": "OPEX",
+    "Underlying": "OPEN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 8627.4825888168,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 8627.4825888168
+  },
+  "ORCU|ORCL": {
+    "ETF": "ORCU",
+    "Underlying": "ORCL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2881.746435794026,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2881.746435794026
+  },
+  "ORCX|ORCL": {
+    "ETF": "ORCX",
+    "Underlying": "ORCL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3281.651738813832,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3281.651738813832
+  },
+  "OSCX|OSCR": {
+    "ETF": "OSCX",
+    "Underlying": "OSCR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "PAAU|PAAS": {
+    "ETF": "PAAU",
+    "Underlying": "PAAS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 4345.902469174933,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 4345.902469174933
+  },
+  "PALU|PANW": {
+    "ETF": "PALU",
+    "Underlying": "PANW",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 286.7607323298156,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 286.7607323298156
+  },
+  "PANG|PANW": {
+    "ETF": "PANG",
+    "Underlying": "PANW",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 431.8375654677771,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 431.8375654677771
+  },
+  "PLOO|PLTR": {
+    "ETF": "PLOO",
+    "Underlying": "PLTR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "PLTA|PLTR": {
+    "ETF": "PLTA",
+    "Underlying": "PLTR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3101.239083462131,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3101.239083462131
+  },
+  "PLTG|PLTR": {
+    "ETF": "PLTG",
+    "Underlying": "PLTR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3209.9431997542765,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3209.9431997542765
+  },
+  "PLTU|PLTR": {
+    "ETF": "PLTU",
+    "Underlying": "PLTR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3866.526932049303,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3866.526932049303
+  },
+  "PLUL|PLUG": {
+    "ETF": "PLUL",
+    "Underlying": "PLUG",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 12067.481682276144,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 12067.481682276144
+  },
+  "PLU|PL": {
+    "ETF": "PLU",
+    "Underlying": "PL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 22436.44254670523,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 22436.44254670523
+  },
+  "PONX|PONY": {
+    "ETF": "PONX",
+    "Underlying": "PONY",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 4851.73785648414,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 4851.73785648414
+  },
+  "PTIR|PLTR": {
+    "ETF": "PTIR",
+    "Underlying": "PLTR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 4901.208439701813,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 4901.208439701813
+  },
+  "PYPG|PYPL": {
+    "ETF": "PYPG",
+    "Underlying": "PYPL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "PYPY|PYPL": {
+    "ETF": "PYPY",
+    "Underlying": "PYPL",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "QBTX|QBTS": {
+    "ETF": "QBTX",
+    "Underlying": "QBTS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 26782.550218159908,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 26782.550218159908
+  },
+  "QBTZ|QBTS": {
+    "ETF": "QBTZ",
+    "Underlying": "QBTS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 25762.15657634312,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 25762.15657634312
+  },
+  "QBY|QBTS": {
+    "ETF": "QBY",
+    "Underlying": "QBTS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "QCML|QCOM": {
+    "ETF": "QCML",
+    "Underlying": "QCOM",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 714.9822789517128,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 714.9822789517128
+  },
+  "QCMU|QCOM": {
+    "ETF": "QCMU",
+    "Underlying": "QCOM",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1538.1590977887838,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1538.1590977887838
+  },
+  "QPUX|IONQ": {
+    "ETF": "QPUX",
+    "Underlying": "IONQ",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 8272.86404115977,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 8272.86404115977
+  },
+  "QSU|QS": {
+    "ETF": "QSU",
+    "Underlying": "QS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 7062.268145207099,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 7062.268145207099
+  },
+  "QUBX|QUBT": {
+    "ETF": "QUBX",
+    "Underlying": "QUBT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 23102.938582398838,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 23102.938582398838
+  },
+  "RBLU|RBLX": {
+    "ETF": "RBLU",
+    "Underlying": "RBLX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 5713.90809115002,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 5713.90809115002
+  },
+  "RCAX|RCAT": {
+    "ETF": "RCAX",
+    "Underlying": "RCAT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 69474.38151823248,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 69474.38151823248
+  },
+  "RDTL|RDDT": {
+    "ETF": "RDTL",
+    "Underlying": "RDDT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 7595.169268451705,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 7595.169268451705
+  },
+  "RGTX|RGTI": {
+    "ETF": "RGTX",
+    "Underlying": "RGTI",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 23935.74079713447,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 23935.74079713447
+  },
+  "RGTZ|RGTI": {
+    "ETF": "RGTZ",
+    "Underlying": "RGTI",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "RGYY|RGTI": {
+    "ETF": "RGYY",
+    "Underlying": "RGTI",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "RIOX|RIOT": {
+    "ETF": "RIOX",
+    "Underlying": "RIOT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 4565.17121201208,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 4565.17121201208
+  },
+  "RKLX|RKLB": {
+    "ETF": "RKLX",
+    "Underlying": "RKLB",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 15015.219488550849,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 15015.219488550849
+  },
+  "RKLZ|RKLB": {
+    "ETF": "RKLZ",
+    "Underlying": "RKLB",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "RKTL|RKT": {
+    "ETF": "RKTL",
+    "Underlying": "RKT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 11222.354853297917,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 11222.354853297917
+  },
+  "ROBN|HOOD": {
+    "ETF": "ROBN",
+    "Underlying": "HOOD",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 10819.581114489363,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 10819.581114489363
+  },
+  "RTYY|RIOT": {
+    "ETF": "RTYY",
+    "Underlying": "RIOT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "RVNL|RIVN": {
+    "ETF": "RVNL",
+    "Underlying": "RIVN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "SATG|SATS": {
+    "ETF": "SATG",
+    "Underlying": "SATS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2713.9796420487323,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2713.9796420487323
+  },
+  "SBTU|SBET": {
+    "ETF": "SBTU",
+    "Underlying": "SBET",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 15583.341688067509,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 15583.341688067509
+  },
+  "SBU|SBUX": {
+    "ETF": "SBU",
+    "Underlying": "SBUX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "SCO|USO": {
+    "ETF": "SCO",
+    "Underlying": "USO",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "SHPU|SHOP": {
+    "ETF": "SHPU",
+    "Underlying": "SHOP",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 4245.450182690361,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 4245.450182690361
+  },
+  "SMCL|SMCI": {
+    "ETF": "SMCL",
+    "Underlying": "SMCI",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 10762.923033851448,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 10762.923033851448
+  },
+  "SMCX|SMCI": {
+    "ETF": "SMCX",
+    "Underlying": "SMCI",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 4589.595081498345,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 4589.595081498345
+  },
+  "SMTG|SMTC": {
+    "ETF": "SMTG",
+    "Underlying": "SMTC",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "SMYY|SMCI": {
+    "ETF": "SMYY",
+    "Underlying": "SMCI",
+    "days_open": 0,
+    "gap": 279609.20526185486,
+    "last_executable": 8876.211082106114,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 288485.41634396097
+  },
+  "SNAG|SNAP": {
+    "ETF": "SNAG",
+    "Underlying": "SNAP",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 8917.421353318226,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 8917.421353318226
+  },
+  "SNDQ|SNDK": {
+    "ETF": "SNDQ",
+    "Underlying": "SNDK",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 24496.388961698292,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 24496.388961698292
+  },
+  "SNDU|SNDK": {
+    "ETF": "SNDU",
+    "Underlying": "SNDK",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 23899.087473886906,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 23899.087473886906
+  },
+  "SNK|SPCX": {
+    "ETF": "SNK",
+    "Underlying": "SPCX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "SNOU|SNOW": {
+    "ETF": "SNOU",
+    "Underlying": "SNOW",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 6601.924137068322,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 6601.924137068322
+  },
+  "SNXX|SNDK": {
+    "ETF": "SNXX",
+    "Underlying": "SNDK",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 20486.102421377454,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 20486.102421377454
+  },
+  "SOFA|SOFI": {
+    "ETF": "SOFA",
+    "Underlying": "SOFI",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 5022.685142901558,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 5022.685142901558
+  },
+  "SOFX|SOFI": {
+    "ETF": "SOFX",
+    "Underlying": "SOFI",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3320.2541177252797,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3320.2541177252797
+  },
+  "SOLT|SOEZ": {
+    "ETF": "SOLT",
+    "Underlying": "SOEZ",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 12962.712085421943,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 12962.712085421943
+  },
+  "SOUX|SOUN": {
+    "ETF": "SOUX",
+    "Underlying": "SOUN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 6864.527736928908,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 6864.527736928908
+  },
+  "SOXL|SOXX": {
+    "ETF": "SOXL",
+    "Underlying": "SOXX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 4864.180178238919,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 4864.180178238919
+  },
+  "SPCG|SPCX": {
+    "ETF": "SPCG",
+    "Underlying": "SPCX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3408.4551501550272,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3408.4551501550272
+  },
+  "SPOG|SPOT": {
+    "ETF": "SPOG",
+    "Underlying": "SPOT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1699.1447222274733,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1699.1447222274733
+  },
+  "SPXL|SPY": {
+    "ETF": "SPXL",
+    "Underlying": "SPY",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 304.2979165514062,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 304.2979165514062
+  },
+  "SQQQ|QQQ": {
+    "ETF": "SQQQ",
+    "Underlying": "QQQ",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "SSPC|SPCX": {
+    "ETF": "SSPC",
+    "Underlying": "SPCX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3888.156662244503,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3888.156662244503
+  },
+  "STXL|STX": {
+    "ETF": "STXL",
+    "Underlying": "STX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 4546.435310796192,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 4546.435310796192
+  },
+  "STXX|STX": {
+    "ETF": "STXX",
+    "Underlying": "STX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3591.5973627137923,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3591.5973627137923
+  },
+  "TARK|ARKK": {
+    "ETF": "TARK",
+    "Underlying": "ARKK",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1293.136468489555,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1293.136468489555
+  },
+  "TBX|TLT": {
+    "ETF": "TBX",
+    "Underlying": "TLT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "TECS|XLK": {
+    "ETF": "TECS",
+    "Underlying": "XLK",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "TECY|XLK": {
+    "ETF": "TECY",
+    "Underlying": "XLK",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "TEMT|TEM": {
+    "ETF": "TEMT",
+    "Underlying": "TEM",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 8962.274132513618,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 8962.274132513618
+  },
+  "TERG|TER": {
+    "ETF": "TERG",
+    "Underlying": "TER",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 7478.472374820313,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 7478.472374820313
+  },
+  "TMYY|TSM": {
+    "ETF": "TMYY",
+    "Underlying": "TSM",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "TQQQ|QQQ": {
+    "ETF": "TQQQ",
+    "Underlying": "QQQ",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 745.4917847359624,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 745.4917847359624
+  },
+  "TQQY|QQQ": {
+    "ETF": "TQQY",
+    "Underlying": "QQQ",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "TSDD|TSLA": {
+    "ETF": "TSDD",
+    "Underlying": "TSLA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "TSLG|TSLA": {
+    "ETF": "TSLG",
+    "Underlying": "TSLA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 374.3005140023551,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 374.3005140023551
+  },
+  "TSLI|TSLA": {
+    "ETF": "TSLI",
+    "Underlying": "TSLA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1719.7300577012895,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1719.7300577012895
+  },
+  "TSLL|TSLA": {
+    "ETF": "TSLL",
+    "Underlying": "TSLA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2133.7903776465087,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2133.7903776465087
+  },
+  "TSLO|TSLA": {
+    "ETF": "TSLO",
+    "Underlying": "TSLA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "TSLR|TSLA": {
+    "ETF": "TSLR",
+    "Underlying": "TSLA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1456.7687427957871,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1456.7687427957871
+  },
+  "TSLT|TSLA": {
+    "ETF": "TSLT",
+    "Underlying": "TSLA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1063.0364309615672,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1063.0364309615672
+  },
+  "TSLY|TSLA": {
+    "ETF": "TSLY",
+    "Underlying": "TSLA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "TSMG|TSM": {
+    "ETF": "TSMG",
+    "Underlying": "TSM",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 715.3168678947147,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 715.3168678947147
+  },
+  "TSMU|TSM": {
+    "ETF": "TSMU",
+    "Underlying": "TSM",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 529.8904256333997,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 529.8904256333997
+  },
+  "TSMX|TSM": {
+    "ETF": "TSMX",
+    "Underlying": "TSM",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "TSYW|TLT": {
+    "ETF": "TSYW",
+    "Underlying": "TLT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "TTDU|TTD": {
+    "ETF": "TTDU",
+    "Underlying": "TTD",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1038.0957862861733,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1038.0957862861733
+  },
+  "TXNU|TXN": {
+    "ETF": "TXNU",
+    "Underlying": "TXN",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 559.595021355897,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 559.595021355897
+  },
+  "TXXD|TDOG": {
+    "ETF": "TXXD",
+    "Underlying": "TDOG",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 10565.80735654473,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 10565.80735654473
+  },
+  "TXXS|TSUI": {
+    "ETF": "TXXS",
+    "Underlying": "TSUI",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "UBEW|UBER": {
+    "ETF": "UBEW",
+    "Underlying": "UBER",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "UBRL|UBER": {
+    "ETF": "UBRL",
+    "Underlying": "UBER",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1665.2422083280335,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1665.2422083280335
+  },
+  "UECG|UEC": {
+    "ETF": "UECG",
+    "Underlying": "UEC",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 12213.75619009715,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 12213.75619009715
+  },
+  "UNHG|UNH": {
+    "ETF": "UNHG",
+    "Underlying": "UNH",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 274.0900020783863,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 274.0900020783863
+  },
+  "UNHU|UNH": {
+    "ETF": "UNHU",
+    "Underlying": "UNH",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "UNX|U": {
+    "ETF": "UNX",
+    "Underlying": "U",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 12117.475817641975,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 12117.475817641975
+  },
+  "UPSG|UPS": {
+    "ETF": "UPSG",
+    "Underlying": "UPS",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "UPSX|UPST": {
+    "ETF": "UPSX",
+    "Underlying": "UPST",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 10194.623446452668,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 10194.623446452668
+  },
+  "URAA|URA": {
+    "ETF": "URAA",
+    "Underlying": "URA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3781.9395447755605,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3781.9395447755605
+  },
+  "URTY|IWM": {
+    "ETF": "URTY",
+    "Underlying": "IWM",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 277.92148408466,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 277.92148408466
+  },
+  "USGG|USAR": {
+    "ETF": "USGG",
+    "Underlying": "USAR",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "UUUG|UUUU": {
+    "ETF": "UUUG",
+    "Underlying": "UUUU",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 24563.482663902883,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 24563.482663902883
+  },
+  "UVIX|SVIX": {
+    "ETF": "UVIX",
+    "Underlying": "SVIX",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 11000.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 11000.0
+  },
+  "UXRP|XRPZ": {
+    "ETF": "UXRP",
+    "Underlying": "XRPZ",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 13269.698690341187,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 13269.698690341187
+  },
+  "VALG|VALE": {
+    "ETF": "VALG",
+    "Underlying": "VALE",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "VRTL|VRT": {
+    "ETF": "VRTL",
+    "Underlying": "VRT",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 3951.6497253542566,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 3951.6497253542566
+  },
+  "VSTL|VST": {
+    "ETF": "VSTL",
+    "Underlying": "VST",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1141.0839469933992,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1141.0839469933992
+  },
+  "WDCX|WDC": {
+    "ETF": "WDCX",
+    "Underlying": "WDC",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 8158.0667613535925,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 8158.0667613535925
+  },
+  "WULX|WULF": {
+    "ETF": "WULX",
+    "Underlying": "WULF",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 14972.35348875591,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 14972.35348875591
+  },
+  "XBTY|IBIT": {
+    "ETF": "XBTY",
+    "Underlying": "IBIT",
+    "days_open": 2,
+    "gap": 127888.64741528816,
+    "last_executable": 25112.034772344592,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 153000.68218763274
+  },
+  "XEY|ETHA": {
+    "ETF": "XEY",
+    "Underlying": "ETHA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "XOMX|XOM": {
+    "ETF": "XOMX",
+    "Underlying": "XOM",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "XPEG|XPEV": {
+    "ETF": "XPEG",
+    "Underlying": "XPEV",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 960.4808287880516,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 960.4808287880516
+  },
+  "XRPT|XRPZ": {
+    "ETF": "XRPT",
+    "Underlying": "XRPZ",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 11336.591080191027,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 11336.591080191027
+  },
+  "XXRP|XRPZ": {
+    "ETF": "XXRP",
+    "Underlying": "XRPZ",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 14413.465305548187,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 14413.465305548187
+  },
+  "XYZG|XYZ": {
+    "ETF": "XYZG",
+    "Underlying": "XYZ",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 2874.9225627773353,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 2874.9225627773353
+  },
+  "XYZY|XYZ": {
+    "ETF": "XYZY",
+    "Underlying": "XYZ",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "YINN|FXI": {
+    "ETF": "YINN",
+    "Underlying": "FXI",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 1694.4442557625216,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 1694.4442557625216
+  },
+  "YSPY|SPY": {
+    "ETF": "YSPY",
+    "Underlying": "SPY",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 0.0,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 0.0
+  },
+  "ZETX|ZETA": {
+    "ETF": "ZETX",
+    "Underlying": "ZETA",
+    "days_open": 0,
+    "gap": 0.0,
+    "last_executable": 6099.912215696756,
+    "last_seen_run_date": "2026-06-25",
+    "optimal_target": 6099.912215696756
+  }
+}

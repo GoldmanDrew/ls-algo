@@ -37,6 +37,32 @@ from .metrics import build_snapshot
 
 HISTORY_MAX_RUNS = 60
 
+# Optional auxiliary panels merged into the snapshot if present. Each is a
+# standalone JSON produced by a research/EOD generator (decoupled from the
+# heavy accounting build) and keyed onto the payload under the same name.
+AUX_PANELS = {
+    "bucket4_risk_sim": "bucket4_risk_sim.json",
+}
+
+
+def _merge_aux_panels(payload: dict, *search_dirs: Path) -> None:
+    """Attach auxiliary panel JSONs (e.g. the B4 risk simulator) to the payload.
+
+    Looks for each file across ``search_dirs`` in order; first hit wins. Missing
+    or unreadable files are skipped silently so the core build never fails on an
+    optional panel.
+    """
+    for key, fname in AUX_PANELS.items():
+        for d in search_dirs:
+            fpath = d / fname
+            if not fpath.is_file():
+                continue
+            try:
+                payload[key] = json.loads(fpath.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+            break
+
 
 def _discover_default_run_date(runs_root: Path) -> str:
     dates = _discover_accounting_run_dates(runs_root)
@@ -165,6 +191,10 @@ def build_run_snapshot(
         screener_csv=screener_csv,
     )
     payload = snap.to_dict()
+
+    # Optional standalone panels (B4 risk simulator, etc.). Prefer a per-run-date
+    # copy under the run folder, else the shared dashboard data dir.
+    _merge_aux_panels(payload, runs_root / run_date, out_dir, Path("risk_dashboard/data"))
 
     history = _load_history(out_dir, current_date=run_date)
     current_point = _extract_history_point(payload)

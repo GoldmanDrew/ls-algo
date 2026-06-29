@@ -3,8 +3,11 @@
     "AALG": {
       "sticky_in": true
     },
-    "AAOX": {
+    "AAOG": {
       "sticky_in": false
+    },
+    "AAOX": {
+      "sticky_in": true
     },
     "AAPB": {
       "sticky_in": true
@@ -27,17 +30,29 @@
     "AFRU": {
       "sticky_in": true
     },
+    "ALBG": {
+      "sticky_in": true
+    },
+    "AMA": {
+      "sticky_in": false
+    },
     "AMDG": {
       "sticky_in": true
     },
     "AMDL": {
       "sticky_in": true
     },
+    "AMKL": {
+      "sticky_in": false
+    },
+    "AMPU": {
+      "sticky_in": false
+    },
     "AMUU": {
       "sticky_in": true
     },
     "AMZU": {
-      "sticky_in": false
+      "sticky_in": true
     },
     "AMZZ": {
       "sticky_in": true
@@ -81,6 +96,12 @@
     "AVXX": {
       "sticky_in": true
     },
+    "AXTU": {
+      "sticky_in": false
+    },
+    "AXTX": {
+      "sticky_in": true
+    },
     "BABU": {
       "sticky_in": true
     },
@@ -94,7 +115,7 @@
       "sticky_in": true
     },
     "BIDG": {
-      "sticky_in": false
+      "sticky_in": true
     },
     "BITU": {
       "sticky_in": true
@@ -132,6 +153,9 @@
     "BULX": {
       "sticky_in": true
     },
+    "CATG": {
+      "sticky_in": false
+    },
     "CCUP": {
       "sticky_in": true
     },
@@ -156,6 +180,9 @@
     "CNCG": {
       "sticky_in": true
     },
+    "COHH": {
+      "sticky_in": false
+    },
     "COHX": {
       "sticky_in": true
     },
@@ -178,6 +205,9 @@
       "sticky_in": false
     },
     "COZX": {
+      "sticky_in": true
+    },
+    "CPNX": {
       "sticky_in": true
     },
     "CRCA": {
@@ -294,8 +324,11 @@
     "GGLL": {
       "sticky_in": true
     },
+    "GLGG": {
+      "sticky_in": true
+    },
     "GLWG": {
-      "sticky_in": false
+      "sticky_in": true
     },
     "GLXU": {
       "sticky_in": true
@@ -328,7 +361,7 @@
       "sticky_in": true
     },
     "IBX": {
-      "sticky_in": false
+      "sticky_in": true
     },
     "INTW": {
       "sticky_in": true
@@ -357,6 +390,9 @@
     "JOBX": {
       "sticky_in": true
     },
+    "KEEX": {
+      "sticky_in": true
+    },
     "KLAG": {
       "sticky_in": true
     },
@@ -367,12 +403,15 @@
       "sticky_in": true
     },
     "LABU": {
-      "sticky_in": false
+      "sticky_in": true
     },
     "LABX": {
       "sticky_in": true
     },
     "LACG": {
+      "sticky_in": true
+    },
+    "LEUX": {
       "sticky_in": true
     },
     "LINT": {
@@ -390,6 +429,9 @@
     "LMTL": {
       "sticky_in": false
     },
+    "LNOK": {
+      "sticky_in": true
+    },
     "LRCU": {
       "sticky_in": true
     },
@@ -406,6 +448,12 @@
       "sticky_in": true
     },
     "MPL": {
+      "sticky_in": true
+    },
+    "MPWX": {
+      "sticky_in": true
+    },
+    "MRAL": {
       "sticky_in": true
     },
     "MRNX": {
@@ -469,7 +517,7 @@
       "sticky_in": true
     },
     "NUG": {
-      "sticky_in": true
+      "sticky_in": false
     },
     "NUGT": {
       "sticky_in": true
@@ -526,7 +574,7 @@
       "sticky_in": true
     },
     "PAAU": {
-      "sticky_in": false
+      "sticky_in": true
     },
     "PALU": {
       "sticky_in": true
@@ -546,8 +594,14 @@
     "PLTU": {
       "sticky_in": true
     },
+    "PLU": {
+      "sticky_in": true
+    },
     "PLUL": {
       "sticky_in": true
+    },
+    "POEL": {
+      "sticky_in": false
     },
     "PONX": {
       "sticky_in": true
@@ -565,7 +619,7 @@
       "sticky_in": true
     },
     "QCML": {
-      "sticky_in": false
+      "sticky_in": true
     },
     "QCMU": {
       "sticky_in": true
@@ -624,6 +678,9 @@
     "SMCL": {
       "sticky_in": true
     },
+    "SMCX": {
+      "sticky_in": true
+    },
     "SMU": {
       "sticky_in": true
     },
@@ -633,8 +690,11 @@
     "SNAG": {
       "sticky_in": true
     },
-    "SNDU": {
+    "SNDG": {
       "sticky_in": false
+    },
+    "SNDU": {
+      "sticky_in": true
     },
     "SNOU": {
       "sticky_in": true
@@ -674,6 +734,15 @@
     },
     "STLU": {
       "sticky_in": false
+    },
+    "STXL": {
+      "sticky_in": true
+    },
+    "STXU": {
+      "sticky_in": false
+    },
+    "STXX": {
+      "sticky_in": true
     },
     "TARK": {
       "sticky_in": true
@@ -715,6 +784,12 @@
       "sticky_in": true
     },
     "TXNU": {
+      "sticky_in": true
+    },
+    "TXXD": {
+      "sticky_in": true
+    },
+    "TXXH": {
       "sticky_in": false
     },
     "UBRL": {
@@ -768,6 +843,9 @@
     "WULX": {
       "sticky_in": true
     },
+    "XNDX": {
+      "sticky_in": false
+    },
     "XOMX": {
       "sticky_in": false
     },
@@ -793,6 +871,6 @@
       "sticky_in": true
     }
   },
-  "updated_run_date": "2026-04-22",
+  "updated_run_date": "2026-06-25",
   "version": 1
 }

@@ -2043,6 +2043,288 @@
     return snap;
   }
 
+  /* ===================== Bucket 4 risk simulator ===================== */
+  // Seeded PRNG (mulberry32) so a given control set is reproducible.
+  function b4Mulberry32(seed) {
+    let a = seed >>> 0;
+    return function () {
+      a |= 0;
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function b4Gauss(rng) {
+    let u = 0;
+    while (u <= 1e-12) u = rng();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng());
+  }
+  // Marsaglia-Tsang gamma sampler (shape > 0) -> chi-square via Gamma(df/2, 2).
+  function b4Gamma(rng, shape) {
+    if (shape < 1) return b4Gamma(rng, shape + 1) * Math.pow(rng(), 1 / shape);
+    const d = shape - 1 / 3;
+    const c = 1 / Math.sqrt(9 * d);
+    while (true) {
+      let x, v;
+      do {
+        x = b4Gauss(rng);
+        v = 1 + c * x;
+      } while (v <= 0);
+      v = v * v * v;
+      const u = rng();
+      if (u < 1 - 0.0331 * x * x * x * x) return d * v;
+      if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v;
+    }
+  }
+  function b4Pctl(sorted, p) {
+    if (!sorted.length) return NaN;
+    const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((p / 100) * (sorted.length - 1))));
+    return sorted[idx];
+  }
+  // Monte-Carlo: max-drawdown + terminal-return distribution over `horizon`.
+  function b4RunSim(sim, o) {
+    const rng = b4Mulberry32(o.seed >>> 0);
+    const H = o.horizon | 0;
+    const N = o.nSims | 0;
+    const k = o.volMult;
+    const dist = o.dist;
+    const floor = -0.95;
+    const dds = new Float64Array(N);
+    const term = new Float64Array(N);
+    const data = sim.port_daily_returns || [];
+    const m = data.length;
+    const mean = sim.mean_daily || 0;
+    const L = (sim.reference_mc && sim.reference_mc.block_len) || 10;
+    const tdf = sim.fit_student_t.df;
+    const tloc = sim.fit_student_t.loc;
+    const tscale = sim.fit_student_t.scale * k;
+    const lloc = sim.fit_laplace.loc;
+    const lscale = sim.fit_laplace.scale * k;
+    for (let i = 0; i < N; i++) {
+      let eq = 1, peak = 1, mdd = 0;
+      if (dist === "boot") {
+        let filled = 0;
+        while (filled < H) {
+          const s = Math.floor(rng() * m);
+          for (let b = 0; b < L && filled < H; b++, filled++) {
+            let r = data[(s + b) % m];
+            r = mean + k * (r - mean);
+            if (r < floor) r = floor;
+            eq *= 1 + r;
+            if (eq > peak) peak = eq;
+            const dd = eq / peak - 1;
+            if (dd < mdd) mdd = dd;
+          }
+        }
+      } else {
+        for (let s = 0; s < H; s++) {
+          let r;
+          if (dist === "t") {
+            const chi2 = b4Gamma(rng, tdf / 2) * 2;
+            r = tloc + tscale * (b4Gauss(rng) / Math.sqrt(chi2 / tdf));
+          } else {
+            const u = rng() - 0.5;
+            r = lloc - lscale * Math.sign(u) * Math.log(1 - 2 * Math.abs(u));
+          }
+          if (r < floor) r = floor;
+          eq *= 1 + r;
+          if (eq > peak) peak = eq;
+          const dd = eq / peak - 1;
+          if (dd < mdd) mdd = dd;
+        }
+      }
+      dds[i] = -mdd;
+      term[i] = eq - 1;
+    }
+    return { dds, term };
+  }
+  function b4Histogram(dds, p95, p99) {
+    const W = 1000, Hh = 220, pad = 24;
+    const nbins = 40, maxX = 1.0;
+    const bins = new Array(nbins).fill(0);
+    for (let i = 0; i < dds.length; i++) {
+      let b = Math.floor((dds[i] / maxX) * nbins);
+      if (b < 0) b = 0;
+      if (b >= nbins) b = nbins - 1;
+      bins[b]++;
+    }
+    const peak = Math.max(1, ...bins);
+    const bw = (W - 2 * pad) / nbins;
+    let bars = "";
+    for (let b = 0; b < nbins; b++) {
+      const h = (bins[b] / peak) * (Hh - 2 * pad);
+      const x = pad + b * bw;
+      const y = Hh - pad - h;
+      bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(bw - 1).toFixed(1)}" height="${h.toFixed(1)}" fill="var(--accent)" opacity="0.75"></rect>`;
+    }
+    const mk = (val, color, label) => {
+      const x = pad + (Math.min(val, maxX) / maxX) * (W - 2 * pad);
+      return `<line x1="${x.toFixed(1)}" y1="${pad - 6}" x2="${x.toFixed(1)}" y2="${Hh - pad}" stroke="${color}" stroke-width="2" stroke-dasharray="4 3"></line>` +
+        `<text x="${x.toFixed(1)}" y="${pad - 9}" fill="${color}" font-size="13" text-anchor="middle">${label}</text>`;
+    };
+    let axis = "";
+    for (let g = 0; g <= 5; g++) {
+      const frac = g / 5;
+      const x = pad + frac * (W - 2 * pad);
+      axis += `<text x="${x.toFixed(1)}" y="${Hh - pad + 16}" fill="var(--text-muted)" font-size="12" text-anchor="middle">${Math.round(frac * 100)}%</text>`;
+    }
+    return `<svg viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none" style="width:100%;height:220px;display:block">` +
+      `<line x1="${pad}" y1="${Hh - pad}" x2="${W - pad}" y2="${Hh - pad}" stroke="var(--border-strong)" stroke-width="1"></line>` +
+      bars +
+      mk(p95, "var(--warn-bg)", "") +
+      mk(p95, "#d08b1f", "p95") +
+      mk(p99, "var(--neg)", "p99") +
+      axis +
+      `</svg>`;
+  }
+  function renderBucket4Sim(sim) {
+    const content = document.getElementById("b4sim-content");
+    const meta = document.getElementById("b4sim-meta");
+    if (!content) return;
+    if (!sim || !sim.port_daily_returns || !sim.port_daily_returns.length) {
+      if (meta) meta.innerHTML = statusPill("unknown", "risk-sim data not available");
+      content.innerHTML =
+        '<div class="callout dim">No B4 risk-sim dataset in this snapshot. Run <code>python scripts/build_bucket4_risk_sim.py</code> then rebuild the dashboard.</div>';
+      return;
+    }
+    const cad = sim.cadence || {};
+    if (meta) {
+      meta.innerHTML =
+        `<span class="dim">cadence tr=${safeText(cad.cadence_signal_col)} · base_days=${safeText(cad.base_days)} · k_tr=${safeText(cad.k_tr)} · m_vcr=${safeText(cad.m_vcr)} · ` +
+        `${sim.n_pairs} pairs · ${sim.n_obs} obs since ${safeText(sim.window_start)}</span>`;
+    }
+    const rz = sim.realized || {};
+    const pairRows = (sim.pairs || [])
+      .map(
+        (p) =>
+          `<tr><td>${p.etf}</td><td>${p.und}</td><td class="num">${fmtPct(p.weight, 1)}</td><td class="num">${p.n_days}</td><td class="num">${fmtPct(p.borrow, 1)}</td></tr>`
+      )
+      .join("");
+
+    content.innerHTML = `
+      <div class="callout dim small">
+        Resamples the live B4 proposed book's gross-weighted daily returns (under the current production cadence) to
+        estimate the 1-year max-drawdown distribution. Block bootstrap preserves volatility clustering; Student-t and
+        Laplace are fat-tailed parametric fits. <strong>Tune the controls to stress the book.</strong>
+      </div>
+      <div class="b4sim-controls strip" style="margin:10px 0;gap:14px;flex-wrap:wrap">
+        <label class="b4sim-ctl">Distribution
+          <select id="b4sim-dist">
+            <option value="boot">Block bootstrap (empirical)</option>
+            <option value="t">Student-t (fat tail)</option>
+            <option value="laplace">Laplace (fat tail)</option>
+          </select>
+        </label>
+        <label class="b4sim-ctl">Horizon (trading days)
+          <input id="b4sim-horizon" type="number" min="20" max="756" step="1" value="252">
+        </label>
+        <label class="b4sim-ctl">Simulations
+          <select id="b4sim-nsims">
+            <option value="2000">2,000</option>
+            <option value="4000" selected>4,000</option>
+            <option value="8000">8,000</option>
+            <option value="20000">20,000</option>
+          </select>
+        </label>
+        <label class="b4sim-ctl">Vol shock &times;<span id="b4sim-volval">1.0</span>
+          <input id="b4sim-vol" type="range" min="0.5" max="3" step="0.1" value="1.0">
+        </label>
+        <button id="b4sim-run" class="btn btn-primary" type="button">Run</button>
+      </div>
+      <div id="b4sim-stats" class="strip"></div>
+      <h3>1-year max-drawdown distribution</h3>
+      <div id="b4sim-chart"></div>
+      <div class="two-col" style="margin-top:12px">
+        <div>
+          <h3>Book under test (live B4 proposed)</h3>
+          <table class="tight"><thead><tr><th>ETF</th><th>Und</th><th class="num">Weight</th><th class="num">Days</th><th class="num">Borrow</th></tr></thead>
+          <tbody>${pairRows}</tbody></table>
+          <p class="dim small">Realized (sample): CAGR ${fmtPct(rz.cagr, 1)} · ann vol ${fmtPct(rz.ann_vol, 1)} · Sharpe ${safeText(rz.sharpe)} · maxDD ${fmtPct(rz.hist_maxdd, 1)}.</p>
+        </div>
+        <div>
+          <h3>Reference tail (precomputed, ${(sim.reference_mc || {}).n_sims || "?"} sims)</h3>
+          <table class="tight"><thead><tr><th>Method</th><th class="num">p95</th><th class="num">p99</th><th class="num">p99.9</th><th class="num">P(dd&gt;40%)</th></tr></thead>
+          <tbody>${["block_bootstrap", "student_t", "laplace"]
+            .map((mname) => {
+              const r = (sim.reference_mc || {})[mname] || {};
+              return `<tr><td>${mname.replace("_", " ")}</td><td class="num">${fmtPct(r.dd_p95, 1)}</td><td class="num">${fmtPct(r.dd_p99, 1)}</td><td class="num">${fmtPct(r.dd_p999, 1)}</td><td class="num">${fmtPct(r["P(dd>40)"], 1)}</td></tr>`;
+            })
+            .join("")}</tbody></table>
+          <p class="dim small">Bootstrap is the headline (most pessimistic / preserves clustering). Even the base case carries a large tail &mdash; B4's drawdown is structural; size accordingly.</p>
+        </div>
+      </div>`;
+
+    const distEl = document.getElementById("b4sim-dist");
+    const horizonEl = document.getElementById("b4sim-horizon");
+    const nsimsEl = document.getElementById("b4sim-nsims");
+    const volEl = document.getElementById("b4sim-vol");
+    const volValEl = document.getElementById("b4sim-volval");
+    const runEl = document.getElementById("b4sim-run");
+    const statsEl = document.getElementById("b4sim-stats");
+    const chartEl = document.getElementById("b4sim-chart");
+
+    function update() {
+      const o = {
+        dist: distEl.value,
+        horizon: Math.max(20, Math.min(756, parseInt(horizonEl.value, 10) || 252)),
+        nSims: parseInt(nsimsEl.value, 10) || 4000,
+        volMult: parseFloat(volEl.value) || 1.0,
+        seed: 1234567,
+      };
+      volValEl.textContent = o.volMult.toFixed(1);
+      const t0 = performance.now();
+      const { dds, term } = b4RunSim(sim, o);
+      const ddSorted = Array.from(dds).sort((a, b) => a - b);
+      const termSorted = Array.from(term).sort((a, b) => a - b);
+      const p50 = b4Pctl(ddSorted, 50);
+      const p95 = b4Pctl(ddSorted, 95);
+      const p99 = b4Pctl(ddSorted, 99);
+      const p999 = b4Pctl(ddSorted, 99.9);
+      const pGt = (thr) => dds.reduce((acc, v) => acc + (v > thr ? 1 : 0), 0) / dds.length;
+      // 1y downside: 95% VaR (5th pct of terminal return) and CVaR (mean of worst 5%)
+      const var95 = b4Pctl(termSorted, 5);
+      const nTail = Math.max(1, Math.floor(0.05 * termSorted.length));
+      let cvar = 0;
+      for (let i = 0; i < nTail; i++) cvar += termSorted[i];
+      cvar /= nTail;
+      const pLoss = term.reduce((acc, v) => acc + (v < 0 ? 1 : 0), 0) / term.length;
+      const ms = (performance.now() - t0).toFixed(0);
+
+      const stats = [
+        { label: "Median maxDD", value: fmtPct(p50, 1) },
+        { label: "p95 maxDD", value: fmtPct(p95, 1), cls: "stat-neg" },
+        { label: "p99 maxDD", value: fmtPct(p99, 1), cls: "stat-neg" },
+        { label: "p99.9 maxDD", value: fmtPct(p999, 1), cls: "stat-neg" },
+        { label: "P(dd > 15%)", value: fmtPct(pGt(0.15), 0) },
+        { label: "P(dd > 25%)", value: fmtPct(pGt(0.25), 0) },
+        { label: "P(dd > 40%)", value: fmtPct(pGt(0.4), 0), cls: "stat-neg" },
+        { label: "1y VaR 95%", value: fmtPct(var95, 1), sub: "5th pct annual return" },
+        { label: "1y CVaR 95%", value: fmtPct(cvar, 1), sub: "mean of worst 5%" },
+        { label: "P(annual loss)", value: fmtPct(pLoss, 0) },
+      ];
+      statsEl.innerHTML = stats
+        .map(
+          (it) =>
+            `<div class="stat ${it.cls || ""}"><div class="label">${it.label}</div><div class="value ${it.cls ? "neg" : ""}">${it.value}</div>${it.sub ? `<div class="sub">${it.sub}</div>` : ""}</div>`
+        )
+        .join("");
+      chartEl.innerHTML =
+        b4Histogram(dds, p95, p99) +
+        `<p class="dim small">${o.nSims.toLocaleString()} sims · ${distEl.options[distEl.selectedIndex].text} · horizon ${o.horizon}d · vol &times;${o.volMult.toFixed(1)} · ${ms} ms. x-axis = max drawdown over the horizon.</p>`;
+    }
+
+    distEl.addEventListener("change", update);
+    horizonEl.addEventListener("change", update);
+    nsimsEl.addEventListener("change", update);
+    volEl.addEventListener("input", () => {
+      volValEl.textContent = (parseFloat(volEl.value) || 1).toFixed(1);
+    });
+    volEl.addEventListener("change", update);
+    if (runEl) runEl.addEventListener("click", update);
+    update();
+  }
+
   function renderAll(snap) {
     els.runDateLabel.textContent = `Run: ${snap.run_date}`;
     els.generatedAtLabel.textContent =
@@ -2054,6 +2336,7 @@
       () => renderAlerts(snap.alert_rows || []),
       () => renderActionQueue(snap.action_queue || []),
       () => renderSlideRisk(snap.slide_risk_panel || {}),
+      () => renderBucket4Sim(snap.bucket4_risk_sim || null),
       () => renderConcentration(snap.concentration_panel || {}),
       () => renderFactor(snap.factor_panel || {}),
       () => renderBucketSleevePanel(snap.bucket_sleeve_panel || {}, snap.book || {}),

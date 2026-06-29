@@ -43,6 +43,10 @@ on:
     paths:
       - "risk_dashboard/**"
       - "site/**"
+      - "scripts/build_bucket4_risk_sim.py"
+      - "scripts/sizing_tilt_cadence_bt.py"
+      - "scripts/bucket4_cadence_risk_opt.py"
+      - "config/strategy_config.yml"
       - ".github/workflows/risk_dashboard.yml"
 
 # Pages deploy needs these.
@@ -121,6 +125,12 @@ jobs:
           fi
           echo "run_date=$RUN_DATE" >> "$GITHUB_OUTPUT"
           echo "Selected run_date=$RUN_DATE"
+
+      - name: Build Bucket 4 risk simulator dataset
+        run: |
+          python scripts/build_bucket4_risk_sim.py \
+            --run-date "${{ steps.compute.outputs.run_date }}" \
+            --n-mc 8000
 
       - name: Build snapshot
         env:

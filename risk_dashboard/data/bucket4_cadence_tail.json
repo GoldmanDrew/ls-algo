@@ -1,0 +1,280 @@
+{
+  "schema": "bucket4_cadence_tail.v1",
+  "generated_at_utc": "2026-06-26T03:27:50.483098+00:00",
+  "horizon_days": 252,
+  "note": "Monte-Carlo 1y max-drawdown for the live B4 proposed book (gross-weighted). Block bootstrap preserves vol clustering; Student-t / Laplace are fat-tailed parametric fits.",
+  "production": {
+    "variant": "lin b12 k+2.25 m2.5",
+    "family": "linear",
+    "cagr": -0.0411,
+    "vol": 0.5095,
+    "sharpe": 0.148,
+    "hist_maxdd": -0.441,
+    "calmar": -0.093,
+    "mean_n_rebal": 27.0,
+    "mc_drawdown_1y": {
+      "block_bootstrap": {
+        "median": 0.3387,
+        "p95": 0.5646,
+        "p99": 0.657,
+        "p99_9": 0.7384,
+        "P_gt_15": 0.9674,
+        "P_gt_25": 0.793,
+        "P_gt_40": 0.3207
+      },
+      "student_t": {
+        "p95": 0.2174,
+        "p99": 0.3549,
+        "p99_9": 0.946
+      },
+      "laplace": {
+        "p95": 0.4772,
+        "p99": 0.5659,
+        "p99_9": 0.6309
+      }
+    }
+  },
+  "recommended": {
+    "variant": "lin b14 k-1.00 m2.5",
+    "family": "linear",
+    "cagr": 0.1206,
+    "vol": 0.5412,
+    "sharpe": 0.453,
+    "hist_maxdd": -0.3624,
+    "calmar": 0.333,
+    "mean_n_rebal": 25.6,
+    "mc_drawdown_1y": {
+      "block_bootstrap": {
+        "median": 0.3156,
+        "p95": 0.528,
+        "p99": 0.6199,
+        "p99_9": 0.7219,
+        "P_gt_15": 0.9513,
+        "P_gt_25": 0.7065,
+        "P_gt_40": 0.23
+      },
+      "student_t": {
+        "p95": 0.2209,
+        "p99": 0.3737,
+        "p99_9": 0.9521
+      },
+      "laplace": {
+        "p95": 0.4752,
+        "p99": 0.5574,
+        "p99_9": 0.647
+      }
+    }
+  },
+  "frontier": [
+    {
+      "variant": "lin b14 k-1.00 m2.5",
+      "family": "linear",
+      "cagr": 0.1206,
+      "boot_dd_p95": 0.528,
+      "P_gt_40": 0.23
+    },
+    {
+      "variant": "lin b14 k+0.00 m2.5",
+      "family": "linear",
+      "cagr": 0.1083,
+      "boot_dd_p95": 0.5094,
+      "P_gt_40": 0.1981
+    },
+    {
+      "variant": "vcr_ins b14 m4",
+      "family": "vcr_insurance",
+      "cagr": 0.0839,
+      "boot_dd_p95": 0.511,
+      "P_gt_40": 0.1979
+    },
+    {
+      "variant": "lin b10 k+2.25 m2.5",
+      "family": "linear",
+      "cagr": 0.0889,
+      "boot_dd_p95": 0.5257,
+      "P_gt_40": 0.2121
+    },
+    {
+      "variant": "vol_tgt b12 g0.75",
+      "family": "vol_target",
+      "cagr": 0.0941,
+      "boot_dd_p95": 0.5484,
+      "P_gt_40": 0.2655
+    },
+    {
+      "variant": "lin b14 k+2.25 m2.5",
+      "family": "linear",
+      "cagr": 0.0816,
+      "boot_dd_p95": 0.5441,
+      "P_gt_40": 0.2499
+    },
+    {
+      "variant": "lin b12 k-1.00 m2.5",
+      "family": "linear",
+      "cagr": 0.0769,
+      "boot_dd_p95": 0.55,
+      "P_gt_40": 0.2894
+    },
+    {
+      "variant": "vcr_ins b14 m6",
+      "family": "vcr_insurance",
+      "cagr": 0.0528,
+      "boot_dd_p95": 0.5186,
+      "P_gt_40": 0.2179
+    },
+    {
+      "variant": "lin b14 k+2.25 m5.0",
+      "family": "linear",
+      "cagr": 0.0494,
+      "boot_dd_p95": 0.537,
+      "P_gt_40": 0.2382
+    },
+    {
+      "variant": "lin b10 k+0.00 m5.0",
+      "family": "linear",
+      "cagr": 0.0335,
+      "boot_dd_p95": 0.5424,
+      "P_gt_40": 0.2654
+    },
+    {
+      "variant": "lin b10 k+2.25 m5.0",
+      "family": "linear",
+      "cagr": 0.0501,
+      "boot_dd_p95": 0.5845,
+      "P_gt_40": 0.398
+    },
+    {
+      "variant": "lin b14 k+0.00 m5.0",
+      "family": "linear",
+      "cagr": 0.0242,
+      "boot_dd_p95": 0.5553,
+      "P_gt_40": 0.2624
+    },
+    {
+      "variant": "lin b12 k+0.00 m5.0",
+      "family": "linear",
+      "cagr": 0.0211,
+      "boot_dd_p95": 0.5644,
+      "P_gt_40": 0.2951
+    },
+    {
+      "variant": "lin b12 k-1.00 m5.0",
+      "family": "linear",
+      "cagr": 0.0234,
+      "boot_dd_p95": 0.5772,
+      "P_gt_40": 0.3157
+    },
+    {
+      "variant": "lin b10 k+0.00 m2.5",
+      "family": "linear",
+      "cagr": -0.0071,
+      "boot_dd_p95": 0.5301,
+      "P_gt_40": 0.2326
+    },
+    {
+      "variant": "drift 5% + vcr m6",
+      "family": "drift_vcr",
+      "cagr": -0.0087,
+      "boot_dd_p95": 0.5489,
+      "P_gt_40": 0.2669
+    },
+    {
+      "variant": "vcr_ins b12 m6",
+      "family": "vcr_insurance",
+      "cagr": -0.0218,
+      "boot_dd_p95": 0.5527,
+      "P_gt_40": 0.2828
+    },
+    {
+      "variant": "vcr_ins b14 m8",
+      "family": "vcr_insurance",
+      "cagr": -0.0283,
+      "boot_dd_p95": 0.5576,
+      "P_gt_40": 0.285
+    },
+    {
+      "variant": "vcr_ins b12 m8",
+      "family": "vcr_insurance",
+      "cagr": -0.0381,
+      "boot_dd_p95": 0.5513,
+      "P_gt_40": 0.2707
+    },
+    {
+      "variant": "lin b12 k+0.00 m2.5",
+      "family": "linear",
+      "cagr": -0.0196,
+      "boot_dd_p95": 0.6054,
+      "P_gt_40": 0.4086
+    },
+    {
+      "variant": "lin b12 k+2.25 m2.5",
+      "family": "linear",
+      "cagr": -0.0411,
+      "boot_dd_p95": 0.5646,
+      "P_gt_40": 0.3207
+    },
+    {
+      "variant": "drift 3% f21",
+      "family": "drift_gate",
+      "cagr": -0.0753,
+      "boot_dd_p95": 0.519,
+      "P_gt_40": 0.2209
+    },
+    {
+      "variant": "lin b10 k-1.00 m2.5",
+      "family": "linear",
+      "cagr": -0.0597,
+      "boot_dd_p95": 0.555,
+      "P_gt_40": 0.276
+    },
+    {
+      "variant": "drift 5% f21",
+      "family": "drift_gate",
+      "cagr": -0.0753,
+      "boot_dd_p95": 0.5258,
+      "P_gt_40": 0.2274
+    },
+    {
+      "variant": "vcr_ins b12 m4",
+      "family": "vcr_insurance",
+      "cagr": -0.054,
+      "boot_dd_p95": 0.5689,
+      "P_gt_40": 0.3236
+    },
+    {
+      "variant": "lin b14 k-1.00 m5.0",
+      "family": "linear",
+      "cagr": -0.0397,
+      "boot_dd_p95": 0.6073,
+      "P_gt_40": 0.4046
+    },
+    {
+      "variant": "drift 8% f21",
+      "family": "drift_gate",
+      "cagr": -0.0843,
+      "boot_dd_p95": 0.5324,
+      "P_gt_40": 0.2392
+    },
+    {
+      "variant": "lin b12 k+2.25 m5.0",
+      "family": "linear",
+      "cagr": -0.0687,
+      "boot_dd_p95": 0.5675,
+      "P_gt_40": 0.3192
+    },
+    {
+      "variant": "lin b10 k-1.00 m5.0",
+      "family": "linear",
+      "cagr": -0.0776,
+      "boot_dd_p95": 0.5918,
+      "P_gt_40": 0.3496
+    },
+    {
+      "variant": "vol_tgt b12 g1.50",
+      "family": "vol_target",
+      "cagr": -0.1706,
+      "boot_dd_p95": 0.6409,
+      "P_gt_40": 0.4651
+    }
+  ]
+}
