@@ -173,7 +173,7 @@ leverage_pairs_leverageshares = [
     # 2026-06-23 Leverage Shares Themes - 2X long daily (Cboe-listed)
     ("CDNG", "CDNS"), ("FOMG", "FORM"), ("ENTL", "ENTG"), ("FPSX", "FPS"),
     ("ASTG", "ASTS"), ("GFSG", "GFS"),  ("HPEL", "HPE"),  ("MTSG", "MTSI"),
-    ("SMTG", "SMTC"),
+    ("SMTG", "SMTC"), ("AEHG", "AEHR"),
 ]
 
 new_pairs = [
@@ -255,6 +255,16 @@ new_pairs = [
     ("SPAX", "SPCX"),
     # 2026-06-15 Defiance 2X long Infleqtion
     ("INFH", "INFQ"),
+    # 2026-06-24 Corgi 2X long daily (Cboe-listed; 0.45% ER)
+    ("ACLZ", "ACLS"), ("ACMM", "ACMR"), ("CAMC", "CAMT"), ("CRUC", "CRUS"),
+    ("LASC", "LASR"), ("LRNX", "LRN"),  ("MNSX", "MNST"), ("SIMX", "SIMO"),
+    ("UMCX", "UMC"),  ("CARX", "CART"), ("MSIX", "MSI"),  ("ONTX", "ONTO"),
+    ("RMBC", "RMBS"), ("TPLX", "TPL"), ("KEYX", "KEYS"),
+    # 2026-06-26 Corgi 2X long daily (Cboe-listed; 0.20% / 0.45% ER)
+    ("NVC",  "NVDA"), ("TESC", "TSLA"), ("AMDC", "AMD"),  ("COIX", "COIN"),
+    ("GOGL", "GOOGL"),("FBX",  "META"), ("MSFC", "MSFT"), ("MSTC", "MSTR"),
+    ("PLTL", "PLTR"), ("MIC",  "MU"),   ("AMAA", "AMZN"), ("SNDC", "SNDK"),
+    ("TWSC", "TSM"),  ("APPC", "APP"),  ("ASTT", "ASTS"), ("UCTX", "UCTT"),
 
     # Auto-discovered single-stock leveraged ETFs (2026-06-15)
     ("SPAL", "SPCX"),
