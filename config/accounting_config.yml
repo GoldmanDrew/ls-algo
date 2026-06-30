@@ -19,6 +19,12 @@ accounting:
   # (current risk); PnL uses lot timing so a recently-grown sleeve cannot retroactively claim
   # PnL earned while the spot hedged a different sleeve.
   b12_spot_pnl_method: ledger_fifo
+  # Where the per-underlying IBKR-vs-FIFO-ledger residual lands:
+  #   bucket_1 (legacy) = dump 100% onto B1 (B1 becomes the noise sink);
+  #   prorate           = split across the buckets holding the underlying by
+  #                       lot-component magnitude (fallback ratio, then B1).
+  # ``prorate`` stops B1's daily PnL from jumping on shared-underlying noise.
+  b12_residual_attribution: prorate
   b12_hedge_delta_floor: 0.25            # min |β| for hr = 1/|β| on B1/B2 ETF legs
   b12_pnl_mode: plan_b4_inject           # lot_timed_strict | plan_b4_inject (uses plan_b4_pnl_mode below)
   plan_b4_pnl_mode: inject_slice    # inject_slice: FIFO realized + plan-split unrealized | full_override (legacy)
@@ -35,7 +41,7 @@ accounting:
     - AMD   # lot under-tags B2 vs live sleeve; do not pull realized from B2
   # EOD email: use accounting bucket_pnl as-is (no continuity re-spread). Disable only for
   # one-off methodology transitions where headline jumps must be smoothed vs prior run.
-  eod_bucket_pnl_continuity: false
+  eod_bucket_pnl_continuity: true
   plan_sleeve_bucketing: sleeve_first  # sleeve_first | delta_first
   # All bucket-2 underlyings (yieldboost / 0<β≤1.5 ETFs) get full Flex replay by default.
   ledger_full_replay_include_bucket2: true

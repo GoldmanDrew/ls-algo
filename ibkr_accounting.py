@@ -6414,9 +6414,23 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         # gap vs the IBKR-reported totals is ``ibkr_total(u, col) -
         # sum_buckets(_lot_components[u][b][col])`` (or just
         # ``ibkr_total(u, col)`` when the underlying isn't in the lot
-        # ledger). We attribute that residual to bucket_1's canonical
-        # first row so the per-underlying / per-column sum equals the
-        # IBKR-reported total.
+        # ledger).
+        #
+        # ``b12_residual_attribution`` controls where that gap lands:
+        #   * ``bucket_1`` (legacy): dump 100% onto bucket_1's first row.
+        #     This makes B1 the sink for ALL ledger-vs-IBKR FIFO noise, so
+        #     B1's daily PnL jumps even when the move belongs to a shared
+        #     underlying that is mostly B2/B4.
+        #   * ``prorate`` (recommended): split the residual across the
+        #     buckets that hold the underlying, weighted by each bucket's
+        #     lot-component magnitude for that column (fallback: the
+        #     attribution ratio, then bucket_1). Conserves the per-
+        #     underlying total exactly while keeping the residual on the
+        #     buckets that actually own the position.
+        _residual_attribution = str(
+            _acct_cfg.get("b12_residual_attribution", "bucket_1")
+        ).strip().lower()
+        _resid_bucket_specs = (("bucket_1", "b1"), ("bucket_2", "b2"), ("bucket_4", "b4"))
         for _u in split_source["underlying"].astype(str).unique():
             _u_rows = split_source[split_source["underlying"].astype(str) == _u]
             if _u_rows.empty:
@@ -6438,22 +6452,69 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 _resid = _ibkr_val - _lot_sum
                 if abs(_resid) <= 1e-6:
                     continue
-                for _part in split_parts:
-                    if _part.empty:
-                        continue
-                    _mask = (_part["bucket"] == "bucket_1") & (
-                        _part["underlying"].astype(str) == _u
-                    )
-                    if not _mask.any():
-                        continue
-                    _first_idx = _part.index[_mask][0]
-                    _part.at[_first_idx, _col] = (
-                        float(_part.at[_first_idx, _col]) + _resid
-                    )
-                    _part.at[_first_idx, "total_pnl"] = float(
-                        _part.loc[_first_idx, component_cols].sum()
-                    )
-                    break
+                if _residual_attribution == "prorate":
+                    # Weight by each bucket's lot-component magnitude for this
+                    # column; fall back to the attribution ratio, then to B1.
+                    _weights = {
+                        _bl: abs(float(_lot_components.get(_u, {}).get(_bl, {}).get(_col, 0.0)))
+                        for _bl, _ in _resid_bucket_specs
+                    }
+                    if sum(_weights.values()) <= 1e-9:
+                        if _col == "realized_pnl":
+                            _kind = "realized"
+                        elif _col == "unrealized_pnl":
+                            _kind = "unrealized"
+                        elif _col in carry_cols:
+                            _kind = "carry"
+                        else:
+                            _kind = "current"
+                        _weights = {
+                            _bl: (
+                                abs(float(_u_rows[f"_ratio_{_rk}_{_kind}"].iloc[0]))
+                                if f"_ratio_{_rk}_{_kind}" in _u_rows.columns
+                                else 0.0
+                            )
+                            for _bl, _rk in _resid_bucket_specs
+                        }
+                    _wsum = sum(_weights.values())
+                    if _wsum <= 1e-9:
+                        _weights = {"bucket_1": 1.0, "bucket_2": 0.0, "bucket_4": 0.0}
+                        _wsum = 1.0
+                    for _part in split_parts:
+                        if _part.empty:
+                            continue
+                        _bl = str(_part["bucket"].iloc[0])
+                        _w = float(_weights.get(_bl, 0.0))
+                        if _w <= 0.0:
+                            continue
+                        _mask = _part["underlying"].astype(str) == _u
+                        if not _mask.any():
+                            continue
+                        _first_idx = _part.index[_mask][0]
+                        _part.at[_first_idx, _col] = (
+                            float(_part.at[_first_idx, _col]) + _resid * (_w / _wsum)
+                        )
+                        _part.at[_first_idx, "total_pnl"] = float(
+                            _part.loc[_first_idx, component_cols].sum()
+                        )
+                else:
+                    # Legacy: dump the full residual onto bucket_1's first row.
+                    for _part in split_parts:
+                        if _part.empty:
+                            continue
+                        _mask = (_part["bucket"] == "bucket_1") & (
+                            _part["underlying"].astype(str) == _u
+                        )
+                        if not _mask.any():
+                            continue
+                        _first_idx = _part.index[_mask][0]
+                        _part.at[_first_idx, _col] = (
+                            float(_part.at[_first_idx, _col]) + _resid
+                        )
+                        _part.at[_first_idx, "total_pnl"] = float(
+                            _part.loc[_first_idx, component_cols].sum()
+                        )
+                        break
 
     # Drop rows where all PnL components net to zero AFTER residual fixup.
     # Deferring this filter (rather than doing it inside the per-bucket
