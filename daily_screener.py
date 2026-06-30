@@ -269,6 +269,9 @@ new_pairs = [
     ("GOGL", "GOOGL"),("FBX",  "META"), ("MSFC", "MSFT"), ("MSTC", "MSTR"),
     ("PLTL", "PLTR"), ("MIC",  "MU"),   ("AMAA", "AMZN"), ("SNDC", "SNDK"),
     ("TWSC", "TSM"),  ("APPC", "APP"),  ("ASTT", "ASTS"), ("UCTX", "UCTT"),
+    # 2026-06-29 Tradr 2X long daily (Cboe-listed)
+    ("CIEX", "CIEN"), ("QNTU", "QNT"),  ("RMBX", "RMBS"), ("TSEU", "TSEM"),
+    ("TTMX", "TTMI"),
 
     # Auto-discovered single-stock leveraged ETFs (2026-06-15)
     ("SPAL", "SPCX"),
