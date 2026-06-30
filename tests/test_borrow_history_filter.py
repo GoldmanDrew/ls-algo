@@ -2,10 +2,13 @@
 import datetime as dt
 
 import numpy as np
+import pytest
 
 from screener_v2_fields import (
+    BORROW_ACT360_ANNUAL_FACTOR,
     _borrow_history_usable_currents_sorted,
     _weighted_borrow_values_probs,
+    borrow_net_charge_annual,
 )
 
 
@@ -50,3 +53,9 @@ def test_weighted_borrow_none_when_only_placeholders():
         {"date": "2025-02-01", "borrow_current": 0.0, "shares_available": 0},
     ]
     assert _weighted_borrow_values_probs(hist, asof, halflife_days=90.0) is None
+
+
+def test_borrow_net_charge_uses_act360_factor():
+    assert BORROW_ACT360_ANNUAL_FACTOR == pytest.approx(365.0 / 360.0)
+    assert borrow_net_charge_annual(0.05) == pytest.approx(0.05 * 365.0 / 360.0)
+    assert borrow_net_charge_annual(0.0) == pytest.approx(0.0)

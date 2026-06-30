@@ -27,6 +27,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import pytest
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 if REPO_ROOT not in sys.path:
@@ -340,3 +341,36 @@ def test_yieldboost_routes_to_blended_realized_expected():
     # is True for income_yieldboost in the v2 taxonomy).
     assert math.isfinite(float(row["gross_anchor_shift_annual"]))
     assert abs(float(row["gross_anchor_target_annual"]) - 0.40) < 1e-9
+
+
+def test_net_edge_borrow_subtracted_with_act360_factor():
+    """Point-in-time borrow uses 365/360 effective annual charge (etf-dashboard)."""
+    sigma = 0.30
+    n = 600
+    und = _gbm_tr(n, sigma_annual=sigma, seed=42)
+    etf = _build_letf_tr(und, beta=2.0, daily_drag=0.0004)
+    tr_map = {"ABC": etf, "ABCUND": und}
+
+    anchor = 0.30
+    quoted_borrow = 0.036  # 3.6% annual quoted
+    df = pd.DataFrame(
+        [
+            {
+                **_minimal_letf_row(
+                    etf="ABC",
+                    underlying="ABCUND",
+                    beta=2.0,
+                    expected_p50=anchor,
+                    n_obs=n - 1,
+                ),
+                "borrow_current": quoted_borrow,
+            }
+        ]
+    )
+    out = enrich_screener_v2_fields(df, tr_map, bootstrap_seed=7)
+    row = out.iloc[0]
+    expected_net = anchor - quoted_borrow * (365.0 / 360.0)
+    assert abs(float(row["net_edge_p50_annual"]) - expected_net) < 0.05
+    assert float(row["borrow_for_net_annual"]) == pytest.approx(
+        quoted_borrow * (365.0 / 360.0), rel=1e-9
+    )

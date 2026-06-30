@@ -30,6 +30,14 @@ from vol_shape import (
 # Match daily_screener
 TRADING_DAYS = 252
 _MIN_DAYS_DECAY = 40
+# Quoted annual borrow accrues Act/360 (rate/360 per calendar day) in etf-dashboard
+# net_decay / decay-tab; effective annual charge = quoted × (365/360).
+BORROW_ACT360_ANNUAL_FACTOR = 365.0 / 360.0
+
+
+def borrow_net_charge_annual(quoted_annual: float) -> float:
+    """Effective annual borrow cost under Act/360 accrual (etf-dashboard convention)."""
+    return float(quoted_annual) * BORROW_ACT360_ANNUAL_FACTOR
 _STRESS_BORROW_RHOS = (0.0, 0.2, 0.4)
 _BOOT_N = 400
 _BLOCK_LEN_DEFAULT = 10
@@ -493,7 +501,9 @@ def enrich_screener_v2_fields(
     When ``borrow_history_map`` is provided (etf-dashboard ``borrow_history.json``),
     net-edge percentiles use independent weighted resampling of historical
     ``borrow_current`` (recent-heavy half-life in calendar days); otherwise the
-    legacy point-in-time ``borrow_current`` subtraction is used.
+    legacy point-in-time ``borrow_current`` subtraction is used. All borrow
+    charges subtracted from gross edge use Act/360 (``365/360`` × quoted annual
+    rate), matching etf-dashboard ``net_decay_annual``.
 
     ``borrow_avg_annual`` and ``borrow_median_60d`` are computed from that same
     history (chronological mean and median of the last up to 60 usable points),
@@ -569,6 +579,9 @@ def enrich_screener_v2_fields(
     )
 
     expected_avail: list[bool] = [True] * n
+    # Single consistent posterior borrow estimate (E[half-life-weighted borrow]),
+    # using the SAME weighted-borrow distribution that nets net_edge_p50_annual.
+    bpost_arr: list[float] = [np.nan] * n
     anchor_shift_arr: list[float] = [np.nan] * n
     anchor_target_arr: list[float] = [np.nan] * n
     anchor_source_arr: list[str] = [""] * n
@@ -600,7 +613,8 @@ def enrich_screener_v2_fields(
         pclass[j] = _product_class(lev, beta, is_yieldboost=is_yb)
         expected_avail[j] = _expected_decay_available(pclass[j])
         bcur = float(row["borrow_current"]) if not _nanf(row.get("borrow_current")) else 0.0
-        bfor[j] = bcur
+        bcur_net = borrow_net_charge_annual(bcur)
+        bfor[j] = bcur_net
 
         hist = None
         if borrow_history_map:
@@ -620,6 +634,24 @@ def enrich_screener_v2_fields(
         else:
             bavg[j] = np.nan
             bmed[j] = np.nan
+
+        # Consistent posterior borrow = expectation of the SAME half-life-weighted
+        # borrow distribution that is resampled to net ``net_edge_p50_annual``
+        # (see the ``_weighted_borrow_values_probs`` use below). This gives net
+        # edge and downstream sizing ONE shared forward borrow measure that folds
+        # in the full borrow history (recent points weighted more) instead of a
+        # spot reading that lurches on a transient HTB spike. Falls back to the
+        # point-in-time borrow when no usable history exists (matching net edge).
+        _wb_post = (
+            _weighted_borrow_values_probs(hist, asof_d, float(borrow_weight_halflife_days))
+            if hist
+            else None
+        )
+        if _wb_post is not None:
+            _vals_post, _probs_post = _wb_post
+            bpost_arr[j] = borrow_net_charge_annual(float(np.dot(_vals_post, _probs_post)))
+        else:
+            bpost_arr[j] = bcur_net
 
         n_obs = int(row["Delta_n_obs"]) if not _nanf(row.get("Delta_n_obs")) else 0
         realized_ok = bool(
@@ -664,7 +696,7 @@ def enrich_screener_v2_fields(
             primary[j] = float(nd_annual)
         else:
             primary[j] = (
-                float(gprim[j]) - bcur
+                float(gprim[j]) - bcur_net
                 if not _nanf(gprim[j]) else np.nan
             )
 
@@ -813,7 +845,7 @@ def enrich_screener_v2_fields(
             if wb is not None:
                 vals, probs = wb
                 idx = rng_borrow.choice(vals.size, size=gross_draws.size, p=probs, replace=True)
-                b_draws = vals[idx]
+                b_draws = vals[idx] * BORROW_ACT360_ANNUAL_FACTOR
                 net_draws = gross_draws - b_draws
                 cnote[j] = (
                     "block_bootstrap_daily_drag;"
@@ -826,7 +858,7 @@ def enrich_screener_v2_fields(
                 bnpts[j] = float(vals.size)
                 bmode[j] = "weighted_empirical"
             else:
-                net_draws = gross_draws - bcur
+                net_draws = gross_draws - bcur_net
                 cnote[j] = (
                     f"block_bootstrap_daily_drag;{anchor_note}borrow_point_in_time"
                 )
@@ -895,6 +927,7 @@ def enrich_screener_v2_fields(
     out["borrow_for_net_annual"] = bfor
     out["borrow_avg_annual"] = bavg
     out["borrow_median_60d"] = bmed
+    out["borrow_posterior_annual"] = bpost_arr
     out["net_edge_p05_annual"] = p05
     out["net_edge_p25_annual"] = p25
     out["net_edge_p50_annual"] = p50

@@ -59,7 +59,11 @@ from delta_estimator import (
 )
 from decay_distribution import enrich_with_decay_distribution
 from expense_ratios import fetch_expense_ratios
-from screener_v2_fields import enrich_screener_v2_fields, load_borrow_history_json
+from screener_v2_fields import (
+    BORROW_ACT360_ANNUAL_FACTOR,
+    enrich_screener_v2_fields,
+    load_borrow_history_json,
+)
 from vol_shape import resolve_etf_metrics_daily_path, underlying_vol_shape_panel
 from strategy_config import load_config
 from splits import (
@@ -2331,8 +2335,8 @@ def enrich_with_decay_and_vol(
                                        (β≤0 or β>1.5); realized-only for 0<β≤1.5.
                                        If ``Delta_n_obs`` < ``_MIN_DAYS_DECAY``
                                        (40), blend uses **100 % expected** only.
-      - net_decay_annual             : realized − ETF borrow
-      - decay_score                  : blended − ETF borrow (computed but omitted
+      - net_decay_annual             : realized − ETF borrow (Act/360 effective charge)
+      - decay_score                  : blended − ETF borrow (Act/360; computed but omitted
                                        from ``etf_screened_today.csv`` export)
       - vol_underlying_source        : JSON probe summary per underlying (PASS 2)
       - sigma_realized_implied_annual: median √(G/(½|β||β−1|)) across LETFs on U
@@ -2892,15 +2896,22 @@ def enrich_with_decay_and_vol(
             blended.append(np.nan)
     df["blended_gross_decay"] = blended
 
-    # Net decay (realized only, backward compat)
-    borrow_net = pd.to_numeric(df.get("borrow_current"), errors="coerce").fillna(0.0)
+    # Net decay (realized only, backward compat). Borrow quoted annual rates accrue
+    # Act/360 in etf-dashboard → effective charge = quoted × (365/360).
+    borrow_net = (
+        pd.to_numeric(df.get("borrow_current"), errors="coerce").fillna(0.0)
+        * BORROW_ACT360_ANNUAL_FACTOR
+    )
     df["net_decay_annual"] = np.where(
         df["gross_decay_annual"].notna(),
         df["gross_decay_annual"] - borrow_net, np.nan)
 
     # Decay score: blended gross decay minus borrow (for generate_trade_plan sizing)
     # Missing borrow treated as 0 — same as _decay_score_weights in generate_trade_plan.
-    borrow_current = pd.to_numeric(df.get("borrow_current"), errors="coerce").fillna(0.0)
+    borrow_current = (
+        pd.to_numeric(df.get("borrow_current"), errors="coerce").fillna(0.0)
+        * BORROW_ACT360_ANNUAL_FACTOR
+    )
     df["decay_score"] = np.where(
         df["blended_gross_decay"].notna(),
         df["blended_gross_decay"] - borrow_current, np.nan)
