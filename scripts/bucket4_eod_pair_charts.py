@@ -45,6 +45,10 @@ SIGNAL_WINDOW = 45
 ACTIVE_B4_SLEEVES = frozenset({"inverse_decay_bucket4", "volatility_etp_bucket5"})
 MIN_BACKTEST_PRICE_ROWS = 20
 TRADING_DAYS = 252.0
+# Minimum fraction of actual-history dates that must carry a per-leg PnL value
+# (from ``pnl_bucket_4_by_symbol.csv``) before the leg-decomposition lines are
+# drawn. Below this they are sparse fragments that don't sum to the pair total.
+LEG_COVERAGE_MIN = 0.6
 
 
 def _norm(x: object) -> str:
@@ -479,6 +483,43 @@ def load_b4_pair_leg_history(runs_root: Path) -> pd.DataFrame:
                 }
             )
     return pd.DataFrame(rows)
+
+
+def _reconcile_actual_endpoints(
+    actual_by_pair: dict[str, float],
+    *,
+    runs_root: Path,
+    run_date: str,
+    tol: float = 1.0,
+) -> list[str]:
+    """Warn when a charted actual-PnL endpoint diverges from the run's accounting.
+
+    The chart's last "actual pair total" point must equal the ``total_pnl`` the
+    EOD email reports for the same run date (``pnl_bucket_4_by_pair.csv``). Any
+    divergence means the stitched history and the email disagree — log it so the
+    mismatch is caught instead of silently shipping a wrong-looking graph.
+    """
+    mismatches: list[str] = []
+    p = runs_root / run_date / "accounting" / "pnl_bucket_4_by_pair.csv"
+    if not p.is_file():
+        return mismatches
+    try:
+        ap = pd.read_csv(p)
+    except Exception:
+        return mismatches
+    if ap.empty or not {"etf", "underlying", "total_pnl"}.issubset(ap.columns):
+        return mismatches
+    latest = {
+        _pair_key(e, u): _scalar_float(t, np.nan)
+        for e, u, t in zip(ap["etf"], ap["underlying"], ap["total_pnl"])
+    }
+    for pair, charted in actual_by_pair.items():
+        acct = latest.get(pair, np.nan)
+        if np.isfinite(acct) and np.isfinite(charted) and abs(acct - charted) > tol:
+            msg = f"{pair}: chart={charted:,.0f} vs accounting={acct:,.0f}"
+            mismatches.append(msg)
+            print(f"[B4-pair-charts] WARN actual-PnL endpoint mismatch {msg}")
+    return mismatches
 
 
 def load_pair_gross_and_realized_h(runs_root: Path, run_date: str) -> pd.DataFrame:
@@ -1025,6 +1066,39 @@ def _safe_last(series: pd.Series) -> float:
     return float(s.iloc[-1]) if len(s) else np.nan
 
 
+def _trim_leading_flat_history(
+    df: pd.DataFrame,
+    value_cols: tuple[str, ...] = ("pair_pnl_cum",),
+    eps: float = 1e-6,
+) -> pd.DataFrame:
+    """Drop leading run-date rows where the pair had no economic PnL yet.
+
+    Historical ``pnl_bucket_4_by_pair.csv`` snapshots emit a ``0.0`` row for
+    every run since a pair entered the registry — often months before any
+    position existed. Plotting those flat-zero months stretches the x-axis and
+    compresses the real PnL into a sliver on the right, which is the main reason
+    the chart looks nothing like the emailed figure. Keep a single zero anchor
+    immediately before the first economically meaningful row so the curve still
+    visibly starts from 0.
+    """
+    if df.empty:
+        return df
+    d = df.sort_values("date").reset_index(drop=True)
+    mag: pd.Series | None = None
+    for c in value_cols:
+        if c in d.columns:
+            col = pd.to_numeric(d[c], errors="coerce").abs().fillna(0.0)
+            mag = col if mag is None else mag.add(col, fill_value=0.0)
+    if mag is None:
+        return d
+    nz = mag > eps
+    if not bool(nz.any()):
+        return d.tail(1).reset_index(drop=True)
+    first = int(nz.to_numpy().argmax())
+    start = max(0, first - 1)
+    return d.iloc[start:].reset_index(drop=True)
+
+
 def _plot_pair_page(
     pdf: PdfPages,
     row: pd.Series,
@@ -1044,6 +1118,8 @@ def _plot_pair_page(
         if not hist.empty and "pair" in hist.columns
         else pd.DataFrame()
     )
+    if not pair_hist.empty:
+        pair_hist = _trim_leading_flat_history(pair_hist)
     pair_book = (
         book_h[book_h["pair"].eq(pair)].sort_values("date")
         if not book_h.empty and "pair" in book_h.columns
@@ -1074,6 +1150,7 @@ def _plot_pair_page(
     latest_tcost = _safe_last(model.bt["tcost_cum"]) if model_ok and "tcost_cum" in model.bt else np.nan
     status = model.status if model is not None else "model_missing"
     reason = model.missing_reason if model is not None else ""
+    latest_actual_pnl = _safe_last(pair_hist["pair_pnl_cum"]) if not pair_hist.empty else np.nan
     current_model_h = np.nan
     if model is not None and not model.h_signal.empty:
         _h = model.h_signal.dropna()
@@ -1086,10 +1163,25 @@ def _plot_pair_page(
 
     # ---- panel drawing closures (each takes a single Axes) ------------------
     def draw_actual(ax: "plt.Axes") -> None:
+        span_lo = span_hi = None
         if not pair_hist.empty:
+            span_lo = pd.Timestamp(pair_hist["date"].min())
+            span_hi = pd.Timestamp(pair_hist["date"].max())
             ax.plot(pair_hist["date"], pair_hist["pair_pnl_cum"], color="#1f77b4", lw=1.7, label="actual pair total")
-            ax.plot(pair_hist["date"], pair_hist["etf_leg_pnl_cum"], color="#ff7f0e", lw=1.0, label=f"actual {etf} leg")
-            ax.plot(pair_hist["date"], pair_hist["und_leg_pnl_cum"], color="#2ca02c", lw=1.0, label=f"actual {und} leg")
+            # The per-leg split comes from pnl_bucket_4_by_symbol.csv, which only
+            # recently began carrying these symbols. Draw the leg lines only when
+            # they cover enough of the window to be meaningful; otherwise they are
+            # misleading sparse fragments that don't visually sum to the pair total.
+            etf_cov = float(pd.to_numeric(pair_hist["etf_leg_pnl_cum"], errors="coerce").notna().mean())
+            if etf_cov >= LEG_COVERAGE_MIN:
+                ax.plot(pair_hist["date"], pair_hist["etf_leg_pnl_cum"], color="#ff7f0e", lw=1.0, label=f"actual {etf} leg")
+                ax.plot(pair_hist["date"], pair_hist["und_leg_pnl_cum"], color="#2ca02c", lw=1.0, label=f"actual {und} leg")
+            else:
+                ax.text(
+                    0.005, 0.90,
+                    f"leg split unavailable for early history (coverage {etf_cov:.0%})",
+                    transform=ax.transAxes, fontsize=6.5, color="#9ca3af", va="top", style="italic",
+                )
         else:
             ax.text(0.5, 0.5, "no actual accounting PnL history", ha="center", va="center", transform=ax.transAxes)
         if is_shared:
@@ -1099,7 +1191,18 @@ def _plot_pair_page(
                 f"the {und}-leg line is an attributed slice, not an independently observed PnL",
                 transform=ax.transAxes, fontsize=6.5, color="#b45309", va="top", style="italic",
             )
-        _plot_marker_lines(ax, model_reb_dates, etf_trade_dates, und_trade_dates)
+        # Only overlay markers that fall inside the actual-accounting window. The
+        # model backtest starts months earlier, so its rebalance markers are
+        # omitted here (they belong on the model panels) and the trade markers are
+        # clipped — otherwise they stretch this panel's x-axis and distort the
+        # curve relative to the emailed figure.
+        if span_lo is not None:
+            def _clip(dates) -> list:
+                seq = list(dates) if dates is not None else []
+                return [x for x in seq if span_lo <= pd.Timestamp(x) <= span_hi]
+
+            _plot_marker_lines(ax, None, _clip(etf_trade_dates), _clip(und_trade_dates))
+            ax.set_xlim(span_lo - pd.Timedelta(days=1), span_hi + pd.Timedelta(days=1))
         ax.axhline(0, color="#888", lw=0.6)
         ax.set_title("Actual accounting cumulative PnL", loc="left", fontsize=10)
         ax.set_ylabel("$")
@@ -1269,9 +1372,11 @@ def _plot_pair_page(
         + f"  |  sizing fwd TR={_scalar_float(row.get('sizing_tr_fwd'), np.nan):.3f}{_metrics_through}",
         transform=hax.transAxes, va="top", ha="left", fontsize=8.5, color="#333333",
     )
+    _actual_txt = f"${latest_actual_pnl:,.0f}" if np.isfinite(latest_actual_pnl) else "n/a"
     hax.text(
         0.0, 0.40,
-        f"Model PnL ${latest_model_pnl:,.0f}  |  Borrow ${latest_borrow:,.0f}  |  "
+        f"Actual PnL (accounting/email) {_actual_txt}  |  Model PnL ${latest_model_pnl:,.0f}  |  "
+        f"Borrow ${latest_borrow:,.0f}  |  "
         f"T-costs ${latest_tcost:,.0f}  |  CAGR {_scalar_float(risk.get('cagr'), np.nan):.1%}  |  "
         f"Vol {_scalar_float(risk.get('vol_annual'), np.nan):.1%}  |  "
         f"Sharpe {_scalar_float(risk.get('sharpe'), np.nan):.2f}  |  "
@@ -1374,9 +1479,11 @@ def _plot_summary_page(
     ratchet_by_pair: dict[str, dict],
     shared_unds: set[str],
     model_results: dict[str, "ModelPairResult"],
+    actual_by_pair: dict[str, float] | None = None,
 ) -> None:
     """Index / overview page: one row per pair with sizing, ratchet, and risk."""
-    headers = ["Pair", "Sleeve", "Gross $", "Creep x", "lambda", "Trim $",
+    actual_by_pair = actual_by_pair or {}
+    headers = ["Pair", "Sleeve", "Gross $", "Actual $", "Creep x", "lambda", "Trim $",
                "h model", "Sharpe", "MaxDD", "Shared", "Status"]
     cells: list[list[str]] = []
     risk_free = _scalar_float(os.environ.get("EOD_B4_RISK_FREE_RATE", 0.0), 0.0)
@@ -1394,10 +1501,12 @@ def _plot_summary_page(
         if status and status != "ok":
             status = "insuf_price" if str(status).startswith("insufficient_price") else str(status)[:12]
         sleeve = str(row.get("sleeve", "")).replace("_bucket4", " b4").replace("_bucket5", " b5")
+        _act = _scalar_float(actual_by_pair.get(pair, np.nan), np.nan)
         cells.append([
             f"{row['etf']}/{row['underlying']}",
             sleeve,
             f"{float(row['gross_target_usd']):,.0f}",
+            f"{_act:,.0f}" if np.isfinite(_act) else "-",
             f"{_scalar_float(rt.get('creep_ratio'), np.nan):.2f}" if rt else "-",
             f"{_scalar_float(rt.get('trim_lambda'), np.nan):.2f}" if rt else "-",
             f"{_scalar_float(rt.get('trim_usd'), 0.0):,.0f}" if rt else "-",
@@ -1420,6 +1529,7 @@ def _plot_summary_page(
     ax.text(
         0.0, 1.035,
         f"{model_tag}   |   pages follow, one per pair (sorted by proposed gross). "
+        "Actual $ = accounting cumulative PnL (matches the EOD email). "
         "Shared = underlying netted with B1/B2/B5 (attributed slice).",
         transform=ax.transAxes, va="bottom", ha="left", fontsize=7.5, color="#555555",
     )
@@ -1514,6 +1624,14 @@ def _make_chart_inner(
         diagnostics=model_inputs.diagnostics,
     )
 
+    # Latest charted endpoint per pair = the figure the EOD email reports. Build it
+    # once for the overview table and to reconcile against the run's accounting.
+    actual_by_pair: dict[str, float] = {}
+    if not hist.empty and "pair" in hist.columns:
+        for _p, _g in hist.groupby("pair"):
+            actual_by_pair[str(_p)] = _safe_last(_g.sort_values("date")["pair_pnl_cum"])
+    _reconcile_actual_endpoints(actual_by_pair, runs_root=runs_root, run_date=run_date)
+
     out_dir.mkdir(parents=True, exist_ok=True)
     pdf_path = out_dir / f"b4_pair_pnl_hedge_{run_date}.pdf"
     csv_path = out_dir / f"b4_pair_pnl_hedge_summary_{run_date}.csv"
@@ -1524,6 +1642,7 @@ def _make_chart_inner(
             run_date=run_date, model_tag=model_tag,
             ratchet_by_pair=ratchet_by_pair, shared_unds=shared_unds,
             model_results=model_results,
+            actual_by_pair=actual_by_pair,
         )
         for _, row in active.iterrows():
             summary_rows.append(

@@ -5,6 +5,8 @@ import pandas as pd
 import pytest
 
 from scripts.bucket4_eod_pair_charts import (
+    _reconcile_actual_endpoints,
+    _trim_leading_flat_history,
     load_active_b4_pairs_from_proposed,
     load_actual_trade_markers,
     load_b4_pair_leg_history,
@@ -112,6 +114,48 @@ def test_leg_history_splits_pair_into_etf_and_underlying(tmp_path):
     assert last["pair_pnl_cum"] == pytest.approx(1500.0)
     assert last["etf_leg_pnl_cum"] == pytest.approx(900.0)
     assert last["und_leg_pnl_cum"] == pytest.approx(600.0)
+
+
+def test_trim_leading_flat_history_keeps_one_zero_anchor():
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                ["2026-01-30", "2026-02-15", "2026-06-06", "2026-06-07"]
+            ),
+            "pair_pnl_cum": [0.0, 0.0, -1591.0, -1800.0],
+        }
+    )
+    out = _trim_leading_flat_history(df)
+    # Drops the long leading flat-zero stretch but keeps a single 0 anchor
+    # immediately before the first economically meaningful row.
+    assert list(out["date"].dt.strftime("%Y-%m-%d")) == [
+        "2026-02-15",
+        "2026-06-06",
+        "2026-06-07",
+    ]
+    assert out["pair_pnl_cum"].iloc[0] == pytest.approx(0.0)
+
+
+def test_trim_leading_flat_history_all_zero_keeps_last():
+    df = pd.DataFrame(
+        {"date": pd.to_datetime(["2026-01-01", "2026-01-02"]), "pair_pnl_cum": [0.0, 0.0]}
+    )
+    out = _trim_leading_flat_history(df)
+    assert len(out) == 1
+
+
+def test_reconcile_actual_endpoints_flags_mismatch(tmp_path, capsys):
+    _write_run(tmp_path, "2026-06-02", pair_pnl=1500.0, etf_pnl=900.0)
+    # Matching endpoint -> no warning; mismatched endpoint -> warning + return.
+    ok = _reconcile_actual_endpoints(
+        {"QBTZ|QBTS": 1500.0}, runs_root=tmp_path, run_date="2026-06-02"
+    )
+    assert ok == []
+    bad = _reconcile_actual_endpoints(
+        {"QBTZ|QBTS": 999.0}, runs_root=tmp_path, run_date="2026-06-02"
+    )
+    assert len(bad) == 1 and "QBTZ|QBTS" in bad[0]
+    assert "endpoint mismatch" in capsys.readouterr().out
 
 
 def test_realized_h_is_und_gross_over_beta_times_etf_gross(tmp_path):
