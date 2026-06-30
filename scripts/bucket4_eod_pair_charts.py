@@ -19,6 +19,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 from matplotlib.backends.backend_pdf import PdfPages
 import numpy as np
 import pandas as pd
@@ -345,6 +346,90 @@ def load_active_b4_pairs_from_proposed(
         "pair_override_gross_mult", "pair_override_hedge_add", "pair_override_note", "applied_hedge_ratio",
     ]
     return d[cols].sort_values("gross_target_usd", ascending=False).reset_index(drop=True)
+
+
+def load_ratchet_targets(runs_root: Path, run_date: str) -> dict[str, dict]:
+    """Per-pair grow-only ratchet / continuous-trim audit for the run.
+
+    Returns a dict keyed by ``ETF|UNDERLYING`` with the creep ratio, dollar gap
+    above the freshly solved target, the trim fraction (lambda) applied this run,
+    and the dollar amount being trimmed. Fail-soft: returns ``{}`` when the
+    ``b4_ratchet_targets.csv`` produced by ``generate_trade_plan`` is absent.
+    """
+    p = runs_root / run_date / "b4_hedge_cadence" / "b4_ratchet_targets.csv"
+    if not p.is_file():
+        return {}
+    try:
+        df = pd.read_csv(p)
+    except Exception:
+        return {}
+    if df.empty or not {"ETF", "Underlying"}.issubset(df.columns):
+        return {}
+    out: dict[str, dict] = {}
+    for _, r in df.iterrows():
+        key = _pair_key(r["ETF"], r["Underlying"])
+        out[key] = {
+            "inverse_solved_usd": _scalar_float(r.get("inverse_short_solved_usd"), np.nan),
+            "inverse_target_usd": _scalar_float(r.get("inverse_etf_short_usd"), np.nan),
+            "ratchet_floor_usd": _scalar_float(r.get("ratchet_floor_usd"), np.nan),
+            "creep_ratio": _scalar_float(r.get("ratchet_creep_ratio"), np.nan),
+            "gap_usd": _scalar_float(r.get("ratchet_gap_usd"), np.nan),
+            "trim_lambda": _scalar_float(r.get("ratchet_trim_lambda"), np.nan),
+            "trim_usd": _scalar_float(r.get("ratchet_trim_usd"), np.nan),
+            "released": bool(r.get("ratchet_released", False)),
+            "source": str(r.get("ratchet_source", "") or ""),
+            "forward_edge_annual": _scalar_float(r.get("forward_edge_annual"), np.nan),
+        }
+    return out
+
+
+def load_shared_underlyings(runs_root: Path, run_date: str, active: pd.DataFrame) -> set[str]:
+    """Underlyings whose B4 short shares a netted broker line with B1/B2/B5.
+
+    Two independent signals are unioned:
+      * the same underlying ticker carries a B1/B2/B5 claim in
+        ``accounting/pnl_by_symbol.csv`` (one physical spot line, many sleeves);
+      * the underlying backs more than one active B4 pair.
+    For these names the per-pair "underlying leg" PnL is an *attributed slice*,
+    not an independently observed series, so the chart should say so.
+    """
+    shared: set[str] = set()
+    if not active.empty and "underlying" in active.columns:
+        counts = active["underlying"].map(_norm).value_counts()
+        shared |= set(counts[counts > 1].index)
+    p = runs_root / run_date / "accounting" / "pnl_by_symbol.csv"
+    if p.is_file():
+        try:
+            sym = pd.read_csv(p)
+        except Exception:
+            sym = pd.DataFrame()
+        if not sym.empty and {"symbol", "bucket"}.issubset(sym.columns):
+            sym["symbol"] = sym["symbol"].map(_norm)
+            non_b4 = sym[sym["bucket"].astype(str).isin(["bucket_1", "bucket_2", "bucket_5"])].copy()
+            # Only treat a non-B4 claim as material (avoid flagging splitter dust).
+            if "total_pnl" in non_b4.columns:
+                _tp = pd.to_numeric(non_b4["total_pnl"], errors="coerce").abs()
+                non_b4 = non_b4[_tp > 50.0]
+            b4_unds = set(active["underlying"].map(_norm)) if not active.empty else set()
+            shared |= (set(non_b4["symbol"]) & b4_unds)
+    return shared
+
+
+def _apply_date_axis(ax: "plt.Axes") -> None:
+    """Consistent, adaptive date ticks (days on short ranges, months/years on long).
+
+    ``ConciseDateFormatter`` avoids the duplicate ``2026-06 2026-06`` labels that a
+    fixed ``%Y-%m`` formatter produces when a pair only has a few weeks of history.
+    """
+    try:
+        loc = mdates.AutoDateLocator(minticks=4, maxticks=8)
+        ax.xaxis.set_major_locator(loc)
+        ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(loc))
+        for lbl in ax.get_xticklabels():
+            lbl.set_rotation(0)
+            lbl.set_fontsize(7)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -950,6 +1035,8 @@ def _plot_pair_page(
     trades: pd.DataFrame,
     model: ModelPairResult | None,
     model_tag: str,
+    ratchet_by_pair: dict[str, dict] | None = None,
+    shared_unds: set[str] | None = None,
 ) -> dict:
     etf, und, pair = str(row["etf"]), str(row["underlying"]), str(row["pair"])
     pair_hist = (
@@ -975,142 +1062,246 @@ def _plot_pair_page(
     if model is not None and "rebalance" in model.bt.columns:
         model_reb_dates = pd.DatetimeIndex(model.bt.index[model.bt["rebalance"].astype(bool)])
 
-    fig, axes = plt.subplots(5, 1, figsize=(13, 12), sharex=False, constrained_layout=True)
+    ratchet = (ratchet_by_pair or {}).get(pair, {})
+    is_shared = und in (shared_unds or set())
+
+    model_ok = model is not None and not model.bt.empty
+    risk_free = _scalar_float(os.environ.get("EOD_B4_RISK_FREE_RATE", 0.0), 0.0)
+    risk = compute_risk_metrics(model.bt["equity"], risk_free_rate=risk_free) if model_ok else {}
+    model_pnl_last = _safe_last(model.bt["net_pnl"]) if model_ok and "net_pnl" in model.bt else np.nan
+    latest_model_pnl = model_pnl_last
+    latest_borrow = _safe_last(model.bt["borrow_cost_cum"]) if model_ok and "borrow_cost_cum" in model.bt else np.nan
+    latest_tcost = _safe_last(model.bt["tcost_cum"]) if model_ok and "tcost_cum" in model.bt else np.nan
+    status = model.status if model is not None else "model_missing"
+    reason = model.missing_reason if model is not None else ""
+    current_model_h = np.nan
+    if model is not None and not model.h_signal.empty:
+        _h = model.h_signal.dropna()
+        current_model_h = _safe_last(_h[_h.index <= pd.Timestamp(run_date)]) if len(_h) else np.nan
+
     _ovr_gm = _scalar_float(row.get("pair_override_gross_mult", 1.0), 1.0)
     _ovr_ha = _scalar_float(row.get("pair_override_hedge_add", 0.0), 0.0)
     _ovr_note = str(row.get("pair_override_note", "") or "")
     _ovr_active = (abs(_ovr_gm - 1.0) > 1e-9) or (abs(_ovr_ha) > 1e-9)
+
+    # ---- panel drawing closures (each takes a single Axes) ------------------
+    def draw_actual(ax: "plt.Axes") -> None:
+        if not pair_hist.empty:
+            ax.plot(pair_hist["date"], pair_hist["pair_pnl_cum"], color="#1f77b4", lw=1.7, label="actual pair total")
+            ax.plot(pair_hist["date"], pair_hist["etf_leg_pnl_cum"], color="#ff7f0e", lw=1.0, label=f"actual {etf} leg")
+            ax.plot(pair_hist["date"], pair_hist["und_leg_pnl_cum"], color="#2ca02c", lw=1.0, label=f"actual {und} leg")
+        else:
+            ax.text(0.5, 0.5, "no actual accounting PnL history", ha="center", va="center", transform=ax.transAxes)
+        if is_shared:
+            ax.text(
+                0.005, 0.97,
+                f"\u26a0 {und} is a SHARED underlying (netted with B1/B2/B5) — "
+                f"the {und}-leg line is an attributed slice, not an independently observed PnL",
+                transform=ax.transAxes, fontsize=6.5, color="#b45309", va="top", style="italic",
+            )
+        _plot_marker_lines(ax, model_reb_dates, etf_trade_dates, und_trade_dates)
+        ax.axhline(0, color="#888", lw=0.6)
+        ax.set_title("Actual accounting cumulative PnL", loc="left", fontsize=10)
+        ax.set_ylabel("$")
+        ax.grid(True, ls="--", alpha=0.3)
+        ax.legend(loc="best", fontsize=7)
+        _apply_date_axis(ax)
+
+    def draw_model_pnl(ax: "plt.Axes") -> None:
+        if model_ok:
+            model_pnl = model.bt["net_pnl"].astype(float)
+            ax.plot(model.bt.index, model_pnl.values, color="#06b6d4", lw=1.7, label="net model PnL")
+            ax.plot(model.bt.index, model.bt["etf_leg_pnl_cum"], color="#10b981", lw=1.0, label="ETF leg MTM")
+            ax.plot(model.bt.index, model.bt["underlying_leg_pnl_cum"], color="#8b5cf6", lw=1.0, label="underlying leg MTM")
+            ax.plot(model.bt.index, -model.bt["borrow_cost_cum"], color="#ef4444", lw=1.0, ls="--", label="borrow cost drag")
+            ax.plot(model.bt.index, -model.bt["tcost_cum"], color="#f59e0b", lw=1.0, ls="--", label="T-cost drag")
+            if "rebalance_skipped_below_drift" in model.bt.columns:
+                for dt in model.bt.index[model.bt["rebalance_skipped_below_drift"].astype(bool)]:
+                    ax.axvline(dt, color="#aaaaaa", lw=0.5, alpha=0.3, ls=":")
+        else:
+            msg = "no model/backtest data"
+            if model is not None and model.status:
+                msg = f"{model.status}: {model.missing_reason or 'no backtest'}"
+            ax.text(0.5, 0.5, msg, ha="center", va="center", transform=ax.transAxes, wrap=True)
+        _plot_marker_lines(ax, model_reb_dates, etf_trade_dates, und_trade_dates)
+        ax.axhline(0, color="#888", lw=0.6)
+        ax.set_title(f"Model/backtest PnL breakdown scaled to proposed gross ({model_tag})", loc="left", fontsize=10)
+        ax.set_ylabel("$")
+        ax.grid(True, ls="--", alpha=0.3)
+        ax.legend(loc="best", fontsize=7)
+        _apply_date_axis(ax)
+
+    def draw_gross(ax: "plt.Axes") -> None:
+        if model_ok:
+            ax.plot(model.bt.index, model.bt["etf_gross"], color="#10b981", lw=1.2, label=f"{etf} short gross")
+            ax.plot(model.bt.index, model.bt["underlying_gross"], color="#8b5cf6", lw=1.2, label=f"{und} short gross")
+            ax.plot(model.bt.index, model.bt["total_gross"], color="#06b6d4", lw=1.0, ls="--", label="total gross")
+            beta_abs = abs(_scalar_float(row.get("delta"), np.nan))
+            if np.isfinite(beta_abs):
+                ax.plot(model.bt.index, model.bt["etf_gross"] * beta_abs, color="#0891b2", lw=0.9, ls=":", label="beta-adjusted ETF gross")
+        else:
+            ax.text(0.5, 0.5, "no model gross exposure data", ha="center", va="center", transform=ax.transAxes)
+        # Ratchet / continuous-trim overlays: visualize the inverse-ETF gap being unwound.
+        _solved = _scalar_float(ratchet.get("inverse_solved_usd"), np.nan)
+        _floor = _scalar_float(ratchet.get("ratchet_floor_usd"), np.nan)
+        _target = _scalar_float(ratchet.get("inverse_target_usd"), np.nan)
+        if np.isfinite(_solved):
+            ax.axhline(_solved, color="#16a34a", lw=1.1, ls=":", label=f"inverse solved ${_solved:,.0f}")
+        if np.isfinite(_floor) and _floor > _solved + 1e-6:
+            ax.axhline(_floor, color="#b91c1c", lw=1.1, ls="--", label=f"ratchet floor (pinned) ${_floor:,.0f}")
+            ax.axhspan(min(_solved, _floor), max(_solved, _floor), color="#fca5a5", alpha=0.12)
+        if np.isfinite(_target) and abs(_target - _floor) > 1e-6:
+            ax.axhline(_target, color="#2563eb", lw=1.3, label=f"proposed inverse target ${_target:,.0f}")
+        _plot_marker_lines(ax, model_reb_dates, etf_trade_dates, und_trade_dates)
+        ax.set_title("Gross leg exposure (+ ratchet target / floor)", loc="left", fontsize=10)
+        ax.set_ylabel("$")
+        ax.grid(True, ls="--", alpha=0.3)
+        ax.legend(loc="best", fontsize=6.5)
+        _apply_date_axis(ax)
+
+    def draw_hedge(ax: "plt.Axes") -> None:
+        if model is not None and not model.h_signal.empty:
+            _h = model.h_signal.dropna()
+            ax.plot(_h.index, _h.values, color="#d62728", lw=1.4, label="model h")
+        if not pair_book.empty:
+            ax.plot(pair_book["date"], pair_book["realized_h"], color="#9467bd", lw=1.1, marker="o", ms=2.5,
+                    label="book/realized h")
+        if np.isfinite(current_model_h):
+            ax.scatter([pd.Timestamp(run_date)], [current_model_h], color="#d62728", s=36, zorder=5)
+        if _ovr_active and abs(_ovr_ha) > 1e-9:
+            _applied_h = _scalar_float(row.get("applied_hedge_ratio", np.nan), np.nan)
+            if np.isfinite(_applied_h):
+                ax.axhline(_applied_h, color="#b91c1c", lw=1.4, ls="--",
+                           label=f"applied h (override {_ovr_ha:+g})")
+        # Annotate the trim state: hedge ratio is preserved while gross de-grosses.
+        _lam = _scalar_float(ratchet.get("trim_lambda"), np.nan)
+        if np.isfinite(_lam) and _lam > 1e-9:
+            ax.text(
+                0.005, 0.04,
+                f"continuous trim active: \u03bb={_lam:.2f} ({ratchet.get('source', '')}) — "
+                f"h held, gross trimmed ${_scalar_float(ratchet.get('trim_usd'), 0.0):,.0f}",
+                transform=ax.transAxes, fontsize=6.5, color="#15803d", va="bottom",
+            )
+        _plot_marker_lines(ax, model_reb_dates, etf_trade_dates, und_trade_dates)
+        ax.set_ylim(0.0, 1.05)
+        ax.set_title("Hedge ratio over time", loc="left", fontsize=10)
+        ax.set_ylabel("h")
+        ax.grid(True, ls="--", alpha=0.3)
+        ax.legend(loc="best", fontsize=7)
+        _apply_date_axis(ax)
+
+    def draw_price(ax: "plt.Axes") -> None:
+        if model is not None and not model.close.empty:
+            ax.plot(model.close.index, model.close.values, color="#444444", lw=1.1, label=f"{und} adj close")
+        else:
+            ax.text(0.5, 0.5, "no underlying price data", ha="center", va="center", transform=ax.transAxes)
+        _plot_marker_lines(ax, model_reb_dates, etf_trade_dates, und_trade_dates)
+        ax.set_title("Underlying price and rebalance/trade markers", loc="left", fontsize=10)
+        ax.set_ylabel("price")
+        ax.grid(True, ls="--", alpha=0.3)
+        ax.legend(loc="best", fontsize=7)
+        _apply_date_axis(ax)
+
+    def draw_status(ax: "plt.Axes") -> None:
+        ax.axis("off")
+        lines = [
+            f"Model backtest unavailable: {status}" + (f" ({reason})" if reason else ""),
+            f"price rows={model.price_rows if model is not None else 0} "
+            f"(need >= {MIN_BACKTEST_PRICE_ROWS})",
+            "",
+            f"proposed gross ${float(row['gross_target_usd']):,.0f} | sleeve {row.get('sleeve', '')}",
+            f"latest actual pair PnL ${_safe_last(pair_hist['pair_pnl_cum']) if not pair_hist.empty else float('nan'):,.0f}"
+            if not pair_hist.empty else "no actual accounting PnL history yet",
+        ]
+        if ratchet:
+            lines.append(
+                f"ratchet: creep {_scalar_float(ratchet.get('creep_ratio'), np.nan):.2f}x | "
+                f"gap ${_scalar_float(ratchet.get('gap_usd'), 0.0):,.0f} | "
+                f"\u03bb {_scalar_float(ratchet.get('trim_lambda'), 0.0):.2f} | "
+                f"trimming ${_scalar_float(ratchet.get('trim_usd'), 0.0):,.0f}/reb"
+            )
+        ax.text(0.02, 0.95, "\n".join(lines), transform=ax.transAxes, va="top", ha="left",
+                fontsize=9, color="#334155", family="monospace")
+
+    # Adaptive layout: skip empty model panels for short-history pairs (P2).
+    if model_ok:
+        panels = [draw_actual, draw_model_pnl, draw_gross, draw_hedge, draw_price]
+    else:
+        panels = [draw_actual]
+        if not pair_book.empty:
+            panels.append(draw_hedge)
+        if model is not None and not model.close.empty:
+            panels.append(draw_price)
+        panels.append(draw_status)
+
+    header_h = 1.05
+    panel_h = 2.15
+    height_ratios = [header_h] + [panel_h] * len(panels)
+    fig, all_axes = plt.subplots(
+        len(panels) + 1, 1,
+        figsize=(13, header_h * 1.3 + panel_h * 1.3 * len(panels)),
+        squeeze=False, constrained_layout=True,
+        gridspec_kw={"height_ratios": height_ratios},
+    )
+    all_axes = all_axes[:, 0]
+
+    # ---- header panel (all run/model/ratchet metadata, no axes overlap) -----
+    hax = all_axes[0]
+    hax.axis("off")
     _ovr_txt = ""
     if _ovr_active:
-        _ovr_txt = f" | OVERRIDE gross×{_ovr_gm:g} h{_ovr_ha:+g}" + (f" ({_ovr_note})" if _ovr_note else "")
-    fig.suptitle(
-        f"Bucket 4/5 {etf}/{und} | {row.get('sleeve', '')} | proposed gross ${float(row['gross_target_usd']):,.0f} | run {run_date}{_ovr_txt}",
-        fontsize=12,
+        _ovr_txt = f"  |  OVERRIDE gross\u00d7{_ovr_gm:g} h{_ovr_ha:+g}" + (f" ({_ovr_note})" if _ovr_note else "")
+    hax.text(
+        0.0, 1.0,
+        f"Bucket 4/5 {etf}/{und}  |  {row.get('sleeve', '')}  |  proposed gross "
+        f"${float(row['gross_target_usd']):,.0f}  |  run {run_date}{_ovr_txt}",
+        transform=hax.transAxes, va="top", ha="left", fontsize=13, fontweight="bold",
         color=("#b91c1c" if _ovr_active else "black"),
     )
-    risk_free = _scalar_float(os.environ.get("EOD_B4_RISK_FREE_RATE", 0.0), 0.0)
-    risk = compute_risk_metrics(model.bt["equity"], risk_free_rate=risk_free) if model is not None and not model.bt.empty else {}
-    latest_model_pnl = _safe_last(model.bt["net_pnl"]) if model is not None and not model.bt.empty and "net_pnl" in model.bt else np.nan
-    latest_borrow = _safe_last(model.bt["borrow_cost_cum"]) if model is not None and not model.bt.empty and "borrow_cost_cum" in model.bt else np.nan
-    latest_tcost = _safe_last(model.bt["tcost_cum"]) if model is not None and not model.bt.empty and "tcost_cum" in model.bt else np.nan
-    status = model.status if model is not None else "model_missing"
-    reason = model.missing_reason if model is not None else ""
-    fig.text(
-        0.01,
-        0.965,
-        (
-            f"model={status}"
-            + (f" ({reason})" if reason else "")
-            + f" | sizing fwd TR={_scalar_float(row.get('sizing_tr_fwd'), np.nan):.3f}"
-            + (f" | metrics through {pd.Timestamp(model.metrics_last_date).date()}" if model is not None and model.metrics_last_date is not None and pd.notna(model.metrics_last_date) else "")
-        ),
-        fontsize=8,
-        color="#333333",
+    _metrics_through = (
+        f"  |  metrics through {pd.Timestamp(model.metrics_last_date).date()}"
+        if model is not None and model.metrics_last_date is not None and pd.notna(model.metrics_last_date)
+        else ""
     )
-    fig.text(
-        0.01,
-        0.945,
-        (
-            f"Model PnL ${latest_model_pnl:,.0f} | Borrow ${latest_borrow:,.0f} | T-costs ${latest_tcost:,.0f} | "
-            f"CAGR {_scalar_float(risk.get('cagr'), np.nan):.1%} | Vol {_scalar_float(risk.get('vol_annual'), np.nan):.1%} | "
-            f"Sharpe {_scalar_float(risk.get('sharpe'), np.nan):.2f} | Max DD {_scalar_float(risk.get('max_drawdown'), np.nan):.1%}"
-        ),
-        fontsize=8,
-        color="#333333",
+    hax.text(
+        0.0, 0.66,
+        f"model={status}" + (f" ({reason})" if reason else "")
+        + f"  |  sizing fwd TR={_scalar_float(row.get('sizing_tr_fwd'), np.nan):.3f}{_metrics_through}",
+        transform=hax.transAxes, va="top", ha="left", fontsize=8.5, color="#333333",
     )
-
-    ax = axes[0]
-    if not pair_hist.empty:
-        ax.plot(pair_hist["date"], pair_hist["pair_pnl_cum"], color="#1f77b4", lw=1.7, label="actual pair total")
-        ax.plot(pair_hist["date"], pair_hist["etf_leg_pnl_cum"], color="#ff7f0e", lw=1.0, label=f"actual {etf} leg")
-        ax.plot(pair_hist["date"], pair_hist["und_leg_pnl_cum"], color="#2ca02c", lw=1.0, label=f"actual {und} leg")
+    hax.text(
+        0.0, 0.40,
+        f"Model PnL ${latest_model_pnl:,.0f}  |  Borrow ${latest_borrow:,.0f}  |  "
+        f"T-costs ${latest_tcost:,.0f}  |  CAGR {_scalar_float(risk.get('cagr'), np.nan):.1%}  |  "
+        f"Vol {_scalar_float(risk.get('vol_annual'), np.nan):.1%}  |  "
+        f"Sharpe {_scalar_float(risk.get('sharpe'), np.nan):.2f}  |  "
+        f"Max DD {_scalar_float(risk.get('max_drawdown'), np.nan):.1%}",
+        transform=hax.transAxes, va="top", ha="left", fontsize=8.5, color="#333333",
+    )
+    if ratchet:
+        _rel = bool(ratchet.get("released", False))
+        hax.text(
+            0.0, 0.14,
+            f"ratchet: creep {_scalar_float(ratchet.get('creep_ratio'), np.nan):.2f}x  |  "
+            f"gap ${_scalar_float(ratchet.get('gap_usd'), 0.0):,.0f}  |  "
+            f"\u03bb {_scalar_float(ratchet.get('trim_lambda'), 0.0):.2f}  |  "
+            f"trimming ${_scalar_float(ratchet.get('trim_usd'), 0.0):,.0f}/reb  |  "
+            f"released={_rel}  |  src={ratchet.get('source', '')}  |  "
+            f"fwd_edge {_scalar_float(ratchet.get('forward_edge_annual'), np.nan):.3f}",
+            transform=hax.transAxes, va="top", ha="left", fontsize=8.5,
+            color=("#15803d" if _rel else "#6b7280"), fontweight=("bold" if _rel else "normal"),
+        )
     else:
-        ax.text(0.5, 0.5, "no actual accounting PnL history", ha="center", va="center", transform=ax.transAxes)
-    _plot_marker_lines(ax, model_reb_dates, etf_trade_dates, und_trade_dates)
-    ax.axhline(0, color="#888", lw=0.6)
-    ax.set_title("Actual accounting cumulative PnL", loc="left", fontsize=10)
-    ax.set_ylabel("$")
-    ax.grid(True, ls="--", alpha=0.3)
-    ax.legend(loc="best", fontsize=7)
+        hax.text(
+            0.0, 0.14,
+            "ratchet: (no b4_ratchet_targets.csv for this run)",
+            transform=hax.transAxes, va="top", ha="left", fontsize=8.5, color="#9ca3af",
+        )
 
-    ax = axes[1]
-    model_pnl_last = np.nan
-    if model is not None and not model.bt.empty:
-        model_pnl = model.bt["net_pnl"].astype(float)
-        model_pnl_last = _safe_last(model_pnl)
-        ax.plot(model.bt.index, model_pnl.values, color="#06b6d4", lw=1.7, label="net model PnL")
-        ax.plot(model.bt.index, model.bt["etf_leg_pnl_cum"], color="#10b981", lw=1.0, label="ETF leg MTM")
-        ax.plot(model.bt.index, model.bt["underlying_leg_pnl_cum"], color="#8b5cf6", lw=1.0, label="underlying leg MTM")
-        ax.plot(model.bt.index, -model.bt["borrow_cost_cum"], color="#ef4444", lw=1.0, ls="--", label="borrow cost drag")
-        ax.plot(model.bt.index, -model.bt["tcost_cum"], color="#f59e0b", lw=1.0, ls="--", label="T-cost drag")
-        if "rebalance_skipped_below_drift" in model.bt.columns:
-            skipped = model.bt.index[model.bt["rebalance_skipped_below_drift"].astype(bool)]
-            for dt in skipped:
-                ax.axvline(dt, color="#aaaaaa", lw=0.5, alpha=0.3, ls=":")
-    else:
-        msg = "no model/backtest data"
-        if model is not None and model.status:
-            msg = f"{model.status}: {model.missing_reason or 'no backtest'}"
-        ax.text(0.5, 0.5, msg, ha="center", va="center", transform=ax.transAxes, wrap=True)
-    _plot_marker_lines(ax, model_reb_dates, etf_trade_dates, und_trade_dates)
-    ax.axhline(0, color="#888", lw=0.6)
-    ax.set_title(f"Model/backtest PnL breakdown scaled to proposed gross ({model_tag})", loc="left", fontsize=10)
-    ax.set_ylabel("$")
-    ax.grid(True, ls="--", alpha=0.3)
-    ax.legend(loc="best", fontsize=7)
+    for ax, draw in zip(all_axes[1:], panels):
+        draw(ax)
 
-    ax = axes[2]
-    if model is not None and not model.bt.empty:
-        ax.plot(model.bt.index, model.bt["etf_gross"], color="#10b981", lw=1.2, label=f"{etf} short gross")
-        ax.plot(model.bt.index, model.bt["underlying_gross"], color="#8b5cf6", lw=1.2, label=f"{und} short gross")
-        ax.plot(model.bt.index, model.bt["total_gross"], color="#06b6d4", lw=1.0, ls="--", label="total gross")
-        beta_abs = abs(_scalar_float(row.get("delta"), np.nan))
-        if np.isfinite(beta_abs):
-            ax.plot(model.bt.index, model.bt["etf_gross"] * beta_abs, color="#0891b2", lw=0.9, ls=":", label="beta-adjusted ETF gross")
-    else:
-        ax.text(0.5, 0.5, "no model gross exposure data", ha="center", va="center", transform=ax.transAxes)
-    _plot_marker_lines(ax, model_reb_dates, etf_trade_dates, und_trade_dates)
-    ax.set_title("Gross leg exposure", loc="left", fontsize=10)
-    ax.set_ylabel("$")
-    ax.grid(True, ls="--", alpha=0.3)
-    ax.legend(loc="best", fontsize=7)
-
-    ax = axes[3]
-    current_model_h = np.nan
-    if model is not None and not model.h_signal.empty:
-        h = model.h_signal.dropna()
-        current_model_h = _safe_last(h[h.index <= pd.Timestamp(run_date)]) if len(h) else np.nan
-        ax.plot(h.index, h.values, color="#d62728", lw=1.4, label="model h")
-    if not pair_book.empty:
-        ax.plot(pair_book["date"], pair_book["realized_h"], color="#9467bd", lw=1.1, marker="o", ms=2.5,
-                label="book/realized h")
-    if np.isfinite(current_model_h):
-        ax.scatter([pd.Timestamp(run_date)], [current_model_h], color="#d62728", s=36, zorder=5)
-    # Operator override: draw the applied hedge ratio (h after additive offset).
-    if _ovr_active and abs(_ovr_ha) > 1e-9:
-        _applied_h = _scalar_float(row.get("applied_hedge_ratio", np.nan), np.nan)
-        if np.isfinite(_applied_h):
-            ax.axhline(_applied_h, color="#b91c1c", lw=1.4, ls="--",
-                       label=f"applied h (override {_ovr_ha:+g})")
-    _plot_marker_lines(ax, model_reb_dates, etf_trade_dates, und_trade_dates)
-    ax.set_ylim(0.0, 1.05)
-    ax.set_title("Hedge ratio over time", loc="left", fontsize=10)
-    ax.set_ylabel("h")
-    ax.grid(True, ls="--", alpha=0.3)
-    ax.legend(loc="best", fontsize=7)
-
-    ax = axes[4]
-    if model is not None and not model.close.empty:
-        ax.plot(model.close.index, model.close.values, color="#444444", lw=1.1, label=f"{und} adj close")
-    else:
-        ax.text(0.5, 0.5, "no underlying price data", ha="center", va="center", transform=ax.transAxes)
-    _plot_marker_lines(ax, model_reb_dates, etf_trade_dates, und_trade_dates)
-    ax.set_title("Underlying price and rebalance/trade markers", loc="left", fontsize=10)
-    ax.set_ylabel("price")
-    ax.grid(True, ls="--", alpha=0.3)
-    ax.legend(loc="best", fontsize=7)
-
-    pdf.savefig(fig, bbox_inches="tight")
+    pdf.savefig(fig)
     plt.close(fig)
 
     latest_actual = np.nan
@@ -1164,7 +1355,91 @@ def _plot_pair_page(
         "model_rebalance_count": int(len(model_reb_dates)),
         "actual_etf_trade_count": int(len(etf_trade_dates)),
         "actual_underlying_trade_count": int(len(und_trade_dates)),
+        "shared_underlying": bool(is_shared),
+        "ratchet_creep_ratio": _scalar_float(ratchet.get("creep_ratio"), np.nan) if ratchet else np.nan,
+        "ratchet_gap_usd": _scalar_float(ratchet.get("gap_usd"), np.nan) if ratchet else np.nan,
+        "ratchet_trim_lambda": _scalar_float(ratchet.get("trim_lambda"), np.nan) if ratchet else np.nan,
+        "ratchet_trim_usd": _scalar_float(ratchet.get("trim_usd"), np.nan) if ratchet else np.nan,
+        "ratchet_released": bool(ratchet.get("released", False)) if ratchet else False,
+        "ratchet_source": str(ratchet.get("source", "")) if ratchet else "",
     }
+
+
+def _plot_summary_page(
+    pdf: PdfPages,
+    active: pd.DataFrame,
+    *,
+    run_date: str,
+    model_tag: str,
+    ratchet_by_pair: dict[str, dict],
+    shared_unds: set[str],
+    model_results: dict[str, "ModelPairResult"],
+) -> None:
+    """Index / overview page: one row per pair with sizing, ratchet, and risk."""
+    headers = ["Pair", "Sleeve", "Gross $", "Creep x", "lambda", "Trim $",
+               "h model", "Sharpe", "MaxDD", "Shared", "Status"]
+    cells: list[list[str]] = []
+    risk_free = _scalar_float(os.environ.get("EOD_B4_RISK_FREE_RATE", 0.0), 0.0)
+    for _, row in active.iterrows():
+        pair = str(row["pair"])
+        rt = ratchet_by_pair.get(pair, {})
+        model = model_results.get(pair)
+        model_ok = model is not None and not model.bt.empty
+        risk = compute_risk_metrics(model.bt["equity"], risk_free_rate=risk_free) if model_ok else {}
+        hm = np.nan
+        if model is not None and not model.h_signal.empty:
+            _h = model.h_signal.dropna()
+            hm = _safe_last(_h[_h.index <= pd.Timestamp(run_date)]) if len(_h) else np.nan
+        status = model.status if model is not None else "missing"
+        if status and status != "ok":
+            status = "insuf_price" if str(status).startswith("insufficient_price") else str(status)[:12]
+        sleeve = str(row.get("sleeve", "")).replace("_bucket4", " b4").replace("_bucket5", " b5")
+        cells.append([
+            f"{row['etf']}/{row['underlying']}",
+            sleeve,
+            f"{float(row['gross_target_usd']):,.0f}",
+            f"{_scalar_float(rt.get('creep_ratio'), np.nan):.2f}" if rt else "-",
+            f"{_scalar_float(rt.get('trim_lambda'), np.nan):.2f}" if rt else "-",
+            f"{_scalar_float(rt.get('trim_usd'), 0.0):,.0f}" if rt else "-",
+            f"{hm:.2f}" if np.isfinite(hm) else "-",
+            f"{_scalar_float(risk.get('sharpe'), np.nan):.2f}" if risk else "-",
+            f"{_scalar_float(risk.get('max_drawdown'), np.nan):.0%}" if risk else "-",
+            "yes" if str(row["underlying"]) in shared_unds else "",
+            status,
+        ])
+
+    n = len(cells)
+    fig, ax = plt.subplots(figsize=(13, max(3.4, 2.0 + 0.34 * n)), constrained_layout=True)
+    ax.axis("off")
+    # Title + subtitle drawn in axes space above the table so they never collide.
+    ax.text(
+        0.0, 1.09,
+        f"Bucket 4/5 per-pair overview  |  run {run_date}  |  {n} pair(s)",
+        transform=ax.transAxes, va="bottom", ha="left", fontsize=13, fontweight="bold",
+    )
+    ax.text(
+        0.0, 1.035,
+        f"{model_tag}   |   pages follow, one per pair (sorted by proposed gross). "
+        "Shared = underlying netted with B1/B2/B5 (attributed slice).",
+        transform=ax.transAxes, va="bottom", ha="left", fontsize=7.5, color="#555555",
+    )
+    tbl = ax.table(cellText=cells, colLabels=headers, loc="center", cellLoc="center")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(8)
+    tbl.scale(1.0, 1.35)
+    for c in range(len(headers)):
+        hdr = tbl[0, c]
+        hdr.set_facecolor("#1f2937")
+        hdr.set_text_props(color="white", fontweight="bold")
+    for r in range(1, n + 1):
+        rt = ratchet_by_pair.get(str(active.iloc[r - 1]["pair"]), {})
+        released = bool(rt.get("released", False)) if rt else False
+        base = "#ecfdf5" if released else ("#f9fafb" if r % 2 else "#ffffff")
+        for c in range(len(headers)):
+            tbl[r, c].set_facecolor(base)
+            tbl[r, c].set_edgecolor("#e5e7eb")
+    pdf.savefig(fig)
+    plt.close(fig)
 
 
 def make_b4_pair_pnl_hedge_chart(
@@ -1211,6 +1486,10 @@ def _make_chart_inner(
     hist = load_b4_pair_leg_history(runs_root)
     book_h = load_book_h_history(runs_root)
     trades = load_actual_trade_markers(runs_root, active)
+    ratchet_by_pair = load_ratchet_targets(runs_root, run_date)
+    shared_unds = load_shared_underlyings(runs_root, run_date, active)
+    if shared_unds:
+        print(f"[B4-pair-charts] shared underlyings (attributed slice): {sorted(shared_unds)}")
     model_inputs = resolve_b4_model_inputs(
         run_date,
         runs_root=runs_root,
@@ -1240,6 +1519,12 @@ def _make_chart_inner(
     csv_path = out_dir / f"b4_pair_pnl_hedge_summary_{run_date}.csv"
     summary_rows: list[dict] = []
     with PdfPages(pdf_path) as pdf:
+        _plot_summary_page(
+            pdf, active,
+            run_date=run_date, model_tag=model_tag,
+            ratchet_by_pair=ratchet_by_pair, shared_unds=shared_unds,
+            model_results=model_results,
+        )
         for _, row in active.iterrows():
             summary_rows.append(
                 _plot_pair_page(
@@ -1251,8 +1536,14 @@ def _make_chart_inner(
                     trades=trades,
                     model=model_results.get(str(row["pair"])),
                     model_tag=model_tag,
+                    ratchet_by_pair=ratchet_by_pair,
+                    shared_unds=shared_unds,
                 )
             )
+        meta = pdf.infodict()
+        meta["Title"] = f"Bucket 4/5 per-pair PnL + hedge ({run_date})"
+        meta["Subject"] = "B4/B5 pair PnL, hedge ratio, gross exposure, ratchet/continuous-trim audit"
+        meta["Author"] = "ls-algo EOD"
     pd.DataFrame(summary_rows).to_csv(csv_path, index=False)
     print(f"[B4-pair-charts] wrote {pdf_path.name} ({len(summary_rows)} pairs) + {csv_path.name}")
     return pdf_path, csv_path

@@ -1116,6 +1116,50 @@ def compute_bucket4_weights(
     return w, wdf, meta
 
 
+def _continuous_ratchet_trim_rate(
+    fwd_edge: float,
+    borrow: float,
+    creep_ratio: float,
+    *,
+    trim_max: float,
+    creep_full: float,
+    k_edge: float,
+    edge_floor: float,
+    k_borrow: float,
+    edge_ref: float,
+    borrow_ref: float,
+) -> float:
+    """Continuous, bounded willingness-to-trim lambda in ``[0, trim_max]``.
+
+    Driven primarily by the *gross creep* ``creep_ratio = pinned / solved`` (how far
+    the held inverse leg has drifted above the freshly solved target), then modulated
+    by forward edge and borrow:
+
+        gap_term    = clip((creep_ratio - 1) / creep_full, 0, 1)   # 0 at no creep, 1 at full
+        edge_mult   = clip(1 - k_edge * (fwd_edge - edge_ref), edge_floor, 1.5)
+        borrow_mult = clip(1 + k_borrow * (borrow - borrow_ref), 0, 2)
+        lambda      = clip(trim_max * gap_term * edge_mult * borrow_mult, 0, trim_max)
+
+    So a position only trims once it is oversized (gap_term>0); a strong forward edge
+    *slows* the trim (down to ``edge_floor``, never fully stopping creep unwind) while a
+    decayed edge speeds it; high borrow accelerates when ``k_borrow>0`` (carry pressure)
+    or protects HTB inventory when ``k_borrow<0``. NaN edge/borrow are treated as the
+    reference (neutral) so a missing signal neither blocks nor accelerates the unwind.
+    """
+    if trim_max <= 0.0:
+        return 0.0
+    excess = max(0.0, float(creep_ratio) - 1.0)
+    if excess <= 1e-9:
+        return 0.0
+    gap_term = float(np.clip(excess / max(float(creep_full), 1e-6), 0.0, 1.0))
+    e = float(fwd_edge) if (fwd_edge is not None and np.isfinite(fwd_edge)) else float(edge_ref)
+    b = float(borrow) if (borrow is not None and np.isfinite(borrow)) else float(borrow_ref)
+    edge_mult = float(np.clip(1.0 - float(k_edge) * (e - float(edge_ref)), float(edge_floor), 1.5))
+    borrow_mult = float(np.clip(1.0 + float(k_borrow) * (b - float(borrow_ref)), 0.0, 2.0))
+    lam = float(trim_max) * gap_term * edge_mult * borrow_mult
+    return float(np.clip(lam, 0.0, float(trim_max)))
+
+
 def compute_bucket4_targets(
     state: Bucket4State,
     pair_weights: Mapping[tuple[str, str], float],
@@ -1130,6 +1174,16 @@ def compute_bucket4_targets(
     small_epsilon: float = 100.0,
     ratchet_enabled: bool = False,
     ratchet_floor_by_pair: Mapping[tuple[str, str], float] | None = None,
+    ratchet_release_below_edge: float | None = None,
+    forward_edge_by_pair: Mapping[tuple[str, str], float] | None = None,
+    ratchet_trim_enabled: bool = False,
+    ratchet_trim_max: float = 0.5,
+    ratchet_trim_creep_full: float = 1.0,
+    ratchet_trim_k_edge: float = 0.3,
+    ratchet_trim_edge_floor: float = 0.25,
+    ratchet_trim_k_borrow: float = 0.0,
+    ratchet_trim_edge_ref: float = 0.30,
+    ratchet_trim_borrow_ref: float = 0.30,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
     """
     Production-style target notionals for one run date (weights × sleeve budget; dynamic hedge).
@@ -1141,14 +1195,27 @@ def compute_bucket4_targets(
     Threshold diagnostics then mirror the backtest rule:
     ``abs(current - target) / max(abs(target), small_epsilon)``.
 
-    RATCHET (``ratchet_enabled``): the inverse-ETF short leg is *grow-only*. The solved
-    delta-neutral inverse target is floored at ``max(solved, current_held, persisted_floor)``
-    so we never propose buying back (covering) inverse-ETF inventory that is hard to relocate.
-    The underlying short leg is then re-solved against the floored inverse leg
-    (``und = h * beta_used * inv * partial_hedge_ratio``) so the hedge stays consistent — all
-    delta reduction is expressed through the (bidirectional) underlying leg, never the inverse leg.
+    RATCHET (``ratchet_enabled``): the inverse-ETF short leg is *grow-only* by default. The
+    solved delta-neutral inverse target is floored at ``max(solved, current_held, persisted_floor)``
+    so we never blindly cover hard-to-relocate inverse inventory. The underlying short leg is
+    always re-solved against the chosen inverse leg (``und = h * beta_used * inv *
+    partial_hedge_ratio``) so the hedge ratio stays consistent.
+
+    CONTINUOUS TRIM (``ratchet_trim_enabled``, preferred): instead of an all-or-nothing release,
+    gradually de-gross. Let ``gap = floor - solved`` (the inverse held above its fresh target)
+    and ``creep_ratio = floor / solved``. Each rebalance trim ``lambda * gap`` off the inverse leg
+    where ``lambda`` is driven by the creep and modulated by forward edge / borrow
+    (see :func:`_continuous_ratchet_trim_rate`): the trim grows as the proposed size shrinks /
+    gross creeps (wider gap & higher creep_ratio), a strong forward edge *slows* it (never fully
+    stops the unwind), and borrow accelerates (``k_borrow>0``) or protects HTB inventory
+    (``k_borrow<0``). The underlying is re-solved so ``h`` is preserved (paired reduction).
+    ``lambda>0`` sets ``ratchet_released=True`` so the downstream resize permits the gradual
+    cover; ``lambda=0`` is the pure grow-only pin. When ``ratchet_trim_enabled`` is False the
+    legacy binary ``ratchet_release_below_edge`` gate applies.
+
     Provenance columns (``inverse_short_solved_usd``, ``ratchet_floor_usd``, ``ratchet_binding``,
-    ``ratchet_source``, ``ratchet_explain``) make every floored value reverse-engineerable.
+    ``ratchet_released``, ``ratchet_trim_lambda``, ``ratchet_source``, ``forward_edge_annual``,
+    ``ratchet_explain``) make every value reverse-engineerable.
     """
     as_of_ts = pd.Timestamp(as_of)
     rows: list[dict[str, Any]] = []
@@ -1196,16 +1263,86 @@ def compute_bucket4_targets(
         cur_inv_held = abs(float(cur.get("inverse_etf_short_usd", cur.get("etf_target_usd", 0.0)))) \
             if (etf_sym, und_sym) in (current_leg_notional_by_pair or {}) else 0.0
         ratchet_binding = False
+        ratchet_released = False
         ratchet_source = "solve"
+        ratchet_trim_lambda = 0.0
+        # Audit trail: how far the pinned inverse leg has crept above the freshly
+        # solved target, and how much of that gap this run trims. Defaults assume
+        # no creep (ratio 1.0, zero gap) when the ratchet is off / not binding.
+        ratchet_creep_ratio = 1.0
+        ratchet_gap_usd = 0.0
+        ratchet_trim_usd = 0.0
+        borrow_a = float(kw.get("borrow_a_annual", 0.0) or 0.0)
+        fwd_edge_raw = (forward_edge_by_pair or {}).get((etf_sym, und_sym))
+        fwd_edge = (
+            float(fwd_edge_raw)
+            if (fwd_edge_raw is not None and np.isfinite(float(fwd_edge_raw)))
+            else float("nan")
+        )
         if ratchet_enabled:
             floor_val = max(inv_short_solved, cur_inv_held, ratchet_floor)
-            if floor_val > inv_short_solved + 1e-6:
-                ratchet_binding = True
-                ratchet_source = "held_position" if cur_inv_held >= ratchet_floor else "ratchet_state"
-            inv_short_usd = floor_val
-            # re-solve underlying leg against the floored inverse leg (keeps hedge h consistent)
-            und_short_usd = h * beta_used * inv_short_usd * float(partial_hedge_ratio)
-        if ratchet_binding:
+            gap = floor_val - inv_short_solved  # inverse held above fresh solved target
+            ratchet_gap_usd = float(gap)
+            ratchet_creep_ratio = (
+                float(floor_val / inv_short_solved) if inv_short_solved > 1e-9 else float("inf")
+            )
+            if ratchet_trim_enabled and gap > float(small_epsilon):
+                # CONTINUOUS TRIM: close a lambda-fraction of the gap, preserve h.
+                # lambda is driven by the gross creep (pinned/solved) and modulated
+                # by forward edge / borrow; the dollar trim = lambda*gap also rises
+                # as the gap widens (solved shrank or gross crept up).
+                creep_ratio = floor_val / inv_short_solved if inv_short_solved > 1e-9 else float("inf")
+                ratchet_trim_lambda = _continuous_ratchet_trim_rate(
+                    fwd_edge, borrow_a, creep_ratio,
+                    trim_max=ratchet_trim_max, creep_full=ratchet_trim_creep_full,
+                    k_edge=ratchet_trim_k_edge, edge_floor=ratchet_trim_edge_floor,
+                    k_borrow=ratchet_trim_k_borrow, edge_ref=ratchet_trim_edge_ref,
+                    borrow_ref=ratchet_trim_borrow_ref,
+                )
+                inv_short_usd = floor_val - ratchet_trim_lambda * gap
+                ratchet_trim_usd = float(ratchet_trim_lambda * gap)
+                ratchet_binding = inv_short_usd > inv_short_solved + 1e-6
+                if ratchet_trim_lambda > 1e-9:
+                    ratchet_released = True   # gradual cover permitted at execution
+                    ratchet_source = "edge_trim"
+                elif ratchet_binding:
+                    # lambda==0: edge healthy -> pure grow-only pin (no cover)
+                    ratchet_source = "held_position" if cur_inv_held >= ratchet_floor else "ratchet_state"
+                # re-solve underlying against the (partially trimmed) inverse leg
+                und_short_usd = h * beta_used * inv_short_usd * float(partial_hedge_ratio)
+            else:
+                # LEGACY binary edge-gated release / pure grow-only pin.
+                edge_release = (
+                    ratchet_release_below_edge is not None
+                    and np.isfinite(fwd_edge)
+                    and fwd_edge < float(ratchet_release_below_edge)
+                )
+                if edge_release:
+                    ratchet_released = True
+                    ratchet_source = "edge_release"
+                    # leave inv_short_usd / und_short_usd at the solved values
+                else:
+                    if floor_val > inv_short_solved + 1e-6:
+                        ratchet_binding = True
+                        ratchet_source = "held_position" if cur_inv_held >= ratchet_floor else "ratchet_state"
+                    inv_short_usd = floor_val
+                    # re-solve underlying leg against the floored inverse leg (keeps hedge h consistent)
+                    und_short_usd = h * beta_used * inv_short_usd * float(partial_hedge_ratio)
+        if ratchet_source == "edge_trim":
+            ratchet_explain = (
+                f"continuous trim lambda={ratchet_trim_lambda:.2f} of gap {gap:,.0f} "
+                f"(pinned {floor_val:,.0f} - solved {inv_short_solved:,.0f}); inverse -> "
+                f"{inv_short_usd:,.0f}; underlying re-solved = h({h:.3f})*beta({beta_used:.3f})"
+                f"*inv*phr({partial_hedge_ratio:.2f}) = {und_short_usd:,.0f}"
+                f" [fwd_edge={fwd_edge:.3f}, borrow={borrow_a:.3f}]"
+            )
+        elif ratchet_released:
+            ratchet_explain = (
+                f"edge release: forward edge {fwd_edge:.3f} < threshold "
+                f"{float(ratchet_release_below_edge):.3f}; floor lifted, solved inverse "
+                f"{inv_short_solved:,.0f} stands (de-risk allowed)"
+            )
+        elif ratchet_binding:
             ratchet_explain = (
                 f"inverse floored to {inv_short_usd:,.0f} (>solved {inv_short_solved:,.0f}) "
                 f"from {ratchet_source} [held={cur_inv_held:,.0f}, state={ratchet_floor:,.0f}]; "
@@ -1264,7 +1401,13 @@ def compute_bucket4_targets(
                 "inverse_short_solved_usd": inv_short_solved,
                 "ratchet_floor_usd": ratchet_floor,
                 "ratchet_binding": bool(ratchet_binding),
+                "ratchet_released": bool(ratchet_released),
+                "ratchet_trim_lambda": float(ratchet_trim_lambda),
+                "ratchet_creep_ratio": float(ratchet_creep_ratio),
+                "ratchet_gap_usd": float(ratchet_gap_usd),
+                "ratchet_trim_usd": float(ratchet_trim_usd),
                 "ratchet_source": ratchet_source,
+                "forward_edge_annual": fwd_edge,
                 "ratchet_explain": ratchet_explain,
             }
         )

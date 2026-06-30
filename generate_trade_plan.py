@@ -172,7 +172,10 @@ def _emit_b4_cadence_outputs(state, tgt_df: "pd.DataFrame", run_date: str) -> No
             _plot_b4_cadence(cad_df, state, out_dir)
         rcols = [c for c in (
             "ETF", "Underlying", "inverse_etf_short_usd", "inverse_short_solved_usd",
-            "underlying_short_usd", "hedge_ratio", "ratchet_binding", "ratchet_source",
+            "ratchet_floor_usd", "ratchet_creep_ratio", "ratchet_gap_usd",
+            "ratchet_trim_lambda", "ratchet_trim_usd",
+            "underlying_short_usd", "hedge_ratio", "ratchet_binding", "ratchet_released",
+            "forward_edge_annual", "ratchet_source",
             "ratchet_explain") if c in tgt_df.columns]
         if rcols:
             tgt_df[rcols].to_csv(out_dir / "b4_ratchet_targets.csv", index=False)
@@ -2784,21 +2787,92 @@ def main() -> None:
                             vol_etp_weight_penalty=float(
                                 b4_opt2.get("vol_etp_weight_penalty", 0.0)
                             ),
+                            borrow_aversion_source=str(
+                                b4_opt2.get("borrow_aversion_source", "spot")
+                            ),
+                            decay_borrow_quad=float(
+                                b4_opt2.get("decay_borrow_quad", 18.0)
+                            ),
+                            borrow_linear_aversion=float(
+                                b4_opt2.get("borrow_linear_aversion", 0.0)
+                            ),
+                            borrow_uncertainty_penalty=float(
+                                b4_opt2.get("borrow_uncertainty_penalty", 0.0)
+                            ),
                         ),
                         hedge_source=_hedge_source,
                         hedge_cadence_policy=_hcp,
                     )
                     st_b4 = build_bucket4_state(cfg_b4, bucket4_pairs=pairs_subset)
                     pw, _, _ = compute_bucket4_weights(st_b4)
-                    # Grow-only ratchet: floor inverse leg at persisted per-pair state.
+                    # Grow-only ratchet: floor the inverse leg at the MAX of the
+                    # persisted per-pair state and the COMMITTED held inverse short
+                    # (from the latest accounting snapshot). Sourcing the held leg
+                    # from committed data (not a local-only JSON) makes the floor
+                    # machine-independent -- a second machine that never commits
+                    # data/b4_inverse_ratchet_state.json still ratchets correctly.
+                    # Only pairs in ``pairs_subset`` (still in the plan) get a floor,
+                    # so dropped pairs are exited normally by Phase-1 cleanup.
                     _rcfg = b4_rules.get("ratchet") or {}
                     _ratchet_on = bool(_rcfg.get("enabled"))
                     _ratchet_path = _b4_ratchet_state_path(b4_rules)
                     _ratchet_state = _b4_load_ratchet_state(_ratchet_path) if _ratchet_on else {}
-                    _ratchet_floor = {
-                        (e, u): float(_ratchet_state[f"{e}|{u}"])
-                        for (e, u) in pairs_subset if f"{e}|{u}" in _ratchet_state
-                    }
+                    _held_legs: dict = {}
+                    if _ratchet_on:
+                        try:
+                            from scripts.b4_reconstruct_state import held_inverse_short_by_pair
+
+                            _held_legs = held_inverse_short_by_pair(args.run_date) or {}
+                        except Exception as _e:
+                            print(f"[WARN] B4 ratchet: committed held positions unavailable ({_e})")
+                    _ratchet_floor: dict[tuple[str, str], float] = {}
+                    for (e, u) in pairs_subset:
+                        _candidates: list[float] = []
+                        _sk = f"{e}|{u}"
+                        if _sk in _ratchet_state:
+                            _candidates.append(float(_ratchet_state[_sk]))
+                        _hl = _held_legs.get((e, u))
+                        if _hl is not None:
+                            _candidates.append(float(_hl.get("inverse_etf_short_usd", 0.0) or 0.0))
+                        if _candidates:
+                            _ratchet_floor[(e, u)] = max(_candidates)
+                    # ``current_leg_notional_by_pair`` lets the ratchet floor to held
+                    # inventory and mirror the backtest resize threshold.
+                    _cur_legs = {k: v for k, v in _held_legs.items() if k in set(pairs_subset)} or None
+                    # Edge-gated release: lift the grow-only floor when a pair's
+                    # forward edge (net_edge_p50_annual) decays below the configured
+                    # threshold, so decaying pairs can de-risk instead of staying
+                    # pinned at peak gross (bounds gross creep; keeps high-edge inventory).
+                    _ratchet_release_edge = _rcfg.get("release_below_edge")
+                    _ratchet_release_edge = (
+                        float(_ratchet_release_edge) if _ratchet_release_edge is not None else None
+                    )
+                    # Continuous gross-reduction trim (preferred). When enabled it
+                    # supersedes the binary release_below_edge gate.
+                    _trim_cfg = (_rcfg.get("trim") or {})
+                    _trim_on = bool(_trim_cfg.get("enabled"))
+                    _trim_kw = dict(
+                        ratchet_trim_enabled=_trim_on,
+                        ratchet_trim_max=float(_trim_cfg.get("trim_max", 0.5)),
+                        ratchet_trim_creep_full=float(_trim_cfg.get("creep_full", 1.0)),
+                        ratchet_trim_k_edge=float(_trim_cfg.get("k_edge", 0.3)),
+                        ratchet_trim_edge_floor=float(_trim_cfg.get("edge_floor", 0.25)),
+                        ratchet_trim_k_borrow=float(_trim_cfg.get("k_borrow", 0.0)),
+                        ratchet_trim_edge_ref=float(_trim_cfg.get("edge_ref", 0.30)),
+                        ratchet_trim_borrow_ref=float(_trim_cfg.get("borrow_ref", 0.30)),
+                    )
+                    # Forward-edge signal feeds both the continuous trim lambda and
+                    # the legacy binary release gate.
+                    _need_edge = _trim_on or (_ratchet_release_edge is not None)
+                    _fwd_edge_by_pair: dict[tuple[str, str], float] = {}
+                    if _need_edge and "net_edge_p50_annual" in b4c.columns:
+                        for _, _er in b4c.iterrows():
+                            _ek = (_norm_sym(str(_er["ETF"])), _norm_sym(str(_er["Underlying"])))
+                            _ev = pd.to_numeric(
+                                pd.Series([_er.get("net_edge_p50_annual")]), errors="coerce"
+                            ).iloc[0]
+                            if pd.notna(_ev):
+                                _fwd_edge_by_pair[_ek] = float(_ev)
                     tgt_df, _ = compute_bucket4_targets(
                         st_b4,
                         pw,
@@ -2808,18 +2882,29 @@ def main() -> None:
                         slippage_bps=float(b4_opt2.get("slippage_bps", 20.0)),
                         partial_hedge_ratio=b4_partial_hedge_ratio,
                         delta_floor=delta_floor,
+                        current_leg_notional_by_pair=_cur_legs,
                         ratchet_enabled=_ratchet_on,
                         ratchet_floor_by_pair=_ratchet_floor,
+                        ratchet_release_below_edge=_ratchet_release_edge,
+                        forward_edge_by_pair=(_fwd_edge_by_pair or None),
+                        **_trim_kw,
                     )
                     # Emit human-readable cadence + hedge-ratio explainability and plots.
                     _emit_b4_cadence_outputs(st_b4, tgt_df, args.run_date)
-                    # Persist the grow-only floor (max of prior and this run's inverse target).
+                    # Persist the inverse floor. Pure grow-only (no trim): high-water
+                    # max so we never forget peak inventory. Continuous trim: track the
+                    # current (possibly reduced) target so the floor follows the gradual
+                    # de-gross DOWN -- otherwise a stale high-water mark would reopen the
+                    # full gap every run and the trim could never converge.
                     if _ratchet_on:
                         _new_state = dict(_ratchet_state)
                         for _, r in tgt_df.iterrows():
                             _k = f"{_norm_sym(str(r['ETF']))}|{_norm_sym(str(r['Underlying']))}"
                             _inv = float(r.get("inverse_etf_short_usd", 0.0) or 0.0)
-                            _new_state[_k] = max(float(_new_state.get(_k, 0.0)), _inv)
+                            if _trim_on:
+                                _new_state[_k] = _inv
+                            else:
+                                _new_state[_k] = max(float(_new_state.get(_k, 0.0)), _inv)
                         _b4_write_ratchet_state(_ratchet_path, _new_state, args.run_date)
                     gross_by_key = {
                         (_norm_sym(str(r["ETF"])), _norm_sym(str(r["Underlying"]))): float(r["gross_target_usd"])
@@ -2841,6 +2926,22 @@ def main() -> None:
                         for _, r in tgt_df.iterrows()
                         if pd.notna(r.get("hedge_ratio"))
                     }
+                    # Ratchet execution flags -> proposed_trades so phase2b_resize knows
+                    # when a gradual inverse cover (trim) is intended and permitted.
+                    released_by_key = {
+                        (_norm_sym(str(r["ETF"])), _norm_sym(str(r["Underlying"]))): bool(r.get("ratchet_released", False))
+                        for _, r in tgt_df.iterrows()
+                    }
+                    trim_lambda_by_key = {
+                        (_norm_sym(str(r["ETF"])), _norm_sym(str(r["Underlying"]))): float(r.get("ratchet_trim_lambda", 0.0) or 0.0)
+                        for _, r in tgt_df.iterrows()
+                    }
+                    # Default columns so non-opt2 / fallback B4 rows are explicitly
+                    # NOT released (NaN would read as truthy in the resize guard).
+                    if "ratchet_released" not in b4c.columns:
+                        b4c["ratchet_released"] = False
+                    if "ratchet_trim_lambda" not in b4c.columns:
+                        b4c["ratchet_trim_lambda"] = 0.0
                     for idx in b4c.index:
                         k = (
                             _norm_sym(str(b4c.at[idx, "ETF"])),
@@ -2854,6 +2955,10 @@ def main() -> None:
                             b4c.at[idx, "b4_opt2_underlying_short_usd"] = und_short_by_key[k]
                         if k in hedge_by_key:
                             b4c.at[idx, "b4_opt2_hedge_ratio"] = hedge_by_key[k]
+                        if k in released_by_key:
+                            b4c.at[idx, "ratchet_released"] = bool(released_by_key[k])
+                        if k in trim_lambda_by_key:
+                            b4c.at[idx, "ratchet_trim_lambda"] = float(trim_lambda_by_key[k])
                     print(f"[INFO] bucket4_weekly_opt2: tail-risk weights + dynamic hedge targets (n={len(tgt_df)})")
                 except Exception as e:
                     print(f"[WARN] bucket4_weekly_opt2 disabled for this run ({e}); using decay_score sizing")
@@ -3275,7 +3380,10 @@ def main() -> None:
         for col in ("b1_trend_xsec_pctile", "b1_trend_multiplier"):
             if col in sized.columns:
                 keep.loc[sized.index, col] = pd.to_numeric(sized[col], errors="coerce")
-        # Carry pair-override audit columns through to proposed_trades.csv.
+        # Carry pair-override + ratchet audit/execution columns through to
+        # proposed_trades.csv. ``ratchet_released`` tells phase2b_resize the inverse
+        # leg may be gradually covered (continuous trim); ``ratchet_trim_lambda`` is
+        # the audit trail of how much of the creep gap was closed this run.
         for col in (
             "pair_override_gross_mult",
             "pair_override_hedge_add",
@@ -3284,9 +3392,19 @@ def main() -> None:
             "b4_opt2_hedge_ratio_pre_override",
             "low_n_included",
             "low_n_size_mult",
+            "ratchet_released",
+            "ratchet_trim_lambda",
         ):
             if col in sized.columns:
                 keep.loc[sized.index, col] = sized[col]
+        # Non-B4 rows have no ratchet flag: default to NOT released / no trim so the
+        # execution guard never reads a stray NaN as truthy.
+        if "ratchet_released" in keep.columns:
+            keep["ratchet_released"] = keep["ratchet_released"].fillna(False).astype(bool)
+        if "ratchet_trim_lambda" in keep.columns:
+            keep["ratchet_trim_lambda"] = pd.to_numeric(
+                keep["ratchet_trim_lambda"], errors="coerce"
+            ).fillna(0.0)
 
         # ---- Optimal (structural-only) target columns: parallel set written next to executable.
         # ``optimal_*`` reflects "where the position should sit" if today's IBKR shares_available
