@@ -7315,6 +7315,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         float(totals["gross_exposure_bucket_1"])
         + float(totals["gross_exposure_bucket_2"])
         + float(totals["gross_exposure_bucket_4"])
+        + float(totals.get("gross_exposure_unbucketed", 0.0))
     )
     _bucket_net_sum = (
         float(totals["net_exposure_bucket_1"])

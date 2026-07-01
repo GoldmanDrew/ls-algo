@@ -26,7 +26,13 @@ accounting:
   # ``prorate`` stops B1's daily PnL from jumping on shared-underlying noise.
   b12_residual_attribution: prorate
   b12_hedge_delta_floor: 0.25            # min |β| for hr = 1/|β| on B1/B2 ETF legs
-  b12_pnl_mode: plan_b4_inject           # lot_timed_strict | plan_b4_inject (uses plan_b4_pnl_mode below)
+  b12_pnl_mode: lot_timed_strict         # lot_timed_strict | plan_b4_inject (uses plan_b4_pnl_mode below)
+  # Option 2 (2026-06): B4 = inverse-ETF leg ONLY. Spot P&L and exposure stay in
+  # B1/B2 by their FIFO lot tags; no synthetic structural-short slice is carved out
+  # of the real long spot line into B4 (that slice previously exceeded/inverted the
+  # actual position and distorted the per-bucket split, hence the per-bucket history
+  # and daily/weekly deltas). ``lot_timed_strict`` disables plan/implied spot
+  # injection; ``ledger_fifo`` attribution+exposure disables structural shorts.
   plan_b4_pnl_mode: inject_slice    # inject_slice: FIFO realized + plan-split unrealized | full_override (legacy)
   # Do not retroactively inject plan B4 unrealized before live B4 trading began.
   plan_b4_inject_start_date: "2026-05-12"
@@ -67,7 +73,7 @@ accounting:
     - IBIT
   plan_aware_b4_attribution: true
   # B4 structural short underlying in pair exposure (plan-implied, not FIFO ledger).
-  b4_underlying_exposure_mode: plan_structural   # ledger_fifo | plan_structural
+  b4_underlying_exposure_mode: ledger_fifo   # ledger_fifo | plan_structural
   b4_plan_exposure_underlyings: []               # empty = all B4 registry names with plan b4 sleeve
   b4_plan_exposure_min_usd: 500
   # Canonical B4 underlying attribution rule. ``etf_implied`` (default) sources
@@ -79,7 +85,7 @@ accounting:
   # their spot PnL reflects the short. ``plan_only`` reverts to the legacy
   # "plan-row required" behaviour; ``ledger_fifo`` disables structural shorts
   # entirely and trusts the share ledger only.
-  b4_underlying_attribution: etf_implied         # plan_only | etf_implied | ledger_fifo
+  b4_underlying_attribution: ledger_fifo         # plan_only | etf_implied | ledger_fifo
   b4_attribution_min_usd: 500                    # ignore implied shorts below this magnitude
   b4_partial_hedge_ratio_default: 0.75           # fallback when registry row lacks partial_hedge_ratio
   # Re-seed physical B1/B2 ledger qty from plan ratios (qty_b4 stays 0 on net spot line).

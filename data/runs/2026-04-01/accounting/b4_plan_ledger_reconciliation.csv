@@ -9,7 +9,7 @@ run_date,underlying,plan_b4_usd,plan_b4_qty,etf_implied_short_usd,etf_implied_sh
 2026-04-01,CRWV,0.0,0.0,0.0,0.0,none,0.0,105.0,9.0,0.08571428571428572,False,False
 2026-04-01,DASH,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
 2026-04-01,DIA,0.0,0.0,0.0,0.0,none,-52.94117647058823,0.0,0.0,0.0,False,False
-2026-04-01,DKNG,0.0,0.0,0.0,0.0,none,0.0,0.0,14.999999999999979,0.0,False,False
+2026-04-01,DKNG,0.0,0.0,0.0,0.0,none,0.0,0.0,15.0,0.0,False,False
 2026-04-01,IBIT,0.0,0.0,0.0,0.0,none,0.0,858.0,14.0,0.016317016317016316,False,False
 2026-04-01,IWM,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
 2026-04-01,LYFT,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False

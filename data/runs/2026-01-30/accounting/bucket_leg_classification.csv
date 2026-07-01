@@ -2,7 +2,6 @@ symbol,underlying,bucket,leg_class,total_pnl
 AAPB,AAPL,bucket_1,core_levered_etf,0.0
 AAPU,AAPL,bucket_1,core_levered_etf,0.0
 AAPX,AAPL,bucket_1,core_levered_etf,0.0
-ABNY,ABNB,bucket_2,yieldboost_etf,0.0
 AIYY,AI,bucket_2,yieldboost_etf,0.0
 AMDG,AMD,bucket_1,core_levered_etf,0.0
 AMDL,AMD,bucket_1,core_levered_etf,0.0

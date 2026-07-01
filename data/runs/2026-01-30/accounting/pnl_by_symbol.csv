@@ -1,6 +1,6 @@
 symbol,underlying,bucket,pair,description,realized_pnl,unrealized_pnl,dividends,withholding_tax,pil_dividends,borrow_fees,short_credit_interest,other_fees,bond_interest,total_pnl
 AAPB,AAPL,bucket_1,AAPL | AAPB,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-MSFO,MSFT,bucket_2,MSFT | MSFO,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+AAPU,AAPL,bucket_1,AAPL | AAPU,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 QQQX,QQQ,bucket_2,QQQ | QQQX,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 QCMU,QCOM,bucket_1,QCOM | QCMU,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 PYPY,PYPL,bucket_2,PYPL | PYPY,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
@@ -59,9 +59,9 @@ SNOY,SNOW,bucket_2,SNOW | SNOY,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 SNOU,SNOW,bucket_1,SNOW | SNOU,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 SNAG,SNAP,bucket_1,SNAP | SNAG,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 MSFU,MSFT,bucket_1,MSFT | MSFU,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+MSFO,MSFT,bucket_2,MSFT | MSFO,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 MSFL,MSFT,bucket_1,MSFT | MSFL,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-AAPU,AAPL,bucket_1,AAPL | AAPU,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-MARO,MARA,bucket_2,MARA | MARO,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+ASTX,ASTS,bucket_1,ASTS | ASTX,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 CMGG,CMG,bucket_1,CMG | CMGG,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 CEGX,CEG,bucket_1,CEG | CEGX,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 BTCL,IBIT,bucket_1,IBIT | BTCL,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
@@ -74,8 +74,8 @@ BABO,BABA,bucket_2,BABA | BABO,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 AZYY,AMZN,bucket_3,AMZN | AZYY,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 AVL,AVGO,bucket_1,AVGO | AVL,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 AVGG,AVGO,bucket_1,AVGO | AVGG,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-ASTX,ASTS,bucket_1,ASTS | ASTX,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 ARMW,ARM,bucket_2,ARM | ARMW,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+COIW,COIN,bucket_2,COIN | COIW,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 APPX,APP,bucket_1,APP | APPX,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 APLY,AAPL,bucket_2,AAPL | APLY,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 AMZZ,AMZN,bucket_1,AMZN | AMZZ,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
@@ -87,11 +87,10 @@ AMDY,AMD,bucket_2,AMD | AMDY,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 AMDL,AMD,bucket_1,AMD | AMDL,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 AMDG,AMD,bucket_1,AMD | AMDG,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 AIYY,AI,bucket_2,AI | AIYY,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-ABNY,ABNB,bucket_2,ABNB | ABNY,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 AAPX,AAPL,bucket_1,AAPL | AAPX,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 CNCG,CNC,bucket_1,CNC | CNCG,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
-COIW,COIN,bucket_2,COIN | COIW,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 COTG,COST,bucket_1,COST | COTG,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+MARO,MARA,bucket_2,MARA | MARO,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 GGLL,GOOGL,bucket_1,GOOGL | GGLL,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 MAAY,MARA,bucket_2,MARA | MAAY,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
 LMTL,LMT,bucket_1,LMT | LMTL,,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0

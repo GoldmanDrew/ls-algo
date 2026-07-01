@@ -1,0 +1,3 @@
+symbol,underlying,overlay_type,net_notional_usd,gross_notional_usd,n_legs
+UVIX,SVIX,volatility_etp_bucket5,7413.78558744,7413.78558744,1
+SVIX,SVIX,volatility_etp_bucket5,-4810.8,4810.8,1

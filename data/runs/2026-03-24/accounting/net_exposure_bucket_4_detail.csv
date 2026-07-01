@@ -1,5 +1,5 @@
 underlying,symbol,leg_type,net_notional_usd,gross_notional_usd
-AXON,AXON,underlying,-624.1800000000001,624.1800000000001
+AXON,AXON,underlying,0.0,0.0
 AXON,AXUP,etf,832.24,832.24
 BLSH,BLSH,underlying,0.0,0.0
 BLSH,BLSX,etf,5209.049999999999,5209.049999999999
@@ -10,7 +10,7 @@ CRCL,CRCL,underlying,0.0,0.0
 CRWV,CRWV,underlying,0.0,0.0
 DASH,DASH,underlying,0.0,0.0
 DASH,DASX,etf,4179.6,4179.6
-DKNG,DKNG,underlying,-1338.8112,1338.8112
+DKNG,DKNG,underlying,0.0,0.0
 DKNG,DKUP,etf,1785.0816,1785.0816
 IBIT,IBIT,underlying,0.0,0.0
 MSTR,MSTR,underlying,0.0,0.0

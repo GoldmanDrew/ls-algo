@@ -862,13 +862,14 @@ def exposure_reconciliation_tolerances(totals: dict[str, Any]) -> tuple[float, f
 
 
 def bucket_exposure_component_sums(totals: dict[str, Any]) -> tuple[float, float]:
-    """Sum B1+B2+B4 gross/net; net includes unbucketed spot (matches accounting gate)."""
+    """Sum B1+B2+B4 gross/net; both include unbucketed spot (matches accounting gate)."""
     bucket_gross = sum(
         float(totals.get(f"gross_exposure_{b}", 0.0) or 0.0) for b in RECONCILE_EXPOSURE_BUCKETS
     )
     bucket_net = sum(
         float(totals.get(f"net_exposure_{b}", 0.0) or 0.0) for b in RECONCILE_EXPOSURE_BUCKETS
     )
+    bucket_gross += float(totals.get("gross_exposure_unbucketed", 0.0) or 0.0)
     bucket_net += float(totals.get("net_exposure_unbucketed", 0.0) or 0.0)
     return bucket_gross, bucket_net
 

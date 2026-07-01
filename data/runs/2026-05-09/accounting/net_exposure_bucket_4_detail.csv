@@ -4,7 +4,6 @@ ASTS,ASTS,underlying,0.0,0.0
 AXON,AXON,underlying,0.0,0.0
 BE,BE,underlying,0.0,0.0
 BLSH,BLSH,underlying,0.0,0.0
-CLSK,CLSK,underlying,-13632.0,13632.0
 COIN,COIN,underlying,0.0,0.0
 CRCL,CRCL,underlying,0.0,0.0
 CRWV,CRWV,underlying,0.0,0.0
@@ -16,6 +15,7 @@ IWM,IWM,underlying,0.0,0.0
 KEEL,KEEL,underlying,0.0,0.0
 LITE,LITE,underlying,0.0,0.0
 MSTR,MSTR,underlying,0.0,0.0
+MU,MU,underlying,0.0,0.0
 NBIS,NBIS,underlying,0.0,0.0
 NEM,NEM,underlying,0.0,0.0
 NET,NET,underlying,0.0,0.0

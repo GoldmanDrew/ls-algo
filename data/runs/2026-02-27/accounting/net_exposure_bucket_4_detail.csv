@@ -1,11 +1,11 @@
 underlying,symbol,leg_type,net_notional_usd,gross_notional_usd
-CRWV,CRWV,underlying,-14950.527075,14950.527075
+AMD,AMD,underlying,0.0,0.0
+CRWV,CRWV,underlying,0.0,0.0
 IBIT,IBIT,underlying,0.0,0.0
-IREN,IREN,underlying,-14979.759299999996,14979.759299999996
-MSTR,MSTR,underlying,-10660.539252082126,10660.539252082126
-NBIS,NBIS,underlying,-15182.023724999997,15182.023724999997
+MSTR,MSTR,underlying,0.0,0.0
+NBIS,NBIS,underlying,0.0,0.0
 NVDA,NVDA,underlying,0.0,0.0
-SOEZ,SOEZ,underlying,-10333.10679975,10333.10679975
+SOEZ,SOEZ,underlying,9656.12,9656.12
 SOEZ,SOLT,etf,13777.475733,13777.475733
 SOXX,SOXX,underlying,0.0,0.0
 XRPZ,XRPZ,underlying,0.0,0.0
