@@ -73,6 +73,13 @@ except ImportError:  # pragma: no cover
     STOCK_SLEEVE_BUCKETS = ("bucket_1", "bucket_2", "bucket_4")
     _scope_blocked_exposure_keys = None  # type: ignore[assignment]
 
+# Display-only stock sleeves matching the EOD email (B1+B2+B4+B5). Bucket 5 is a
+# real stock sleeve (volatility ETP) but is intentionally excluded from
+# ``RECONCILE_EXPOSURE_BUCKETS`` because ``gross_exposure_total`` in totals.json
+# is B1+B2+B4 (+unbucketed); adding B5 to the reconcile set would break the gate
+# that mirrors ``ibkr_accounting``. So B5 is shown but not reconciled.
+DISPLAY_STOCK_SLEEVE_BUCKETS: tuple[str, ...] = tuple(STOCK_SLEEVE_BUCKETS) + ("bucket_5",)
+
 
 TRADING_DAYS_PER_YEAR_DAYS: int = 252
 
@@ -113,9 +120,19 @@ BUCKET_SLEEVE_KEYS: dict[str, str] = {
     "bucket_1": "core_leveraged",
     "bucket_2": "yieldboost",
     "bucket_4": "inverse_decay_bucket4",
+    "bucket_5": "volatility_etp_bucket5",
 }
 
-BUCKET_KEYS: tuple[str, ...] = ("bucket_1", "bucket_2", "bucket_3", "bucket_4")
+# Accounting buckets surfaced across the dashboard (sleeve table, bucket tabs,
+# factor-by-bucket, data-quality scan). Bucket 5 (volatility ETP) is a real
+# stock sleeve and must appear everywhere B1/B2/B4 do.
+BUCKET_KEYS: tuple[str, ...] = (
+    "bucket_1",
+    "bucket_2",
+    "bucket_3",
+    "bucket_4",
+    "bucket_5",
+)
 BUCKETS_WITHOUT_ROC: frozenset[str] = frozenset({"bucket_3"})
 PNL_HISTORY_START_DATE = "2026-02-27"
 
@@ -124,14 +141,15 @@ BUCKET_LABELS: dict[str, str] = {
     "bucket_2": "Bucket 2 (yield boost)",
     "bucket_3": "Bucket 3 (flow hedge overlay)",
     "bucket_4": "Bucket 4 (inverse / decay)",
+    "bucket_5": "Bucket 5 (volatility ETP)",
 }
 
 DISPLAY_SLEEVE_GROUPS: dict[str, dict[str, Any]] = {
-    "b124": {
-        "id": "b124",
-        "label": "Buckets 1, 2, and 4",
-        "buckets": STOCK_SLEEVE_BUCKETS,
-        "exposure_note": "Share-notional book (B1+B2+B4 ratio split); excludes B3 overlay.",
+    "b1245": {
+        "id": "b1245",
+        "label": "Buckets 1, 2, 4, and 5",
+        "buckets": DISPLAY_STOCK_SLEEVE_BUCKETS,
+        "exposure_note": "Share-notional book (B1+B2+B4 ratio split + B5 vol ETP); excludes B3 overlay.",
     },
     "b3": {
         "id": "b3",
@@ -166,11 +184,13 @@ def load_risk_limits(config_yml: Path | None = None) -> RiskLimitsContext:
         "bucket_1": {"warn": 55.0, "hard": 75.0},
         "bucket_2": {"warn": 40.0, "hard": 50.0},
         "bucket_4": {"warn": 90.0, "hard": 120.0},
+        "bucket_5": {"warn": 90.0, "hard": 120.0},
     }
     underlying_by_bucket: dict[str, dict[str, float]] = {
         "bucket_1": {"warn": 0.20, "hard": 0.20},
         "bucket_2": {"warn": 0.20, "hard": 0.20},
         "bucket_4": {"warn": 0.30, "hard": 0.30},
+        "bucket_5": {"warn": 0.30, "hard": 0.30},
     }
     liquidity = {"shares_outstanding_use_frac": 0.35, "median_daily_volume_use_pct": 0.30}
 
@@ -182,7 +202,7 @@ def load_risk_limits(config_yml: Path | None = None) -> RiskLimitsContext:
             cfg = {}
         screener = (cfg.get("screener") or {}) if isinstance(cfg, dict) else {}
         per_bucket = (screener.get("per_bucket") or {}) if isinstance(screener, dict) else {}
-        for bkt in ("bucket_1", "bucket_2", "bucket_4"):
+        for bkt in ("bucket_1", "bucket_2", "bucket_4", "bucket_5"):
             row = per_bucket.get(bkt) or {}
             if row:
                 borrow_by_bucket[bkt] = _decimal_borrow_to_pct_limits(
@@ -219,6 +239,7 @@ SLEEVE_TARGET_WEIGHTS = {
     "bucket_2": 0.20,
     "bucket_3": None,
     "bucket_4": 0.25,
+    "bucket_5": None,
 }
 
 BREACH_CATEGORY_LABELS: dict[str, str] = {
@@ -927,7 +948,7 @@ def compute_book_summary(
 
     sleeve_table: list[dict[str, Any]] = []
     bucket_pnl = totals.get("bucket_pnl") or {}
-    for bucket in ("bucket_1", "bucket_2", "bucket_3", "bucket_4"):
+    for bucket in BUCKET_KEYS:
         gross_b_raw = float(totals.get(f"gross_exposure_{bucket}", 0.0) or 0.0)
         net_b_raw = float(totals.get(f"net_exposure_{bucket}", 0.0) or 0.0)
         target_w = target_weights.get(bucket)
@@ -1353,7 +1374,7 @@ def compute_data_quality(
         {"name": "flex_positions", "path": flex_dir / "flex_positions.xml", "type": "xml"},
         {"name": "flex_borrow_fee_details", "path": flex_dir / "flex_borrow_fee_details.xml", "type": "xml"},
     ]
-    for bucket in ("bucket_1", "bucket_2", "bucket_3", "bucket_4"):
+    for bucket in BUCKET_KEYS:
         source_specs.extend(
             [
                 {
@@ -1844,7 +1865,7 @@ def compute_factor_by_bucket(
         return []
 
     bucket_rows: list[dict[str, Any]] = []
-    for bucket in ("bucket_1", "bucket_2", "bucket_3", "bucket_4"):
+    for bucket in BUCKET_KEYS:
         path = accounting_dir / f"net_exposure_{bucket}.csv"
         df = _read_csv_or_empty(path)
         if blocked_exposure_keys and not df.empty and _filter_exposure_df is not None:
@@ -4066,8 +4087,13 @@ def resolve_nav_usd(
     *,
     cli_fallback: float,
     flex_dir: Path | None = None,
+    cli_source: str = "MAGIS_NAV_USD",
 ) -> tuple[float, str]:
-    """Pick NAV denominator: persisted totals → Flex equity tags → CLI/env fallback."""
+    """Pick NAV denominator: persisted totals → Flex equity tags → CLI/config fallback.
+
+    ``cli_source`` labels where the fallback came from (e.g. ``config:capital_usd``)
+    so the dashboard can show the provenance of the NAV denominator.
+    """
     nav = totals.get("nav_usd")
     if nav is not None:
         try:
@@ -4080,7 +4106,7 @@ def resolve_nav_usd(
         flex_nav = parse_flex_nav(flex_dir)
         if flex_nav and float(flex_nav.get("nav_usd") or 0) > 0:
             return float(flex_nav["nav_usd"]), str(flex_nav.get("source") or "flex")
-    return float(cli_fallback), "MAGIS_NAV_USD"
+    return float(cli_fallback), cli_source
 
 
 def compute_display_sleeve_groups(
@@ -4099,7 +4125,7 @@ def compute_display_sleeve_groups(
         if sleeve_available:
             gross = sum(float(totals.get(f"gross_exposure_{b}", 0.0) or 0.0) for b in buckets)
             net = sum(float(totals.get(f"net_exposure_{b}", 0.0) or 0.0) for b in buckets)
-            if spec["id"] == "b124":
+            if spec["id"] == "b1245":
                 net += float(totals.get("net_exposure_unbucketed", 0.0) or 0.0)
         else:
             gross = None
@@ -4294,6 +4320,242 @@ def compute_bucket_sleeve_rows(
 
 
 # ---------------------------------------------------------------------------
+# Borrow-rate shock sensitivity (short ETF sleeve)
+
+# Relative borrow-rate shocks applied to every short ETF leg. Borrow APR is the
+# single most volatile cost line for the inverse-ETF sleeves, so we show the
+# incremental *annualized* carry drag (and its bite on NAV) under each shock.
+BORROW_SHOCK_MULTIPLIERS: tuple[float, ...] = (1.25, 1.5, 2.0)
+BORROW_SHOCK_ABS_BPS: tuple[float, ...] = (1000.0, 2500.0)  # +10pp, +25pp absolute APR
+
+
+def compute_borrow_shock_panel(
+    borrow_panel: dict[str, Any] | None,
+    *,
+    nav_usd: float,
+) -> dict[str, Any]:
+    """Annualized borrow-carry drag on the held short-ETF book under rate shocks.
+
+    Uses the already-computed ``borrow_panel.short_etf_rows`` (short notional +
+    current borrow APR). For each shock we recompute carry = Σ short_notional ×
+    shocked_apr and report the *incremental* cost vs the current bill.
+    """
+    rows = list((borrow_panel or {}).get("short_etf_rows") or [])
+    legs: list[dict[str, Any]] = []
+    base_cost = 0.0
+    base_notional = 0.0
+    for r in rows:
+        notion = abs(float(r.get("short_notional_usd") or 0.0))
+        rate_pct = r.get("borrow_rate_pct")
+        if notion <= 0 or rate_pct is None:
+            continue
+        rate = float(rate_pct) / 100.0
+        legs.append({"symbol": r.get("symbol"), "notional": notion, "rate": rate})
+        base_cost += notion * rate
+        base_notional += notion
+
+    available = bool(legs)
+    scenarios: list[dict[str, Any]] = []
+
+    def _scenario(label: str, shocked_cost: float) -> dict[str, Any]:
+        incr = shocked_cost - base_cost
+        return {
+            "label": label,
+            "annual_cost_usd": shocked_cost,
+            "incremental_cost_usd": incr,
+            "incremental_pct_nav": (incr / nav_usd) if nav_usd > 0 else None,
+        }
+
+    for mult in BORROW_SHOCK_MULTIPLIERS:
+        shocked = sum(leg["notional"] * leg["rate"] * mult for leg in legs)
+        scenarios.append(_scenario(f"x{mult:g} borrow APR", shocked))
+    for bps in BORROW_SHOCK_ABS_BPS:
+        add = bps / 10000.0
+        shocked = sum(leg["notional"] * (leg["rate"] + add) for leg in legs)
+        scenarios.append(_scenario(f"+{bps / 100:.0f}pp APR", shocked))
+
+    return {
+        "available": available,
+        "reason": "" if available else "No short-ETF rows with borrow rates in borrow panel.",
+        "short_notional_usd": base_notional,
+        "current_annual_cost_usd": base_cost,
+        "current_pct_nav": (base_cost / nav_usd) if nav_usd > 0 else None,
+        "n_short_etfs": len(legs),
+        "scenarios": scenarios,
+        "note": (
+            "Annualized carry = Σ |short notional| × borrow APR on held short ETFs. "
+            "Shocks are applied to every leg's current APR; incremental = shocked − current."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Book drawdown (cumulative-PnL equity curve)
+
+
+def compute_drawdown_panel(
+    pnl_history_csv: Path,
+    *,
+    nav_usd: float,
+    run_date: str | None = None,
+) -> dict[str, Any]:
+    """Max drawdown of the strategy cumulative-PnL curve (capital base = NAV).
+
+    ``pnl_history.csv`` carries the restated *cumulative* (YTD) PnL per date in
+    ``total_pnl``; equity = NAV + cumulative PnL. Filters to dates <= run_date so
+    no future-dated rows leak into a historical snapshot.
+    """
+    if not pnl_history_csv.is_file():
+        return {"available": False, "reason": f"missing {pnl_history_csv.name}"}
+    try:
+        df = pd.read_csv(pnl_history_csv, usecols=["date", "total_pnl"])
+    except Exception as exc:  # pragma: no cover - defensive
+        return {"available": False, "reason": f"unreadable pnl_history.csv: {exc}"}
+    if df.empty:
+        return {"available": False, "reason": "pnl_history.csv is empty"}
+    df["date"] = df["date"].astype(str)
+    if run_date:
+        df = df[df["date"] <= str(run_date)]
+    df = df.sort_values("date")
+    if df.empty:
+        return {"available": False, "reason": "no pnl_history rows on/before run_date"}
+
+    base = float(nav_usd) if nav_usd and nav_usd > 0 else 0.0
+    points: list[dict[str, Any]] = []
+    running_peak = float("-inf")
+    max_dd_usd = 0.0
+    max_dd_pct = 0.0
+    max_dd_date = None
+    peak_equity = base
+    for _, r in df.iterrows():
+        cum = float(r["total_pnl"] or 0.0)
+        equity = base + cum
+        running_peak = max(running_peak, equity)
+        dd = equity - running_peak  # <= 0
+        dd_pct = (dd / running_peak) if running_peak > 0 else 0.0
+        if dd < max_dd_usd:
+            max_dd_usd = dd
+            max_dd_pct = dd_pct
+            max_dd_date = str(r["date"])
+        peak_equity = running_peak
+        points.append({"date": str(r["date"]), "cum_pnl_usd": cum, "equity_usd": equity})
+
+    last = points[-1]
+    cur_equity = last["equity_usd"]
+    cur_dd_usd = cur_equity - peak_equity
+    return {
+        "available": True,
+        "base_nav_usd": base,
+        "current_cum_pnl_usd": last["cum_pnl_usd"],
+        "current_equity_usd": cur_equity,
+        "peak_equity_usd": peak_equity,
+        "current_drawdown_usd": cur_dd_usd,
+        "current_drawdown_pct": (cur_dd_usd / peak_equity) if peak_equity > 0 else None,
+        "max_drawdown_usd": max_dd_usd,
+        "max_drawdown_pct": max_dd_pct,
+        "max_drawdown_date": max_dd_date,
+        "n_points": len(points),
+        "curve": points[-90:],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Shared-underlying map (names that appear in more than one accounting bucket)
+
+
+def compute_shared_underlying_panel(
+    accounting_dir: Path,
+    *,
+    blocked_exposure_keys: set[str] | None = None,
+) -> dict[str, Any]:
+    """Underlyings whose exposure spans multiple buckets (shared spot lines).
+
+    Reads ``net_exposure_<bucket>.csv`` for each bucket and groups by underlying.
+    Names present in >1 bucket are flagged: their broker spot line is shared and
+    nets across sleeves, which is exactly why B4 attribution slices a larger line.
+    """
+    by_underlying: dict[str, dict[str, Any]] = {}
+    for bucket in BUCKET_KEYS:
+        path = accounting_dir / f"net_exposure_{bucket}.csv"
+        df = _read_csv_or_empty(path)
+        if df.empty:
+            continue
+        if blocked_exposure_keys and _filter_exposure_df is not None:
+            df = _filter_exposure_df(df, blocked_exposure_keys)
+        for _, raw in df.iterrows():
+            u = _clean_str(_first_nonblank(raw.get("underlying"), raw.get("symbol")))
+            if not u:
+                continue
+            net = float(raw.get("net_notional_usd", 0.0) or 0.0)
+            gross = float(raw.get("gross_notional_usd", 0.0) or 0.0)
+            slot = by_underlying.setdefault(
+                u, {"underlying": u, "buckets": {}, "net_usd": 0.0, "gross_usd": 0.0}
+            )
+            slot["buckets"][bucket] = {"net_usd": net, "gross_usd": gross}
+            slot["net_usd"] += net
+            slot["gross_usd"] += gross
+
+    shared = [
+        {
+            "underlying": v["underlying"],
+            "buckets": sorted(v["buckets"].keys()),
+            "bucket_detail": v["buckets"],
+            "net_usd": v["net_usd"],
+            "gross_usd": v["gross_usd"],
+        }
+        for v in by_underlying.values()
+        if len(v["buckets"]) > 1
+    ]
+    shared.sort(key=lambda r: abs(r["gross_usd"]), reverse=True)
+    return {
+        "available": True,
+        "n_underlyings": len(by_underlying),
+        "n_shared": len(shared),
+        "rows": shared[:40],
+        "note": (
+            "Underlyings appearing in more than one accounting bucket share a single "
+            "broker spot line that nets across sleeves; B4 attribution slices it."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Top movers (largest cumulative PnL contributors by underlying)
+
+
+def compute_movers_panel(
+    accounting_dir: Path,
+    *,
+    top_n: int = 8,
+) -> dict[str, Any]:
+    """Largest positive/negative cumulative PnL contributors at the book level."""
+    path = accounting_dir / "pnl_by_underlying.csv"
+    df = _read_csv_or_empty(path)
+    if df.empty or "total_pnl" not in df.columns:
+        return {"available": False, "reason": f"missing/empty {path.name}"}
+    rows: list[dict[str, Any]] = []
+    for _, r in df.iterrows():
+        u = _clean_str(_first_nonblank(r.get("underlying"), r.get("symbol")))
+        if not u:
+            continue
+        rows.append(
+            {
+                "underlying": u,
+                "symbols": _clean_str(r.get("symbols")),
+                "total_pnl": float(r.get("total_pnl", 0.0) or 0.0),
+            }
+        )
+    winners = sorted([r for r in rows if r["total_pnl"] > 0], key=lambda r: r["total_pnl"], reverse=True)
+    losers = sorted([r for r in rows if r["total_pnl"] < 0], key=lambda r: r["total_pnl"])
+    return {
+        "available": True,
+        "winners": winners[:top_n],
+        "losers": losers[:top_n],
+        "note": "Cumulative (YTD) PnL by underlying from pnl_by_underlying.csv.",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Top-level snapshot assembler
 
 
@@ -4316,6 +4578,12 @@ class RiskSnapshot:
     nav_source: str = "MAGIS_NAV_USD"
     bucket_sleeve_panel: dict[str, Any] = field(default_factory=dict)
     exposure_reconciliation: dict[str, Any] = field(default_factory=dict)
+    borrow_shock_panel: dict[str, Any] = field(default_factory=dict)
+    drawdown_panel: dict[str, Any] = field(default_factory=dict)
+    shared_underlying_panel: dict[str, Any] = field(default_factory=dict)
+    movers_panel: dict[str, Any] = field(default_factory=dict)
+    display_sleeve_groups: list[dict[str, Any]] = field(default_factory=list)
+    capital_panel: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -4331,8 +4599,15 @@ class RiskSnapshot:
                 "short_notional_usd": self.book.short_notional_usd,
                 "gross_exposure_pct_nav": self.book.gross_exposure_pct_nav,
                 "net_exposure_pct_nav": self.book.net_exposure_pct_nav,
+                # ``pnl_today_*`` is a legacy field name that has always carried the
+                # strategy *cumulative* (YTD) PnL, not a single-day move. The
+                # ``pnl_ytd_*`` aliases make that explicit; ``pnl_daily_*`` (added
+                # post-hoc in build_site from the prior snapshot) carries the true
+                # day-over-day change.
                 "pnl_today_usd": self.book.pnl_today_usd,
                 "pnl_today_pct_nav": self.book.pnl_today_pct_nav,
+                "pnl_ytd_usd": self.book.pnl_today_usd,
+                "pnl_ytd_pct_nav": self.book.pnl_today_pct_nav,
                 "sleeve_table": self.book.sleeve_table,
                 "breaches": self.book.breaches,
                 "sleeve_attribution_available": self.book.sleeve_attribution_available,
@@ -4358,6 +4633,12 @@ class RiskSnapshot:
             "raw_totals": self.raw_totals,
             "bucket_sleeve_panel": self.bucket_sleeve_panel,
             "exposure_reconciliation": self.exposure_reconciliation,
+            "borrow_shock_panel": self.borrow_shock_panel,
+            "drawdown_panel": self.drawdown_panel,
+            "shared_underlying_panel": self.shared_underlying_panel,
+            "movers_panel": self.movers_panel,
+            "display_sleeve_groups": self.display_sleeve_groups,
+            "capital_panel": self.capital_panel,
             "limits": getattr(self, "_limits", DEFAULT_LIMITS),
             "borrow_limits_by_bucket": getattr(self, "_borrow_limits_by_bucket", {}),
             "underlying_gross_frac_by_bucket": getattr(
@@ -4378,6 +4659,7 @@ def build_snapshot(
     screener_csv: Path | None = None,
     enable_computed_betas: bool = True,
     beta_cache_dir: Path | None = None,
+    nav_source_hint: str = "MAGIS_NAV_USD",
 ) -> RiskSnapshot:
     """Build a full snapshot from a ``data/runs/<run_date>`` folder."""
     repo_root = runs_root
@@ -4400,7 +4682,10 @@ def build_snapshot(
 
     cli_nav_usd = nav_usd
     nav_usd, nav_source = resolve_nav_usd(
-        totals, cli_fallback=cli_nav_usd, flex_dir=flex if flex.is_dir() else None
+        totals,
+        cli_fallback=cli_nav_usd,
+        flex_dir=flex if flex.is_dir() else None,
+        cli_source=nav_source_hint,
     )
     book = compute_book_summary(totals, pnl_by_bucket, nav_usd=nav_usd, limits=limits)
     capital_panel = compute_capital_panel(
@@ -4416,7 +4701,7 @@ def build_snapshot(
     exposure_reconciliation = evaluate_exposure_reconciliation(totals)
 
     buckets: dict[str, dict[str, Any]] = {}
-    for bucket in ("bucket_1", "bucket_2", "bucket_3", "bucket_4"):
+    for bucket in BUCKET_KEYS:
         detail_csv = (
             accounting / "net_exposure_bucket_4_detail.csv"
             if bucket == "bucket_4"
@@ -4566,6 +4851,21 @@ def build_snapshot(
         beta_results=beta_results_dicts or None,
         repo_root=repo_root,
     )
+    display_sleeve_groups = compute_display_sleeve_groups(
+        totals,
+        nav_usd=nav_usd,
+        sleeve_available=book.sleeve_attribution_available,
+    )
+    borrow_shock_panel = compute_borrow_shock_panel(borrow_panel, nav_usd=nav_usd)
+    drawdown_panel = compute_drawdown_panel(
+        repo_root / "data" / "ledger" / "pnl_history.csv",
+        nav_usd=nav_usd,
+        run_date=run_date,
+    )
+    shared_underlying_panel = compute_shared_underlying_panel(
+        accounting, blocked_exposure_keys=blocked_exposure_keys
+    )
+    movers_panel = compute_movers_panel(accounting)
     action_queue = compute_action_queue(
         book=book,
         factor_panel=factor_panel,
@@ -4608,6 +4908,12 @@ def build_snapshot(
         raw_totals=totals,
         bucket_sleeve_panel=bucket_sleeve_panel,
         exposure_reconciliation=exposure_reconciliation,
+        borrow_shock_panel=borrow_shock_panel,
+        drawdown_panel=drawdown_panel,
+        shared_underlying_panel=shared_underlying_panel,
+        movers_panel=movers_panel,
+        display_sleeve_groups=display_sleeve_groups,
+        capital_panel=capital_panel,
     )
     snap._limits = limits_ctx.limits
     snap._borrow_limits_by_bucket = limits_ctx.borrow_apr_pct_by_bucket

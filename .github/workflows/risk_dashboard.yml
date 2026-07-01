@@ -28,9 +28,9 @@ on:
         required: false
         default: ""
       nav_usd:
-        description: "Account NAV used as the %-of-NAV denominator"
+        description: "Account NAV %-of-NAV denominator (blank = strategy.capital_usd from config)"
         required: false
-        default: "800000"
+        default: ""
       skip_build:
         description: "Skip rebuilding snapshot (deploy site only)"
         required: false
@@ -133,13 +133,19 @@ jobs:
             --n-mc 8000
 
       - name: Build snapshot
+        # NAV denominator: explicit input/var wins; otherwise build_site reads
+        # strategy.capital_usd from config/strategy_config.yml (currently $1.05M).
         env:
-          MAGIS_NAV_USD: ${{ inputs.nav_usd || vars.MAGIS_NAV_USD || '800000' }}
+          MAGIS_NAV_USD: ${{ inputs.nav_usd || vars.MAGIS_NAV_USD || '' }}
         run: |
+          NAV_ARG=""
+          if [ -n "$MAGIS_NAV_USD" ]; then
+            NAV_ARG="--nav-usd $MAGIS_NAV_USD"
+          fi
           python -m risk_dashboard.build_site \
             --run-date "${{ steps.compute.outputs.run_date }}" \
             --runs-root data/runs \
-            --nav-usd "$MAGIS_NAV_USD" \
+            $NAV_ARG \
             --out-dir risk_dashboard/data
 
       - name: Commit snapshot

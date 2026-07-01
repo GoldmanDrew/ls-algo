@@ -22,8 +22,16 @@
     logoutBtn: document.getElementById("logout-btn"),
     authUserLabel: document.getElementById("auth-user-label"),
     runDateLabel: document.getElementById("run-date-label"),
+    freshnessBadge: document.getElementById("freshness-badge"),
     generatedAtLabel: document.getElementById("generated-at-label"),
     cockpitStrip: document.getElementById("cockpit-strip"),
+    pnlStrip: document.getElementById("pnl-strip"),
+    drawdownMeta: document.getElementById("drawdown-meta"),
+    moversWinners: document.getElementById("movers-winners"),
+    moversLosers: document.getElementById("movers-losers"),
+    borrowShockContent: document.getElementById("borrow-shock-content"),
+    borrowShockMeta: document.getElementById("borrow-shock-meta"),
+    sharedUnderlyingContent: document.getElementById("shared-underlying-content"),
     dataQuality: document.getElementById("data-quality"),
     dqDrilldown: document.getElementById("dq-drilldown"),
     alertRows: document.getElementById("alert-rows"),
@@ -466,6 +474,28 @@
         sub: snap.nav_source ? `source: ${snap.nav_source}` : "",
         spark: sparklineSvg(series("nav_usd")),
         delta: "",
+      },
+      {
+        label: "P&L today",
+        value: fmtUsdSigned(book.pnl_daily_usd),
+        sub:
+          book.pnl_daily_usd == null
+            ? "no prior run"
+            : `${fmtPct(book.pnl_daily_pct_nav, 2)} of NAV vs ${safeText(
+                book.pnl_daily_prior_run_date,
+                "prior"
+              )}`,
+        cls: signedClass(book.pnl_daily_usd),
+        spark: sparklineSvg(series("pnl_cum_usd")),
+      },
+      {
+        label: "P&L YTD",
+        value: fmtUsdSigned(book.pnl_ytd_usd ?? book.pnl_today_usd),
+        sub: `${fmtPct(
+          book.pnl_ytd_pct_nav ?? book.pnl_today_pct_nav,
+          2
+        )} of NAV (cumulative)`,
+        cls: signedClass(book.pnl_ytd_usd ?? book.pnl_today_usd),
       },
       {
         label: "Gross / NAV",
@@ -1626,9 +1656,35 @@
       .join("");
   }
 
-  function renderBucketSleevePanel(panel, book) {
+  function renderSleeveGroups(groups, nav) {
+    if (!groups || !groups.length) return "";
+    const rows = groups
+      .map(
+        (g) => `<tr>
+          <td><strong>${safeText(g.label)}</strong></td>
+          <td class="num">${g.gross_usd == null ? "unavailable" : fmtUsd(g.gross_usd)}</td>
+          <td class="num ${signedClass(g.net_usd)}">${g.net_usd == null ? "unavailable" : fmtUsd(g.net_usd)}</td>
+          <td class="num ${signedClass(g.pnl_usd)}">${fmtUsdSigned(g.pnl_usd)}</td>
+          <td class="num">${fmtPct(g.pnl_pct_nav, 2)}</td>
+        </tr>
+        <tr><td colspan="5" class="dim small">${safeText(g.exposure_note, "")}</td></tr>`
+      )
+      .join("");
+    return `
+      <h3>EOD sleeve groups (matches PnL email)</h3>
+      <table class="tight"><thead><tr>
+        <th>Group</th><th>Gross $</th><th>Net $</th><th>P&amp;L YTD</th><th>% NAV</th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
+  function renderBucketSleevePanel(panel, book, groups, nav) {
     if (!els.bucketSleevePanel) return;
     const rows = panel?.rows || [];
+    const marginSum = rows.reduce(
+      (m, r) => m + (Number(r.margin_req_usd) || 0),
+      0
+    );
+    const marginUtil = nav && nav > 0 ? marginSum / nav : null;
     const exposureAvailable = book?.sleeve_attribution_available !== false;
     const capitalAvailable = panel?.capital_available !== false;
     const unavailableCell = (title) =>
@@ -1728,7 +1784,18 @@
               panel?.capital_reason,
               "Capital snapshot not available."
             )}</p>`
-      }`;
+      }
+      ${
+        capitalAvailable && marginUtil != null
+          ? `<p class="dim small">Margin utilization: ${fmtUsd(
+              marginSum
+            )} margin req / ${fmtUsd(nav)} NAV = <strong>${fmtPct(
+              marginUtil,
+              1
+            )}</strong> of NAV.</p>`
+          : ""
+      }
+      ${renderSleeveGroups(groups, nav)}`;
 
     const banner = document.getElementById("sleeve-banner");
     if (banner) {
@@ -2325,22 +2392,214 @@
     update();
   }
 
+  /* ------------------- Phase 0/1/2 panels --------------------- */
+  function renderFreshness(snap) {
+    if (!els.freshnessBadge) return;
+    const f = snap.freshness || {};
+    const badge = els.freshnessBadge;
+    badge.hidden = false;
+    const age = f.data_age_days;
+    if (f.is_latest && (age == null || age <= 1)) {
+      badge.className = "pill pill-ok";
+      badge.textContent = age === 0 || age == null ? "fresh" : `${age}d old`;
+      badge.title = "This is the latest accounting run.";
+    } else if (!f.is_latest) {
+      badge.className = "pill pill-hard";
+      badge.textContent = "stale snapshot";
+      badge.title = `Newer accounting run available: ${safeText(
+        f.latest_accounting_run_date,
+        "unknown"
+      )}`;
+    } else {
+      badge.className = "pill pill-warn";
+      badge.textContent = `${age}d old`;
+      badge.title = "Snapshot is more than a day behind its generation time.";
+    }
+  }
+
+  function renderPerformance(snap) {
+    const book = snap.book || {};
+    const dd = snap.drawdown_panel || {};
+    if (els.pnlStrip) {
+      const items = [
+        {
+          label: "P&L today",
+          value: fmtUsdSigned(book.pnl_daily_usd),
+          sub:
+            book.pnl_daily_usd == null
+              ? "no prior run"
+              : `${fmtPct(book.pnl_daily_pct_nav, 2)} of NAV`,
+          cls: signedClass(book.pnl_daily_usd),
+        },
+        {
+          label: "P&L YTD (cumulative)",
+          value: fmtUsdSigned(book.pnl_ytd_usd ?? book.pnl_today_usd),
+          sub: `${fmtPct(book.pnl_ytd_pct_nav ?? book.pnl_today_pct_nav, 2)} of NAV`,
+          cls: signedClass(book.pnl_ytd_usd ?? book.pnl_today_usd),
+        },
+        {
+          label: "Current drawdown",
+          value: dd.available ? fmtUsd(dd.current_drawdown_usd) : "-",
+          sub: dd.available ? `${fmtPct(dd.current_drawdown_pct, 2)} from peak` : "no history",
+          cls: signedClass(dd.current_drawdown_usd),
+        },
+        {
+          label: "Max drawdown (YTD)",
+          value: dd.available ? fmtUsd(dd.max_drawdown_usd) : "-",
+          sub: dd.available
+            ? `${fmtPct(dd.max_drawdown_pct, 2)} · ${safeText(dd.max_drawdown_date, "")}`
+            : "no history",
+          cls: "neg",
+        },
+        {
+          label: "Peak equity",
+          value: dd.available ? fmtUsd(dd.peak_equity_usd) : "-",
+          sub: dd.available ? `base NAV ${fmtUsd(dd.base_nav_usd)}` : "",
+        },
+      ];
+      els.pnlStrip.innerHTML = items
+        .map(
+          (it) => `
+        <div class="stat">
+          <div class="label">${it.label}</div>
+          <div class="value ${it.cls || ""}">${it.value}</div>
+          ${it.sub ? `<div class="sub">${it.sub}</div>` : ""}
+        </div>`
+        )
+        .join("");
+    }
+    if (els.drawdownMeta) {
+      els.drawdownMeta.innerHTML = dd.available
+        ? `<span class="dim small">Equity = NAV + cumulative PnL over ${dd.n_points} runs.</span>`
+        : `<span class="dim small">${safeText(dd.reason, "drawdown unavailable")}</span>`;
+    }
+  }
+
+  function renderMovers(panel) {
+    const moverTable = (rows, cls) =>
+      `<table class="tight"><thead><tr><th>Underlying</th><th>Symbols</th><th>P&amp;L</th></tr></thead>
+       <tbody>${
+         (rows || [])
+           .map(
+             (r) => `<tr>
+          <td><strong>${safeText(r.underlying)}</strong></td>
+          <td class="dim">${safeText(r.symbols, "-")}</td>
+          <td class="num ${cls}">${fmtUsdSigned(r.total_pnl)}</td>
+        </tr>`
+           )
+           .join("") || "<tr><td colspan=3 class=dim>(none)</td></tr>"
+       }</tbody></table>`;
+    if (els.moversWinners) {
+      els.moversWinners.innerHTML = (panel && panel.available)
+        ? moverTable(panel.winners, "pos")
+        : `<p class="dim">${safeText(panel?.reason, "no mover data")}</p>`;
+    }
+    if (els.moversLosers) {
+      els.moversLosers.innerHTML = (panel && panel.available)
+        ? moverTable(panel.losers, "neg")
+        : "";
+    }
+  }
+
+  function renderBorrowShock(panel, nav) {
+    if (!els.borrowShockContent) return;
+    if (!panel || !panel.available) {
+      els.borrowShockContent.innerHTML = `<p class="dim">${safeText(
+        panel?.reason,
+        "No borrow shock data."
+      )}</p>`;
+      if (els.borrowShockMeta) els.borrowShockMeta.innerHTML = "";
+      return;
+    }
+    const scen = panel.scenarios || [];
+    const rows = scen
+      .map((s) => {
+        const bite = s.incremental_pct_nav;
+        const cls = bite != null && bite >= 0.005 ? "row-warn" : "";
+        return `<tr class="${cls}">
+          <td><strong>${safeText(s.label)}</strong></td>
+          <td class="num">${fmtUsd(s.annual_cost_usd)}</td>
+          <td class="num neg">${fmtUsdSigned(-Math.abs(s.incremental_cost_usd))}</td>
+          <td class="num">${fmtPct(s.incremental_pct_nav, 3)}</td>
+        </tr>`;
+      })
+      .join("");
+    els.borrowShockContent.innerHTML = `
+      <div class="strip" style="margin-bottom:8px;">
+        <div class="stat"><div class="label">Short ETFs</div><div class="value">${
+          panel.n_short_etfs ?? 0
+        }</div><div class="sub">${fmtUsd(panel.short_notional_usd)} short</div></div>
+        <div class="stat"><div class="label">Current annual carry</div><div class="value neg">${fmtUsdSigned(
+          -Math.abs(panel.current_annual_cost_usd)
+        )}</div><div class="sub">${fmtPct(panel.current_pct_nav, 3)} of NAV</div></div>
+      </div>
+      <table class="tight"><thead><tr>
+        <th>Shock</th><th>Annual carry</th><th>Incremental drag</th><th>% NAV</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+      <p class="dim small">${safeText(panel.note, "")}</p>`;
+    if (els.borrowShockMeta) {
+      els.borrowShockMeta.innerHTML = `<span class="dim small">Annualized; applied to held short-ETF legs.</span>`;
+    }
+  }
+
+  function renderSharedUnderlying(panel) {
+    if (!els.sharedUnderlyingContent) return;
+    if (!panel || !panel.available || !(panel.rows || []).length) {
+      els.sharedUnderlyingContent.innerHTML = `<p class="dim">${safeText(
+        panel?.reason,
+        "No underlyings span multiple buckets."
+      )}</p>`;
+      return;
+    }
+    const bucketShort = (b) => b.replace("bucket_", "B");
+    const rows = panel.rows
+      .map((r) => {
+        const buckets = (r.buckets || []).map(bucketShort).join(", ");
+        return `<tr>
+          <td><strong>${safeText(r.underlying)}</strong></td>
+          <td>${buckets}</td>
+          <td class="num ${signedClass(r.net_usd)}">${fmtUsd(r.net_usd)}</td>
+          <td class="num">${fmtUsd(r.gross_usd)}</td>
+        </tr>`;
+      })
+      .join("");
+    els.sharedUnderlyingContent.innerHTML = `
+      <p class="dim small">${panel.n_shared} of ${panel.n_underlyings} underlyings span more than one bucket. ${safeText(
+        panel.note,
+        ""
+      )}</p>
+      <table class="tight sortable"><thead><tr>
+        <th>Underlying</th><th>Buckets</th><th>Net $ (summed)</th><th>Gross $ (summed)</th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+  }
+
   function renderAll(snap) {
     els.runDateLabel.textContent = `Run: ${snap.run_date}`;
     els.generatedAtLabel.textContent =
       "Generated " + new Date(snap.generated_at_utc).toLocaleString();
 
     const steps = [
+      () => renderFreshness(snap),
       () => renderDataQuality(snap.data_quality || {}),
       () => renderCockpit(snap),
       () => renderAlerts(snap.alert_rows || []),
       () => renderActionQueue(snap.action_queue || []),
+      () => renderPerformance(snap),
+      () => renderMovers(snap.movers_panel || {}),
       () => renderSlideRisk(snap.slide_risk_panel || {}),
       () => renderBucket4Sim(snap.bucket4_risk_sim || null),
+      () => renderBorrowShock(snap.borrow_shock_panel || {}, snap.nav_usd),
       () => renderConcentration(snap.concentration_panel || {}),
       () => renderFactor(snap.factor_panel || {}),
-      () => renderBucketSleevePanel(snap.bucket_sleeve_panel || {}, snap.book || {}),
+      () =>
+        renderBucketSleevePanel(
+          snap.bucket_sleeve_panel || {},
+          snap.book || {},
+          snap.display_sleeve_groups || [],
+          snap.nav_usd
+        ),
       () => bindTabs(snap),
+      () => renderSharedUnderlying(snap.shared_underlying_panel || {}),
       () => renderBorrow(snap.borrow_panel || {}),
       () => renderSqueeze((snap.borrow_panel || {}).squeeze_rows || []),
     ];

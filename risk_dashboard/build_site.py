@@ -37,6 +37,27 @@ from .metrics import build_snapshot
 
 HISTORY_MAX_RUNS = 60
 
+# Default NAV denominator falls back to the strategy capital base in
+# ``config/strategy_config.yml`` (``strategy.capital_usd``) when totals.json /
+# Flex equity are unavailable. This keeps the dashboard %-of-NAV figures aligned
+# with the sizing capital the book is actually run against.
+CONFIG_NAV_FALLBACK_USD = 800_000.0
+
+
+def _nav_from_config(config_yml: Path | None = None) -> tuple[float, str]:
+    """Return (nav_usd, source_label) read from strategy_config capital_usd."""
+    path = config_yml or Path("config/strategy_config.yml")
+    try:
+        import yaml  # local import; pyyaml is already a project dep
+
+        cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        cap = ((cfg.get("strategy") or {}).get("capital_usd"))
+        if cap is not None and float(cap) > 0:
+            return float(cap), "config:capital_usd"
+    except Exception:
+        pass
+    return CONFIG_NAV_FALLBACK_USD, "default"
+
 # Optional auxiliary panels merged into the snapshot if present. Each is a
 # standalone JSON produced by a research/EOD generator (decoupled from the
 # heavy accounting build) and keyed onto the payload under the same name.
@@ -101,6 +122,7 @@ def _extract_history_point(payload: dict) -> dict:
         "gross_pct_nav": book.get("gross_exposure_pct_nav"),
         "net_pct_nav": book.get("net_exposure_pct_nav"),
         "pnl_pct_nav": book.get("pnl_today_pct_nav"),
+        "pnl_cum_usd": book.get("pnl_today_usd"),
         "worst_shock_pct_nav": worst.get("pnl_pct_nav"),
         "worst_shock_label": worst.get("label"),
         "net_beta_to_spy": factor.get("net_beta_to_spy"),
@@ -137,6 +159,7 @@ def _compute_deltas(current: dict, prior: dict | None) -> dict:
         "gross_pct_nav",
         "net_pct_nav",
         "pnl_pct_nav",
+        "pnl_cum_usd",
         "worst_shock_pct_nav",
         "net_beta_to_spy",
         "top10_pct_nav",
@@ -172,6 +195,43 @@ def _build_index(out_dir: Path) -> dict:
     }
 
 
+def _attach_daily_pnl(payload: dict, deltas: dict) -> None:
+    """Add true day-over-day PnL to the book block from the prior snapshot.
+
+    ``book.pnl_ytd_*`` is the strategy cumulative; the day move is the change in
+    that cumulative vs the prior run (``deltas.delta_pnl_cum_usd``).
+    """
+    book = payload.get("book") or {}
+    nav = book.get("nav_usd") or 0.0
+    daily = deltas.get("delta_pnl_cum_usd")
+    book["pnl_daily_usd"] = daily
+    book["pnl_daily_pct_nav"] = (daily / nav) if (daily is not None and nav) else None
+    book["pnl_daily_prior_run_date"] = deltas.get("prior_run_date")
+    payload["book"] = book
+
+
+def _attach_freshness(payload: dict, runs_root: Path, run_date: str) -> None:
+    """Mark whether this snapshot's run_date is the latest accounting run."""
+    latest = None
+    dates = _discover_accounting_run_dates(runs_root)
+    if dates:
+        latest = dates[-1]
+    age_days = None
+    try:
+        gen = payload.get("generated_at_utc") or ""
+        gen_date = datetime.fromisoformat(gen.replace("Z", "+00:00")).date()
+        rd = datetime.strptime(str(run_date), "%Y-%m-%d").date()
+        age_days = (gen_date - rd).days
+    except Exception:
+        age_days = None
+    payload["freshness"] = {
+        "run_date": run_date,
+        "latest_accounting_run_date": latest,
+        "is_latest": (latest is None or run_date == latest),
+        "data_age_days": age_days,
+    }
+
+
 def build_run_snapshot(
     *,
     run_date: str,
@@ -181,6 +241,7 @@ def build_run_snapshot(
     screener_csv: Path | None,
     generated_at_utc: str | None = None,
     write_latest: bool = True,
+    nav_source_hint: str = "MAGIS_NAV_USD",
 ) -> Path:
     """Build one dated snapshot (+ optional latest.json) from accounting outputs."""
     snap = build_snapshot(
@@ -189,6 +250,7 @@ def build_run_snapshot(
         nav_usd=nav_usd,
         generated_at_utc=generated_at_utc or datetime.now(timezone.utc).isoformat(),
         screener_csv=screener_csv,
+        nav_source_hint=nav_source_hint,
     )
     payload = snap.to_dict()
 
@@ -200,6 +262,8 @@ def build_run_snapshot(
     current_point = _extract_history_point(payload)
     payload["history"] = history + [current_point]
     payload["deltas"] = _compute_deltas(current_point, history[-1] if history else None)
+    _attach_daily_pnl(payload, payload["deltas"])
+    _attach_freshness(payload, runs_root, run_date)
 
     snap_path = out_dir / f"{run_date}.json"
     _write_json(snap_path, payload)
@@ -215,9 +279,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--nav-usd",
         type=float,
-        default=float(os.getenv("MAGIS_NAV_USD", "800000")),
+        default=None,
         help="Account NAV used as the denominator for %%-of-NAV metrics. "
-        "Override via env MAGIS_NAV_USD or this flag.",
+        "Defaults to strategy.capital_usd from config/strategy_config.yml; "
+        "override via env MAGIS_NAV_USD or this flag.",
     )
     ap.add_argument(
         "--out-dir",
@@ -235,11 +300,29 @@ def main(argv: list[str] | None = None) -> int:
         help="Rebuild every run date with accounting/totals.json, oldest first "
         "(use after a full accounting restate).",
     )
+    ap.add_argument(
+        "--fail-if-stale",
+        action="store_true",
+        help="Exit non-zero if the built run_date is not the latest accounting run "
+        "(CI guard against publishing a stale snapshot).",
+    )
     args = ap.parse_args(argv)
 
     runs_root = Path(args.runs_root).resolve()
     out_dir = Path(args.out_dir).resolve()
     screener_csv = Path(args.screener_csv).resolve() if args.screener_csv else None
+
+    # NAV denominator precedence: explicit --nav-usd > env MAGIS_NAV_USD >
+    # config strategy.capital_usd > hard default. The resolved value is only a
+    # *fallback*: build_snapshot still prefers totals.json / Flex equity when
+    # those carry a real NAV.
+    if args.nav_usd is not None:
+        nav_usd, nav_source_hint = float(args.nav_usd), "cli:--nav-usd"
+    elif os.getenv("MAGIS_NAV_USD"):
+        nav_usd, nav_source_hint = float(os.environ["MAGIS_NAV_USD"]), "MAGIS_NAV_USD"
+    else:
+        nav_usd, nav_source_hint = _nav_from_config()
+    print(f"[risk_dashboard] NAV fallback = ${nav_usd:,.0f} (source hint: {nav_source_hint})")
 
     if args.all_dates:
         run_dates = _discover_accounting_run_dates(runs_root)
@@ -251,9 +334,10 @@ def main(argv: list[str] | None = None) -> int:
                 run_date=run_date,
                 runs_root=runs_root,
                 out_dir=out_dir,
-                nav_usd=args.nav_usd,
+                nav_usd=nav_usd,
                 screener_csv=screener_csv,
                 write_latest=(i == len(run_dates)),
+                nav_source_hint=nav_source_hint,
             )
             print(f"[risk_dashboard] ({i}/{len(run_dates)}) wrote {snap_path}")
     else:
@@ -262,12 +346,24 @@ def main(argv: list[str] | None = None) -> int:
             run_date=run_date,
             runs_root=runs_root,
             out_dir=out_dir,
-            nav_usd=args.nav_usd,
+            nav_usd=nav_usd,
             screener_csv=screener_csv,
             write_latest=True,
+            nav_source_hint=nav_source_hint,
         )
         print(f"[risk_dashboard] wrote {snap_path}")
         print(f"[risk_dashboard] wrote {out_dir / 'latest.json'}")
+
+        latest_acct = _discover_accounting_run_dates(runs_root)
+        newest = latest_acct[-1] if latest_acct else None
+        if newest and run_date != newest:
+            msg = (
+                f"[risk_dashboard] WARNING: built {run_date} but newest accounting "
+                f"run is {newest} (snapshot is stale)."
+            )
+            print(msg)
+            if args.fail_if_stale:
+                raise SystemExit(msg)
 
     manifest = _build_index(out_dir)
     index_path = out_dir / "index.json"

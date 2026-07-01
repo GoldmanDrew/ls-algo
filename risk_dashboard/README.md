@@ -89,7 +89,33 @@ Optional repo **variable** (Settings ? Variables ? Actions):
 
 | Variable | Default | Effect |
 |---|---|---|
-| `MAGIS_NAV_USD` | `800000` | denominator for %-of-NAV metrics. |
+| `MAGIS_NAV_USD` | *(unset)* | denominator for %-of-NAV metrics. |
+
+**NAV denominator precedence** (highest first): `--nav-usd` flag → env
+`MAGIS_NAV_USD` → `strategy.capital_usd` in `config/strategy_config.yml`
+(currently **$1,050,000**) → hard default `$800,000`. The resolved value is only
+a *fallback*: `build_site` still prefers a real NAV from `totals.json` /
+Flex equity when present. The snapshot records where NAV came from in
+`nav_source` (e.g. `config:capital_usd`), surfaced in the cockpit.
+
+### Dashboard panels (Phase 0-4)
+
+* **Freshness badge** — header pill comparing the snapshot's `run_date` to the
+  latest accounting run + its age in days (`fresh` / `Nd old` / `stale snapshot`).
+* **Bucket 5 (volatility ETP)** — a first-class sleeve everywhere B1/B2/B4 are:
+  sleeve table, bucket tabs, factor-by-bucket, data-quality scan. It is shown
+  but **not** added to the exposure reconciliation set (which mirrors
+  `ibkr_accounting`: B1+B2+B4 + unbucketed net).
+* **P&L naming** — `pnl_ytd_*` (strategy cumulative) is explicit; `pnl_daily_*`
+  is the true day-over-day move vs the prior snapshot. Cockpit shows both.
+* **Performance & drawdown** — daily/YTD P&L, current & max drawdown of the
+  NAV+cumulative-PnL equity curve, plus top cumulative winners/losers.
+* **Borrow shock sensitivity** — annualized carry on held short ETFs under
+  ×1.25/×1.5/×2 and +10pp/+25pp APR shocks.
+* **Shared underlyings** — names whose exposure spans more than one bucket
+  (shared broker spot line that nets across sleeves).
+* **EOD sleeve groups** — B1+B2+B4+B5 vs B3 overlay, matching the PnL email,
+  plus book margin utilization (Σ margin req / NAV).
 
 ### 3. Trigger the workflow once
 

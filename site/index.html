@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="referrer" content="no-referrer">
 <title>ls-algo Risk Dashboard</title>
-<link rel="stylesheet" href="./assets/css/main.css?v=2026-06-25-b4-risk-sim">
+<link rel="stylesheet" href="./assets/css/main.css?v=2026-06-30-phase0-4">
 </head>
 <body>
 
@@ -17,6 +17,7 @@
   </div>
   <div class="meta">
     <span id="run-date-label" class="dim">No data loaded</span>
+    <span id="freshness-badge" class="pill" hidden></span>
     <span id="generated-at-label" class="dim"></span>
     <span id="auth-user-label" class="topbar-user dim" hidden title="Signed in"></span>
     <button id="theme-toggle" class="btn btn-ghost" type="button" title="Toggle dark mode">Dark</button>
@@ -27,6 +28,7 @@
 <nav id="subnav" class="subnav" hidden>
   <a href="#cockpit-section">Cockpit</a>
   <a href="#actions-section">Actions</a>
+  <a href="#performance-section">Performance</a>
   <a href="#slide-risk-section">Slide risk</a>
   <a href="#b4sim-section">B4 risk sim</a>
   <a href="#borrow-shock-section">Borrow shocks</a>
@@ -34,6 +36,7 @@
   <a href="#factor-section">Factor</a>
   <a href="#sleeve-section">Sleeves</a>
   <a href="#buckets-section">Buckets</a>
+  <a href="#shared-section">Shared names</a>
   <a href="#borrow-section">Borrow</a>
 </nav>
 
@@ -84,6 +87,25 @@
     <section id="actions-section" class="panel">
       <h2>Action queue</h2>
       <div id="action-queue"></div>
+    </section>
+
+    <!-- Performance: daily/YTD P&L, book drawdown, top movers -->
+    <section id="performance-section" class="panel">
+      <div class="panel-head">
+        <h2>Performance &amp; drawdown</h2>
+        <div id="drawdown-meta" class="quality-line"></div>
+      </div>
+      <div id="pnl-strip" class="strip"></div>
+      <div class="two-col">
+        <div>
+          <h3>Top cumulative winners</h3>
+          <div id="movers-winners"></div>
+        </div>
+        <div>
+          <h3>Top cumulative losers</h3>
+          <div id="movers-losers"></div>
+        </div>
+      </div>
     </section>
 
     <!-- Slide risk strips: SPX / NDX / RUT -->
@@ -165,8 +187,15 @@
         <button class="tab" data-bucket="bucket_2">B2 (yield)</button>
         <button class="tab" data-bucket="bucket_3">B3 (flow overlay)</button>
         <button class="tab" data-bucket="bucket_4">B4 (inverse)</button>
+        <button class="tab" data-bucket="bucket_5">B5 (vol ETP)</button>
       </nav>
       <div id="bucket-content"></div>
+    </section>
+
+    <!-- Shared underlyings across buckets -->
+    <section id="shared-section" class="panel">
+      <h2>Shared underlyings (exposure spanning multiple buckets)</h2>
+      <div id="shared-underlying-content"></div>
     </section>
 
     <!-- Borrow + microstructure -->
@@ -200,6 +229,6 @@
 
 <script src="./assets/js/config.js?v=2026-05-19-login-fix"></script>
 <script src="./assets/js/auth.js?v=2026-05-19-login-fix"></script>
-<script src="./assets/js/app.js?v=2026-06-25-b4-risk-sim"></script>
+<script src="./assets/js/app.js?v=2026-06-30-phase0-4"></script>
 </body>
 </html>
