@@ -1,34 +1,14 @@
 name: Risk Dashboard
 
-# Two responsibilities, one workflow:
-#   1) build  : after each EOD run (or on demand), regenerate the JSON
-#               snapshot under risk_dashboard/data/ and commit it back
-#               to main. This is the data plane.
-#   2) deploy : redeploy the static site under site/ to GitHub Pages.
-#               Bundles risk_dashboard/data/latest.json into site/data/
-#               and gates the UI with login id + password (investors.json).
+# Deploy the static site to GitHub Pages.
+# Snapshot *build* runs as the tail of eod_pnl_email.yml (authoritative path).
+# This workflow: deploy after snapshot commits, manual rebuild, or recovery.
 
 on:
-  # Mirror the EOD pipeline cadence so the dashboard rebuilds even if
-  # the upstream workflow_run path does not fire.
-  schedule:
-    # 06:00 UTC = 02:00 America/New_York during EDT; 01:00 during EST.
-    - cron: "0 6 * * 2-6"
-
-  # Run after the existing EOD pipeline (eod_pnl_email.yml) succeeds.
-  workflow_run:
-    workflows: ["EOD PnL Email + Daily Screener"]
-    types: [completed]
-
-  # Manual trigger.
   workflow_dispatch:
     inputs:
       run_date:
-        description: "Run date YYYY-MM-DD (blank = latest under data/runs/)"
-        required: false
-        default: ""
-      nav_usd:
-        description: "Account NAV %-of-NAV denominator (blank = strategy.capital_usd from config)"
+        description: "Run date YYYY-MM-DD (blank = latest accounting run)"
         required: false
         default: ""
       skip_build:
@@ -36,63 +16,57 @@ on:
         required: false
         default: "false"
         type: boolean
+      allow_config_nav:
+        description: "Allow config NAV fallback in verify gates (dev/backfill)"
+        required: false
+        default: "false"
+        type: boolean
 
-  # Rebuild the site shell whenever the dashboard code changes.
   push:
     branches: [main]
     paths:
       - "risk_dashboard/**"
       - "site/**"
-      - "scripts/build_bucket4_risk_sim.py"
-      - "scripts/sizing_tilt_cadence_bt.py"
-      - "scripts/bucket4_cadence_risk_opt.py"
-      - "config/strategy_config.yml"
+      - "scripts/dashboard_pipeline.py"
+      - "scripts/verify_dashboard_snapshot.py"
+      - "scripts/run_data_contract.py"
       - ".github/workflows/risk_dashboard.yml"
 
-# Pages deploy needs these.
 permissions:
   contents: write
   pages: write
   id-token: write
 
-# Only one concurrent deploy. Build jobs may stack but we don't push
-# multiple Pages deploys simultaneously.
 concurrency:
-  group: "risk-dashboard-pages"
+  group: risk-dashboard-pages
   cancel-in-progress: true
 
 jobs:
-  # ----------------------------------------------------------------
-  # Build the JSON snapshot and commit it. Skipped when the trigger
-  # is a docs-only push or the user passed skip_build=true.
-  # ----------------------------------------------------------------
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     if: >-
-      github.event_name == 'workflow_dispatch' && inputs.skip_build != 'true'
-      || github.event_name == 'schedule'
-      || github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+      (github.event_name == 'workflow_dispatch' && inputs.skip_build != 'true')
+      || (github.event_name == 'push'
+        && !startsWith(github.event.head_commit.message, 'risk_dashboard: snapshot')
+        && !startsWith(github.event.head_commit.message, 'risk_dashboard: recovery'))
 
     outputs:
-      run_date: ${{ steps.compute.outputs.run_date }}
-      committed: ${{ steps.commit.outputs.committed }}
+      run_date: ${{ steps.date.outputs.run_date }}
+      gates_passed: ${{ steps.gate.outputs.gates_passed }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GH_PAT || github.token }}
 
-      - name: Checkout etf-dashboard (squeeze liquidity metrics)
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: GoldmanDrew/etf-dashboard
           ref: main
           path: etf-dashboard
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
@@ -103,133 +77,109 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
 
-      - name: Run risk-dashboard tests
+      - name: Run dashboard tests
         run: |
-          python -m pytest risk_dashboard/tests -q
+          python -m pytest risk_dashboard/tests tests/test_dashboard_accounting_parity.py tests/test_dashboard_phase0_4.py -q
 
-      - name: Compute run date
-        id: compute
+      - name: Resolve run date
+        id: date
         run: |
           if [ -n "${{ inputs.run_date }}" ]; then
-            RUN_DATE="${{ inputs.run_date }}"
+            RD="${{ inputs.run_date }}"
           else
-            RUN_DATE=$(python -c "
-          from pathlib import Path
-          dirs = sorted([p.name for p in Path('data/runs').iterdir() if p.is_dir() and p.name[:4].isdigit()], reverse=True)
-          print(dirs[0] if dirs else '')
+            RD=$(python -c "
+          from scripts.run_data_contract import discover_accounting_dates
+          d = discover_accounting_dates()
+          print(d[-1] if d else '')
           ")
           fi
-          if [ -z "$RUN_DATE" ]; then
-            echo "No run-date folder under data/runs; aborting."
-            exit 1
-          fi
-          echo "run_date=$RUN_DATE" >> "$GITHUB_OUTPUT"
-          echo "Selected run_date=$RUN_DATE"
+          test -n "$RD"
+          echo "run_date=$RD" >> "$GITHUB_OUTPUT"
 
-      - name: Build Bucket 4 risk simulator dataset
-        run: |
-          python scripts/build_bucket4_risk_sim.py \
-            --run-date "${{ steps.compute.outputs.run_date }}" \
-            --n-mc 8000
-
-      - name: Build snapshot
-        # NAV denominator: explicit input/var wins; otherwise build_site reads
-        # strategy.capital_usd from config/strategy_config.yml (currently $1.05M).
+      - name: Build + verify snapshot
+        id: gate
         env:
-          MAGIS_NAV_USD: ${{ inputs.nav_usd || vars.MAGIS_NAV_USD || '' }}
+          ALLOW_CONFIG: ${{ inputs.allow_config_nav }}
         run: |
-          NAV_ARG=""
-          if [ -n "$MAGIS_NAV_USD" ]; then
-            NAV_ARG="--nav-usd $MAGIS_NAV_USD"
+          EXTRA=""
+          if [ "$ALLOW_CONFIG" = "true" ]; then
+            EXTRA="--allow-config-nav"
           fi
-          python -m risk_dashboard.build_site \
-            --run-date "${{ steps.compute.outputs.run_date }}" \
-            --runs-root data/runs \
-            $NAV_ARG \
-            --out-dir risk_dashboard/data
+          python scripts/dashboard_pipeline.py \
+            --run-date "${{ steps.date.outputs.run_date }}" \
+            --write-manifest \
+            --fail-if-stale \
+            $EXTRA
+          echo "gates_passed=true" >> "$GITHUB_OUTPUT"
 
       - name: Commit snapshot
-        id: commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add risk_dashboard/data || true
+          git add risk_dashboard/data data/runs/*/manifest.json || true
           if git diff --cached --quiet; then
-            echo "No snapshot changes to commit"
-            echo "committed=false" >> "$GITHUB_OUTPUT"
+            echo "No snapshot changes"
           else
-            git commit -m "risk_dashboard: snapshot ${{ steps.compute.outputs.run_date }}"
-            git pull --no-rebase -X ours origin main || true
-            git push
-            echo "committed=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Warm beta cache (history closes + summary)
-        # Persist data/cache/beta_history/*.csv + beta_summary.json
-        # back to main so the next build can compute betas even if
-        # yfinance is rate-limited. [skip ci] in the message prevents
-        # this commit from re-triggering the workflow.
-        run: |
-          git add data/cache/beta_history data/cache/beta_summary.json 2>/dev/null || true
-          if git diff --cached --quiet; then
-            echo "No beta-cache changes to commit"
-          else
-            git commit -m "warm beta cache ${{ steps.compute.outputs.run_date }} [skip ci]"
+            git commit -m "risk_dashboard: snapshot ${{ steps.date.outputs.run_date }}"
             git pull --no-rebase -X ours origin main || true
             git push
           fi
 
-  # ----------------------------------------------------------------
-  # Deploy the static site to GitHub Pages.
-  # Runs whenever the workflow runs (build or skip_build path).
-  # ----------------------------------------------------------------
   deploy:
     needs: build
     if: |
-      always() &&
-      (needs.build.result == 'success' || needs.build.result == 'skipped')
+      always() && (
+        (needs.build.result == 'success' && needs.build.outputs.gates_passed == 'true')
+        || (needs.build.result == 'skipped' && github.event_name == 'push')
+        || (github.event_name == 'workflow_dispatch' && inputs.skip_build == 'true')
+      )
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Checkout (post-commit)
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: main
 
-      - name: Configure Pages
-        uses: actions/configure-pages@v4
+      - name: Verify latest.json before deploy
+        run: |
+          test -f risk_dashboard/data/latest.json
+          python -c "
+          import json, sys
+          from scripts.run_data_contract import discover_accounting_dates
+          snap = json.load(open('risk_dashboard/data/latest.json'))
+          latest = discover_accounting_dates()[-1]
+          rd = snap.get('run_date')
+          fresh = (snap.get('freshness') or {}).get('is_latest')
+          if rd != latest or fresh is False:
+              print(f'Deploy blocked: snapshot run_date={rd} latest={latest} fresh={fresh}', file=sys.stderr)
+              sys.exit(1)
+          print(f'Deploy ok: run_date={rd}')
+          "
 
-      - name: Bundle snapshot + auth data for Pages
+      - uses: actions/configure-pages@v4
+
+      - name: Bundle snapshot for Pages
         run: |
           mkdir -p site/data
           cp risk_dashboard/data/latest.json site/data/latest.json
-          if [ -f risk_dashboard/data/index.json ]; then
-            cp risk_dashboard/data/index.json site/data/index.json
-          fi
-          if [ -f site/data/investors.json ]; then
-            echo "Using committed site/data/investors.json"
-          else
-            echo "No site/data/investors.json — dashboard will load without login"
-          fi
+          cp risk_dashboard/data/index.json site/data/index.json 2>/dev/null || true
 
-      - name: Inject build metadata into site
+      - name: Inject build metadata
         run: |
-          mkdir -p site
           cat > site/build_meta.json <<EOF
           {
             "deployed_at_utc": "$(date -u +%FT%TZ)",
             "commit_sha": "${{ github.sha }}",
-            "trigger": "${{ github.event_name }}"
+            "trigger": "${{ github.event_name }}",
+            "snapshot_run_date": "$(python -c "import json; print(json.load(open('risk_dashboard/data/latest.json')).get('run_date',''))")"
           }
           EOF
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
-      - name: Deploy to GitHub Pages
+      - uses: actions/deploy-pages@v4
         id: deployment
-        uses: actions/deploy-pages@v4

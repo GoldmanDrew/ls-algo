@@ -204,8 +204,35 @@ _FLEX_NAV_TAGS = (
 )
 
 
+def _nav_from_position_percent_of_nav(flex_positions_xml: Path) -> dict[str, Any] | None:
+    """Infer account NAV from OpenPosition ``percentOfNAV`` × base position value."""
+    if not flex_positions_xml.is_file():
+        return None
+    estimates: list[float] = []
+    for elem in _iter_elements(flex_positions_xml, "OpenPosition"):
+        a = elem.attrib
+        if str(a.get("levelOfDetail", "")).upper() not in ("", "SUMMARY"):
+            continue
+        pct = _to_float(a.get("percentOfNAV"))
+        if pct <= 0:
+            continue
+        pv_base = _to_float(a.get("positionValue")) * _to_float(a.get("fxRateToBase"), 1.0)
+        if abs(pv_base) <= 0:
+            continue
+        estimates.append(abs(pv_base) / (pct / 100.0))
+    if not estimates:
+        return None
+    estimates.sort()
+    mid = estimates[len(estimates) // 2]
+    return {
+        "nav_usd": mid,
+        "source": "flex_positions:percentOfNAV_median",
+        "n_estimates": len(estimates),
+    }
+
+
 def parse_flex_nav(flex_dir: Path) -> dict[str, Any] | None:
-    """Best-effort NAV from Flex equity summary tags (when present in run folder)."""
+    """Best-effort NAV from Flex equity tags or position ``percentOfNAV`` rows."""
     if not flex_dir.is_dir():
         return None
     candidates = [
@@ -246,4 +273,5 @@ def parse_flex_nav(flex_dir: Path) -> dict[str, Any] | None:
                         "nav_usd": val,
                         "source": f"{path.name}:{tag}.{nav_key}",
                     }
-    return None
+    pos_path = flex_dir / "flex_positions.xml"
+    return _nav_from_position_percent_of_nav(pos_path)

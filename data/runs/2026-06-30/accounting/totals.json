@@ -195,5 +195,7 @@
     "margin_req_bucket_2": 918836.6241099278,
     "margin_req_bucket_4": 112933.92185144399,
     "margin_req_bucket_5": 12385.573225008
-  }
+  },
+  "nav_usd": 3487649.9999999995,
+  "nav_source": "flex_positions:percentOfNAV_median"
 }

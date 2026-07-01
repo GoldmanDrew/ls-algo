@@ -1,0 +1,86 @@
+name: Dashboard Recovery
+
+# Catch-up if EOD succeeded but dashboard snapshot/manifest is missing or stale.
+on:
+  schedule:
+    - cron: "0 10 * * 1-6"
+  workflow_dispatch:
+    inputs:
+      run_date:
+        description: "YYYY-MM-DD (blank = latest accounting run)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: data-plane-main
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Recovery check + rebuild if needed
+        run: |
+          RUN_DATE="${{ inputs.run_date }}"
+          if [ -z "$RUN_DATE" ]; then
+            RUN_DATE=$(python -c "
+          from scripts.run_data_contract import discover_accounting_dates
+          d = discover_accounting_dates()
+          print(d[-1] if d else '')
+          ")
+          fi
+          if [ -z "$RUN_DATE" ]; then
+            echo "No accounting runs; nothing to recover."
+            exit 0
+          fi
+          echo "Recovery target run_date=$RUN_DATE"
+          NEED=0
+          if [ ! -f "data/runs/${RUN_DATE}/manifest.json" ]; then
+            echo "missing manifest"
+            NEED=1
+          fi
+          SNAP_DATE=$(python -c "import json; print(json.load(open('risk_dashboard/data/latest.json')).get('run_date',''))" 2>/dev/null || echo "")
+          if [ "$SNAP_DATE" != "$RUN_DATE" ]; then
+            echo "latest.json run_date=$SNAP_DATE expected $RUN_DATE"
+            NEED=1
+          fi
+          if [ "$NEED" -eq 0 ]; then
+            echo "Dashboard already current for $RUN_DATE"
+            exit 0
+          fi
+          python scripts/dashboard_pipeline.py \
+            --run-date "$RUN_DATE" \
+            --write-manifest \
+            --fail-if-stale
+
+      - name: Commit recovered snapshot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add risk_dashboard/data data/runs/*/manifest.json data/runs/*/etf_screened_today.csv || true
+          if git diff --cached --quiet; then
+            echo "No recovery changes"
+          else
+            git commit -m "risk_dashboard: recovery snapshot [skip ci]"
+            git pull --no-rebase -X ours origin main || true
+            git push
+          fi

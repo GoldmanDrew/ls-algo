@@ -195,19 +195,55 @@ def _build_index(out_dir: Path) -> dict:
     }
 
 
-def _attach_daily_pnl(payload: dict, deltas: dict) -> None:
-    """Add true day-over-day PnL to the book block from the prior snapshot.
+def _attach_daily_pnl(payload: dict, deltas: dict, run_date: str) -> None:
+    """Add day-over-day PnL to the book block.
 
-    ``book.pnl_ytd_*`` is the strategy cumulative; the day move is the change in
-    that cumulative vs the prior run (``deltas.delta_pnl_cum_usd``).
+    Primary: consecutive rows in ``pnl_history.csv`` (robust if a snapshot day
+    was skipped). Fallback: delta vs the prior published snapshot.
     """
     book = payload.get("book") or {}
     nav = book.get("nav_usd") or 0.0
-    daily = deltas.get("delta_pnl_cum_usd")
+    daily: float | None = None
+    prior_date: str | None = None
+    source = "unavailable"
+    try:
+        from scripts.run_data_contract import daily_pnl_from_history
+
+        daily, prior_date = daily_pnl_from_history(run_date)
+        if daily is not None:
+            source = "pnl_history.csv"
+    except Exception:
+        pass
+    if daily is None:
+        daily = deltas.get("delta_pnl_cum_usd")
+        prior_date = deltas.get("prior_run_date")
+        if daily is not None:
+            source = "snapshot_delta"
     book["pnl_daily_usd"] = daily
     book["pnl_daily_pct_nav"] = (daily / nav) if (daily is not None and nav) else None
-    book["pnl_daily_prior_run_date"] = deltas.get("prior_run_date")
+    book["pnl_daily_prior_run_date"] = prior_date
+    book["pnl_daily_source"] = source
     payload["book"] = book
+
+
+def _attach_lineage(payload: dict, run_date: str, runs_root: Path) -> None:
+    try:
+        from scripts.run_data_contract import load_manifest
+
+        payload["manifest"] = load_manifest(run_date, runs_root=runs_root)
+    except FileNotFoundError:
+        payload["manifest"] = None
+    payload.setdefault("data_quality", {})
+    dq = payload["data_quality"]
+    if isinstance(dq, dict):
+        manifest = payload.get("manifest") or {}
+        dq["lineage"] = {
+            "manifest_present": manifest != {},
+            "nav_source": manifest.get("nav_source") or payload.get("nav_source"),
+            "git_sha": manifest.get("git_sha"),
+            "workflow_run_id": manifest.get("workflow_run_id"),
+            "checksum_count": len(manifest.get("checksums") or {}),
+        }
 
 
 def _attach_freshness(payload: dict, runs_root: Path, run_date: str) -> None:
@@ -262,8 +298,9 @@ def build_run_snapshot(
     current_point = _extract_history_point(payload)
     payload["history"] = history + [current_point]
     payload["deltas"] = _compute_deltas(current_point, history[-1] if history else None)
-    _attach_daily_pnl(payload, payload["deltas"])
+    _attach_daily_pnl(payload, payload["deltas"], run_date)
     _attach_freshness(payload, runs_root, run_date)
+    _attach_lineage(payload, run_date, runs_root)
 
     snap_path = out_dir / f"{run_date}.json"
     _write_json(snap_path, payload)
@@ -313,9 +350,8 @@ def main(argv: list[str] | None = None) -> int:
     screener_csv = Path(args.screener_csv).resolve() if args.screener_csv else None
 
     # NAV denominator precedence: explicit --nav-usd > env MAGIS_NAV_USD >
-    # config strategy.capital_usd > hard default. The resolved value is only a
-    # *fallback*: build_snapshot still prefers totals.json / Flex equity when
-    # those carry a real NAV.
+    # config strategy.capital_usd > hard default. build_snapshot still prefers
+    # totals.json / Flex equity when present.
     if args.nav_usd is not None:
         nav_usd, nav_source_hint = float(args.nav_usd), "cli:--nav-usd"
     elif os.getenv("MAGIS_NAV_USD"):
@@ -324,30 +360,40 @@ def main(argv: list[str] | None = None) -> int:
         nav_usd, nav_source_hint = _nav_from_config()
     print(f"[risk_dashboard] NAV fallback = ${nav_usd:,.0f} (source hint: {nav_source_hint})")
 
+    def _resolve_run_date_and_screener(rd: str) -> tuple[str, Path | None]:
+        pinned = runs_root / rd / "etf_screened_today.csv"
+        if pinned.is_file():
+            return rd, pinned
+        if screener_csv and screener_csv.is_file():
+            return rd, screener_csv
+        return rd, screener_csv
+
     if args.all_dates:
         run_dates = _discover_accounting_run_dates(runs_root)
         if not run_dates:
             raise SystemExit(f"no accounting runs under {runs_root}")
         print(f"[risk_dashboard] rebuilding {len(run_dates)} snapshot(s): {run_dates[0]} -> {run_dates[-1]}")
         for i, run_date in enumerate(run_dates, start=1):
+            _, sc_path = _resolve_run_date_and_screener(run_date)
             snap_path = build_run_snapshot(
                 run_date=run_date,
                 runs_root=runs_root,
                 out_dir=out_dir,
                 nav_usd=nav_usd,
-                screener_csv=screener_csv,
+                screener_csv=sc_path,
                 write_latest=(i == len(run_dates)),
                 nav_source_hint=nav_source_hint,
             )
             print(f"[risk_dashboard] ({i}/{len(run_dates)}) wrote {snap_path}")
     else:
         run_date = args.run_date or _discover_default_run_date(runs_root)
+        _, sc_path = _resolve_run_date_and_screener(run_date)
         snap_path = build_run_snapshot(
             run_date=run_date,
             runs_root=runs_root,
             out_dir=out_dir,
             nav_usd=nav_usd,
-            screener_csv=screener_csv,
+            screener_csv=sc_path,
             write_latest=True,
             nav_source_hint=nav_source_hint,
         )

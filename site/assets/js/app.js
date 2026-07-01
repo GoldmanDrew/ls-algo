@@ -194,6 +194,18 @@
 
     const recs = dq.reconciliations || [];
     const recBreaks = recs.filter((r) => r.status !== "ok");
+    const lineage = dq.lineage || {};
+    if (lineage.manifest_present || lineage.nav_source) {
+      sections.unshift(`<div class="dq-group">
+        <h4>Lineage</h4>
+        <table class="tight"><tbody>
+          <tr><td>NAV source</td><td><code>${safeText(lineage.nav_source, "-")}</code></td></tr>
+          <tr><td>Manifest</td><td>${lineage.manifest_present ? "present" : "missing"}</td></tr>
+          <tr><td>Checksums</td><td>${lineage.checksum_count ?? 0}</td></tr>
+          <tr><td>Git SHA</td><td><code>${safeText(lineage.git_sha, "-").slice(0, 12)}</code></td></tr>
+        </tbody></table>
+      </div>`);
+    }
     if (recBreaks.length) {
       sections.push(`<div class="dq-group">
         <h4>Reconciliation breaks (${recBreaks.length})</h4>
@@ -2401,15 +2413,15 @@
     const age = f.data_age_days;
     if (f.is_latest && (age == null || age <= 1)) {
       badge.className = "pill pill-ok";
-      badge.textContent = age === 0 || age == null ? "fresh" : `${age}d old`;
-      badge.title = "This is the latest accounting run.";
+      badge.textContent = age === 0 || age == null ? "fresh · EOD ✓" : `${age}d old`;
+      badge.title = "Snapshot matches latest accounting run.";
     } else if (!f.is_latest) {
       badge.className = "pill pill-hard";
-      badge.textContent = "stale snapshot";
-      badge.title = `Newer accounting run available: ${safeText(
+      badge.textContent = "stale · fix CI";
+      badge.title = `Newer accounting run: ${safeText(
         f.latest_accounting_run_date,
         "unknown"
-      )}`;
+      )}. Dashboard pipeline may have failed.`;
     } else {
       badge.className = "pill pill-warn";
       badge.textContent = `${age}d old`;
@@ -2614,6 +2626,14 @@
     if (els.rawTotals) {
       els.rawTotals.textContent = JSON.stringify(snap.raw_totals || {}, null, 2);
     }
+    fetch("./build_meta.json")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((meta) => {
+        const foot = document.getElementById("deploy-meta");
+        if (!foot || !meta) return;
+        foot.textContent = `Deployed ${meta.deployed_at_utc || ""} · snapshot ${meta.snapshot_run_date || snap.run_date || ""} · ${String(meta.commit_sha || "").slice(0, 7)}`;
+      })
+      .catch(() => {});
     enableSortableTables();
   }
 

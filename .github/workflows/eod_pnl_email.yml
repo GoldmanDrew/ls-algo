@@ -1,22 +1,21 @@
 name: EOD PnL Email + Daily Screener
 
-# One active run per branch; newer pushes cancel the previous screener run.
 concurrency:
-  group: eod-pipeline-${{ github.ref }}
-  cancel-in-progress: true
+  group: data-plane-main
+  cancel-in-progress: false
 
 on:
   schedule:
-    # 06:00 UTC ≈ 02:00 America/New_York during EDT; 01:00 during EST (GitHub cron is UTC-only)
-    - cron: "0 6 * * 2-6"
+    # 06:00 UTC ≈ 02:00 America/New_York (Mon–Sat; holidays skipped in calendar job)
+    - cron: "0 6 * * 1-6"
   push:
     branches: [main]
-    # Dashboard-only / bot-data commits should not re-run the screener (45+ min).
     paths-ignore:
       - "site/**"
       - "risk_dashboard/data/**"
       - "**.md"
       - ".github/workflows/risk_dashboard.yml"
+      - ".github/workflows/dashboard_recovery.yml"
   workflow_dispatch:
     inputs:
       job:
@@ -30,31 +29,58 @@ on:
           - eod
 
 jobs:
-  # ────────────────────────────────────────────────────────
-  # Daily screener — weekdays on schedule, plus every push to main
-  # (excluding bot commits that only refresh screener/EOD/dashboard data).
-  # ────────────────────────────────────────────────────────
+  calendar:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.cal.outputs.should_run }}
+      run_date: ${{ steps.cal.outputs.run_date }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Trading calendar gate
+        id: cal
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            RUN_DATE=$(python -c "
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          print(datetime.now(ZoneInfo('America/New_York')).date().isoformat())
+          ")
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "run_date=$RUN_DATE" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          python -c "
+          from scripts.trading_calendar import scheduled_run_context
+          ctx = scheduled_run_context()
+          print('should_run=' + str(ctx['should_run']).lower())
+          print('run_date=' + ctx['run_date'])
+          " >> "$GITHUB_OUTPUT"
+
   screener:
+    needs: calendar
     if: >-
-      (github.event_name == 'push'
-        && github.event.head_commit != null
-        && !startsWith(github.event.head_commit.message, 'screener:')
-        && !startsWith(github.event.head_commit.message, 'eod:')
-        && !startsWith(github.event.head_commit.message, 'risk_dashboard:')
-        && !contains(github.event.head_commit.message, 'Merge branch'))
-      || (github.event_name == 'workflow_dispatch' && (inputs.job == 'screener' || inputs.job == 'both'))
-      || (github.event_name == 'schedule' && github.event.schedule == '0 6 * * 2-6')
+      needs.calendar.outputs.should_run == 'true'
+      && (
+        (github.event_name == 'push'
+          && github.event.head_commit != null
+          && !startsWith(github.event.head_commit.message, 'screener:')
+          && !startsWith(github.event.head_commit.message, 'eod:')
+          && !startsWith(github.event.head_commit.message, 'risk_dashboard:')
+          && !contains(github.event.head_commit.message, 'Merge branch'))
+        || (github.event_name == 'workflow_dispatch' && (inputs.job == 'screener' || inputs.job == 'both'))
+        || github.event_name == 'schedule'
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 45
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GH_PAT || github.token }}
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
@@ -64,68 +90,63 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Fetch borrow history (etf-dashboard) for weighted net edge
+      - name: Fetch borrow history (etf-dashboard)
         run: |
           mkdir -p data
-          if curl -fsSL --connect-timeout 15 --max-time 120 \
+          curl -fsSL --connect-timeout 15 --max-time 120 \
             -o data/borrow_history.json \
-            "https://raw.githubusercontent.com/GoldmanDrew/etf-dashboard/main/data/borrow_history.json"
-          then
-            echo "borrow_history.json: $(wc -c < data/borrow_history.json) bytes"
-          else
-            echo "Note: etf-dashboard borrow_history fetch failed; screener uses point-in-time borrow for net edge"
-            rm -f data/borrow_history.json
-          fi
+            "https://raw.githubusercontent.com/GoldmanDrew/etf-dashboard/main/data/borrow_history.json" \
+            || rm -f data/borrow_history.json
 
       - name: Run daily screener
+        env:
+          RUN_DATE: ${{ needs.calendar.outputs.run_date }}
         run: |
-          RUN_DATE=$(python -c "
-          from datetime import datetime
-          import pytz
-          print(datetime.now(pytz.timezone('America/New_York')).date().isoformat())
-          ")
           echo "RUN_DATE=$RUN_DATE"
-          echo "RUN_DATE=$RUN_DATE" >> "$GITHUB_ENV"
           python daily_screener.py --run-date "$RUN_DATE" --skip-ibkr-check
           python generate_trade_plan.py --run-date "$RUN_DATE"
+          mkdir -p "data/runs/${RUN_DATE}"
+          cp data/etf_screened_today.csv "data/runs/${RUN_DATE}/etf_screened_today.csv"
 
-      - name: Commit screener + trade-plan outputs
+      - name: Commit screener outputs
+        env:
+          RUN_DATE: ${{ needs.calendar.outputs.run_date }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/proposed_trades.csv || true
           git add "data/runs/${RUN_DATE}/proposed_trades.csv" || true
           git add data/etf_screened_today.csv || true
+          git add "data/runs/${RUN_DATE}/etf_screened_today.csv" || true
           if git diff --cached --quiet; then
-            echo "No screener/trade-plan changes to commit"
+            echo "No screener changes"
           else
             git commit -m "screener: $(date -u +%Y-%m-%d) refresh + trade plan"
             git pull --no-rebase -X ours origin main || true
             git push
           fi
 
-  # ────────────────────────────────────────────────────────
-  # EOD PnL email — runs on weekdays
-  # ────────────────────────────────────────────────────────
   eod:
-    needs: screener
+    needs: [calendar, screener]
     if: >-
-      always() &&
-      ((github.event_name == 'workflow_dispatch' && (inputs.job == 'eod' || inputs.job == 'both'))
-      || (github.event_name == 'schedule' && github.event.schedule == '0 6 * * 2-6'))
+      always()
+      && needs.calendar.outputs.should_run == 'true'
+      && (needs.screener.result == 'success' || needs.screener.result == 'skipped')
+      && (
+        (github.event_name == 'workflow_dispatch' && (inputs.job == 'eod' || inputs.job == 'both'))
+        || github.event_name == 'schedule'
+      )
     runs-on: ubuntu-latest
-    # flex_trades can approach IBKR_FLEX_TRADES_TIMEOUT_SEC; leave room for accounting + email.
     timeout-minutes: 120
-
+    outputs:
+      run_date: ${{ needs.calendar.outputs.run_date }}
     steps:
-      - name: Checkout latest main
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GH_PAT || github.token }}
           ref: main
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
@@ -137,6 +158,7 @@ jobs:
 
       - name: Run EOD pipeline + email
         env:
+          RUN_DATE: ${{ needs.calendar.outputs.run_date }}
           IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
           IBKR_FLEX_Q_TRADES: ${{ secrets.IBKR_FLEX_Q_TRADES }}
           IBKR_FLEX_Q_CASH: ${{ secrets.IBKR_FLEX_Q_CASH }}
@@ -144,30 +166,17 @@ jobs:
           IBKR_FLEX_Q_BORROW_DETAILS: ${{ secrets.IBKR_FLEX_Q_BORROW_DETAILS }}
           IBKR_FLEX_TRADES_TIMEOUT_SEC: "3600"
           IBKR_FLEX_1019_STUCK_MAX_RENEWS: "0"
-
-          # Email
           PNL_RECIPIENTS: ${{ secrets.PNL_RECIPIENTS }}
           SMTP_HOST: ${{ secrets.SMTP_HOST || 'smtp.gmail.com' }}
           SMTP_PORT: ${{ secrets.SMTP_PORT || 587 }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
-
         run: |
-          RUN_DATE=$(python -c "
-          from datetime import datetime
-          import pytz
-          print(datetime.now(pytz.timezone('America/New_York')).date().isoformat())
-          ")
-          export RUN_DATE
-
-          # 1) Pull Flex
           python ibkr_flex.py --run-date "$RUN_DATE"
-
-          # 2) Build accounting
           python scripts/ibkr_accounting_pnl.py "$RUN_DATE"
-
-          # 3) Email (flex + accounting already ran above)
+          python -m scripts.b4_reconstruct_state --run-date "$RUN_DATE" || true
           EOD_SKIP_PIPELINE=1 python run_eod_pnl_email.py
+          python scripts/run_data_contract.py --run-date "$RUN_DATE"
 
       - name: Commit PnL outputs
         run: |
@@ -175,9 +184,81 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data/ || true
           if git diff --cached --quiet; then
-            echo "No PnL changes to commit"
+            echo "No PnL changes"
           else
             git commit -m "eod: $(date -u +%Y-%m-%d) pnl history update"
             git pull --no-rebase -X ours origin main || true
             git push
           fi
+
+  dashboard:
+    needs: [calendar, eod]
+    if: needs.eod.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      gates_passed: ${{ steps.gate.outputs.gates_passed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || github.token }}
+          ref: main
+
+      - uses: actions/checkout@v4
+        with:
+          repository: GoldmanDrew/etf-dashboard
+          ref: main
+          path: etf-dashboard
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Pull latest after EOD commit
+        run: git pull --no-rebase origin main
+
+      - name: Dashboard tests + build + verify
+        id: gate
+        env:
+          RUN_DATE: ${{ needs.calendar.outputs.run_date }}
+        run: |
+          python -m pytest risk_dashboard/tests tests/test_dashboard_accounting_parity.py tests/test_dashboard_phase0_4.py -q
+          python scripts/dashboard_pipeline.py \
+            --run-date "$RUN_DATE" \
+            --write-manifest \
+            --fail-if-stale
+          echo "gates_passed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Commit dashboard snapshot
+        env:
+          RUN_DATE: ${{ needs.calendar.outputs.run_date }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add risk_dashboard/data "data/runs/${RUN_DATE}/manifest.json" || true
+          if git diff --cached --quiet; then
+            echo "No snapshot changes"
+          else
+            git commit -m "risk_dashboard: snapshot ${RUN_DATE}"
+            git pull --no-rebase -X ours origin main || true
+            git push
+          fi
+
+      - name: Warm beta cache
+        env:
+          RUN_DATE: ${{ needs.calendar.outputs.run_date }}
+        run: |
+          git add data/cache/beta_history data/cache/beta_summary.json 2>/dev/null || true
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "warm beta cache ${RUN_DATE} [skip ci]"
+          git pull --no-rebase -X ours origin main || true
+          git push

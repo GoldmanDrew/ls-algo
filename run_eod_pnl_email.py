@@ -948,17 +948,28 @@ def persist_totals_dashboard_fields(
         **consolidated,
         **{k: float(v) for k, v in capital_snap.items()},
     }
-    nav_raw = os.getenv("MAGIS_NAV_USD", "").strip()
-    if nav_raw:
-        try:
-            nav_f = float(nav_raw)
-            if nav_f > 0:
-                totals["nav_usd"] = nav_f
-                totals["nav_source"] = "MAGIS_NAV_USD"
-        except ValueError:
-            pass
     outdir = RUNS_ROOT / run_date / "accounting"
     (outdir / "totals.json").write_text(json.dumps(totals, indent=2), encoding="utf-8")
+    try:
+        from scripts.run_data_contract import patch_totals_nav
+
+        totals = patch_totals_nav(run_date)
+        totals["capital_snapshot"] = {
+            **consolidated,
+            **{k: float(v) for k, v in capital_snap.items()},
+        }
+        (outdir / "totals.json").write_text(json.dumps(totals, indent=2), encoding="utf-8")
+    except Exception:
+        nav_raw = os.getenv("MAGIS_NAV_USD", "").strip()
+        if nav_raw:
+            try:
+                nav_f = float(nav_raw)
+                if nav_f > 0:
+                    totals["nav_usd"] = nav_f
+                    totals["nav_source"] = "MAGIS_NAV_USD"
+                    (outdir / "totals.json").write_text(json.dumps(totals, indent=2), encoding="utf-8")
+            except ValueError:
+                pass
     return totals
 
 
