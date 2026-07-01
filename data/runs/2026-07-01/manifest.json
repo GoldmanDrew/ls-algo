@@ -1,21 +1,21 @@
 {
   "run_date": "2026-07-01",
-  "generated_at_utc": "2026-07-01T13:24:27.533362+00:00",
-  "git_sha": "42942dcb9dd4ad362f96a8ad4665998fcca95526",
-  "workflow_run_id": "28520592722",
+  "generated_at_utc": "2026-07-01T16:03:35.419932+00:00",
+  "git_sha": "65485c9ba81286a6acabce8efb77cee76255269f",
+  "workflow_run_id": "28530678301",
   "nav_usd": 3509499.9999999995,
   "nav_source": "flex_positions:percentOfNAV_median",
   "screener_csv": "data/runs/2026-07-01/etf_screened_today.csv",
   "checksums": {
-    "accounting/totals.json": "4d115af121caa34e5a1c21d9d83d09fc52f0c97de2e68050100e8af8e9acfc43",
-    "accounting/pnl_by_bucket.csv": "c449656b00f0055404fe03263758aa6e469d04b5f62a80d19f1642a4b4fde425",
-    "accounting/pnl_bucket_1.csv": "a63c58105d907caf62619bf2f3b2c23b02fb5c7682702fa2915fbedd4db19894",
-    "accounting/pnl_bucket_2.csv": "320594664672333cc0e6ced6bd3c494a3a61b16ba09097938c1e43d0eb297933",
+    "accounting/totals.json": "36b0d88730a00c4e3b544b0035c38f795dd70e72e280fba79583ce3ab3da6a5e",
+    "accounting/pnl_by_bucket.csv": "5edf99e7c75bc5198434d9ffaa93a8f2c6b4bb0459a34c49615b7912cc7e7cb8",
+    "accounting/pnl_bucket_1.csv": "b25bb7b426506aef594d18202a4317591e5dc50b60ec92f75d55a2ddd1b20e09",
+    "accounting/pnl_bucket_2.csv": "189b5d8fd194b68048e0f5bb4244755a407c71325ed244522dfab9d13b430b8d",
     "accounting/pnl_bucket_3.csv": "a9b2b2be312d3adc6ffe31a55dc21c1ff0bc8ea89430148c96bf86f47448517c",
-    "accounting/pnl_bucket_4.csv": "c86158773c4e944e39e8692efcb4e978ec5847cb465507f495c6e5a6d41a6d8a",
+    "accounting/pnl_bucket_4.csv": "0b0590156706440edadb41e92d6e293974ad579f366ad6e33a889f536742f8a7",
     "accounting/pnl_bucket_5.csv": "4a67c62cded35ca4e658de4022ec2dfd50b9d01f0d7f3c9826288bdc8c17acb0",
     "ibkr_flex/flex_positions.xml": "5f6d0d4123f7151151b734d4cfdf5132410c631f43a4f460a9b26e565f4865e0",
-    "etf_screened_today.csv": "d5b755b486d5b30389d25be6d928acc05878eb7a74a2c7bda4e7feefbcc9ffbe"
+    "etf_screened_today.csv": "0ebf8e2b9db7ebff953251006ba9f53ebd6e57c547b34e7dd7b3648cf6f29cc4"
   },
   "accounting_files": [
     "accounting/pnl_bucket_1.csv",
