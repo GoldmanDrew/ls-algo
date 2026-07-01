@@ -63,7 +63,6 @@ MSFO,MSFT,bucket_2,yieldboost_etf,0.0
 MSFU,MSFT,bucket_1,core_levered_etf,0.0
 MSFW,MSFT,bucket_2,yieldboost_etf,0.0
 MSFX,MSFT,bucket_1,core_levered_etf,0.0
-MSOO,MSTR,bucket_1,core_levered_etf,0.0
 MSTW,MSTR,bucket_2,yieldboost_etf,0.0
 MTYY,MSTR,bucket_2,yieldboost_etf,0.0
 MUU,MU,bucket_1,core_levered_etf,0.0
@@ -74,7 +73,6 @@ NFXL,NFLX,bucket_1,core_levered_etf,0.0
 NVDB,NVDA,bucket_1,core_levered_etf,0.0
 NVDG,NVDA,bucket_1,core_levered_etf,0.0
 NVDL,NVDA,bucket_1,core_levered_etf,0.0
-NVDO,NVDA,bucket_1,core_levered_etf,0.0
 NVDU,NVDA,bucket_1,core_levered_etf,0.0
 NVDY,NVDA,bucket_2,yieldboost_etf,0.0
 NVYY,NVDA,bucket_3,flow_low_delta,0.0

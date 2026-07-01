@@ -161,7 +161,6 @@ MSFO,MSFT,bucket_2,yieldboost_etf,466.05950913
 MSFU,MSFT,bucket_1,core_levered_etf,379.7765075849252
 MSFW,MSFT,bucket_2,yieldboost_etf,924.38087664
 MSFX,MSFT,bucket_1,core_levered_etf,1466.6834668060253
-MSOO,MSTR,bucket_1,core_levered_etf,218.92998575000001
 MSTU,MSTR,bucket_1,core_levered_etf,153.2418516992874
 MSTW,MSTR,bucket_2,yieldboost_etf,972.8263548199999
 MSTX,MSTR,bucket_1,core_levered_etf,161.99184016163852
@@ -186,7 +185,6 @@ NUGT,GDX,bucket_1,core_levered_etf,3022.9854931107616
 NVDB,NVDA,bucket_1,core_levered_etf,-437.1723939072813
 NVDG,NVDA,bucket_1,core_levered_etf,-710.2914474807757
 NVDL,NVDA,bucket_1,core_levered_etf,-561.0109339640456
-NVDO,NVDA,bucket_1,core_levered_etf,-51.33217225
 NVDQ,NVDA,bucket_3,flow_inverse,865.7806611099237
 NVDU,NVDA,bucket_1,core_levered_etf,-453.0838378642205
 NVDY,NVDA,bucket_2,yieldboost_etf,13.093847689999997

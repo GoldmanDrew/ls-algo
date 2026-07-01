@@ -122,7 +122,6 @@ MSFO,MSFT,bucket_2,yieldboost_etf,466.05950913
 MSFU,MSFT,bucket_1,core_levered_etf,638.3805517758742
 MSFW,MSFT,bucket_2,yieldboost_etf,801.8471280331677
 MSFX,MSFT,bucket_1,core_levered_etf,1022.0296154561084
-MSOO,MSTR,bucket_1,core_levered_etf,218.92998575000001
 MSTU,MSTR,bucket_1,core_levered_etf,-56.25500825
 MSTW,MSTR,bucket_2,yieldboost_etf,702.0556786200923
 MSTX,MSTR,bucket_1,core_levered_etf,-57.65308187
@@ -141,7 +140,6 @@ NUGT,GDX,bucket_1,core_levered_etf,2760.367427822287
 NVDB,NVDA,bucket_1,core_levered_etf,365.92385480566395
 NVDG,NVDA,bucket_1,core_levered_etf,347.0096708790609
 NVDL,NVDA,bucket_1,core_levered_etf,297.407076475543
-NVDO,NVDA,bucket_1,core_levered_etf,-51.33217225
 NVDQ,NVDA,bucket_3,flow_inverse,-19.33704798847685
 NVDU,NVDA,bucket_1,core_levered_etf,347.7355650034366
 NVDY,NVDA,bucket_2,yieldboost_etf,13.093847689999997
@@ -314,12 +312,12 @@ META,META,bucket_1,spot,372.0403820165076
 MP,MP,bucket_1,spot,-23.828257
 MRNA,MRNA,bucket_1,spot,584.465394
 MRVL,MRVL,bucket_1,spot,774.934424
-MSFT,MSFT,bucket_1,spot,-1390.8992430482472
+MSFT,MSFT,bucket_1,spot,-1390.8994255661917
 MSTR,MSTR,bucket_1,spot,132.72119158137514
 MU,MU,bucket_1,spot,1808.980268
 NBIS,NBIS,bucket_1,spot,1876.422437
 NEM,NEM,bucket_1,spot,-261.961257
-NFLX,NFLX,bucket_1,spot,483.57006655091817
+NFLX,NFLX,bucket_1,spot,483.57007564102946
 NOK,NOK,bucket_1,spot,-81.977777
 NOW,NOW,bucket_1,spot,-22.254257
 NU,NU,bucket_1,spot,-1496.793088
@@ -332,7 +330,7 @@ ORLY,ORLY,bucket_1,spot,-78.072757
 OSCR,OSCR,bucket_1,spot,-249.397601
 PANW,PANW,bucket_1,spot,-927.036935
 PBR,PBR,bucket_1,spot,421.628342
-PLTR,PLTR,bucket_1,spot,199.68532957701657
+PLTR,PLTR,bucket_1,spot,199.68533725075446
 PLUG,PLUG,bucket_1,spot,1915.647597
 PYPL,PYPL,bucket_1,spot,-1429.96307809
 QBTS,QBTS,bucket_1,spot,-1308.451698
@@ -389,10 +387,10 @@ HOOD,HOOD,bucket_2,spot,-2769.31706
 IBIT,IBIT,bucket_2,spot,-3084.687105458254
 MARA,MARA,bucket_2,spot,-1087.027109
 META,META,bucket_2,spot,-806.2088342665076
-MSFT,MSFT,bucket_2,spot,-2345.1556509517527
+MSFT,MSFT,bucket_2,spot,-2345.1554684338084
 MSTR,MSTR,bucket_2,spot,52.95125041862488
-NFLX,NFLX,bucket_2,spot,2850.020433829082
-PLTR,PLTR,bucket_2,spot,178.49166996298337
+NFLX,NFLX,bucket_2,spot,2850.0204247389706
+PLTR,PLTR,bucket_2,spot,178.49166228924554
 QQQ,QQQ,bucket_2,spot,-789.2242640000001
 SPY,SPY,bucket_2,spot,1.68239558
 BKNU,BKNG,bucket_4,spot,-42.80836925

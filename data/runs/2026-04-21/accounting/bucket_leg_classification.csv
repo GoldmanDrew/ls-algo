@@ -145,7 +145,6 @@ MSFO,MSFT,bucket_2,yieldboost_etf,466.05950913
 MSFU,MSFT,bucket_1,core_levered_etf,130.82477388560235
 MSFW,MSFT,bucket_2,yieldboost_etf,924.38087664
 MSFX,MSFT,bucket_1,core_levered_etf,506.107261820076
-MSOO,MSTR,bucket_1,core_levered_etf,218.92998575000001
 MSTU,MSTR,bucket_1,core_levered_etf,-56.25500825
 MSTW,MSTR,bucket_2,yieldboost_etf,972.8263548199999
 MSTX,MSTR,bucket_1,core_levered_etf,-57.65308187
@@ -166,7 +165,6 @@ NUGT,GDX,bucket_1,core_levered_etf,1272.8674912522054
 NVDB,NVDA,bucket_1,core_levered_etf,-563.770816358907
 NVDG,NVDA,bucket_1,core_levered_etf,-891.3314651573154
 NVDL,NVDA,bucket_1,core_levered_etf,-729.9770769995118
-NVDO,NVDA,bucket_1,core_levered_etf,-51.33217225
 NVDQ,NVDA,bucket_3,flow_inverse,902.5520121466217
 NVDU,NVDA,bucket_1,core_levered_etf,-600.7600803295463
 NVDY,NVDA,bucket_2,yieldboost_etf,13.093847689999997
@@ -396,7 +394,7 @@ OSCR,OSCR,bucket_1,spot,262.303342
 PAAS,PAAS,bucket_1,spot,110.08435599999999
 PANW,PANW,bucket_1,spot,-803.090949
 PBR,PBR,bucket_1,spot,361.388758
-PLTR,PLTR,bucket_1,spot,-522.6234901075143
+PLTR,PLTR,bucket_1,spot,-522.623512351887
 PLUG,PLUG,bucket_1,spot,6353.449915
 PONY,PONY,bucket_1,spot,1231.129486
 PYPL,PYPL,bucket_1,spot,-1086.46307809
@@ -460,7 +458,7 @@ IBIT,IBIT,bucket_2,spot,-559.5848857651265
 MARA,MARA,bucket_2,spot,1801.832891
 META,META,bucket_2,spot,478.7748099113643
 MSTR,MSTR,bucket_2,spot,4037.5052354186246
-PLTR,PLTR,bucket_2,spot,-679.7061908924857
+PLTR,PLTR,bucket_2,spot,-679.7061686481129
 SPY,SPY,bucket_2,spot,2.11239558
 BKNU,BKNG,bucket_4,spot,-42.80836925
 DIA,DIA,bucket_4,spot,-0.525

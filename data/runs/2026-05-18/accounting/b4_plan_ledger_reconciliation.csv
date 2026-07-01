@@ -43,7 +43,7 @@ run_date,underlying,plan_b4_usd,plan_b4_qty,etf_implied_short_usd,etf_implied_sh
 2026-05-18,SPY,0.0,0.0,0.0,0.0,none,0.0,1.0,3.0,3.0,False,False
 2026-05-18,SVIX,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
 2026-05-18,TLT,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
-2026-05-18,TSLA,0.0,0.0,0.0,0.0,none,0.0,8.0,1.0000000000000053,0.12500000000000067,False,False
+2026-05-18,TSLA,0.0,0.0,0.0,0.0,none,0.0,8.0,0.9999999999999964,0.12499999999999956,False,False
 2026-05-18,TSM,0.0,0.0,0.0,0.0,none,0.0,2.0,1.0,0.5,False,False
 2026-05-18,UPXI,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
 2026-05-18,USO,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False

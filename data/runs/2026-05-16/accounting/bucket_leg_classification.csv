@@ -177,7 +177,6 @@ MSFO,MSFT,bucket_2,yieldboost_etf,466.05950913
 MSFU,MSFT,bucket_1,core_levered_etf,43.0092575499957
 MSFW,MSFT,bucket_2,yieldboost_etf,924.38087664
 MSFX,MSFT,bucket_1,core_levered_etf,683.5704125334621
-MSOO,MSTR,bucket_1,core_levered_etf,218.92998575000001
 MSTU,MSTR,bucket_1,core_levered_etf,-211.1198173242781
 MSTW,MSTR,bucket_2,yieldboost_etf,972.8263548199999
 MSTX,MSTR,bucket_1,core_levered_etf,-199.79297937492572
@@ -204,7 +203,6 @@ NUGT,GDX,bucket_1,core_levered_etf,3168.327908321186
 NVDB,NVDA,bucket_1,core_levered_etf,-1653.220250781353
 NVDG,NVDA,bucket_1,core_levered_etf,-2931.37937397
 NVDL,NVDA,bucket_1,core_levered_etf,-2038.8181160652357
-NVDO,NVDA,bucket_1,core_levered_etf,-51.33217225
 NVDQ,NVDA,bucket_3,flow_inverse,1653.2403371910732
 NVDU,NVDA,bucket_1,core_levered_etf,-1816.821873949725
 NVDY,NVDA,bucket_2,yieldboost_etf,13.093847689999997
@@ -357,7 +355,7 @@ AVAV,AVAV,bucket_1,spot,-687.697829
 AVGO,AVGO,bucket_1,spot,6665.7781932
 AXON,AXON,bucket_1,spot,-107.67568700000001
 BA,BA,bucket_1,spot,-920.1607027499999
-BABA,BABA,bucket_1,spot,-1118.2160821724456
+BABA,BABA,bucket_1,spot,-1118.2169973328023
 BBAI,BBAI,bucket_1,spot,2001.178317
 BE,BE,bucket_1,spot,3657.138263
 BIDU,BIDU,bucket_1,spot,69.771605
@@ -533,7 +531,7 @@ XYZ,XYZ,bucket_1,spot,-880.77495475
 ZETA,ZETA,bucket_1,spot,-196.710554
 AMD,AMD,bucket_2,spot,5269.42212594144
 ASML,ASML,bucket_2,spot,41.02042399999999
-BABA,BABA,bucket_2,spot,-1356.0252387575547
+BABA,BABA,bucket_2,spot,-1356.0243235971977
 CMG,CMG,bucket_2,spot,-78.913729
 COIN,COIN,bucket_2,spot,-2731.865639766755
 CVNA,CVNA,bucket_2,spot,-1326.609712

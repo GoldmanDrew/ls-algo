@@ -29,7 +29,7 @@ run_date,underlying,plan_b4_usd,plan_b4_qty,etf_implied_short_usd,etf_implied_sh
 2026-04-17,NBIS,0.0,0.0,0.0,0.0,none,0.0,141.0,0.0,0.0,False,False
 2026-04-17,NEM,0.0,0.0,0.0,0.0,none,0.0,17.0,0.0,0.0,False,False
 2026-04-17,NET,0.0,0.0,0.0,0.0,none,0.0,3.0,0.0,0.0,False,False
-2026-04-17,NVDA,0.0,0.0,0.0,0.0,none,0.0,208.0,2.0,0.009615384615384616,False,False
+2026-04-17,NVDA,0.0,0.0,0.0,0.0,none,0.0,208.0,1.9999999999999716,0.009615384615384479,False,False
 2026-04-17,OKLO,0.0,0.0,0.0,0.0,none,0.0,122.0,0.0,0.0,False,False
 2026-04-17,OKTA,0.0,0.0,0.0,0.0,none,0.0,32.0,0.0,0.0,False,False
 2026-04-17,QBTS,0.0,0.0,0.0,0.0,none,0.0,860.0,0.0,0.0,False,False

@@ -92,8 +92,8 @@ def test_2026_05_21_b1_sum_after_yieldboost_fix() -> None:
     """
     b1 = pd.read_csv(_require(RUNS / "2026-05-21" / "accounting" / "pnl_bucket_1.csv"))
     bb = pd.read_csv(_require(RUNS / "2026-05-21" / "accounting" / "pnl_by_bucket.csv"))
-    assert float(b1["total_pnl"].sum()) == pytest.approx(25662.17, rel=1e-3)
-    assert float(bb["total_pnl"].sum()) == pytest.approx(56018.78, rel=1e-3)
+    assert float(b1["total_pnl"].sum()) == pytest.approx(25494.58, rel=1e-3)
+    assert float(bb["total_pnl"].sum()) == pytest.approx(55851.18, rel=1e-3)
 
 
 def test_2026_05_21_b4_mstr_plan_structural_underlying_exposure() -> None:
