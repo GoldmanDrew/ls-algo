@@ -1,7 +1,7 @@
 {
   "run_date": "2026-06-25",
   "fifo_summary_present": true,
-  "total_realized_pnl": 34793.951325210015,
+  "total_realized_pnl": 34793.951325209986,
   "total_unrealized_pnl": 171205.111878,
   "total_dividends": 668.6899999999998,
   "total_withholding_tax": -17.16,
@@ -10,7 +10,7 @@
   "total_short_credit_interest": 8960.19,
   "total_other_fees": -1.8200000000000003,
   "total_bond_interest": 0.0,
-  "total_pnl": 36173.93320321001,
+  "total_pnl": 36173.93320320998,
   "excluded_cash_interest_base": -17267.0634723,
   "borrow_mode": "borrow_fee_details_cumulative_by_symbol",
   "borrow_total_account_source": -52291.76,
@@ -23,20 +23,20 @@
   "kept_underlyings": 198,
   "net_exposure_total": 201806.2106625465,
   "gross_exposure_total": 3132541.3275648477,
-  "net_exposure_bucket_1": 8442.6181299749,
-  "gross_exposure_bucket_1": 2085355.587318871,
-  "net_exposure_bucket_2": -37796.48627449352,
-  "gross_exposure_bucket_2": 804618.7277743677,
+  "net_exposure_bucket_1": 127789.6585688073,
+  "gross_exposure_bucket_1": 2214821.2677577036,
+  "net_exposure_bucket_2": -3253.8050196807526,
+  "gross_exposure_bucket_2": 839161.4090291804,
   "net_exposure_bucket_3": 106456.78728935859,
   "gross_exposure_bucket_3": 107745.08095390239,
   "net_exposure_bucket_5": 1299.9434907199984,
   "gross_exposure_bucket_5": 11418.58349072,
-  "net_exposure_bucket_4": 236863.545639337,
-  "gross_exposure_bucket_4": 236863.545639337,
-  "net_exposure_unbucketed": -5059.320000000001,
-  "gross_exposure_unbucketed": 5059.320000000001,
-  "net_exposure_bucket_4_pair": 231804.22563933698,
-  "gross_exposure_bucket_4_pair": 241922.865639337,
+  "net_exposure_bucket_4": 77914.50394569185,
+  "gross_exposure_bucket_4": 77914.50394569185,
+  "net_exposure_unbucketed": 0.0,
+  "gross_exposure_unbucketed": 0.0,
+  "net_exposure_bucket_4_pair": 72855.18394569185,
+  "gross_exposure_bucket_4_pair": 400871.9073329821,
   "yfinance_override": false,
   "yfinance_symbols_overridden": 0,
   "bucket_split_method": "held_exposure",
@@ -44,12 +44,28 @@
   "b12_spot_split_method": "ledger_fifo",
   "b12_spot_exposure_method": "sleeve_balance",
   "b12_spot_pnl_method": "ledger_fifo",
-  "b12_pnl_mode": "lot_timed_strict",
+  "b12_pnl_mode": "plan_b4_inject",
   "plan_b4_pnl_mode": "inject_slice",
   "plan_sleeve_bucketing": "sleeve_first",
-  "b4_underlying_exposure_mode": "ledger_fifo",
-  "b4_plan_exposure_underlyings": [],
-  "b4_underlying_attribution": "ledger_fifo",
+  "b4_underlying_exposure_mode": "plan_structural",
+  "b4_plan_exposure_underlyings": [
+    "AMD",
+    "ASTS",
+    "BE",
+    "COIN",
+    "CRCL",
+    "CRWV",
+    "IREN",
+    "LITE",
+    "MSTR",
+    "NBIS",
+    "QBTS",
+    "RGTI",
+    "RKLB",
+    "SNDK",
+    "SPCX"
+  ],
+  "b4_underlying_attribution": "etf_implied",
   "b4_attribution_min_usd": 500.0,
   "b4_partial_hedge_ratio_default": 0.75,
   "b4_etf_implied_underlyings": [
@@ -65,8 +81,7 @@
     "NBIS",
     "QBTS",
     "RGTI",
-    "RKLB",
-    "SVIX"
+    "RKLB"
   ],
   "b4_attribution_sources": {
     "plan": [
@@ -79,7 +94,14 @@
       "QBTS",
       "SNDK"
     ],
-    "etf_implied": []
+    "etf_implied": [
+      "ASTS",
+      "BE",
+      "CRCL",
+      "IREN",
+      "RGTI",
+      "RKLB"
+    ]
   },
   "bucket3_flow_low_delta_symbols": [
     "AZYY",
@@ -112,7 +134,7 @@
   "net_exposure_bucket_2_full": -38440.633106765425,
   "net_exposure_bucket_4_full": 236863.545639337,
   "spot_ratio_max_diff": 6.938893903907228e-18,
-  "spot_ratio_max_diff_pnl": 0.6249313883679374,
+  "spot_ratio_max_diff_pnl": 0.981836757193873,
   "spot_ratio_gate_passed": true,
   "spot_ratio_gate_mode": "exposure_vs_plan_or_hedge_residual",
   "exposure_reconciliation_tol_gross_pct": 0.005,
@@ -148,10 +170,10 @@
     "SMZ"
   ],
   "bucket_pnl": {
-    "bucket_1": 48297.869263209635,
-    "bucket_2": 10328.158744368158,
+    "bucket_1": 29935.79484584801,
+    "bucket_4": 24485.649449445147,
     "bucket_3": 1821.580787376217,
     "bucket_5": 249.6318352120062,
-    "bucket_4": -24523.30742695602
+    "bucket_2": -20318.723714671385
   }
 }

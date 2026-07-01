@@ -8,9 +8,9 @@
   "total_pil_dividends": -85273.44999999998,
   "total_borrow_fees": -41055.98,
   "total_short_credit_interest": 8960.19,
-  "total_other_fees": -1.8199999999999998,
+  "total_other_fees": -1.82,
   "total_bond_interest": 0.0,
-  "total_pnl": 106868.09916354006,
+  "total_pnl": 106868.09916354,
   "excluded_cash_interest_base": -17267.0634723,
   "borrow_mode": "borrow_fee_details_cumulative_by_symbol",
   "borrow_total_account_source": -41055.98,
@@ -21,22 +21,22 @@
   "universe_allowed_underlyings": 270,
   "kept_symbols": 552,
   "kept_underlyings": 199,
-  "net_exposure_total": -136767.0668511013,
-  "gross_exposure_total": 3331550.1517124777,
-  "net_exposure_bucket_1": -153496.3287007081,
-  "gross_exposure_bucket_1": 2329205.825267467,
-  "net_exposure_bucket_2": -167990.14398559165,
-  "gross_exposure_bucket_2": 806289.4277828328,
-  "net_exposure_bucket_3": 102042.44391253921,
-  "gross_exposure_bucket_3": 103318.57673951822,
+  "net_exposure_total": -136767.01037781974,
+  "gross_exposure_total": 3331550.095239196,
+  "net_exposure_bucket_1": -104950.4639313495,
+  "gross_exposure_bucket_1": 2377751.7607433805,
+  "net_exposure_bucket_2": -153974.27866990364,
+  "gross_exposure_bucket_2": 820305.1087725204,
+  "net_exposure_bucket_3": 102042.4435760982,
+  "gross_exposure_bucket_3": 103318.57707595923,
   "net_exposure_bucket_5": 1690.729956960001,
   "gross_exposure_bucket_5": 11750.08995696,
-  "net_exposure_bucket_4": 190387.152248688,
-  "gross_exposure_bucket_4": 190387.152248688,
+  "net_exposure_bucket_4": 127825.47897336393,
+  "gross_exposure_bucket_4": 127825.47897336393,
   "net_exposure_unbucketed": -5029.679999999999,
   "gross_exposure_unbucketed": 5029.679999999999,
-  "net_exposure_bucket_4_pair": 189284.042248688,
-  "gross_exposure_bucket_4_pair": 199343.402248688,
+  "net_exposure_bucket_4_pair": 126722.36897336396,
+  "gross_exposure_bucket_4_pair": 261905.07552401206,
   "yfinance_override": false,
   "yfinance_symbols_overridden": 0,
   "bucket_split_method": "held_exposure",
@@ -44,12 +44,27 @@
   "b12_spot_split_method": "ledger_fifo",
   "b12_spot_exposure_method": "sleeve_balance",
   "b12_spot_pnl_method": "ledger_fifo",
-  "b12_pnl_mode": "lot_timed_strict",
+  "b12_pnl_mode": "plan_b4_inject",
   "plan_b4_pnl_mode": "inject_slice",
   "plan_sleeve_bucketing": "sleeve_first",
-  "b4_underlying_exposure_mode": "ledger_fifo",
-  "b4_plan_exposure_underlyings": [],
-  "b4_underlying_attribution": "ledger_fifo",
+  "b4_underlying_exposure_mode": "plan_structural",
+  "b4_plan_exposure_underlyings": [
+    "AMD",
+    "ASTS",
+    "BE",
+    "COIN",
+    "CRCL",
+    "CRWV",
+    "IREN",
+    "LITE",
+    "MSTR",
+    "NBIS",
+    "QBTS",
+    "RKLB",
+    "SNDK",
+    "SVIX"
+  ],
+  "b4_underlying_attribution": "etf_implied",
   "b4_attribution_min_usd": 500.0,
   "b4_partial_hedge_ratio_default": 0.75,
   "b4_etf_implied_underlyings": [
@@ -64,8 +79,7 @@
     "MSTR",
     "NBIS",
     "QBTS",
-    "RKLB",
-    "SVIX"
+    "RKLB"
   ],
   "b4_attribution_sources": {
     "plan": [
@@ -81,7 +95,11 @@
       "SNDK",
       "SVIX"
     ],
-    "etf_implied": []
+    "etf_implied": [
+      "AMD",
+      "BE",
+      "CRCL"
+    ]
   },
   "bucket3_flow_low_delta_symbols": [
     "AZYY",
@@ -110,8 +128,8 @@
     "TSYY",
     "ZSL"
   ],
-  "net_exposure_bucket_1_full": -158526.00870070813,
-  "net_exposure_bucket_2_full": -168628.21039908117,
+  "net_exposure_bucket_1_full": -158525.8944855255,
+  "net_exposure_bucket_2_full": -168628.2681409822,
   "net_exposure_bucket_4_full": 190387.152248688,
   "spot_ratio_max_diff": 6.938893903907228e-18,
   "spot_ratio_max_diff_pnl": 0.8067062998319057,
@@ -152,10 +170,10 @@
     "SMZ"
   ],
   "bucket_pnl": {
-    "bucket_2": 72455.43650070296,
-    "bucket_1": 32381.276753498747,
+    "bucket_2": 67833.37208346144,
+    "bucket_1": 22604.85856675604,
+    "bucket_4": 11508.88140288885,
     "bucket_3": 4786.369557438244,
-    "bucket_5": 134.61755299542838,
-    "bucket_4": -2889.6012010953764
+    "bucket_5": 134.61755299542838
   }
 }

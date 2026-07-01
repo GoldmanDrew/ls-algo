@@ -1,8 +1,8 @@
 {
   "run_date": "2026-04-18",
   "fifo_summary_present": true,
-  "total_realized_pnl": 21140.81216532,
-  "total_unrealized_pnl": 28723.46024500001,
+  "total_realized_pnl": 21140.812165789997,
+  "total_unrealized_pnl": 28723.460244999995,
   "total_dividends": 488.18,
   "total_withholding_tax": -7.89,
   "total_pil_dividends": -20132.970000000005,
@@ -10,7 +10,7 @@
   "total_short_credit_interest": 2215.19,
   "total_other_fees": 0.0,
   "total_bond_interest": 0.0,
-  "total_pnl": 23401.252410320012,
+  "total_pnl": 23401.25241078998,
   "excluded_cash_interest_base": -4054.7053851,
   "borrow_mode": "borrow_fee_details_cumulative_by_symbol",
   "borrow_total_account_source": -9025.529999999999,
@@ -21,14 +21,14 @@
   "universe_allowed_underlyings": 270,
   "kept_symbols": 455,
   "kept_underlyings": 183,
-  "net_exposure_total": -48378.552794863295,
-  "gross_exposure_total": 3170835.879194863,
-  "net_exposure_bucket_1": -47925.66336074664,
-  "gross_exposure_bucket_1": 3097194.5791163673,
+  "net_exposure_total": -48378.630136221684,
+  "gross_exposure_total": 3170835.956536222,
+  "net_exposure_bucket_1": -47925.740490405035,
+  "gross_exposure_bucket_1": 3097194.6562460256,
   "net_exposure_bucket_2": -87.01622685666098,
   "gross_exposure_bucket_2": 73275.42687123614,
-  "net_exposure_bucket_3": 92070.1993441228,
-  "gross_exposure_bucket_3": 92801.94575864279,
+  "net_exposure_bucket_3": 92070.1991324228,
+  "gross_exposure_bucket_3": 92801.94597034279,
   "net_exposure_bucket_5": 0.0,
   "gross_exposure_bucket_5": 0.0,
   "net_exposure_bucket_4": 0.0,
@@ -44,25 +44,17 @@
   "b12_spot_split_method": "ledger_fifo",
   "b12_spot_exposure_method": "sleeve_balance",
   "b12_spot_pnl_method": "ledger_fifo",
-  "b12_pnl_mode": "lot_timed_strict",
+  "b12_pnl_mode": "plan_b4_inject",
   "plan_b4_pnl_mode": "inject_slice",
   "plan_sleeve_bucketing": "sleeve_first",
-  "b4_underlying_exposure_mode": "ledger_fifo",
+  "b4_underlying_exposure_mode": "plan_structural",
   "b4_plan_exposure_underlyings": [],
-  "b4_underlying_attribution": "ledger_fifo",
+  "b4_underlying_attribution": "etf_implied",
   "b4_attribution_min_usd": 500.0,
   "b4_partial_hedge_ratio_default": 0.75,
   "b4_etf_implied_underlyings": [],
   "b4_attribution_sources": {
-    "plan": [
-      "BE",
-      "CLSK",
-      "COIN",
-      "CRCL",
-      "ETHA",
-      "IREN",
-      "MSTR"
-    ],
+    "plan": [],
     "etf_implied": []
   },
   "bucket3_flow_low_delta_symbols": [
@@ -92,11 +84,11 @@
     "TSYY",
     "ZSL"
   ],
-  "net_exposure_bucket_1_full": -47925.66336074664,
-  "net_exposure_bucket_2_full": -452.889434116661,
+  "net_exposure_bucket_1_full": -47925.740490405035,
+  "net_exposure_bucket_2_full": -452.889645816661,
   "net_exposure_bucket_4_full": 0.0,
   "spot_ratio_max_diff": 0.0,
-  "spot_ratio_max_diff_pnl": 0.7244693336936352,
+  "spot_ratio_max_diff_pnl": 0.9743829010977793,
   "spot_ratio_gate_passed": true,
   "spot_ratio_gate_mode": "exposure_vs_plan_or_hedge_residual",
   "exposure_reconciliation_tol_gross_pct": 0.005,
@@ -134,9 +126,9 @@
     "SMZ"
   ],
   "bucket_pnl": {
-    "bucket_2": 24349.227561839634,
-    "bucket_1": 14264.45807167265,
+    "bucket_2": 20645.740436324562,
     "bucket_3": 6142.472665776017,
-    "bucket_4": -21354.905888968304
+    "bucket_4": 286.10893533,
+    "bucket_1": -3673.0696266405776
   }
 }

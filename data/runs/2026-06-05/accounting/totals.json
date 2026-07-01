@@ -1,8 +1,8 @@
 {
   "run_date": "2026-06-05",
   "fifo_summary_present": true,
-  "total_realized_pnl": 42262.58156660001,
-  "total_unrealized_pnl": 126386.71910400002,
+  "total_realized_pnl": 42262.58156747004,
+  "total_unrealized_pnl": 126386.719104,
   "total_dividends": 689.75,
   "total_withholding_tax": -17.160000000000004,
   "total_pil_dividends": -65023.02,
@@ -10,7 +10,7 @@
   "total_short_credit_interest": 8960.189999999999,
   "total_other_fees": -1.82,
   "total_bond_interest": 0.0,
-  "total_pnl": 79363.67067060008,
+  "total_pnl": 79363.67067147,
   "excluded_cash_interest_base": -17267.0634723,
   "borrow_mode": "borrow_fee_details_cumulative_by_symbol",
   "borrow_total_account_source": -33893.57,
@@ -21,22 +21,22 @@
   "universe_allowed_underlyings": 270,
   "kept_symbols": 548,
   "kept_underlyings": 199,
-  "net_exposure_total": 23706.209066821808,
-  "gross_exposure_total": 3428748.132676642,
-  "net_exposure_bucket_1": -113807.69117756384,
-  "gross_exposure_bucket_1": 2478330.8876817324,
-  "net_exposure_bucket_2": -6050.928736753167,
-  "gross_exposure_bucket_2": 795111.8150825846,
-  "net_exposure_bucket_3": 94501.382518507,
-  "gross_exposure_bucket_3": 95767.6634496934,
+  "net_exposure_total": 23706.1255599048,
+  "gross_exposure_total": 3428748.216183559,
+  "net_exposure_bucket_1": -13622.986823064872,
+  "gross_exposure_bucket_1": 2578515.629992391,
+  "net_exposure_bucket_2": 10744.456948949774,
+  "gross_exposure_bucket_2": 811907.329155405,
+  "net_exposure_bucket_3": 94501.3821832288,
+  "gross_exposure_bucket_3": 95767.6637849716,
   "net_exposure_bucket_5": 1216.5670221600003,
   "gross_exposure_bucket_5": 11690.887022160001,
-  "net_exposure_bucket_4": 149435.12944673203,
-  "gross_exposure_bucket_4": 149435.12944673203,
+  "net_exposure_bucket_4": 32454.956234891317,
+  "gross_exposure_bucket_4": 32454.956234891317,
   "net_exposure_unbucketed": -5237.16,
   "gross_exposure_unbucketed": 5237.16,
-  "net_exposure_bucket_4_pair": 146615.037946732,
-  "gross_exposure_bucket_4_pair": 157089.357946732,
+  "net_exposure_bucket_4_pair": 29634.864734891315,
+  "gross_exposure_bucket_4_pair": 274069.5311585727,
   "yfinance_override": false,
   "yfinance_symbols_overridden": 0,
   "bucket_split_method": "held_exposure",
@@ -44,12 +44,27 @@
   "b12_spot_split_method": "ledger_fifo",
   "b12_spot_exposure_method": "sleeve_balance",
   "b12_spot_pnl_method": "ledger_fifo",
-  "b12_pnl_mode": "lot_timed_strict",
+  "b12_pnl_mode": "plan_b4_inject",
   "plan_b4_pnl_mode": "inject_slice",
   "plan_sleeve_bucketing": "sleeve_first",
-  "b4_underlying_exposure_mode": "ledger_fifo",
-  "b4_plan_exposure_underlyings": [],
-  "b4_underlying_attribution": "ledger_fifo",
+  "b4_underlying_exposure_mode": "plan_structural",
+  "b4_plan_exposure_underlyings": [
+    "AMD",
+    "ASTS",
+    "BE",
+    "COIN",
+    "CRCL",
+    "CRWV",
+    "IREN",
+    "LITE",
+    "MSTR",
+    "NBIS",
+    "QBTS",
+    "RKLB",
+    "SNDK",
+    "SVIX"
+  ],
+  "b4_underlying_attribution": "etf_implied",
   "b4_attribution_min_usd": 500.0,
   "b4_partial_hedge_ratio_default": 0.75,
   "b4_etf_implied_underlyings": [
@@ -63,8 +78,7 @@
     "MSTR",
     "NBIS",
     "QBTS",
-    "RKLB",
-    "SVIX"
+    "RKLB"
   ],
   "b4_attribution_sources": {
     "plan": [
@@ -80,7 +94,11 @@
       "SNDK",
       "SVIX"
     ],
-    "etf_implied": []
+    "etf_implied": [
+      "AMD",
+      "CRCL",
+      "IREN"
+    ]
   },
   "bucket3_flow_low_delta_symbols": [
     "AZYY",
@@ -109,11 +127,11 @@
     "TSYY",
     "ZSL"
   ],
-  "net_exposure_bucket_1_full": -114701.10044547859,
-  "net_exposure_bucket_2_full": -11027.819934431627,
+  "net_exposure_bucket_1_full": -114701.21136461737,
+  "net_exposure_bucket_2_full": -11027.792522209826,
   "net_exposure_bucket_4_full": 149435.12944673203,
   "spot_ratio_max_diff": 0.0,
-  "spot_ratio_max_diff_pnl": 0.8019720019367383,
+  "spot_ratio_max_diff_pnl": 0.9958284521660415,
   "spot_ratio_gate_passed": true,
   "spot_ratio_gate_mode": "exposure_vs_plan_or_hedge_residual",
   "exposure_reconciliation_tol_gross_pct": 0.005,
@@ -151,10 +169,10 @@
     "SMZ"
   ],
   "bucket_pnl": {
-    "bucket_2": 48695.91101877066,
-    "bucket_1": 16994.98622663659,
+    "bucket_2": 40961.55350293685,
+    "bucket_1": 19221.58741149794,
+    "bucket_4": 11027.356522120268,
     "bucket_3": 8046.1977981424925,
-    "bucket_4": 5519.600190277809,
     "bucket_5": 106.97543677246085
   }
 }

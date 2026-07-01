@@ -1,7 +1,7 @@
 {
   "run_date": "2026-03-28",
   "fifo_summary_present": true,
-  "total_realized_pnl": 17043.868512880003,
+  "total_realized_pnl": 17043.86851255,
   "total_unrealized_pnl": 5286.829857000004,
   "total_dividends": 398.1,
   "total_withholding_tax": 0.0,
@@ -10,7 +10,7 @@
   "total_short_credit_interest": 872.6400000000001,
   "total_other_fees": 0.0,
   "total_bond_interest": 0.0,
-  "total_pnl": 4018.368369880016,
+  "total_pnl": 4018.3683695500367,
   "excluded_cash_interest_base": -759.1551274,
   "borrow_mode": "borrow_fee_details_cumulative_by_symbol",
   "borrow_total_account_source": -5167.969999999999,
@@ -44,25 +44,17 @@
   "b12_spot_split_method": "ledger_fifo",
   "b12_spot_exposure_method": "sleeve_balance",
   "b12_spot_pnl_method": "ledger_fifo",
-  "b12_pnl_mode": "lot_timed_strict",
+  "b12_pnl_mode": "plan_b4_inject",
   "plan_b4_pnl_mode": "inject_slice",
   "plan_sleeve_bucketing": "sleeve_first",
-  "b4_underlying_exposure_mode": "ledger_fifo",
+  "b4_underlying_exposure_mode": "plan_structural",
   "b4_plan_exposure_underlyings": [],
-  "b4_underlying_attribution": "ledger_fifo",
+  "b4_underlying_attribution": "etf_implied",
   "b4_attribution_min_usd": 500.0,
   "b4_partial_hedge_ratio_default": 0.75,
   "b4_etf_implied_underlyings": [],
   "b4_attribution_sources": {
-    "plan": [
-      "AMD",
-      "COIN",
-      "CRWV",
-      "LITE",
-      "MSTR",
-      "NBIS",
-      "QBTS"
-    ],
+    "plan": [],
     "etf_implied": []
   },
   "bucket3_flow_low_delta_symbols": [
@@ -129,9 +121,9 @@
     "SMUP"
   ],
   "bucket_pnl": {
-    "bucket_1": 8386.636972610419,
-    "bucket_2": 4029.700727621963,
-    "bucket_4": 2343.2199724045886,
+    "bucket_1": 14309.167991904937,
+    "bucket_4": 871.3064963200001,
+    "bucket_2": -420.9168159179662,
     "bucket_3": -10741.189302756973
   }
 }

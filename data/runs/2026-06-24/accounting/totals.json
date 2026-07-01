@@ -6,8 +6,8 @@
   "total_dividends": 653.7899999999998,
   "total_withholding_tax": -17.16,
   "total_pil_dividends": -133172.14,
-  "total_borrow_fees": -51922.829999999994,
-  "total_short_credit_interest": 8960.19,
+  "total_borrow_fees": -51922.83,
+  "total_short_credit_interest": 8960.189999999999,
   "total_other_fees": -1.82,
   "total_bond_interest": 0.0,
   "total_pnl": 64105.03377292,
@@ -21,22 +21,22 @@
   "universe_allowed_underlyings": 270,
   "kept_symbols": 555,
   "kept_underlyings": 200,
-  "net_exposure_total": 150108.34594068688,
-  "gross_exposure_total": 3265851.5800837395,
-  "net_exposure_bucket_1": -30677.50041459326,
-  "gross_exposure_bucket_1": 2235005.882852791,
-  "net_exposure_bucket_2": -28926.03631676733,
-  "gross_exposure_bucket_2": 809739.8568187701,
-  "net_exposure_bucket_3": 103349.39523701908,
-  "gross_exposure_bucket_3": 104611.03297715008,
+  "net_exposure_total": 150108.40424066945,
+  "gross_exposure_total": 3265851.5217837566,
+  "net_exposure_bucket_1": 65776.04768550544,
+  "gross_exposure_bucket_1": 2341591.807589609,
+  "net_exposure_bucket_2": -11510.262732313548,
+  "gross_exposure_bucket_2": 827155.4565011152,
+  "net_exposure_bucket_3": 103349.39490430709,
+  "gross_exposure_bucket_3": 104611.03330986208,
   "net_exposure_bucket_5": 1387.5670221600003,
   "gross_exposure_bucket_5": 11519.887022160001,
-  "net_exposure_bucket_4": 215408.86154211298,
-  "gross_exposure_bucket_4": 215408.86154211298,
-  "net_exposure_unbucketed": -5066.16,
-  "gross_exposure_unbucketed": 5066.16,
-  "net_exposure_bucket_4_pair": 210342.70154211298,
-  "gross_exposure_bucket_4_pair": 220475.02154211298,
+  "net_exposure_bucket_4": 96473.43849025508,
+  "gross_exposure_bucket_4": 96473.43849025508,
+  "net_exposure_unbucketed": 0.0,
+  "gross_exposure_unbucketed": 0.0,
+  "net_exposure_bucket_4_pair": 91407.27849025508,
+  "gross_exposure_bucket_4_pair": 339410.4445939709,
   "yfinance_override": false,
   "yfinance_symbols_overridden": 0,
   "bucket_split_method": "held_exposure",
@@ -44,12 +44,28 @@
   "b12_spot_split_method": "ledger_fifo",
   "b12_spot_exposure_method": "sleeve_balance",
   "b12_spot_pnl_method": "ledger_fifo",
-  "b12_pnl_mode": "lot_timed_strict",
+  "b12_pnl_mode": "plan_b4_inject",
   "plan_b4_pnl_mode": "inject_slice",
   "plan_sleeve_bucketing": "sleeve_first",
-  "b4_underlying_exposure_mode": "ledger_fifo",
-  "b4_plan_exposure_underlyings": [],
-  "b4_underlying_attribution": "ledger_fifo",
+  "b4_underlying_exposure_mode": "plan_structural",
+  "b4_plan_exposure_underlyings": [
+    "AMD",
+    "ASTS",
+    "BE",
+    "COIN",
+    "CRCL",
+    "CRWV",
+    "IREN",
+    "LITE",
+    "MSTR",
+    "NBIS",
+    "QBTS",
+    "RGTI",
+    "RKLB",
+    "SNDK",
+    "SPCX"
+  ],
+  "b4_underlying_attribution": "etf_implied",
   "b4_attribution_min_usd": 500.0,
   "b4_partial_hedge_ratio_default": 0.75,
   "b4_etf_implied_underlyings": [
@@ -65,8 +81,7 @@
     "NBIS",
     "QBTS",
     "RGTI",
-    "RKLB",
-    "SVIX"
+    "RKLB"
   ],
   "b4_attribution_sources": {
     "plan": [
@@ -79,7 +94,14 @@
       "QBTS",
       "SNDK"
     ],
-    "etf_implied": []
+    "etf_implied": [
+      "ASTS",
+      "BE",
+      "CRCL",
+      "IREN",
+      "RGTI",
+      "RKLB"
+    ]
   },
   "bucket3_flow_low_delta_symbols": [
     "AZYY",
@@ -108,8 +130,8 @@
     "TSYY",
     "ZSL"
   ],
-  "net_exposure_bucket_1_full": -35743.660414593294,
-  "net_exposure_bucket_2_full": -29556.855186832832,
+  "net_exposure_bucket_1_full": -35743.550342082905,
+  "net_exposure_bucket_2_full": -29556.90695936061,
   "net_exposure_bucket_4_full": 215408.86154211298,
   "spot_ratio_max_diff": 1.1102230246251565e-16,
   "spot_ratio_max_diff_pnl": 0.5903398595139178,
@@ -150,10 +172,10 @@
     "SMZ"
   ],
   "bucket_pnl": {
-    "bucket_2": 32694.609307773448,
-    "bucket_1": 32204.532933305014,
+    "bucket_1": 22272.68042980978,
+    "bucket_2": 21144.95753631858,
+    "bucket_4": 17025.59044625324,
     "bucket_3": 3460.864557846546,
-    "bucket_5": 200.94080269185127,
-    "bucket_4": -4455.913828696852
+    "bucket_5": 200.94080269185127
   }
 }

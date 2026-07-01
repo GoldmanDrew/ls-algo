@@ -1,7 +1,7 @@
 {
   "run_date": "2026-03-25",
   "fifo_summary_present": true,
-  "total_realized_pnl": 16540.44196675,
+  "total_realized_pnl": 16540.44196642,
   "total_unrealized_pnl": 6962.8630500000145,
   "total_dividends": 242.25,
   "total_withholding_tax": 0.0,
@@ -10,7 +10,7 @@
   "total_short_credit_interest": 872.64,
   "total_other_fees": 0.0,
   "total_bond_interest": 0.0,
-  "total_pnl": 5507.465016749993,
+  "total_pnl": 5507.465016419985,
   "excluded_cash_interest_base": -759.1551274,
   "borrow_mode": "borrow_fee_details_cumulative_by_symbol",
   "borrow_total_account_source": -4728.59,
@@ -23,8 +23,8 @@
   "kept_underlyings": 169,
   "net_exposure_total": 35119.847828114,
   "gross_exposure_total": 2087921.1361718858,
-  "net_exposure_bucket_1": 35265.598547692396,
-  "gross_exposure_bucket_1": 1976223.5712848683,
+  "net_exposure_bucket_1": 35312.2185476924,
+  "gross_exposure_bucket_1": 1976270.1912848686,
   "net_exposure_bucket_2": 9.094947017729282e-13,
   "gross_exposure_bucket_2": 111458.5741674392,
   "net_exposure_bucket_3": 98233.5706190216,
@@ -33,8 +33,8 @@
   "gross_exposure_bucket_5": 0.0,
   "net_exposure_bucket_4": 0.0,
   "gross_exposure_bucket_4": 0.0,
-  "net_exposure_unbucketed": 46.62,
-  "gross_exposure_unbucketed": 46.62,
+  "net_exposure_unbucketed": 0.0,
+  "gross_exposure_unbucketed": 0.0,
   "net_exposure_bucket_4_pair": -6579.478399999999,
   "gross_exposure_bucket_4_pair": 11814.121599999999,
   "yfinance_override": false,
@@ -44,28 +44,17 @@
   "b12_spot_split_method": "ledger_fifo",
   "b12_spot_exposure_method": "sleeve_balance",
   "b12_spot_pnl_method": "ledger_fifo",
-  "b12_pnl_mode": "lot_timed_strict",
+  "b12_pnl_mode": "plan_b4_inject",
   "plan_b4_pnl_mode": "inject_slice",
   "plan_sleeve_bucketing": "sleeve_first",
-  "b4_underlying_exposure_mode": "ledger_fifo",
+  "b4_underlying_exposure_mode": "plan_structural",
   "b4_plan_exposure_underlyings": [],
-  "b4_underlying_attribution": "ledger_fifo",
+  "b4_underlying_attribution": "etf_implied",
   "b4_attribution_min_usd": 500.0,
   "b4_partial_hedge_ratio_default": 0.75,
-  "b4_etf_implied_underlyings": [
-    "AXON",
-    "DKNG"
-  ],
+  "b4_etf_implied_underlyings": [],
   "b4_attribution_sources": {
-    "plan": [
-      "AMD",
-      "COIN",
-      "CRWV",
-      "LITE",
-      "MSTR",
-      "NBIS",
-      "QBTS"
-    ],
+    "plan": [],
     "etf_implied": []
   },
   "bucket3_flow_low_delta_symbols": [
@@ -132,9 +121,9 @@
     "SMUP"
   ],
   "bucket_pnl": {
-    "bucket_1": 6334.710694595559,
-    "bucket_2": 6197.730353903662,
-    "bucket_4": 1967.3760548146327,
+    "bucket_1": 11295.736012512936,
+    "bucket_2": 2332.7745941509174,
+    "bucket_4": 871.3064963200001,
     "bucket_3": -8992.352086563853
   }
 }

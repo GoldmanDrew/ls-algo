@@ -1,6 +1,6 @@
 run_date,underlying,plan_b4_usd,plan_b4_qty,etf_implied_short_usd,etf_implied_short_qty,b4_source,ledger_qty_b4,ibkr_qty,orphan_qty,orphan_frac,ledger_missing_b4,plan_exposure_active
 2026-03-24,AUR,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
-2026-03-24,AXON,0.0,0.0,-832.24,-1.640592966409084,none,0.0,1.0,0.0,0.0,True,False
+2026-03-24,AXON,0.0,0.0,0.0,0.0,none,0.0,1.0,0.0,0.0,False,False
 2026-03-24,BKNG,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
 2026-03-24,BLSH,0.0,0.0,0.0,0.0,none,0.0,0.0,18.0,0.0,False,False
 2026-03-24,CELH,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
@@ -9,7 +9,7 @@ run_date,underlying,plan_b4_usd,plan_b4_qty,etf_implied_short_usd,etf_implied_sh
 2026-03-24,CRWV,0.0,0.0,0.0,0.0,none,0.0,105.0,9.0,0.08571428571428572,False,False
 2026-03-24,DASH,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
 2026-03-24,DIA,0.0,0.0,0.0,0.0,none,-52.94117647058823,0.0,0.0,0.0,False,False
-2026-03-24,DKNG,0.0,0.0,-1785.0816,-74.50257095158598,none,0.0,2.0,15.0,7.5,True,False
+2026-03-24,DKNG,0.0,0.0,0.0,0.0,none,0.0,2.0,15.0,7.5,False,False
 2026-03-24,IBIT,0.0,0.0,0.0,0.0,none,0.0,858.0,14.0,0.016317016317016316,False,False
 2026-03-24,IWM,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False
 2026-03-24,LYFT,0.0,0.0,0.0,0.0,none,0.0,0.0,0.0,0.0,False,False

@@ -1,16 +1,16 @@
 {
   "run_date": "2026-06-09",
   "fifo_summary_present": true,
-  "total_realized_pnl": 50851.80527099999,
-  "total_unrealized_pnl": 143966.253976,
+  "total_realized_pnl": 50851.80527187005,
+  "total_unrealized_pnl": 143966.25397599998,
   "total_dividends": 692.74,
   "total_withholding_tax": -17.16,
   "total_pil_dividends": -65025.049999999996,
-  "total_borrow_fees": -37417.87,
+  "total_borrow_fees": -37417.869999999995,
   "total_short_credit_interest": 8960.19,
-  "total_other_fees": -1.82,
+  "total_other_fees": -1.8200000000000003,
   "total_bond_interest": 0.0,
-  "total_pnl": 102009.08924700005,
+  "total_pnl": 102009.08924786994,
   "excluded_cash_interest_base": -17267.0634723,
   "borrow_mode": "borrow_fee_details_cumulative_by_symbol",
   "borrow_total_account_source": -37417.87,
@@ -21,22 +21,22 @@
   "universe_allowed_underlyings": 270,
   "kept_symbols": 548,
   "kept_underlyings": 199,
-  "net_exposure_total": 171025.34807740114,
-  "gross_exposure_total": 3308167.3768205647,
-  "net_exposure_bucket_1": 6878.514396126571,
-  "gross_exposure_bucket_1": 2293163.4675412476,
-  "net_exposure_bucket_2": -4153.099125015435,
-  "gross_exposure_bucket_2": 835518.3107516412,
-  "net_exposure_bucket_3": 104570.51360422322,
-  "gross_exposure_bucket_3": 105856.41932560921,
+  "net_exposure_total": 171025.28563163025,
+  "gross_exposure_total": 3308167.4392663357,
+  "net_exposure_bucket_1": 105901.21372648243,
+  "gross_exposure_bucket_1": 2392186.1996204406,
+  "net_exposure_bucket_2": 10549.057565592011,
+  "gross_exposure_bucket_2": 850220.5589044334,
+  "net_exposure_bucket_3": 104570.5132639632,
+  "gross_exposure_bucket_3": 105856.41966586922,
   "net_exposure_bucket_5": 2179.4437903199996,
   "gross_exposure_bucket_5": 12079.20379032,
-  "net_exposure_bucket_4": 173892.765666983,
-  "gross_exposure_bucket_4": 173892.765666983,
+  "net_exposure_bucket_4": 60167.84754050881,
+  "gross_exposure_bucket_4": 60167.84754050881,
   "net_exposure_unbucketed": -4949.88,
   "gross_exposure_unbucketed": 4949.88,
-  "net_exposure_bucket_4_pair": 157190.7505751011,
-  "gross_exposure_bucket_4_pair": 206533.6869588649,
+  "net_exposure_bucket_4_pair": 63187.42064050882,
+  "gross_exposure_bucket_4_pair": 300537.01689345716,
   "yfinance_override": false,
   "yfinance_symbols_overridden": 0,
   "bucket_split_method": "held_exposure",
@@ -44,12 +44,28 @@
   "b12_spot_split_method": "ledger_fifo",
   "b12_spot_exposure_method": "sleeve_balance",
   "b12_spot_pnl_method": "ledger_fifo",
-  "b12_pnl_mode": "lot_timed_strict",
+  "b12_pnl_mode": "plan_b4_inject",
   "plan_b4_pnl_mode": "inject_slice",
   "plan_sleeve_bucketing": "sleeve_first",
-  "b4_underlying_exposure_mode": "ledger_fifo",
-  "b4_plan_exposure_underlyings": [],
-  "b4_underlying_attribution": "ledger_fifo",
+  "b4_underlying_exposure_mode": "plan_structural",
+  "b4_plan_exposure_underlyings": [
+    "AMD",
+    "ASTS",
+    "BE",
+    "CLSK",
+    "COIN",
+    "CRCL",
+    "CRWV",
+    "IREN",
+    "LITE",
+    "MSTR",
+    "NBIS",
+    "QBTS",
+    "RKLB",
+    "SNDK",
+    "SVIX"
+  ],
+  "b4_underlying_attribution": "etf_implied",
   "b4_attribution_min_usd": 500.0,
   "b4_partial_hedge_ratio_default": 0.75,
   "b4_etf_implied_underlyings": [
@@ -64,8 +80,7 @@
     "MSTR",
     "NBIS",
     "QBTS",
-    "RKLB",
-    "SVIX"
+    "RKLB"
   ],
   "b4_attribution_sources": {
     "plan": [
@@ -82,7 +97,11 @@
       "SNDK",
       "SVIX"
     ],
-    "etf_implied": []
+    "etf_implied": [
+      "AMD",
+      "BE",
+      "CRCL"
+    ]
   },
   "bucket3_flow_low_delta_symbols": [
     "AZYY",
@@ -111,8 +130,8 @@
     "TSYY",
     "ZSL"
   ],
-  "net_exposure_bucket_1_full": 9396.515986265978,
-  "net_exposure_bucket_2_full": -12263.933575847837,
+  "net_exposure_bucket_1_full": 9396.416541555081,
+  "net_exposure_bucket_2_full": -12263.896576907839,
   "net_exposure_bucket_4_full": 173892.765666983,
   "spot_ratio_max_diff": 0.0,
   "spot_ratio_max_diff_pnl": 0.7941060218892139,
@@ -153,10 +172,10 @@
     "SMZ"
   ],
   "bucket_pnl": {
-    "bucket_2": 66062.27685907984,
-    "bucket_1": 39041.333202551985,
+    "bucket_2": 60113.97448989202,
+    "bucket_1": 28923.9580962174,
+    "bucket_4": 8861.253359983477,
     "bucket_3": 4074.975939615174,
-    "bucket_5": 34.92736216194179,
-    "bucket_4": -7204.4241164089335
+    "bucket_5": 34.92736216194179
   }
 }

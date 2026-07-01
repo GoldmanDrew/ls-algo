@@ -2528,8 +2528,17 @@ def apply_plan_b4_spot_pnl_override(
     ledger_r_b1: float,
     ledger_r_b2: float,
     b4_frac_signed: float | None = None,
+    b4_unrealized_usd: float | None = None,
 ) -> None:
     """Redistribute IBKR spot PnL across buckets using a B4 ratio.
+
+    When ``b4_unrealized_usd`` is supplied (point-in-time attribution), the B4
+    slice of **unrealized** PnL is set to that explicit dollar amount — the
+    structural short's mark-to-market accrued *since the sleeve went live* —
+    rather than a fraction of the cumulative since-inception line. Carry columns
+    then stay entirely in B1/B2 (a synthetic short accrues no borrow/dividends),
+    and B1/B2 absorb the remainder so the underlying line still conserves. This
+    supersedes ``b4_frac_signed`` for the unrealized column when set.
 
     ``plan_ratio`` historically came from the latest ``inverse_decay_bucket4``
     plan row and carried a normalised positive ``b4`` magnitude. With the
@@ -2570,7 +2579,15 @@ def apply_plan_b4_spot_pnl_override(
         if col not in u_rows.columns:
             continue
         total = float(u_rows[col].sum())
-        if abs(total) <= 1e-9:
+        # A point-in-time B4 dollar can be non-zero even when the net line PnL is
+        # ~0 (the short's loss offsets the long's gain), so do not short-circuit
+        # the unrealized column in that case.
+        _inject_dollar = (
+            mode != "full_override"
+            and b4_unrealized_usd is not None
+            and col == "unrealized_pnl"
+        )
+        if abs(total) <= 1e-9 and not _inject_dollar:
             for bk in bucket_keys:
                 lot_components[underlying][bk][col] = 0.0
             continue
@@ -2582,7 +2599,10 @@ def apply_plan_b4_spot_pnl_override(
             ):
                 lot_components[underlying][bk][col] = total * float(plan_ratio.get(rk, 0.0))
         else:
-            b4_part = total * b4_frac
+            if b4_unrealized_usd is not None:
+                b4_part = float(b4_unrealized_usd) if col == "unrealized_pnl" else 0.0
+            else:
+                b4_part = total * b4_frac
             remainder = total - b4_part
             lot_components[underlying]["bucket_4"][col] = b4_part
             lot_components[underlying]["bucket_1"][col] = remainder * b1_norm
@@ -2927,6 +2947,22 @@ def resolve_b4_structural_short_usd_by_underlying(
             _implied = float(implied_b4_short_usd.get(u_str, 0.0))
             if abs(_implied) >= float(b4_attribution_min_usd):
                 out[u_str] = _implied
+    # Cap the structural short at the actual long line: the synthetic mirror can
+    # never exceed or invert the real spot position. Drop wrong-sign values and
+    # names that are not net-long (no long line to mirror).
+    for _u in list(out.keys()):
+        _actual = float(spot_qty.get(_u, 0.0))
+        _mk = float(spot_marks.get(_u, 0.0))
+        if _actual <= 0 or _mk <= 1e-12:
+            out.pop(_u, None)
+            continue
+        _val = float(out[_u])
+        if _val >= 0.0:  # a short must be negative USD
+            out.pop(_u, None)
+            continue
+        _cap = -_actual * _mk
+        if _val < _cap:
+            out[_u] = _cap
     return out
 
 
@@ -4424,6 +4460,11 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     b4_partial_hedge_ratio_default = float(
         _acct_cfg.get("b4_partial_hedge_ratio_default", 0.75) or 0.75
     )
+    # Date the live B4 (inverse-decay) sleeve went live. The synthetic structural
+    # short carries only the underlying's move *since* this date (point-in-time),
+    # and no structural short exists on runs before it — the pre-inception move
+    # stays entirely in B1/B2. Empty string disables the gate (legacy behaviour).
+    b4_inject_start_date = str(_acct_cfg.get("plan_b4_inject_start_date", "") or "").strip()
     ledger_plan_seed_b4_underlyings = {
         canonical_symbol(str(x))
         for x in (_acct_cfg.get("ledger_plan_seed_b4_underlyings") or [])
@@ -4462,6 +4503,40 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     fifo = parse_fifo_perf(flex_trades_path)
     trade_events = parse_trade_events(flex_trades_path)
     pos = parse_open_positions(flex_positions_path)
+
+    # ── B4 structural-short inception marks (point-in-time attribution) ──────
+    # The synthetic B4 short is measured from the sleeve's go-live date, so its
+    # unrealized PnL reflects only the underlying's move since then (not the
+    # since-inception spot line). Read the underlying spot marks captured on the
+    # inception run; names absent there get no structural short (safe: they are
+    # treated as not-yet-hedged). ``_b4_inject_active`` gates the whole feature.
+    _b4_inject_active = bool(b4_inject_start_date) and run_date >= b4_inject_start_date
+    _b4_inject_ref_marks: dict[str, float] = {}
+    if _b4_inject_active:
+        _inject_pos_path = (
+            PROJECT_ROOT / "data" / "runs" / b4_inject_start_date / "ibkr_flex" / "flex_positions.xml"
+        )
+        if _inject_pos_path.exists():
+            try:
+                _inject_pos = parse_open_positions(_inject_pos_path)
+                for _, _ir in _inject_pos.iterrows():
+                    try:
+                        _isym = canonical_symbol(str(_ir.get("symbol", "") or ""))
+                        _imk = float(_ir.get("markPrice", 0.0) or 0.0) * float(
+                            _ir.get("fxRateToBase", 1.0) or 1.0
+                        )
+                    except (TypeError, ValueError):
+                        continue
+                    if _isym and _imk > 0:
+                        _b4_inject_ref_marks[_isym] = _imk
+            except Exception as _e:  # noqa: BLE001 - tolerate a missing/short snapshot
+                print(f"[ACCOUNTING] WARN: could not load B4 inception marks: {_e}")
+        else:
+            print(
+                f"[ACCOUNTING] WARN: B4 inception snapshot missing at {_inject_pos_path}; "
+                "structural-short PnL will be zero until it is available."
+            )
+
     cash = parse_cash_transactions(flex_cash_path)
     borrow_details = parse_borrow_fee_details(flex_borrow_details_path, run_date)
     borrow_fee_events = parse_borrow_fee_events(flex_borrow_details_path, run_date)
@@ -5570,7 +5645,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     # current ``inverse_decay_bucket4`` plan no longer carries the row.
     _implied_b4_short_usd: dict[str, float] = {}
     _implied_b4_short_qty: dict[str, float] = {}
-    for _u_b4 in b4_underlyings:
+    # Only carry a structural short once the sleeve is live (point-in-time gate).
+    for _u_b4 in (b4_underlyings if _b4_inject_active else []):
         _u_str_b4 = canonical_symbol(str(_u_b4))
         _mark_u_b4 = float(_spot_marks.get(_u_str_b4, 0.0))
         if _mark_u_b4 <= 1e-12:
@@ -5588,6 +5664,13 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             spot_mark_base=_mark_u_b4,
             partial_hedge_ratio_default=b4_partial_hedge_ratio_default,
         )
+        # Cap the mirror at the actual long line: |short| ≤ |spot shares held|,
+        # and never invert (a long spot can only be mirrored by a short slice).
+        _actual_qty_b4 = float(_spot_qty.get(_u_str_b4, 0.0))
+        if _actual_qty_b4 <= 0 or _short_qty_b4 >= 0:
+            continue
+        _short_qty_b4 = max(_short_qty_b4, -_actual_qty_b4)
+        _short_usd_b4 = _short_qty_b4 * _mark_u_b4
         if abs(_short_usd_b4) < b4_attribution_min_usd:
             continue
         _implied_b4_short_usd[_u_str_b4] = _short_usd_b4
@@ -5605,7 +5688,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         min_usd=b4_plan_exposure_min_usd,
         etf_implied_short_usd=_implied_b4_short_usd,
         attribution_mode=b4_attribution_mode,
-    )
+    ) if _b4_inject_active else set()
     if _b4_plan_exposure_underlyings:
         print(
             f"[ACCOUNTING] structural B4 exposure for "
@@ -5621,7 +5704,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     # Used by the spot PnL override and the ledger reconciliation column.
     _b4_signed_frac: dict[str, float] = {}
     _b4_attribution_source: dict[str, str] = {}
-    for _u_p in _plan_ratio_b4:
+    for _u_p in (_plan_ratio_b4 if _b4_inject_active else []):
         _spot_net_u_p = float(_spot_qty.get(_u_p, 0.0)) * float(_spot_marks.get(_u_p, 0.0))
         if abs(_spot_net_u_p) <= 1e-12:
             continue
@@ -5660,9 +5743,18 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     for _u in _all_underlyings:
         _u_str = str(_u)
         _mark_u = float(_spot_marks.get(_u_str, 0.0))
-        _plan_b4_qty_by_u[_u_str] = compute_plan_b4_structural_qty(
-            _plan_sleeve_usd, _u_str, _mark_u
+        _plan_q_u = (
+            compute_plan_b4_structural_qty(_plan_sleeve_usd, _u_str, _mark_u)
+            if _b4_inject_active
+            else 0.0
         )
+        # Cap the plan mirror at the actual long line (no invert / no exceed).
+        _actual_q_u = float(_spot_qty.get(_u_str, 0.0))
+        if _plan_q_u < 0 and _actual_q_u > 0:
+            _plan_q_u = max(_plan_q_u, -_actual_q_u)
+        elif _actual_q_u <= 0 or _plan_q_u > 0:
+            _plan_q_u = 0.0
+        _plan_b4_qty_by_u[_u_str] = _plan_q_u
         if _u_str not in ledger_plan_seed_b4_underlyings or _u_str not in _plan_ratio_b4:
             continue
         _ibkr_seed = float(_spot_qty.get(_u_str, 0.0))
@@ -5689,7 +5781,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     for _u in _all_underlyings:
         _u_str = str(_u)
         _plan_q = float(_plan_b4_qty_by_u.get(_u_str, 0.0))
-        _plan_usd = float((_plan_sleeve_usd.get(_u_str) or {}).get("b4", 0.0))
+        # Derive USD from the (already capped) plan qty so the persisted short
+        # equals the capped number used everywhere else.
+        _plan_usd = _plan_q * float(_spot_marks.get(_u_str, 0.0))
         _imp_q = float(_implied_b4_short_qty.get(_u_str, 0.0))
         _imp_usd = float(_implied_b4_short_usd.get(_u_str, 0.0))
         if (
@@ -5708,6 +5802,22 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             _b4_struct_qty_by_u[_u_str] = _imp_q
             _b4_struct_usd_by_u[_u_str] = _imp_usd
             _b4_struct_src_by_u[_u_str] = "etf_implied"
+
+    # ── Point-in-time B4 structural-short unrealized PnL ─────────────────────
+    # The synthetic short's PnL is booked only for the underlying's move *since*
+    # the sleeve went live: ``short_qty × (mark_now − mark_at_inception)``. The
+    # short qty is negative, so a rising underlying (long gains) shows as a B4
+    # loss while B1/B2 keep the full long move — with no retroactive attribution
+    # of the pre-inception spot line. Names with no inception mark contribute 0.
+    _b4_pit_unrealized_usd: dict[str, float] = {}
+    if _b4_inject_active:
+        for _u_str, _sq in _b4_struct_qty_by_u.items():
+            _ref_mk = float(_b4_inject_ref_marks.get(_u_str, 0.0))
+            _now_mk = float(_spot_marks.get(_u_str, 0.0))
+            if _ref_mk > 1e-12 and _now_mk > 1e-12 and abs(_sq) > 1e-12:
+                _b4_pit_unrealized_usd[_u_str] = _sq * (_now_mk - _ref_mk)
+            else:
+                _b4_pit_unrealized_usd[_u_str] = 0.0
 
     _spot_exposure_ratio_map: dict[str, SpotBucketRatios] = {}
     _hedge_spot_meta_map: dict[str, HedgeRatioSpotMeta] = {}
@@ -5910,6 +6020,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 ledger_r_b1=_split_r_b1,
                 ledger_r_b2=_split_r_b2,
                 b4_frac_signed=_b4_signed_frac.get(_u),
+                b4_unrealized_usd=(
+                    _b4_pit_unrealized_usd.get(_u, 0.0) if b4_inject_start_date else None
+                ),
             )
             _pnl_split_mode = plan_b4_pnl_mode
         elif use_plan_b4_spot_pnl and _u in _b4_signed_frac:
@@ -5924,6 +6037,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 ledger_r_b1=_split_r_b1,
                 ledger_r_b2=_split_r_b2,
                 b4_frac_signed=_b4_signed_frac[_u],
+                b4_unrealized_usd=(
+                    _b4_pit_unrealized_usd.get(_u, 0.0) if b4_inject_start_date else None
+                ),
             )
             _pnl_split_mode = "inject_slice"
 
