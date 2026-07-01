@@ -72,10 +72,13 @@ def test_book_summary_pct_nav(fake_totals):
     assert book.gross_notional_usd == pytest.approx(expected_gross)
     assert book.gross_exposure_pct_nav == pytest.approx(expected_gross / 800_000.0)
     assert book.pnl_today_pct_nav == pytest.approx(48626.58 / 800_000.0)
-    assert len(book.sleeve_table) == 4
+    assert len(book.sleeve_table) == 5
     b4 = next(r for r in book.sleeve_table if r["bucket"] == "bucket_4")
     assert b4["target_weight"] == 0.25
     assert b4["actual_weight"] == pytest.approx(437084.68 / expected_gross)
+    b5 = next(r for r in book.sleeve_table if r["bucket"] == "bucket_5")
+    assert b5["gross_usd"] == pytest.approx(0.0)
+    assert b5["target_weight"] is None
 
 
 def test_book_summary_breach_when_gross_exceeds(fake_totals):
@@ -131,7 +134,7 @@ def test_data_quality_counts_no_blank_top_rows(tmp_path: Path):
     accounting.mkdir()
     flex.mkdir()
     (accounting / "totals.json").write_text("{}", encoding="utf-8")
-    for bucket in ("bucket_1", "bucket_2", "bucket_3", "bucket_4"):
+    for bucket in ("bucket_1", "bucket_2", "bucket_3", "bucket_4", "bucket_5"):
         (accounting / f"pnl_{bucket}.csv").write_text(
             "underlying,symbols,total_pnl\nABC,\"ABC, ABCU\",1\n",
             encoding="utf-8",
@@ -157,7 +160,7 @@ def test_data_quality_counts_no_blank_top_rows(tmp_path: Path):
             accounting / f"pnl_{bucket}.csv",
             accounting / f"net_exposure_{bucket}.csv",
         )
-        for bucket in ("bucket_1", "bucket_2", "bucket_3", "bucket_4")
+        for bucket in ("bucket_1", "bucket_2", "bucket_3", "bucket_4", "bucket_5")
     }
     dq = compute_data_quality(
         accounting_dir=accounting,
@@ -1107,7 +1110,7 @@ def test_compute_capital_panel_includes_per_bucket_returns(tmp_path: Path):
     }
     panel = compute_capital_panel(totals, nav_usd=800_000.0, pnl_history_csv=hist)
     assert panel["available"] is True
-    assert len(panel["bucket_return_rows"]) == 4
+    assert len(panel["bucket_return_rows"]) == 5
     b1 = next(r for r in panel["bucket_return_rows"] if r["id"] == "bucket_1")
     assert b1["roc_on_net_capital"] == pytest.approx(10.0 / 200.0)
 
@@ -1150,7 +1153,7 @@ def test_compute_bucket_sleeve_rows_merges_exposure_and_capital():
         }
     }
     panel = compute_bucket_sleeve_rows(sleeve_table, capital_panel, totals)
-    assert len(panel["rows"]) == 4
+    assert len(panel["rows"]) == 5
     b1 = next(r for r in panel["rows"] if r["bucket"] == "bucket_1")
     assert b1["exposure_gross_usd"] == pytest.approx(1_000_000.0)
     assert b1["net_capital_usd"] == pytest.approx(500.0)
