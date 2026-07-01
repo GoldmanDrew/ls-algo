@@ -1,6 +1,6 @@
 {
   "run_date": "2026-05-12",
-  "generated_at_utc": "2026-07-01T15:39:39.575310+00:00",
+  "generated_at_utc": "2026-07-01T20:43:46.659782+00:00",
   "nav_usd": 1590800.0,
   "nav_source": "flex_positions:percentOfNAV_median",
   "book": {
@@ -19,14 +19,14 @@
       {
         "bucket": "bucket_1",
         "bucket_label": "Bucket 1 (core leveraged)",
-        "gross_usd": 4282665.043627128,
-        "net_usd": -60774.82498359788,
-        "gross_usd_raw": 4282665.043627128,
-        "net_usd_raw": -60774.82498359788,
+        "gross_usd": 4203511.870420402,
+        "net_usd": -139927.99819032382,
+        "gross_usd_raw": 4203511.870420402,
+        "net_usd_raw": -139927.99819032382,
         "target_gross_usd": 2374627.332098475,
-        "actual_weight": 0.991930709360352,
+        "actual_weight": 0.9735976241325206,
         "target_weight": 0.55,
-        "drift_pp": 44.1930709360352,
+        "drift_pp": 42.35976241325206,
         "drift_status": "hard",
         "pnl_usd": -3964.0160078946456,
         "attribution_available": true
@@ -34,14 +34,14 @@
       {
         "bucket": "bucket_2",
         "bucket_label": "Bucket 2 (yield boost)",
-        "gross_usd": 125562.96467708773,
-        "net_usd": 9478.838619044922,
-        "gross_usd_raw": 125562.96467708773,
-        "net_usd_raw": 9478.838619044922,
+        "gross_usd": 118303.56619637596,
+        "net_usd": 2219.4401383331606,
+        "gross_usd_raw": 118303.56619637596,
+        "net_usd_raw": 2219.4401383331606,
         "target_gross_usd": 863500.8480358091,
-        "actual_weight": 0.029082302573924208,
+        "actual_weight": 0.027400914883981668,
         "target_weight": 0.2,
-        "drift_pp": -17.09176974260758,
+        "drift_pp": -17.259908511601836,
         "drift_status": "hard",
         "pnl_usd": 33255.09943704602,
         "attribution_available": true
@@ -64,14 +64,14 @@
       {
         "bucket": "bucket_4",
         "bucket_label": "Bucket 4 (inverse / decay)",
-        "gross_usd": -91204.22096983116,
-        "net_usd": -91204.22096983116,
-        "gross_usd_raw": -91204.22096983116,
-        "net_usd_raw": -91204.22096983116,
+        "gross_usd": -4791.649282393453,
+        "net_usd": -4791.649282393453,
+        "gross_usd_raw": -4791.649282393453,
+        "net_usd_raw": -4791.649282393453,
         "target_gross_usd": 1079376.0600447613,
-        "actual_weight": -0.02112429215959472,
+        "actual_weight": -0.0011098192418207667,
         "target_weight": 0.25,
-        "drift_pp": -27.112429215959473,
+        "drift_pp": -25.110981924182074,
         "drift_status": "hard",
         "pnl_usd": 286.10893533,
         "attribution_available": true
@@ -105,8 +105,8 @@
       "bucket": "bucket_1",
       "bucket_label": "Bucket 1 (core leveraged)",
       "exposure_header": {
-        "attribution_net_usd": -60774.82498359788,
-        "attribution_gross_usd": 4282665.043627128,
+        "attribution_net_usd": -139927.99819032382,
+        "attribution_gross_usd": 4203511.870420402,
         "source": "totals.json"
       },
       "pnl_rows": [
@@ -2638,8 +2638,8 @@
         {
           "underlying": "NBIS",
           "symbols": "NBIG, NBIL, NBIS, NEBX",
-          "net_notional_usd": 21122.20609242,
-          "gross_notional_usd": 134142.46910758,
+          "net_notional_usd": -4774.331507580006,
+          "gross_notional_usd": 108245.93150758,
           "n_legs": 4
         },
         {
@@ -2657,13 +2657,6 @@
           "n_legs": 2
         },
         {
-          "underlying": "CRWV",
-          "symbols": "CRWG, CRWU, CRWV, CWVX",
-          "net_notional_usd": 18102.55989217989,
-          "gross_notional_usd": 88021.32897133988,
-          "n_legs": 4
-        },
-        {
           "underlying": "CRCL",
           "symbols": "CCUP, CRCA, CRCG, CRCL",
           "net_notional_usd": -7496.184732990003,
@@ -2676,6 +2669,13 @@
           "net_notional_usd": -16862.23686399,
           "gross_notional_usd": 74125.99686399,
           "n_legs": 3
+        },
+        {
+          "underlying": "CRWV",
+          "symbols": "CRWG, CRWU, CRWV, CWVX",
+          "net_notional_usd": 4153.3154604200045,
+          "gross_notional_usd": 74072.08453958,
+          "n_legs": 4
         },
         {
           "underlying": "IBIT",
@@ -2701,8 +2701,8 @@
         {
           "underlying": "IONQ",
           "symbols": "IONL, IONQ, IONX, QPUX",
-          "net_notional_usd": 3524.1305735426613,
-          "gross_notional_usd": 69079.60274586266,
+          "net_notional_usd": 1031.3249930720085,
+          "gross_notional_usd": 66586.79716539201,
           "n_legs": 4
         },
         {
@@ -2711,13 +2711,6 @@
           "net_notional_usd": -5260.22880596,
           "gross_notional_usd": 66366.98880596,
           "n_legs": 3
-        },
-        {
-          "underlying": "IREN",
-          "symbols": "IRE, IREG, IREN, IREX",
-          "net_notional_usd": 5027.80073176543,
-          "gross_notional_usd": 64730.74862856543,
-          "n_legs": 4
         },
         {
           "underlying": "MSFT",
@@ -2748,6 +2741,13 @@
           "n_legs": 2
         },
         {
+          "underlying": "IREN",
+          "symbols": "IRE, IREG, IREN, IREX",
+          "net_notional_usd": -1394.0739484000003,
+          "gross_notional_usd": 58308.8739484,
+          "n_legs": 4
+        },
+        {
           "underlying": "QUBT",
           "symbols": "QUBT, QUBX",
           "net_notional_usd": 490.9106288699986,
@@ -2774,20 +2774,6 @@
           "net_notional_usd": -1102.5045354400029,
           "gross_notional_usd": 53824.54453544,
           "n_legs": 2
-        },
-        {
-          "underlying": "QBTS",
-          "symbols": "QBTS, QBTX",
-          "net_notional_usd": 7639.491632921425,
-          "gross_notional_usd": 53537.30670148142,
-          "n_legs": 2
-        },
-        {
-          "underlying": "COIN",
-          "symbols": "COIA, COIG, COIN, CONL, CONX",
-          "net_notional_usd": 1577.26658066846,
-          "gross_notional_usd": 52919.22493504846,
-          "n_legs": 5
         },
         {
           "underlying": "ALAB",
@@ -2818,10 +2804,24 @@
           "n_legs": 2
         },
         {
+          "underlying": "COIN",
+          "symbols": "COIA, COIG, COIN, CONL, CONX",
+          "net_notional_usd": -1411.779177190001,
+          "gross_notional_usd": 49930.17917719,
+          "n_legs": 5
+        },
+        {
           "underlying": "KEEL",
           "symbols": "KEEL, KEEX",
           "net_notional_usd": -5373.008704262003,
           "gross_notional_usd": 47831.208704262,
+          "n_legs": 2
+        },
+        {
+          "underlying": "QBTS",
+          "symbols": "QBTS, QBTX",
+          "net_notional_usd": -848.344999153851,
+          "gross_notional_usd": 45049.47006940615,
           "n_legs": 2
         },
         {
@@ -2843,13 +2843,6 @@
           "symbols": "HUT, HUTG",
           "net_notional_usd": -2720.076165521601,
           "gross_notional_usd": 41552.2761655216,
-          "n_legs": 2
-        },
-        {
-          "underlying": "ASTS",
-          "symbols": "ASTS, ASTX",
-          "net_notional_usd": 15239.541081839998,
-          "gross_notional_usd": 41224.65891816,
           "n_legs": 2
         },
         {
@@ -2879,13 +2872,6 @@
           "net_notional_usd": -9576.82939,
           "gross_notional_usd": 38555.48939,
           "n_legs": 2
-        },
-        {
-          "underlying": "MSTR",
-          "symbols": "MSTR, MSTU, MSTX",
-          "net_notional_usd": 8527.204269177295,
-          "gross_notional_usd": 38431.1157758973,
-          "n_legs": 3
         },
         {
           "underlying": "TSM",
@@ -2927,6 +2913,20 @@
           "symbols": "BE, BEX",
           "net_notional_usd": -2889.779422649999,
           "gross_notional_usd": 32985.29942265,
+          "n_legs": 2
+        },
+        {
+          "underlying": "MSTR",
+          "symbols": "MSTR, MSTU, MSTX",
+          "net_notional_usd": 2027.2397546788932,
+          "gross_notional_usd": 31931.151261398896,
+          "n_legs": 3
+        },
+        {
+          "underlying": "ASTS",
+          "symbols": "ASTS, ASTX",
+          "net_notional_usd": 5915.140364233452,
+          "gross_notional_usd": 31900.258200553453,
           "n_legs": 2
         },
         {
@@ -3007,13 +3007,6 @@
           "n_legs": 2
         },
         {
-          "underlying": "RGTI",
-          "symbols": "RGTI, RGTX",
-          "net_notional_usd": 2746.7075342112894,
-          "gross_notional_usd": 25628.03905037129,
-          "n_legs": 2
-        },
-        {
           "underlying": "U",
           "symbols": "U, UNX",
           "net_notional_usd": -573.2716886079997,
@@ -3081,6 +3074,13 @@
           "symbols": "LEU, LEUX",
           "net_notional_usd": 770.8164126400006,
           "gross_notional_usd": 22683.38358736,
+          "n_legs": 2
+        },
+        {
+          "underlying": "RGTI",
+          "symbols": "RGTI, RGTX",
+          "net_notional_usd": -344.7557580799985,
+          "gross_notional_usd": 22536.57575808,
           "n_legs": 2
         },
         {
@@ -3871,8 +3871,8 @@
       "bucket": "bucket_2",
       "bucket_label": "Bucket 2 (yield boost)",
       "exposure_header": {
-        "attribution_net_usd": 9478.838619044922,
-        "attribution_gross_usd": 125562.96467708773,
+        "attribution_net_usd": 2219.4401383331606,
+        "attribution_gross_usd": 118303.56619637596,
         "source": "totals.json"
       },
       "pnl_rows": [
@@ -4310,8 +4310,8 @@
         {
           "underlying": "MSTR",
           "symbols": "MSTR, MTYY",
-          "net_notional_usd": 8299.876203196876,
-          "gross_notional_usd": 37406.57467813288,
+          "net_notional_usd": 1973.195254493108,
+          "gross_notional_usd": 31079.893729429103,
           "n_legs": 2
         },
         {
@@ -4331,8 +4331,8 @@
         {
           "underlying": "IONQ",
           "symbols": "IONQ, IOYY",
-          "net_notional_usd": 923.3706715894368,
-          "gross_notional_usd": 18099.80585266944,
+          "net_notional_usd": 270.2213302279997,
+          "gross_notional_usd": 17446.656511308,
           "n_legs": 2
         },
         {
@@ -4350,17 +4350,17 @@
           "n_legs": 2
         },
         {
-          "underlying": "QBTS",
-          "symbols": "QBTS, QBY",
-          "net_notional_usd": 255.5917442586068,
-          "gross_notional_usd": 1759.4195667822069,
-          "n_legs": 2
-        },
-        {
           "underlying": "AI",
           "symbols": "AI, AIYY",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 1589.7411496112002,
+          "n_legs": 2
+        },
+        {
+          "underlying": "QBTS",
+          "symbols": "QBTS, QBY",
+          "net_notional_usd": -23.976446387949068,
+          "gross_notional_usd": 1479.8513761356508,
           "n_legs": 2
         }
       ],
@@ -4951,10 +4951,10 @@
       "bucket": "bucket_4",
       "bucket_label": "Bucket 4 (inverse / decay)",
       "exposure_header": {
-        "attribution_net_usd": -91204.22096983116,
-        "attribution_gross_usd": -91204.22096983116,
-        "pair_view_net_usd": -104932.22096983118,
-        "pair_view_gross_usd": 104932.22096983118,
+        "attribution_net_usd": -4791.649282393453,
+        "attribution_gross_usd": -4791.649282393453,
+        "pair_view_net_usd": -18519.649282393453,
+        "pair_view_gross_usd": 18519.649282393453,
         "source": "totals.json ratio-split (sleeve table); pair CSV is detail-only"
       },
       "pnl_rows": [
@@ -5013,27 +5013,6 @@
       ],
       "exposure_rows": [
         {
-          "underlying": "NBIS",
-          "symbols": "NBIS",
-          "net_notional_usd": -25896.537600000007,
-          "gross_notional_usd": 25896.537600000007,
-          "n_legs": 1
-        },
-        {
-          "underlying": "ASTS",
-          "symbols": "ASTS",
-          "net_notional_usd": -14116.05,
-          "gross_notional_usd": 14116.05,
-          "n_legs": 1
-        },
-        {
-          "underlying": "CRWV",
-          "symbols": "CRWV",
-          "net_notional_usd": -13949.244431759886,
-          "gross_notional_usd": 13949.244431759886,
-          "n_legs": 1
-        },
-        {
           "underlying": "CLSK",
           "symbols": "CLSK",
           "net_notional_usd": -13728.0,
@@ -5041,45 +5020,10 @@
           "n_legs": 1
         },
         {
-          "underlying": "MSTR",
-          "symbols": "MSTR",
-          "net_notional_usd": -12826.64546320217,
-          "gross_notional_usd": 12826.64546320217,
-          "n_legs": 1
-        },
-        {
-          "underlying": "QBTS",
-          "symbols": "QBTS",
-          "net_notional_usd": -8767.404822721828,
-          "gross_notional_usd": 8767.404822721828,
-          "n_legs": 1
-        },
-        {
-          "underlying": "IREN",
-          "symbols": "IREN",
-          "net_notional_usd": -6421.874680165432,
-          "gross_notional_usd": 6421.874680165432,
-          "n_legs": 1
-        },
-        {
-          "underlying": "IONQ",
-          "symbols": "IONQ",
-          "net_notional_usd": -3145.954921832096,
-          "gross_notional_usd": 3145.954921832096,
-          "n_legs": 1
-        },
-        {
-          "underlying": "RGTI",
-          "symbols": "RGTI",
-          "net_notional_usd": -3091.463292291287,
-          "gross_notional_usd": 3091.463292291287,
-          "n_legs": 1
-        },
-        {
-          "underlying": "COIN",
-          "symbols": "COIN",
-          "net_notional_usd": -2989.045757858462,
-          "gross_notional_usd": 2989.045757858462,
+          "underlying": "ASTS",
+          "symbols": "ASTS",
+          "net_notional_usd": -4791.649282393453,
+          "gross_notional_usd": 4791.649282393453,
           "n_legs": 1
         },
         {
@@ -5111,8 +5055,15 @@
           "n_legs": 1
         },
         {
-          "underlying": "TSLA",
-          "symbols": "TSLA",
+          "underlying": "RKLB",
+          "symbols": "RKLB",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
+          "underlying": "COIN",
+          "symbols": "COIN",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 0.0,
           "n_legs": 1
@@ -5120,6 +5071,13 @@
         {
           "underlying": "CRCL",
           "symbols": "CRCL",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
+          "underlying": "CRWV",
+          "symbols": "CRWV",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 0.0,
           "n_legs": 1
@@ -5139,22 +5097,22 @@
           "n_legs": 1
         },
         {
-          "underlying": "MU",
-          "symbols": "MU",
+          "underlying": "IONQ",
+          "symbols": "IONQ",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 0.0,
           "n_legs": 1
         },
         {
-          "underlying": "LITE",
-          "symbols": "LITE",
+          "underlying": "IREN",
+          "symbols": "IREN",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 0.0,
           "n_legs": 1
         },
         {
-          "underlying": "KEEL",
-          "symbols": "KEEL",
+          "underlying": "MSTR",
+          "symbols": "MSTR",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 0.0,
           "n_legs": 1
@@ -5167,50 +5125,36 @@
           "n_legs": 1
         },
         {
+          "underlying": "KEEL",
+          "symbols": "KEEL",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
+          "underlying": "LITE",
+          "symbols": "LITE",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
+          "underlying": "NBIS",
+          "symbols": "NBIS",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
+          "underlying": "MU",
+          "symbols": "MU",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
           "underlying": "NEM",
           "symbols": "NEM",
-          "net_notional_usd": 0.0,
-          "gross_notional_usd": 0.0,
-          "n_legs": 1
-        },
-        {
-          "underlying": "SMCI",
-          "symbols": "SMCI",
-          "net_notional_usd": 0.0,
-          "gross_notional_usd": 0.0,
-          "n_legs": 1
-        },
-        {
-          "underlying": "QS",
-          "symbols": "QS",
-          "net_notional_usd": 0.0,
-          "gross_notional_usd": 0.0,
-          "n_legs": 1
-        },
-        {
-          "underlying": "QQQ",
-          "symbols": "QQQ",
-          "net_notional_usd": 0.0,
-          "gross_notional_usd": 0.0,
-          "n_legs": 1
-        },
-        {
-          "underlying": "OKTA",
-          "symbols": "OKTA",
-          "net_notional_usd": 0.0,
-          "gross_notional_usd": 0.0,
-          "n_legs": 1
-        },
-        {
-          "underlying": "OKLO",
-          "symbols": "OKLO",
-          "net_notional_usd": 0.0,
-          "gross_notional_usd": 0.0,
-          "n_legs": 1
-        },
-        {
-          "underlying": "NVDA",
-          "symbols": "NVDA",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 0.0,
           "n_legs": 1
@@ -5223,6 +5167,62 @@
           "n_legs": 1
         },
         {
+          "underlying": "TSLA",
+          "symbols": "TSLA",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
+          "underlying": "NVDA",
+          "symbols": "NVDA",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
+          "underlying": "OKLO",
+          "symbols": "OKLO",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
+          "underlying": "OKTA",
+          "symbols": "OKTA",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
+          "underlying": "QBTS",
+          "symbols": "QBTS",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
+          "underlying": "QQQ",
+          "symbols": "QQQ",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
+          "underlying": "QS",
+          "symbols": "QS",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
+          "underlying": "RGTI",
+          "symbols": "RGTI",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
           "underlying": "XOP",
           "symbols": "XOP",
           "net_notional_usd": 0.0,
@@ -5230,8 +5230,8 @@
           "n_legs": 1
         },
         {
-          "underlying": "TSM",
-          "symbols": "TSM",
+          "underlying": "SMCI",
+          "symbols": "SMCI",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 0.0,
           "n_legs": 1
@@ -5251,15 +5251,15 @@
           "n_legs": 1
         },
         {
-          "underlying": "RKLB",
-          "symbols": "RKLB",
+          "underlying": "XRPZ",
+          "symbols": "XRPZ",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 0.0,
           "n_legs": 1
         },
         {
-          "underlying": "XRPZ",
-          "symbols": "XRPZ",
+          "underlying": "TSM",
+          "symbols": "TSM",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 0.0,
           "n_legs": 1
@@ -5277,8 +5277,8 @@
           "underlying": "ASTS",
           "symbol": "ASTS",
           "leg_type": "underlying",
-          "net_notional_usd": -14116.05,
-          "gross_notional_usd": 14116.05
+          "net_notional_usd": -4791.649282393453,
+          "gross_notional_usd": 4791.649282393453
         },
         {
           "underlying": "AXON",
@@ -5312,8 +5312,8 @@
           "underlying": "COIN",
           "symbol": "COIN",
           "leg_type": "underlying",
-          "net_notional_usd": -2989.045757858462,
-          "gross_notional_usd": 2989.045757858462
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0
         },
         {
           "underlying": "CRCL",
@@ -5326,8 +5326,8 @@
           "underlying": "CRWV",
           "symbol": "CRWV",
           "leg_type": "underlying",
-          "net_notional_usd": -13949.244431759886,
-          "gross_notional_usd": 13949.244431759886
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0
         },
         {
           "underlying": "HOOD",
@@ -5347,15 +5347,15 @@
           "underlying": "IONQ",
           "symbol": "IONQ",
           "leg_type": "underlying",
-          "net_notional_usd": -3145.954921832096,
-          "gross_notional_usd": 3145.954921832096
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0
         },
         {
           "underlying": "IREN",
           "symbol": "IREN",
           "leg_type": "underlying",
-          "net_notional_usd": -6421.874680165432,
-          "gross_notional_usd": 6421.874680165432
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0
         },
         {
           "underlying": "IWM",
@@ -5382,8 +5382,8 @@
           "underlying": "MSTR",
           "symbol": "MSTR",
           "leg_type": "underlying",
-          "net_notional_usd": -12826.64546320217,
-          "gross_notional_usd": 12826.64546320217
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0
         },
         {
           "underlying": "MU",
@@ -5396,8 +5396,8 @@
           "underlying": "NBIS",
           "symbol": "NBIS",
           "leg_type": "underlying",
-          "net_notional_usd": -25896.537600000007,
-          "gross_notional_usd": 25896.537600000007
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0
         },
         {
           "underlying": "NEM",
@@ -5438,8 +5438,8 @@
           "underlying": "QBTS",
           "symbol": "QBTS",
           "leg_type": "underlying",
-          "net_notional_usd": -8767.404822721828,
-          "gross_notional_usd": 8767.404822721828
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0
         },
         {
           "underlying": "QQQ",
@@ -5459,8 +5459,8 @@
           "underlying": "RGTI",
           "symbol": "RGTI",
           "leg_type": "underlying",
-          "net_notional_usd": -3091.463292291287,
-          "gross_notional_usd": 3091.463292291287
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0
         },
         {
           "underlying": "RKLB",
@@ -22735,19 +22735,19 @@
         "bucket": "bucket_1",
         "bucket_label": "Bucket 1 (core leveraged)",
         "n_names": 158,
-        "net_notional_usd": -60774.824983597966,
-        "gross_notional_usd": 4282665.043627128,
-        "beta_weighted_net_usd": -142004.11575600886,
-        "beta_weighted_gross_usd": 11132779.481563859,
-        "beta_weighted_net_qqq_usd": -139294.69522655336,
-        "beta_weighted_net_iwm_usd": -68513.9180697092,
-        "beta_weighted_net_btc_usd": 6490.8611059218965,
-        "net_beta_to_spy": -0.08926585099070207,
-        "net_beta_to_qqq": -0.0875626698683388,
-        "net_beta_to_iwm": -0.04306884465030751,
-        "net_beta_to_btc": 0.00408024962655387,
-        "gross_beta_to_spy": 6.998226981118845,
-        "implied_avg_beta": 2.33656149226811,
+        "net_notional_usd": -139927.99819032385,
+        "gross_notional_usd": 4203511.870420402,
+        "beta_weighted_net_usd": -400296.6863908728,
+        "beta_weighted_gross_usd": 10874486.910928998,
+        "beta_weighted_net_qqq_usd": -323127.67283400474,
+        "beta_weighted_net_iwm_usd": -230297.83400169614,
+        "beta_weighted_net_btc_usd": -67830.65887574654,
+        "net_beta_to_spy": -0.25163231480442094,
+        "net_beta_to_qqq": -0.2031227513414664,
+        "net_beta_to_iwm": -0.14476856550270062,
+        "net_beta_to_btc": -0.04263933799078862,
+        "gross_beta_to_spy": 6.835860517305128,
+        "implied_avg_beta": 2.8607333169049345,
         "top_beta_names": [
           {
             "underlying": "AMD",
@@ -22772,28 +22772,6 @@
             "beta_weighted_net_usd": -68244.48646536484
           },
           {
-            "underlying": "NBIS",
-            "symbols": "NBIG, NBIL, NBIS, NEBX",
-            "net_notional_usd": 21122.20609242,
-            "beta_to_spy": 3.1657766037233936,
-            "beta_to_qqq": 2.3534953002690893,
-            "beta_to_iwm": 1.7132813708009993,
-            "beta_to_btc": 0.9096408660575415,
-            "beta_source": "computed",
-            "beta_weighted_net_usd": 66868.18586640696
-          },
-          {
-            "underlying": "CRWV",
-            "symbols": "CRWG, CRWU, CRWV, CWVX",
-            "net_notional_usd": 18102.55989217989,
-            "beta_to_spy": 2.920453197830077,
-            "beta_to_qqq": 2.0582777632519456,
-            "beta_to_iwm": 1.6511744818688092,
-            "beta_to_btc": 0.7549875276052053,
-            "beta_source": "computed",
-            "beta_weighted_net_usd": 52867.67892602725
-          },
-          {
             "underlying": "MU",
             "symbols": "MU, MULL, MUU",
             "net_notional_usd": -16862.23686399,
@@ -22803,67 +22781,89 @@
             "beta_to_btc": 0.4728106882591906,
             "beta_source": "computed",
             "beta_weighted_net_usd": -52783.33744409253
+          },
+          {
+            "underlying": "SNDK",
+            "symbols": "SNDK, SNXX",
+            "net_notional_usd": -11074.269121000005,
+            "beta_to_spy": 3.933462322427434,
+            "beta_to_qqq": 3.082564296311407,
+            "beta_to_iwm": 2.4098014868260993,
+            "beta_to_btc": 0.4899202513034261,
+            "beta_source": "computed",
+            "beta_weighted_net_usd": -43560.2203358751
+          },
+          {
+            "underlying": "NVTS",
+            "symbols": "NVTS, NVTX",
+            "net_notional_usd": -7733.183131080019,
+            "beta_to_spy": 4.257920064257825,
+            "beta_to_qqq": 3.2142212642229793,
+            "beta_to_iwm": 2.902017124459232,
+            "beta_to_btc": 0.9523430101135765,
+            "beta_source": "computed",
+            "beta_weighted_net_usd": -32927.275614405764
           }
         ],
-        "pct_of_total_beta_net": 0.4013760420577523,
-        "pct_of_portfolio_beta_net": 0.34662238539005474,
-        "pct_of_bucket_sum_beta_net": 0.4013760420577523
+        "pct_of_total_beta_net": 1.1314425555697543,
+        "pct_of_portfolio_beta_net": 0.9770969775195953,
+        "pct_of_bucket_sum_beta_net": 1.1314425555697543
       },
       {
         "bucket": "bucket_2",
         "bucket_label": "Bucket 2 (yield boost)",
         "n_names": 8,
-        "net_notional_usd": 9478.838619044922,
-        "gross_notional_usd": 125562.96467708773,
-        "beta_weighted_net_usd": 29429.120976272017,
-        "beta_weighted_gross_usd": 342935.3622750829,
-        "beta_weighted_net_qqq_usd": 20209.462795798783,
-        "beta_weighted_net_iwm_usd": 18053.617135120316,
-        "beta_weighted_net_btc_usd": 12501.099218903653,
-        "net_beta_to_spy": 0.018499573155815952,
-        "net_beta_to_qqq": 0.012703962029041227,
-        "net_beta_to_iwm": 0.0113487661146092,
-        "net_beta_to_btc": 0.00785837265457861,
-        "gross_beta_to_spy": 0.21557415280052986,
-        "implied_avg_beta": 3.104718010194087,
+        "net_notional_usd": 2219.4401383331606,
+        "gross_notional_usd": 118303.56619637595,
+        "beta_weighted_net_usd": 6821.21986511694,
+        "beta_weighted_gross_usd": 320327.4611639278,
+        "beta_weighted_net_qqq_usd": 4689.820052759263,
+        "beta_weighted_net_iwm_usd": 4154.103034311738,
+        "beta_weighted_net_btc_usd": 2926.4486395093295,
+        "net_beta_to_spy": 0.004287917943875371,
+        "net_beta_to_qqq": 0.0029480890449831926,
+        "net_beta_to_iwm": 0.0026113295413073534,
+        "net_beta_to_btc": 0.0018396081465359125,
+        "gross_beta_to_spy": 0.20136249758858926,
+        "implied_avg_beta": 3.0733966405779247,
         "top_beta_names": [
           {
             "underlying": "MSTR",
             "symbols": "MSTR, MTYY",
-            "net_notional_usd": 8299.876203196876,
+            "net_notional_usd": 1973.195254493108,
             "beta_to_spy": 3.0464572926156737,
             "beta_to_qqq": 2.084646992555535,
             "beta_to_iwm": 1.8210383914859636,
             "beta_to_btc": 1.370137609272226,
             "beta_source": "computed",
-            "beta_weighted_net_usd": 25285.218387036413
+            "beta_weighted_net_usd": 6011.255072805169
           },
           {
             "underlying": "IONQ",
             "symbols": "IONQ, IOYY",
-            "net_notional_usd": 923.3706715894368,
+            "net_notional_usd": 270.2213302279997,
             "beta_to_spy": 3.359187887182876,
             "beta_to_qqq": 2.379542953013233,
             "beta_to_iwm": 2.3443533441683746,
             "beta_to_btc": 0.9214768433029836,
             "beta_source": "computed",
-            "beta_weighted_net_usd": 3101.7755753831534
+            "beta_weighted_net_usd": 907.7242193603406
           },
           {
             "underlying": "QBTS",
             "symbols": "QBTS, QBY",
-            "net_notional_usd": 255.5917442586068,
+            "net_notional_usd": -23.976446387949068,
             "beta_to_spy": 4.077310935356446,
             "beta_to_qqq": 2.777674442031656,
             "beta_to_iwm": 3.030288810450386,
             "beta_to_btc": 1.0886970929065358,
             "beta_source": "computed",
-            "beta_weighted_net_usd": 1042.1270138524458
+            "beta_weighted_net_usd": -97.7594270485723
           }
         ],
-        "pct_of_total_beta_net": -0.08318170241622036,
-        "pct_of_portfolio_beta_net": -0.07183448210934168,
-        "pct_of_bucket_sum_beta_net": -0.08318170241622036
+        "pct_of_total_beta_net": -0.019280245624504023,
+        "pct_of_portfolio_beta_net": -0.016650133612883068,
+        "pct_of_bucket_sum_beta_net": -0.019280245624504023
       },
       {
         "bucket": "bucket_3",
@@ -22939,50 +22939,28 @@
             "beta_weighted_net_usd": 10082.6400213
           }
         ],
-        "pct_of_total_beta_net": -0.2846207778227908,
+        "pct_of_total_beta_net": -0.2846207778227909,
         "pct_of_portfolio_beta_net": -0.24579427420412245,
-        "pct_of_bucket_sum_beta_net": -0.2846207778227908
+        "pct_of_bucket_sum_beta_net": -0.2846207778227909
       },
       {
         "bucket": "bucket_4",
         "bucket_label": "Bucket 4 (inverse / decay)",
         "n_names": 36,
-        "net_notional_usd": -104932.22096983118,
-        "gross_notional_usd": 104932.22096983118,
-        "beta_weighted_net_usd": -341915.1055792524,
-        "beta_weighted_gross_usd": 341915.1055792524,
-        "beta_weighted_net_qqq_usd": -240828.94505778703,
-        "beta_weighted_net_iwm_usd": -223159.23337854314,
-        "beta_weighted_net_btc_usd": -105420.80354322822,
-        "net_beta_to_spy": -0.21493280461356074,
-        "net_beta_to_qqq": -0.15138857496717817,
-        "net_beta_to_iwm": -0.14028113740164894,
-        "net_beta_to_btc": -0.06626904924769186,
-        "gross_beta_to_spy": 0.21493280461356074,
-        "implied_avg_beta": 3.258437707875788,
+        "net_notional_usd": -18519.649282393453,
+        "gross_notional_usd": 18519.649282393453,
+        "beta_weighted_net_usd": -61014.63383323334,
+        "beta_weighted_gross_usd": 61014.63383323334,
+        "beta_weighted_net_qqq_usd": -41476.32470729633,
+        "beta_weighted_net_iwm_usd": -47475.803345747554,
+        "beta_weighted_net_btc_usd": -21524.632982165465,
+        "net_beta_to_spy": -0.03835468558790127,
+        "net_beta_to_qqq": -0.026072620509992664,
+        "net_beta_to_iwm": -0.029843979975953956,
+        "net_beta_to_btc": -0.01353069712230668,
+        "gross_beta_to_spy": 0.03835468558790127,
+        "implied_avg_beta": 3.294589055271132,
         "top_beta_names": [
-          {
-            "underlying": "NBIS",
-            "symbols": "NBIS",
-            "net_notional_usd": -25896.537600000007,
-            "beta_to_spy": 3.1657766037233936,
-            "beta_to_qqq": 2.3534953002690893,
-            "beta_to_iwm": 1.7132813708009993,
-            "beta_to_btc": 0.9096408660575415,
-            "beta_source": "computed",
-            "beta_weighted_net_usd": -81982.65285152319
-          },
-          {
-            "underlying": "ASTS",
-            "symbols": "ASTS",
-            "net_notional_usd": -14116.05,
-            "beta_to_spy": 3.228723229175,
-            "beta_to_qqq": 2.261368472124903,
-            "beta_to_iwm": 2.3705932982039917,
-            "beta_to_btc": 0.8280107497350888,
-            "beta_source": "computed",
-            "beta_weighted_net_usd": -45576.81853919575
-          },
           {
             "underlying": "CLSK",
             "symbols": "CLSK",
@@ -22995,31 +22973,20 @@
             "beta_weighted_net_usd": -45543.724489109874
           },
           {
-            "underlying": "CRWV",
-            "symbols": "CRWV",
-            "net_notional_usd": -13949.244431759886,
-            "beta_to_spy": 2.920453197830077,
-            "beta_to_qqq": 2.0582777632519456,
-            "beta_to_iwm": 1.6511744818688092,
-            "beta_to_btc": 0.7549875276052053,
+            "underlying": "ASTS",
+            "symbols": "ASTS",
+            "net_notional_usd": -4791.649282393453,
+            "beta_to_spy": 3.228723229175,
+            "beta_to_qqq": 2.261368472124903,
+            "beta_to_iwm": 2.3705932982039917,
+            "beta_to_btc": 0.8280107497350888,
             "beta_source": "computed",
-            "beta_weighted_net_usd": -40738.115508046554
-          },
-          {
-            "underlying": "MSTR",
-            "symbols": "MSTR",
-            "net_notional_usd": -12826.64546320217,
-            "beta_to_spy": 3.0464572926156737,
-            "beta_to_qqq": 2.084646992555535,
-            "beta_to_iwm": 1.8210383914859636,
-            "beta_to_btc": 1.370137609272226,
-            "beta_source": "computed",
-            "beta_weighted_net_usd": -39075.827611167995
+            "beta_weighted_net_usd": -15470.909344123462
           }
         ],
-        "pct_of_total_beta_net": 0.966426438181259,
-        "pct_of_portfolio_beta_net": 0.8345915107165331,
-        "pct_of_bucket_sum_beta_net": 0.966426438181259
+        "pct_of_total_beta_net": 0.1724584678775407,
+        "pct_of_portfolio_beta_net": 0.1489325700905339,
+        "pct_of_bucket_sum_beta_net": 0.1724584678775407
       },
       {
         "bucket": "bucket_5",
@@ -23061,8 +23028,8 @@
       "beta_coverage_gross_pct": 1.0,
       "btc_beta_coverage_gross_pct": 1.0,
       "n_btc_beta_names": 158,
-      "by_bucket_beta_weighted_net_usd": -353793.2035703728,
-      "by_bucket_net_beta_to_spy": -0.22239954964192404,
+      "by_bucket_beta_weighted_net_usd": -353793.2035703727,
+      "by_bucket_net_beta_to_spy": -0.22239954964192402,
       "by_bucket_reconciles": false
     },
     "beta_provenance_counts": {
@@ -23075,7 +23042,7 @@
   "concentration_panel": {
     "available": true,
     "totals": {
-      "n_underlyings": 176,
+      "n_underlyings": 168,
       "n_sectors": 23,
       "total_gross_usd": 4317504.240179044,
       "top5_pct_nav": 0.4235538082642695,
@@ -23121,10 +23088,10 @@
         "underlying": "NBIS",
         "bucket": "bucket_1",
         "sector": "software",
-        "gross_notional_usd": 134142.46910758,
-        "net_notional_usd": 21122.20609242,
-        "pct_nav_gross": 0.0843239056497234,
-        "pct_book_gross": 0.031069446987275498,
+        "gross_notional_usd": 108245.93150758,
+        "net_notional_usd": -4774.331507580006,
+        "pct_nav_gross": 0.06804496574527281,
+        "pct_book_gross": 0.025071412901053945,
         "status": "ok",
         "limit": {
           "warn": 0.2,
@@ -23163,21 +23130,6 @@
         "trim_to_warn_usd": 0.0
       },
       {
-        "underlying": "CRWV",
-        "bucket": "bucket_1",
-        "sector": "software",
-        "gross_notional_usd": 88021.32897133988,
-        "net_notional_usd": 18102.55989217989,
-        "pct_nav_gross": 0.05533148665535572,
-        "pct_book_gross": 0.020387085703867124,
-        "status": "ok",
-        "limit": {
-          "warn": 0.2,
-          "hard": 0.2
-        },
-        "trim_to_warn_usd": 0.0
-      },
-      {
         "underlying": "CRCL",
         "bucket": "bucket_1",
         "sector": "software",
@@ -23200,6 +23152,21 @@
         "net_notional_usd": -16862.23686399,
         "pct_nav_gross": 0.0465966789439213,
         "pct_book_gross": 0.017168714317444666,
+        "status": "ok",
+        "limit": {
+          "warn": 0.2,
+          "hard": 0.2
+        },
+        "trim_to_warn_usd": 0.0
+      },
+      {
+        "underlying": "CRWV",
+        "bucket": "bucket_1",
+        "sector": "software",
+        "gross_notional_usd": 74072.08453958,
+        "net_notional_usd": 4153.3154604200045,
+        "pct_nav_gross": 0.04656278887325874,
+        "pct_book_gross": 0.017156227398750227,
         "status": "ok",
         "limit": {
           "warn": 0.2,
@@ -23256,10 +23223,10 @@
         "underlying": "IONQ",
         "bucket": "bucket_1",
         "sector": "quantum",
-        "gross_notional_usd": 69079.60274586266,
-        "net_notional_usd": 3524.1305735426613,
-        "pct_nav_gross": 0.0434244422591543,
-        "pct_book_gross": 0.015999892276422633,
+        "gross_notional_usd": 66586.79716539201,
+        "net_notional_usd": 1031.3249930720085,
+        "pct_nav_gross": 0.041857428441910996,
+        "pct_book_gross": 0.015422520387062943,
         "status": "ok",
         "limit": {
           "warn": 0.2,
@@ -23275,21 +23242,6 @@
         "net_notional_usd": -5260.22880596,
         "pct_nav_gross": 0.04171925371257229,
         "pct_book_gross": 0.015371609409978903,
-        "status": "ok",
-        "limit": {
-          "warn": 0.2,
-          "hard": 0.2
-        },
-        "trim_to_warn_usd": 0.0
-      },
-      {
-        "underlying": "IREN",
-        "bucket": "bucket_1",
-        "sector": "crypto-equity",
-        "gross_notional_usd": 64730.74862856543,
-        "net_notional_usd": 5027.80073176543,
-        "pct_nav_gross": 0.04069068935665415,
-        "pct_book_gross": 0.014992631165518227,
         "status": "ok",
         "limit": {
           "warn": 0.2,
@@ -23358,6 +23310,21 @@
         "trim_to_warn_usd": 0.0
       },
       {
+        "underlying": "IREN",
+        "bucket": "bucket_1",
+        "sector": "crypto-equity",
+        "gross_notional_usd": 58308.8739484,
+        "net_notional_usd": -1394.0739484000003,
+        "pct_nav_gross": 0.03665380559994971,
+        "pct_book_gross": 0.013505226794168006,
+        "status": "ok",
+        "limit": {
+          "warn": 0.2,
+          "hard": 0.2
+        },
+        "trim_to_warn_usd": 0.0
+      },
+      {
         "underlying": "QUBT",
         "bucket": "bucket_1",
         "sector": "quantum",
@@ -23418,36 +23385,6 @@
         "trim_to_warn_usd": 0.0
       },
       {
-        "underlying": "QBTS",
-        "bucket": "bucket_1",
-        "sector": "quantum",
-        "gross_notional_usd": 53537.30670148142,
-        "net_notional_usd": 7639.491632921425,
-        "pct_nav_gross": 0.03365432908063957,
-        "pct_book_gross": 0.012400058858833052,
-        "status": "ok",
-        "limit": {
-          "warn": 0.2,
-          "hard": 0.2
-        },
-        "trim_to_warn_usd": 0.0
-      },
-      {
-        "underlying": "COIN",
-        "bucket": "bucket_1",
-        "sector": "crypto-equity",
-        "gross_notional_usd": 52919.22493504846,
-        "net_notional_usd": 1577.26658066846,
-        "pct_nav_gross": 0.033265793899326414,
-        "pct_book_gross": 0.012256901670779584,
-        "status": "ok",
-        "limit": {
-          "warn": 0.2,
-          "hard": 0.2
-        },
-        "trim_to_warn_usd": 0.0
-      },
-      {
         "underlying": "ALAB",
         "bucket": "bucket_1",
         "sector": "semis",
@@ -23455,6 +23392,36 @@
         "net_notional_usd": -760.1013472000013,
         "pct_nav_gross": 0.03280293019059592,
         "pct_book_gross": 0.012086357868877507,
+        "status": "ok",
+        "limit": {
+          "warn": 0.2,
+          "hard": 0.2
+        },
+        "trim_to_warn_usd": 0.0
+      },
+      {
+        "underlying": "NFLX",
+        "bucket": "bucket_1",
+        "sector": "mega-cap-tech",
+        "gross_notional_usd": 52011.33821433,
+        "net_notional_usd": 2847.561785670001,
+        "pct_nav_gross": 0.032695083111849384,
+        "pct_book_gross": 0.012046621223972005,
+        "status": "ok",
+        "limit": {
+          "warn": 0.2,
+          "hard": 0.2
+        },
+        "trim_to_warn_usd": 0.0
+      },
+      {
+        "underlying": "GOOGL",
+        "bucket": "bucket_1",
+        "sector": "mega-cap-tech",
+        "gross_notional_usd": 51792.38767444,
+        "net_notional_usd": -3601.027674439998,
+        "pct_nav_gross": 0.03255744762034196,
+        "pct_book_gross": 0.011995908931010615,
         "status": "ok",
         "limit": {
           "warn": 0.2,
@@ -30785,20 +30752,20 @@
     "kept_underlyings": 194,
     "net_exposure_total": -142980.6601790441,
     "gross_exposure_total": 4317504.240179045,
-    "net_exposure_bucket_1": -60774.82498359788,
-    "gross_exposure_bucket_1": 4282665.043627128,
-    "net_exposure_bucket_2": 9478.838619044922,
-    "gross_exposure_bucket_2": 125562.96467708773,
+    "net_exposure_bucket_1": -139927.99819032382,
+    "gross_exposure_bucket_1": 4203511.870420402,
+    "net_exposure_bucket_2": 2219.4401383331606,
+    "gross_exposure_bucket_2": 118303.56619637596,
     "net_exposure_bucket_3": 83914.08065718041,
     "gross_exposure_bucket_3": 84874.98634650042,
     "net_exposure_bucket_5": 0.0,
     "gross_exposure_bucket_5": 0.0,
-    "net_exposure_bucket_4": -91204.22096983116,
-    "gross_exposure_bucket_4": -91204.22096983116,
+    "net_exposure_bucket_4": -4791.649282393453,
+    "gross_exposure_bucket_4": -4791.649282393453,
     "net_exposure_unbucketed": 0.0,
     "gross_exposure_unbucketed": 0.0,
-    "net_exposure_bucket_4_pair": -104932.22096983118,
-    "gross_exposure_bucket_4_pair": 104932.22096983118,
+    "net_exposure_bucket_4_pair": -18519.649282393453,
+    "gross_exposure_bucket_4_pair": 18519.649282393453,
     "yfinance_override": false,
     "yfinance_symbols_overridden": 0,
     "bucket_split_method": "held_exposure",
@@ -30920,12 +30887,12 @@
       {
         "bucket": "bucket_1",
         "bucket_label": "Bucket 1 (core leveraged)",
-        "exposure_gross_usd": 4282665.043627128,
-        "exposure_net_usd": -60774.82498359788,
+        "exposure_gross_usd": 4203511.870420402,
+        "exposure_net_usd": -139927.99819032382,
         "target_gross_usd": 2374627.332098475,
-        "actual_weight": 0.991930709360352,
+        "actual_weight": 0.9735976241325206,
         "target_weight": 0.55,
-        "drift_pp": 44.1930709360352,
+        "drift_pp": 42.35976241325206,
         "drift_status": "hard",
         "pnl_usd": -3964.0160078946456,
         "net_capital_usd": null,
@@ -30942,12 +30909,12 @@
       {
         "bucket": "bucket_2",
         "bucket_label": "Bucket 2 (yield boost)",
-        "exposure_gross_usd": 125562.96467708773,
-        "exposure_net_usd": 9478.838619044922,
+        "exposure_gross_usd": 118303.56619637596,
+        "exposure_net_usd": 2219.4401383331606,
         "target_gross_usd": 863500.8480358091,
-        "actual_weight": 0.029082302573924208,
+        "actual_weight": 0.027400914883981668,
         "target_weight": 0.2,
-        "drift_pp": -17.09176974260758,
+        "drift_pp": -17.259908511601836,
         "drift_status": "hard",
         "pnl_usd": 33255.09943704602,
         "net_capital_usd": null,
@@ -30986,12 +30953,12 @@
       {
         "bucket": "bucket_4",
         "bucket_label": "Bucket 4 (inverse / decay)",
-        "exposure_gross_usd": -91204.22096983116,
-        "exposure_net_usd": -91204.22096983116,
+        "exposure_gross_usd": -4791.649282393453,
+        "exposure_net_usd": -4791.649282393453,
         "target_gross_usd": 1079376.0600447613,
-        "actual_weight": -0.02112429215959472,
+        "actual_weight": -0.0011098192418207667,
         "target_weight": 0.25,
-        "drift_pp": -27.112429215959473,
+        "drift_pp": -25.110981924182074,
         "drift_status": "hard",
         "pnl_usd": 286.10893533,
         "net_capital_usd": null,
@@ -31364,35 +31331,16 @@
         ],
         "bucket_detail": {
           "bucket_1": {
-            "net_usd": 21122.20609242,
-            "gross_usd": 134142.46910758
+            "net_usd": -4774.331507580006,
+            "gross_usd": 108245.93150758
           },
           "bucket_4": {
-            "net_usd": -25896.537600000007,
-            "gross_usd": 25896.537600000007
+            "net_usd": 0.0,
+            "gross_usd": 0.0
           }
         },
         "net_usd": -4774.331507580006,
-        "gross_usd": 160039.00670758
-      },
-      {
-        "underlying": "CRWV",
-        "buckets": [
-          "bucket_1",
-          "bucket_4"
-        ],
-        "bucket_detail": {
-          "bucket_1": {
-            "net_usd": 18102.55989217989,
-            "gross_usd": 88021.32897133988
-          },
-          "bucket_4": {
-            "net_usd": -13949.244431759886,
-            "gross_usd": 13949.244431759886
-          }
-        },
-        "net_usd": 4153.315460420003,
-        "gross_usd": 101970.57340309977
+        "gross_usd": 108245.93150758
       },
       {
         "underlying": "NVDA",
@@ -31412,54 +31360,6 @@
         },
         "net_usd": -4077.7504601800047,
         "gross_usd": 95364.79046018
-      },
-      {
-        "underlying": "IONQ",
-        "buckets": [
-          "bucket_1",
-          "bucket_2",
-          "bucket_4"
-        ],
-        "bucket_detail": {
-          "bucket_1": {
-            "net_usd": 3524.1305735426613,
-            "gross_usd": 69079.60274586266
-          },
-          "bucket_2": {
-            "net_usd": 923.3706715894368,
-            "gross_usd": 18099.80585266944
-          },
-          "bucket_4": {
-            "net_usd": -3145.954921832096,
-            "gross_usd": 3145.954921832096
-          }
-        },
-        "net_usd": 1301.5463233000023,
-        "gross_usd": 90325.36352036419
-      },
-      {
-        "underlying": "MSTR",
-        "buckets": [
-          "bucket_1",
-          "bucket_2",
-          "bucket_4"
-        ],
-        "bucket_detail": {
-          "bucket_1": {
-            "net_usd": 8527.204269177295,
-            "gross_usd": 38431.1157758973
-          },
-          "bucket_2": {
-            "net_usd": 8299.876203196876,
-            "gross_usd": 37406.57467813288
-          },
-          "bucket_4": {
-            "net_usd": -12826.64546320217,
-            "gross_usd": 12826.64546320217
-          }
-        },
-        "net_usd": 4000.4350091720007,
-        "gross_usd": 88664.33591723235
       },
       {
         "underlying": "CRCL",
@@ -31505,6 +31405,30 @@
         "gross_usd": 86093.5886479
       },
       {
+        "underlying": "IONQ",
+        "buckets": [
+          "bucket_1",
+          "bucket_2",
+          "bucket_4"
+        ],
+        "bucket_detail": {
+          "bucket_1": {
+            "net_usd": 1031.3249930720085,
+            "gross_usd": 66586.79716539201
+          },
+          "bucket_2": {
+            "net_usd": 270.2213302279997,
+            "gross_usd": 17446.656511308
+          },
+          "bucket_4": {
+            "net_usd": 0.0,
+            "gross_usd": 0.0
+          }
+        },
+        "net_usd": 1301.5463233000082,
+        "gross_usd": 84033.45367670001
+      },
+      {
         "underlying": "MU",
         "buckets": [
           "bucket_1",
@@ -31522,6 +31446,25 @@
         },
         "net_usd": -16862.23686399,
         "gross_usd": 74125.99686399
+      },
+      {
+        "underlying": "CRWV",
+        "buckets": [
+          "bucket_1",
+          "bucket_4"
+        ],
+        "bucket_detail": {
+          "bucket_1": {
+            "net_usd": 4153.3154604200045,
+            "gross_usd": 74072.08453958
+          },
+          "bucket_4": {
+            "net_usd": 0.0,
+            "gross_usd": 0.0
+          }
+        },
+        "net_usd": 4153.3154604200045,
+        "gross_usd": 74072.08453958
       },
       {
         "underlying": "TSLA",
@@ -31543,26 +31486,7 @@
         "gross_usd": 71714.7015168208
       },
       {
-        "underlying": "IREN",
-        "buckets": [
-          "bucket_1",
-          "bucket_4"
-        ],
-        "bucket_detail": {
-          "bucket_1": {
-            "net_usd": 5027.80073176543,
-            "gross_usd": 64730.74862856543
-          },
-          "bucket_4": {
-            "net_usd": -6421.874680165432,
-            "gross_usd": 6421.874680165432
-          }
-        },
-        "net_usd": -1394.0739484000023,
-        "gross_usd": 71152.62330873086
-      },
-      {
-        "underlying": "QBTS",
+        "underlying": "MSTR",
         "buckets": [
           "bucket_1",
           "bucket_2",
@@ -31570,39 +31494,39 @@
         ],
         "bucket_detail": {
           "bucket_1": {
-            "net_usd": 7639.491632921425,
-            "gross_usd": 53537.30670148142
+            "net_usd": 2027.2397546788932,
+            "gross_usd": 31931.151261398896
           },
           "bucket_2": {
-            "net_usd": 255.5917442586068,
-            "gross_usd": 1759.4195667822069
+            "net_usd": 1973.195254493108,
+            "gross_usd": 31079.893729429103
           },
           "bucket_4": {
-            "net_usd": -8767.404822721828,
-            "gross_usd": 8767.404822721828
+            "net_usd": 0.0,
+            "gross_usd": 0.0
           }
         },
-        "net_usd": -872.3214455417965,
-        "gross_usd": 64064.13109098546
+        "net_usd": 4000.435009172001,
+        "gross_usd": 63011.044990828
       },
       {
-        "underlying": "COIN",
+        "underlying": "IREN",
         "buckets": [
           "bucket_1",
           "bucket_4"
         ],
         "bucket_detail": {
           "bucket_1": {
-            "net_usd": 1577.26658066846,
-            "gross_usd": 52919.22493504846
+            "net_usd": -1394.0739484000003,
+            "gross_usd": 58308.8739484
           },
           "bucket_4": {
-            "net_usd": -2989.045757858462,
-            "gross_usd": 2989.045757858462
+            "net_usd": 0.0,
+            "gross_usd": 0.0
           }
         },
-        "net_usd": -1411.779177190002,
-        "gross_usd": 55908.270692906925
+        "net_usd": -1394.0739484000003,
+        "gross_usd": 58308.8739484
       },
       {
         "underlying": "XRPZ",
@@ -31624,25 +31548,6 @@
         "gross_usd": 55382.13276516
       },
       {
-        "underlying": "ASTS",
-        "buckets": [
-          "bucket_1",
-          "bucket_4"
-        ],
-        "bucket_detail": {
-          "bucket_1": {
-            "net_usd": 15239.541081839998,
-            "gross_usd": 41224.65891816
-          },
-          "bucket_4": {
-            "net_usd": -14116.05,
-            "gross_usd": 14116.05
-          }
-        },
-        "net_usd": 1123.4910818399985,
-        "gross_usd": 55340.70891816
-      },
-      {
         "underlying": "SNDK",
         "buckets": [
           "bucket_1",
@@ -31662,6 +31567,25 @@
         "gross_usd": 51310.829121
       },
       {
+        "underlying": "COIN",
+        "buckets": [
+          "bucket_1",
+          "bucket_4"
+        ],
+        "bucket_detail": {
+          "bucket_1": {
+            "net_usd": -1411.779177190001,
+            "gross_usd": 49930.17917719
+          },
+          "bucket_4": {
+            "net_usd": 0.0,
+            "gross_usd": 0.0
+          }
+        },
+        "net_usd": -1411.779177190001,
+        "gross_usd": 49930.17917719
+      },
+      {
         "underlying": "KEEL",
         "buckets": [
           "bucket_1",
@@ -31679,6 +31603,30 @@
         },
         "net_usd": -5373.008704262003,
         "gross_usd": 47831.208704262
+      },
+      {
+        "underlying": "QBTS",
+        "buckets": [
+          "bucket_1",
+          "bucket_2",
+          "bucket_4"
+        ],
+        "bucket_detail": {
+          "bucket_1": {
+            "net_usd": -848.344999153851,
+            "gross_usd": 45049.47006940615
+          },
+          "bucket_2": {
+            "net_usd": -23.976446387949068,
+            "gross_usd": 1479.8513761356508
+          },
+          "bucket_4": {
+            "net_usd": 0.0,
+            "gross_usd": 0.0
+          }
+        },
+        "net_usd": -872.3214455418,
+        "gross_usd": 46529.3214455418
       },
       {
         "underlying": "CLSK",
@@ -31717,6 +31665,25 @@
         },
         "net_usd": -1010.2582311099997,
         "gross_usd": 37418.85823111
+      },
+      {
+        "underlying": "ASTS",
+        "buckets": [
+          "bucket_1",
+          "bucket_4"
+        ],
+        "bucket_detail": {
+          "bucket_1": {
+            "net_usd": 5915.140364233452,
+            "gross_usd": 31900.258200553453
+          },
+          "bucket_4": {
+            "net_usd": -4791.649282393453,
+            "gross_usd": 4791.649282393453
+          }
+        },
+        "net_usd": 1123.4910818399985,
+        "gross_usd": 36691.9074829469
       },
       {
         "underlying": "MARA",
@@ -31795,25 +31762,6 @@
         "gross_usd": 32985.29942265
       },
       {
-        "underlying": "RGTI",
-        "buckets": [
-          "bucket_1",
-          "bucket_4"
-        ],
-        "bucket_detail": {
-          "bucket_1": {
-            "net_usd": 2746.7075342112894,
-            "gross_usd": 25628.03905037129
-          },
-          "bucket_4": {
-            "net_usd": -3091.463292291287,
-            "gross_usd": 3091.463292291287
-          }
-        },
-        "net_usd": -344.7557580799976,
-        "gross_usd": 28719.502342662578
-      },
-      {
         "underlying": "HIMS",
         "buckets": [
           "bucket_1",
@@ -31869,6 +31817,25 @@
         },
         "net_usd": 217.64426254999853,
         "gross_usd": 22720.11573745
+      },
+      {
+        "underlying": "RGTI",
+        "buckets": [
+          "bucket_1",
+          "bucket_4"
+        ],
+        "bucket_detail": {
+          "bucket_1": {
+            "net_usd": -344.7557580799985,
+            "gross_usd": 22536.57575808
+          },
+          "bucket_4": {
+            "net_usd": 0.0,
+            "gross_usd": 0.0
+          }
+        },
+        "net_usd": -344.7557580799985,
+        "gross_usd": 22536.57575808
       },
       {
         "underlying": "RKLB",
@@ -33351,481 +33318,481 @@
     {
       "run_date": "2026-05-13",
       "nav_usd": 1573325.0,
-      "gross_pct_nav": 2.6363688416897233,
-      "net_pct_nav": -0.05092106707227278,
-      "pnl_pct_nav": 0.027464689830816888,
-      "pnl_cum_usd": 43210.88312806998,
-      "worst_shock_pct_nav": 0.0013050644732837122,
+      "gross_pct_nav": 2.6363708663052687,
+      "net_pct_nav": -0.05092309168781798,
+      "pnl_pct_nav": 0.027358165232593396,
+      "pnl_cum_usd": 43043.28531457001,
+      "worst_shock_pct_nav": 0.0013050921019138236,
       "worst_shock_label": "SPX -1%",
-      "net_beta_to_spy": -0.13050644732837122,
-      "top10_pct_nav": 0.6326936415849967,
-      "hhi_underlying": 129.8587618471869,
+      "net_beta_to_spy": -0.13050921019138234,
+      "top10_pct_nav": 0.6326936225255049,
+      "hhi_underlying": 129.85858997147918,
       "n_alerts": 12,
       "n_alerts_hard": 5
     },
     {
       "run_date": "2026-05-14",
       "nav_usd": 1587090.909090909,
-      "gross_pct_nav": 2.6466762836133797,
-      "net_pct_nav": -0.06489613067489858,
-      "pnl_pct_nav": 0.02596583024262628,
-      "pnl_cum_usd": 41210.13312506996,
-      "worst_shock_pct_nav": 0.001719009821810883,
+      "gross_pct_nav": 2.6466784098590104,
+      "net_pct_nav": -0.06489825692052917,
+      "pnl_pct_nav": 0.025860229604036538,
+      "pnl_cum_usd": 41042.53531156998,
+      "worst_shock_pct_nav": 0.001719038939086272,
       "worst_shock_label": "SPX -1%",
-      "net_beta_to_spy": -0.17190098218108835,
-      "top10_pct_nav": 0.6613085861302138,
-      "hhi_underlying": 133.91730585814906,
+      "net_beta_to_spy": -0.1719038939086272,
+      "top10_pct_nav": 0.6613085999557777,
+      "hhi_underlying": 133.91712103703296,
       "n_alerts": 12,
       "n_alerts_hard": 5
     },
     {
       "run_date": "2026-05-15",
       "nav_usd": 1906520.0,
-      "gross_pct_nav": 2.1724660746508935,
-      "net_pct_nav": -0.35938113996277044,
-      "pnl_pct_nav": 0.023884441480661114,
-      "pnl_cum_usd": 45536.16537171003,
-      "worst_shock_pct_nav": 0.009022641038952851,
+      "gross_pct_nav": 2.1724680679421517,
+      "net_pct_nav": -0.3593831332540287,
+      "pnl_pct_nav": 0.023796533767392943,
+      "pnl_cum_usd": 45368.567558209994,
+      "worst_shock_pct_nav": 0.00902267013768979,
       "worst_shock_label": "SPX -1%",
-      "net_beta_to_spy": -0.902264103895285,
-      "top10_pct_nav": 0.5469640225763167,
-      "hhi_underlying": 128.99613989969976,
-      "n_alerts": 17,
+      "net_beta_to_spy": -0.902267013768979,
+      "top10_pct_nav": 0.546964120390659,
+      "hhi_underlying": 128.99595176437103,
+      "n_alerts": 16,
       "n_alerts_hard": 6
     },
     {
       "run_date": "2026-05-16",
       "nav_usd": 1445999.9999999998,
-      "gross_pct_nav": 1.829773243692576,
-      "net_pct_nav": -0.00526529909891037,
-      "pnl_pct_nav": 0.044564044828561584,
-      "pnl_cum_usd": 64439.60882210004,
-      "worst_shock_pct_nav": -0.011741356862666155,
+      "gross_pct_nav": 1.8297759308582833,
+      "net_pct_nav": -0.005267986264617426,
+      "pnl_pct_nav": 0.044448140393222715,
+      "pnl_cum_usd": 64272.011008600035,
+      "worst_shock_pct_nav": -0.011740544896600917,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.05870678431333078,
-      "top10_pct_nav": 0.5421672922932628,
-      "hhi_underlying": 162.19619813115492,
-      "n_alerts": 19,
+      "net_beta_to_spy": 0.058702724483004586,
+      "top10_pct_nav": 0.5421674108097081,
+      "hhi_underlying": 162.1958682035484,
+      "n_alerts": 18,
       "n_alerts_hard": 7
     },
     {
       "run_date": "2026-05-18",
       "nav_usd": 1445999.9999999998,
-      "gross_pct_nav": 1.829773243692576,
-      "net_pct_nav": -0.00526529909891037,
-      "pnl_pct_nav": 0.044564044828561584,
-      "pnl_cum_usd": 64439.60882210004,
-      "worst_shock_pct_nav": -0.011741356862666155,
+      "gross_pct_nav": 1.8297759308582833,
+      "net_pct_nav": -0.005267986264617426,
+      "pnl_pct_nav": 0.044448140393222715,
+      "pnl_cum_usd": 64272.011008600035,
+      "worst_shock_pct_nav": -0.011740544896600917,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.05870678431333078,
-      "top10_pct_nav": 0.5421672922932628,
-      "hhi_underlying": 162.19619813115492,
-      "n_alerts": 19,
+      "net_beta_to_spy": 0.058702724483004586,
+      "top10_pct_nav": 0.5421674108097081,
+      "hhi_underlying": 162.1958682035484,
+      "n_alerts": 18,
       "n_alerts_hard": 7
     },
     {
       "run_date": "2026-05-19",
       "nav_usd": 1848060.0,
-      "gross_pct_nav": 1.5799611275591527,
-      "net_pct_nav": 0.02945085489996449,
-      "pnl_pct_nav": 0.03144359923927795,
-      "pnl_cum_usd": 58109.65801014,
-      "worst_shock_pct_nav": -0.03188919732554846,
+      "gross_pct_nav": 1.5799633150099504,
+      "net_pct_nav": 0.029448667449166875,
+      "pnl_pct_nav": 0.03135291072618856,
+      "pnl_cum_usd": 57942.06019664003,
+      "worst_shock_pct_nav": -0.03188855894641516,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.15944598662774226,
-      "top10_pct_nav": 0.49856603461801835,
-      "hhi_underlying": 171.8754217810174,
-      "n_alerts": 18,
+      "net_beta_to_spy": 0.1594427947320758,
+      "top10_pct_nav": 0.49856611397414924,
+      "hhi_underlying": 171.87506235820155,
+      "n_alerts": 17,
       "n_alerts_hard": 7
     },
     {
       "run_date": "2026-05-20",
       "nav_usd": 1836571.4285714282,
-      "gross_pct_nav": 1.555727623087935,
-      "net_pct_nav": 0.04501203608495739,
-      "pnl_pct_nav": 0.02647214655242533,
-      "pnl_cum_usd": 48617.98801114,
-      "worst_shock_pct_nav": -0.04149298721274379,
+      "gross_pct_nav": 1.5557298033877462,
+      "net_pct_nav": 0.04500985578514589,
+      "pnl_pct_nav": 0.026380890742336655,
+      "pnl_cum_usd": 48450.390197639994,
+      "worst_shock_pct_nav": -0.04149235081249783,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.2074649360637189,
-      "top10_pct_nav": 0.4890271301200472,
-      "hhi_underlying": 170.37271334238628,
-      "n_alerts": 18,
+      "net_beta_to_spy": 0.20746175406248912,
+      "top10_pct_nav": 0.4890272056888248,
+      "hhi_underlying": 170.37235344320885,
+      "n_alerts": 17,
       "n_alerts_hard": 7
     },
     {
       "run_date": "2026-05-21",
       "nav_usd": 2227750.0000000005,
-      "gross_pct_nav": 1.5236367118150365,
-      "net_pct_nav": 0.022355037768938033,
-      "pnl_pct_nav": 0.025145899764497787,
-      "pnl_cum_usd": 56018.77820035996,
-      "worst_shock_pct_nav": -0.02357550914075949,
+      "gross_pct_nav": 1.5236386419802668,
+      "net_pct_nav": 0.0223531076037078,
+      "pnl_pct_nav": 0.025070667887716305,
+      "pnl_cum_usd": 55851.18038686001,
+      "worst_shock_pct_nav": -0.02357496654873031,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.11787754570379746,
-      "top10_pct_nav": 0.5264452722463403,
-      "hhi_underlying": 193.16967655325396,
-      "n_alerts": 20,
+      "net_beta_to_spy": 0.11787483274365156,
+      "top10_pct_nav": 0.5264452953914174,
+      "hhi_underlying": 193.16925998084835,
+      "n_alerts": 19,
       "n_alerts_hard": 7
     },
     {
       "run_date": "2026-05-22",
       "nav_usd": 1982880.0,
-      "gross_pct_nav": 1.5955683577101996,
-      "net_pct_nav": 0.002145748100676447,
-      "pnl_pct_nav": 0.03471307773225307,
-      "pnl_cum_usd": 68831.86757372998,
-      "worst_shock_pct_nav": -0.0005326911633386713,
+      "gross_pct_nav": 1.5955685074324952,
+      "net_pct_nav": 0.0021455983783808903,
+      "pnl_pct_nav": 0.034628555313599395,
+      "pnl_cum_usd": 68664.26976022997,
+      "worst_shock_pct_nav": -0.0005326822795657149,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.0026634558166933595,
-      "top10_pct_nav": 0.5668676726801032,
-      "hhi_underlying": 208.1585641425328,
-      "n_alerts": 21,
+      "net_beta_to_spy": 0.002663411397828576,
+      "top10_pct_nav": 0.5668676650759583,
+      "hhi_underlying": 208.15851999023877,
+      "n_alerts": 20,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-05-23",
       "nav_usd": 2165300.0,
-      "gross_pct_nav": 1.550441359692857,
-      "net_pct_nav": -0.006382771608619176,
-      "pnl_pct_nav": 0.039925016547332964,
-      "pnl_cum_usd": 86449.63832994006,
-      "worst_shock_pct_nav": 0.0003063337932744986,
+      "gross_pct_nav": 1.5504415431089806,
+      "net_pct_nav": -0.006382955024742978,
+      "pnl_pct_nav": 0.03984761488774766,
+      "pnl_cum_usd": 86282.04051644,
+      "worst_shock_pct_nav": 0.00030633540894673235,
       "worst_shock_label": "SPX -1%",
-      "net_beta_to_spy": -0.030633379327449854,
-      "top10_pct_nav": 0.5357936896795866,
-      "hhi_underlying": 200.4733941607369,
-      "n_alerts": 21,
+      "net_beta_to_spy": -0.03063354089467323,
+      "top10_pct_nav": 0.5357937180373894,
+      "hhi_underlying": 200.47336263646272,
+      "n_alerts": 20,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-05-25",
       "nav_usd": 2165300.0,
-      "gross_pct_nav": 1.550441359692857,
-      "net_pct_nav": -0.006382771608619176,
-      "pnl_pct_nav": 0.03992501654733294,
-      "pnl_cum_usd": 86449.63832994,
-      "worst_shock_pct_nav": 0.0003063337932744986,
+      "gross_pct_nav": 1.5504415431089806,
+      "net_pct_nav": -0.006382955024742978,
+      "pnl_pct_nav": 0.03984761488774766,
+      "pnl_cum_usd": 86282.04051644,
+      "worst_shock_pct_nav": 0.00030633540894673235,
       "worst_shock_label": "SPX -1%",
-      "net_beta_to_spy": -0.030633379327449854,
-      "top10_pct_nav": 0.5357936896795866,
-      "hhi_underlying": 200.4733941607369,
-      "n_alerts": 21,
+      "net_beta_to_spy": -0.03063354089467323,
+      "top10_pct_nav": 0.5357937180373894,
+      "hhi_underlying": 200.47336263646272,
+      "n_alerts": 20,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-05-26",
       "nav_usd": 2165300.0,
-      "gross_pct_nav": 1.550441359692857,
-      "net_pct_nav": -0.006382771608619176,
-      "pnl_pct_nav": 0.039925234761899034,
-      "pnl_cum_usd": 86450.11082993998,
-      "worst_shock_pct_nav": 0.0003063337932744986,
+      "gross_pct_nav": 1.5504415431089806,
+      "net_pct_nav": -0.006382955024742978,
+      "pnl_pct_nav": 0.03984783310231378,
+      "pnl_cum_usd": 86282.51301644003,
+      "worst_shock_pct_nav": 0.00030633540894673235,
       "worst_shock_label": "SPX -1%",
-      "net_beta_to_spy": -0.030633379327449854,
-      "top10_pct_nav": 0.5357936896795866,
-      "hhi_underlying": 200.4733941607369,
-      "n_alerts": 21,
+      "net_beta_to_spy": -0.03063354089467323,
+      "top10_pct_nav": 0.5357937180373894,
+      "hhi_underlying": 200.47336263646272,
+      "n_alerts": 20,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-05-27",
       "nav_usd": 2379325.0,
-      "gross_pct_nav": 1.4878762632168958,
-      "net_pct_nav": -0.024195362004972434,
-      "pnl_pct_nav": 0.03541609987570848,
-      "pnl_cum_usd": 84266.41183677007,
-      "worst_shock_pct_nav": 0.0009059916284768966,
+      "gross_pct_nav": 1.4878764260380193,
+      "net_pct_nav": -0.024195524826095632,
+      "pnl_pct_nav": 0.03534566064882687,
+      "pnl_cum_usd": 84098.81402326998,
+      "worst_shock_pct_nav": 0.0009059929615183063,
       "worst_shock_label": "SPX -1%",
-      "net_beta_to_spy": -0.09059916284768965,
-      "top10_pct_nav": 0.5015321781521457,
-      "hhi_underlying": 199.4595572250605,
-      "n_alerts": 21,
+      "net_beta_to_spy": -0.09059929615183063,
+      "top10_pct_nav": 0.5015322052471932,
+      "hhi_underlying": 199.45952674130973,
+      "n_alerts": 20,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-05-28",
       "nav_usd": 2407180.0,
-      "gross_pct_nav": 1.5076565398434574,
-      "net_pct_nav": -0.03531155637819139,
-      "pnl_pct_nav": 0.029400376535763852,
-      "pnl_cum_usd": 70771.99838936003,
-      "worst_shock_pct_nav": 0.0012682206381235844,
+      "gross_pct_nav": 1.5076566777687825,
+      "net_pct_nav": -0.03531169430351635,
+      "pnl_pct_nav": 0.029330752405661395,
+      "pnl_cum_usd": 70604.40057586,
+      "worst_shock_pct_nav": 0.0012682215405726161,
       "worst_shock_label": "SPX -1%",
-      "net_beta_to_spy": -0.12682206381235844,
-      "top10_pct_nav": 0.4996480457121379,
-      "hhi_underlying": 195.43166593317932,
-      "n_alerts": 20,
+      "net_beta_to_spy": -0.1268221540572616,
+      "top10_pct_nav": 0.49964807006917306,
+      "hhi_underlying": 195.43163847412356,
+      "n_alerts": 19,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-05-29",
       "nav_usd": 2180400.0,
-      "gross_pct_nav": 1.487398116673002,
-      "net_pct_nav": 0.02024463084496762,
-      "pnl_pct_nav": 0.03537633495560905,
-      "pnl_cum_usd": 77134.56073720998,
-      "worst_shock_pct_nav": -0.014134978090307214,
+      "gross_pct_nav": 1.4873982727842023,
+      "net_pct_nav": 0.020244474733767014,
+      "pnl_pct_nav": 0.03529946932843054,
+      "pnl_cum_usd": 76966.96292370994,
+      "worst_shock_pct_nav": -0.014134963022887343,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.07067489045153608,
-      "top10_pct_nav": 0.4808429968284061,
-      "hhi_underlying": 184.92686475280198,
-      "n_alerts": 20,
+      "net_beta_to_spy": 0.07067481511443673,
+      "top10_pct_nav": 0.4808429882281308,
+      "hhi_underlying": 184.9268217919096,
+      "n_alerts": 19,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-05-30",
       "nav_usd": 2306719.9999999995,
-      "gross_pct_nav": 1.4800585083352376,
-      "net_pct_nav": 0.029497221752193412,
-      "pnl_pct_nav": 0.04222767539221497,
-      "pnl_cum_usd": 97407.42338073009,
-      "worst_shock_pct_nav": -0.02145894976818987,
+      "gross_pct_nav": 1.480058719256882,
+      "net_pct_nav": 0.02949701083054906,
+      "pnl_pct_nav": 0.042155019060497165,
+      "pnl_cum_usd": 97239.82556723,
+      "worst_shock_pct_nav": -0.02145890975014322,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.10729474884094935,
-      "top10_pct_nav": 0.48776773118073363,
-      "hhi_underlying": 185.83075358272635,
-      "n_alerts": 20,
+      "net_beta_to_spy": 0.10729454875071609,
+      "top10_pct_nav": 0.48776780216761395,
+      "hhi_underlying": 185.83071267609654,
+      "n_alerts": 19,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-01",
       "nav_usd": 2306719.9999999995,
-      "gross_pct_nav": 1.4800585083352376,
-      "net_pct_nav": 0.029497221752193412,
-      "pnl_pct_nav": 0.04222767539221497,
-      "pnl_cum_usd": 97407.42338073009,
-      "worst_shock_pct_nav": -0.02145894976818987,
+      "gross_pct_nav": 1.480058719256882,
+      "net_pct_nav": 0.02949701083054906,
+      "pnl_pct_nav": 0.042155019060497165,
+      "pnl_cum_usd": 97239.82556723,
+      "worst_shock_pct_nav": -0.02145890975014322,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.10729474884094935,
-      "top10_pct_nav": 0.48776773118073363,
-      "hhi_underlying": 185.83075358272635,
-      "n_alerts": 20,
+      "net_beta_to_spy": 0.10729454875071609,
+      "top10_pct_nav": 0.48776780216761395,
+      "hhi_underlying": 185.83071267609654,
+      "n_alerts": 19,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-02",
       "nav_usd": 2477120.0,
-      "gross_pct_nav": 1.435754309964219,
-      "net_pct_nav": 0.01167391296263315,
-      "pnl_pct_nav": 0.03763326001720551,
-      "pnl_cum_usd": 93222.10105382011,
-      "worst_shock_pct_nav": -0.010805266487955649,
+      "gross_pct_nav": 1.4357545412550439,
+      "net_pct_nav": 0.011673681671808284,
+      "pnl_pct_nav": 0.03756560168272836,
+      "pnl_cum_usd": 93054.50324032007,
+      "worst_shock_pct_nav": -0.010805218144555734,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.054026332439778245,
-      "top10_pct_nav": 0.48336201535856776,
-      "hhi_underlying": 190.27903265641658,
-      "n_alerts": 20,
+      "net_beta_to_spy": 0.05402609072277867,
+      "top10_pct_nav": 0.4833620853122034,
+      "hhi_underlying": 190.27898663502089,
+      "n_alerts": 19,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-03",
       "nav_usd": 2598999.9999999995,
-      "gross_pct_nav": 1.399980178862021,
-      "net_pct_nav": 0.0017937313663166944,
-      "pnl_pct_nav": 0.031201483276775688,
-      "pnl_cum_usd": 81092.65503634,
-      "worst_shock_pct_nav": -0.0023551389498794504,
+      "gross_pct_nav": 1.39998036984887,
+      "net_pct_nav": 0.0017935403794677235,
+      "pnl_pct_nav": 0.03113699777716044,
+      "pnl_cum_usd": 80925.05722283997,
+      "worst_shock_pct_nav": -0.0023551066689162974,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.011775694749397249,
-      "top10_pct_nav": 0.4718604029391583,
-      "hhi_underlying": 191.07462747749196,
-      "n_alerts": 20,
+      "net_beta_to_spy": 0.011775533344581486,
+      "top10_pct_nav": 0.4718604674042312,
+      "hhi_underlying": 191.0745807665388,
+      "n_alerts": 19,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-04",
       "nav_usd": 2671300.0,
-      "gross_pct_nav": 1.3081078521583789,
-      "net_pct_nav": 0.0322524159230069,
-      "pnl_pct_nav": 0.02862173536212332,
-      "pnl_cum_usd": 76457.24167284003,
-      "worst_shock_pct_nav": -0.022493174251426145,
+      "gross_pct_nav": 1.3081080247042414,
+      "net_pct_nav": 0.032252243377144635,
+      "pnl_pct_nav": 0.0285589951931045,
+      "pnl_cum_usd": 76289.64385934005,
+      "worst_shock_pct_nav": -0.022493147122464446,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.11246587125713073,
-      "top10_pct_nav": 0.4279009393224361,
-      "hhi_underlying": 188.15414161166072,
-      "n_alerts": 20,
+      "net_beta_to_spy": 0.11246573561232223,
+      "top10_pct_nav": 0.42790099650838676,
+      "hhi_underlying": 188.1540916030294,
+      "n_alerts": 19,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-05",
       "nav_usd": 2700749.9999999995,
-      "gross_pct_nav": 1.2695540928199796,
-      "net_pct_nav": 0.008777608279146462,
-      "pnl_pct_nav": 0.029385789381271874,
-      "pnl_cum_usd": 79363.67067147,
-      "worst_shock_pct_nav": -0.00535017290422464,
+      "gross_pct_nav": 1.2695542451078268,
+      "net_pct_nav": 0.008777455991299242,
+      "pnl_pct_nav": 0.029323733354797734,
+      "pnl_cum_usd": 79196.07285796996,
+      "worst_shock_pct_nav": -0.005350150934877093,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.026750864521123206,
-      "top10_pct_nav": 0.4274630785511861,
-      "hhi_underlying": 192.61872233700123,
-      "n_alerts": 20,
+      "net_beta_to_spy": 0.026750754674385466,
+      "top10_pct_nav": 0.42746313878624026,
+      "hhi_underlying": 192.6186808284071,
+      "n_alerts": 19,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-06",
       "nav_usd": 2649150.0,
-      "gross_pct_nav": 1.200023466486524,
-      "net_pct_nav": 0.07345712911282669,
-      "pnl_pct_nav": 0.033132130201543875,
-      "pnl_cum_usd": 87771.98272341996,
-      "worst_shock_pct_nav": -0.04978213914443602,
+      "gross_pct_nav": 1.2000236021287423,
+      "net_pct_nav": 0.07345699347060845,
+      "pnl_pct_nav": 0.03306886545115225,
+      "pnl_cum_usd": 87604.38490991999,
+      "worst_shock_pct_nav": -0.04978211787345878,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.2489106957221801,
-      "top10_pct_nav": 0.4187358577565448,
-      "hhi_underlying": 197.11671014693013,
-      "n_alerts": 20,
+      "net_beta_to_spy": 0.24891058936729385,
+      "top10_pct_nav": 0.418735926201266,
+      "hhi_underlying": 197.1166797129676,
+      "n_alerts": 19,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-09",
       "nav_usd": 2679200.0,
-      "gross_pct_nav": 1.2347594204487666,
-      "net_pct_nav": 0.06383446014916029,
-      "pnl_pct_nav": 0.038074458512940404,
-      "pnl_cum_usd": 102009.08924786994,
-      "worst_shock_pct_nav": -0.04277713904181952,
+      "gross_pct_nav": 1.234759548743061,
+      "net_pct_nav": 0.06383433185486619,
+      "pnl_pct_nav": 0.03801190334218051,
+      "pnl_cum_usd": 101841.49143437002,
+      "worst_shock_pct_nav": -0.04277711963639792,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.2138856952090976,
-      "top10_pct_nav": 0.43560733134046487,
-      "hhi_underlying": 198.68764197923872,
-      "n_alerts": 20,
+      "net_beta_to_spy": 0.2138855981819896,
+      "top10_pct_nav": 0.43560740100830564,
+      "hhi_underlying": 198.687615143165,
+      "n_alerts": 19,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-10",
       "nav_usd": 2793600.0,
-      "gross_pct_nav": 1.1959174449118508,
-      "net_pct_nav": 0.08012570958044588,
-      "pnl_pct_nav": 0.025439988383011165,
-      "pnl_cum_usd": 71069.15154677999,
-      "worst_shock_pct_nav": -0.054372587762243824,
+      "gross_pct_nav": 1.1959175981102628,
+      "net_pct_nav": 0.08012555638203386,
+      "pnl_pct_nav": 0.025379994893069868,
+      "pnl_cum_usd": 70901.55373327999,
+      "worst_shock_pct_nav": -0.05437255264172018,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.2718629388112191,
-      "top10_pct_nav": 0.3999100679902694,
-      "hhi_underlying": 191.9131825328991,
-      "n_alerts": 21,
+      "net_beta_to_spy": 0.2718627632086009,
+      "top10_pct_nav": 0.39991013353762683,
+      "hhi_underlying": 191.91315193106115,
+      "n_alerts": 20,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-11",
       "nav_usd": 2952450.0,
-      "gross_pct_nav": 1.1427660268481683,
-      "net_pct_nav": 0.08649296036463536,
-      "pnl_pct_nav": 0.018486986946586733,
-      "pnl_cum_usd": 54581.90461045,
-      "worst_shock_pct_nav": -0.058989365948781305,
+      "gross_pct_nav": 1.1427661548536792,
+      "net_pct_nav": 0.08649283235912467,
+      "pnl_pct_nav": 0.018430221272824263,
+      "pnl_cum_usd": 54414.30679695,
+      "worst_shock_pct_nav": -0.05898934219729138,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.29494682974390657,
-      "top10_pct_nav": 0.3889080378651862,
-      "hhi_underlying": 193.8366231440825,
-      "n_alerts": 21,
+      "net_beta_to_spy": 0.2949467109864569,
+      "top10_pct_nav": 0.3889080974294297,
+      "hhi_underlying": 193.83659381290198,
+      "n_alerts": 20,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-12",
       "nav_usd": 2978100.0,
-      "gross_pct_nav": 1.201613818570819,
-      "net_pct_nav": 0.06331008518067602,
-      "pnl_pct_nav": 0.02808712057854671,
-      "pnl_cum_usd": 83646.25379496996,
-      "worst_shock_pct_nav": -0.04320163079975112,
+      "gross_pct_nav": 1.2016139624897164,
+      "net_pct_nav": 0.06330994126177865,
+      "pnl_pct_nav": 0.02803084382037877,
+      "pnl_cum_usd": 83478.65598147002,
+      "worst_shock_pct_nav": -0.0432016039067286,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.21600815399875556,
-      "top10_pct_nav": 0.39950363417858326,
-      "hhi_underlying": 190.82097367308504,
-      "n_alerts": 20,
+      "net_beta_to_spy": 0.216008019533643,
+      "top10_pct_nav": 0.39950369548071174,
+      "hhi_underlying": 190.82094271245558,
+      "n_alerts": 19,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-13",
       "nav_usd": 3133949.9999999995,
-      "gross_pct_nav": 1.0630514511205336,
-      "net_pct_nav": -0.04364045705190567,
-      "pnl_pct_nav": 0.03410012896298282,
-      "pnl_cum_usd": 106868.09916354,
-      "worst_shock_pct_nav": 0.0010993554853236886,
+      "gross_pct_nav": 1.063051652242903,
+      "net_pct_nav": -0.043640658174274934,
+      "pnl_pct_nav": 0.034046650824052706,
+      "pnl_cum_usd": 106700.50135003997,
+      "worst_shock_pct_nav": 0.0010993581960682447,
       "worst_shock_label": "SPX -1%",
-      "net_beta_to_spy": -0.10993554853236885,
-      "top10_pct_nav": 0.34357973093910876,
-      "hhi_underlying": 185.42867612431044,
-      "n_alerts": 20,
+      "net_beta_to_spy": -0.10993581960682447,
+      "top10_pct_nav": 0.343579831798998,
+      "hhi_underlying": 185.42861838176506,
+      "n_alerts": 19,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-16",
       "nav_usd": 3030350.0,
-      "gross_pct_nav": 1.1704259455347608,
-      "net_pct_nav": 0.008384071355864315,
-      "pnl_pct_nav": 0.035469019618895495,
-      "pnl_cum_usd": 107483.54360211996,
-      "worst_shock_pct_nav": -0.0069320179630594815,
+      "gross_pct_nav": 1.1704261407508025,
+      "net_pct_nav": 0.008383869667342529,
+      "pnl_pct_nav": 0.03541371319769005,
+      "pnl_cum_usd": 107315.94578862004,
+      "worst_shock_pct_nav": -0.006931969686576725,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.03466008981529741,
-      "top10_pct_nav": 0.3822806376553345,
-      "hhi_underlying": 188.10036438860564,
-      "n_alerts": 21,
+      "net_beta_to_spy": 0.034659848432883625,
+      "top10_pct_nav": 0.382280672537664,
+      "hhi_underlying": 188.1002870044711,
+      "n_alerts": 20,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-17",
       "nav_usd": 2811200.0000000005,
-      "gross_pct_nav": 1.1909094905592277,
-      "net_pct_nav": 0.024084781122792623,
-      "pnl_pct_nav": 0.026287002913503155,
-      "pnl_cum_usd": 73898.02259044009,
-      "worst_shock_pct_nav": -0.018090503026160453,
+      "gross_pct_nav": 1.1909096857800692,
+      "net_pct_nav": 0.02408457765634766,
+      "pnl_pct_nav": 0.02622738502310048,
+      "pnl_cum_usd": 73730.42477694008,
+      "worst_shock_pct_nav": -0.018090456165870163,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.09045251513080224,
-      "top10_pct_nav": 0.3809890940492568,
-      "hhi_underlying": 183.05117577840485,
-      "n_alerts": 21,
+      "net_beta_to_spy": 0.0904522808293508,
+      "top10_pct_nav": 0.3809891296269272,
+      "hhi_underlying": 183.0510988192863,
+      "n_alerts": 20,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-18",
       "nav_usd": 2880000.0000000005,
-      "gross_pct_nav": 1.1641576077950226,
-      "net_pct_nav": 0.020476357986151137,
-      "pnl_pct_nav": 0.025204616167166675,
-      "pnl_cum_usd": 72589.29456144004,
-      "worst_shock_pct_nav": -0.01558846342434345,
+      "gross_pct_nav": 1.1641577996950234,
+      "net_pct_nav": 0.02047615771649774,
+      "pnl_pct_nav": 0.025146422481923617,
+      "pnl_cum_usd": 72421.69674794003,
+      "worst_shock_pct_nav": -0.01558841606548934,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.07794231712171724,
-      "top10_pct_nav": 0.37553738051637153,
-      "hhi_underlying": 186.45264112453785,
-      "n_alerts": 21,
+      "net_beta_to_spy": 0.07794208032744669,
+      "top10_pct_nav": 0.37553735139033173,
+      "hhi_underlying": 186.45256632149247,
+      "n_alerts": 20,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-19",
       "nav_usd": 2826239.9999999995,
-      "gross_pct_nav": 1.2250872392609102,
-      "net_pct_nav": 0.017797654449329185,
-      "pnl_pct_nav": 0.03603576979677592,
-      "pnl_cum_usd": 101845.73403043995,
-      "worst_shock_pct_nav": -0.013550395412984572,
+      "gross_pct_nav": 1.2250874273951207,
+      "net_pct_nav": 0.01779745875597986,
+      "pnl_pct_nav": 0.03597646916643312,
+      "pnl_cum_usd": 101678.13621693992,
+      "worst_shock_pct_nav": -0.013550351907497295,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.06775197706492286,
-      "top10_pct_nav": 0.3894110131257559,
-      "hhi_underlying": 182.62299932532994,
-      "n_alerts": 21,
+      "net_beta_to_spy": 0.06775175953748647,
+      "top10_pct_nav": 0.38941098393437407,
+      "hhi_underlying": 182.62292788271316,
+      "n_alerts": 20,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-20",
       "nav_usd": 2826239.9999999995,
-      "gross_pct_nav": 1.2250872392609102,
-      "net_pct_nav": 0.017797654449329185,
-      "pnl_pct_nav": 0.03603597519334525,
-      "pnl_cum_usd": 101846.31453044005,
-      "worst_shock_pct_nav": -0.013550395412984572,
+      "gross_pct_nav": 1.2250874273951207,
+      "net_pct_nav": 0.01779745875597986,
+      "pnl_pct_nav": 0.03597667456300243,
+      "pnl_cum_usd": 101678.71671693996,
+      "worst_shock_pct_nav": -0.013550351907497295,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.06775197706492286,
-      "top10_pct_nav": 0.3894110131257559,
-      "hhi_underlying": 182.62299932532994,
-      "n_alerts": 21,
+      "net_beta_to_spy": 0.06775175953748647,
+      "top10_pct_nav": 0.38941098393437407,
+      "hhi_underlying": 182.62292788271316,
+      "n_alerts": 20,
       "n_alerts_hard": 8
     },
     {
@@ -33846,31 +33813,31 @@
     {
       "run_date": "2026-06-23",
       "nav_usd": 2829900.0,
-      "gross_pct_nav": 1.2221696509314763,
-      "net_pct_nav": 0.02972778364992533,
-      "pnl_pct_nav": 0.03405489593056999,
-      "pnl_cum_usd": 96371.94999392002,
-      "worst_shock_pct_nav": -0.021227287882408293,
+      "gross_pct_nav": 1.2221698364036868,
+      "net_pct_nav": 0.02972759071003025,
+      "pnl_pct_nav": 0.03399567199562531,
+      "pnl_cum_usd": 96204.35218042007,
+      "worst_shock_pct_nav": -0.021227244107700313,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.10613643941204144,
-      "top10_pct_nav": 0.3908656784086995,
-      "hhi_underlying": 185.23189599932851,
-      "n_alerts": 21,
+      "net_beta_to_spy": 0.10613622053850155,
+      "top10_pct_nav": 0.3908657158240326,
+      "hhi_underlying": 185.23182381684023,
+      "n_alerts": 20,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-24",
       "nav_usd": 2788700.0000000005,
-      "gross_pct_nav": 1.171101775660256,
-      "net_pct_nav": 0.05382737628309586,
-      "pnl_pct_nav": 0.022987425600788893,
-      "pnl_cum_usd": 64105.03377292,
-      "worst_shock_pct_nav": -0.0379945993938044,
+      "gross_pct_nav": 1.1711019554220572,
+      "net_pct_nav": 0.05382718884855853,
+      "pnl_pct_nav": 0.022927326696819312,
+      "pnl_cum_usd": 63937.43595942002,
+      "worst_shock_pct_nav": -0.03799455965983514,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.18997299696902198,
-      "top10_pct_nav": 0.37122215414766185,
-      "hhi_underlying": 183.30920002758302,
-      "n_alerts": 21,
+      "net_beta_to_spy": 0.18997279829917568,
+      "top10_pct_nav": 0.37122218877257285,
+      "hhi_underlying": 183.3091229822909,
+      "n_alerts": 20,
       "n_alerts_hard": 8
     },
     {
@@ -33891,46 +33858,46 @@
     {
       "run_date": "2026-06-26",
       "nav_usd": 3175999.999999999,
-      "gross_pct_nav": 1.289925564893484,
-      "net_pct_nav": 0.018622799934305812,
-      "pnl_pct_nav": 0.01407149494650505,
-      "pnl_cum_usd": 44691.06795010003,
-      "worst_shock_pct_nav": -0.01748924332229567,
+      "gross_pct_nav": 1.289925482587384,
+      "net_pct_nav": 0.018622873548743087,
+      "pnl_pct_nav": 0.0140187248540932,
+      "pnl_cum_usd": 44523.47013659999,
+      "worst_shock_pct_nav": -0.01748932097566993,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.08744621661147833,
-      "top10_pct_nav": 0.4552630473625749,
-      "hhi_underlying": 205.62187003485317,
+      "net_beta_to_spy": 0.08744660487834963,
+      "top10_pct_nav": 0.45526314174527016,
+      "hhi_underlying": 205.6219089290738,
       "n_alerts": 16,
       "n_alerts_hard": 3
     },
     {
       "run_date": "2026-06-28",
       "nav_usd": 3458399.9999999995,
-      "gross_pct_nav": 1.3592395682690899,
-      "net_pct_nav": 0.014483208645771267,
-      "pnl_pct_nav": 0.020800388373577384,
-      "pnl_cum_usd": 71936.06315118002,
-      "worst_shock_pct_nav": -0.009728287335628116,
+      "gross_pct_nav": 1.3592396063246104,
+      "net_pct_nav": 0.014483162512839393,
+      "pnl_pct_nav": 0.020751927289405513,
+      "pnl_cum_usd": 71768.46533768001,
+      "worst_shock_pct_nav": -0.009728296646823132,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.048641436678140575,
-      "top10_pct_nav": 0.4995088000547868,
-      "hhi_underlying": 215.0426769679252,
+      "net_beta_to_spy": 0.048641483234115664,
+      "top10_pct_nav": 0.4995089444900023,
+      "hhi_underlying": 215.04272425305973,
       "n_alerts": 15,
       "n_alerts_hard": 2
     },
     {
       "run_date": "2026-06-30",
       "nav_usd": 3487649.9999999995,
-      "gross_pct_nav": 1.400340847043752,
-      "net_pct_nav": -0.02399185967926862,
-      "pnl_pct_nav": 0.022562873548911164,
-      "pnl_cum_usd": 78691.40593286001,
-      "worst_shock_pct_nav": 0.0007719996802257716,
+      "gross_pct_nav": 1.4003407295332204,
+      "net_pct_nav": -0.02399174216873675,
+      "pnl_pct_nav": 0.022562873548934097,
+      "pnl_cum_usd": 78691.40593293999,
+      "worst_shock_pct_nav": 0.00077199708201596,
       "worst_shock_label": "SPX -1%",
-      "net_beta_to_spy": -0.07719996802257716,
-      "top10_pct_nav": 0.5181444268542856,
-      "hhi_underlying": 217.53538009708754,
-      "n_alerts": 16,
+      "net_beta_to_spy": -0.077199708201596,
+      "top10_pct_nav": 0.5181444849348871,
+      "hhi_underlying": 217.53543999017694,
+      "n_alerts": 15,
       "n_alerts_hard": 2
     },
     {
@@ -33938,13 +33905,13 @@
       "nav_usd": 3509499.9999999995,
       "gross_pct_nav": 1.3937073973502527,
       "net_pct_nav": -0.03741308562915605,
-      "pnl_pct_nav": 0.01570320802406041,
-      "pnl_cum_usd": 55110.40856044,
-      "worst_shock_pct_nav": 0.0011998440785331273,
+      "pnl_pct_nav": 0.015703208024037605,
+      "pnl_cum_usd": 55110.40856035997,
+      "worst_shock_pct_nav": 0.0012240908703299047,
       "worst_shock_label": "SPX -1%",
-      "net_beta_to_spy": -0.11998440785331271,
+      "net_beta_to_spy": -0.12240908703299046,
       "top10_pct_nav": 0.5147420222733404,
-      "hhi_underlying": 215.91357695410508,
+      "hhi_underlying": 215.91357695410514,
       "n_alerts": 16,
       "n_alerts_hard": 2
     },
@@ -33969,12 +33936,12 @@
     "delta_nav_usd": -1918699.9999999995,
     "delta_gross_pct_nav": 1.3203385167678294,
     "delta_net_pct_nav": -0.05246663537854076,
-    "delta_pnl_pct_nav": 0.009685857425128699,
-    "delta_pnl_cum_usd": -14721.483243869967,
-    "delta_worst_shock_pct_nav": 0.001375461347579242,
-    "delta_net_beta_to_spy": -0.1375461347579242,
+    "delta_pnl_pct_nav": 0.009685857425151503,
+    "delta_pnl_cum_usd": -14721.483243789931,
+    "delta_worst_shock_pct_nav": 0.0013512145557824646,
+    "delta_net_beta_to_spy": -0.13512145557824645,
     "delta_top10_pct_nav": 0.16398615640905845,
-    "delta_hhi_underlying": -81.45033510339073,
+    "delta_hhi_underlying": -81.45033510339078,
     "delta_n_alerts": -4.0,
     "delta_n_alerts_hard": 3.0
   },

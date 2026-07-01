@@ -1,6 +1,6 @@
 {
   "run_date": "2026-06-20",
-  "generated_at_utc": "2026-07-01T15:43:45.757998+00:00",
+  "generated_at_utc": "2026-07-01T20:47:42.270245+00:00",
   "nav_usd": 2826239.9999999995,
   "nav_source": "flex_positions:percentOfNAV_median",
   "book": {
@@ -19,31 +19,31 @@
       {
         "bucket": "bucket_1",
         "bucket_label": "Bucket 1 (core leveraged)",
-        "gross_usd": 2480345.156211391,
-        "net_usd": -76516.13486709529,
-        "gross_usd_raw": 2480345.156211391,
-        "net_usd_raw": -76516.13486709529,
+        "gross_usd": 2553499.050948315,
+        "net_usd": -3362.2401301714563,
+        "gross_usd_raw": 2553499.050948315,
+        "net_usd_raw": -3362.2401301714563,
         "target_gross_usd": 1904315.0999406518,
-        "actual_weight": 0.716367704041616,
+        "actual_weight": 0.7374958472289288,
         "target_weight": 0.55,
-        "drift_pp": 16.636770404161595,
+        "drift_pp": 18.749584722892877,
         "drift_status": "hard",
-        "pnl_usd": 17992.55997794236,
+        "pnl_usd": 21571.65452597291,
         "attribution_available": true
       },
       {
         "bucket": "bucket_2",
         "bucket_label": "Bucket 2 (yield boost)",
-        "gross_usd": 825521.5164166843,
-        "net_usd": -17852.56929056305,
-        "gross_usd_raw": 825521.5164166843,
-        "net_usd_raw": -17852.56929056305,
+        "gross_usd": 829788.7843848328,
+        "net_usd": -13585.301322414605,
+        "gross_usd_raw": 829788.7843848328,
+        "net_usd_raw": -13585.301322414605,
         "target_gross_usd": 692478.2181602371,
-        "actual_weight": 0.23842526588342783,
+        "actual_weight": 0.23965772861113233,
         "target_weight": 0.2,
-        "drift_pp": 3.842526588342782,
+        "drift_pp": 3.9657728611132317,
         "drift_status": "ok",
-        "pnl_usd": 55970.36323003883,
+        "pnl_usd": 57520.96355269644,
         "attribution_available": true
       },
       {
@@ -64,16 +64,16 @@
       {
         "bucket": "bucket_4",
         "bucket_label": "Bucket 4 (inverse / decay)",
-        "gross_usd": 150596.50608263447,
-        "net_usd": 150596.50608263447,
-        "gross_usd_raw": 150596.50608263447,
-        "net_usd_raw": 150596.50608263447,
+        "gross_usd": 73175.34337756217,
+        "net_usd": 73175.34337756217,
+        "gross_usd_raw": 73175.34337756217,
+        "net_usd_raw": 73175.34337756217,
         "target_gross_usd": 865597.7727002962,
-        "actual_weight": 0.04349494385043227,
+        "actual_weight": 0.021134337935414933,
         "target_weight": 0.25,
-        "drift_pp": -20.650505614956774,
+        "drift_pp": -22.886566206458507,
         "drift_status": "hard",
-        "pnl_usd": 20796.82527961858,
+        "pnl_usd": 15667.130408930412,
         "attribution_available": true
       },
       {
@@ -105,11 +105,24 @@
       "bucket": "bucket_1",
       "bucket_label": "Bucket 1 (core leveraged)",
       "exposure_header": {
-        "attribution_net_usd": -76516.13486709529,
-        "attribution_gross_usd": 2480345.156211391,
+        "attribution_net_usd": -3362.2401301714563,
+        "attribution_gross_usd": 2553499.050948315,
         "source": "totals.json"
       },
       "pnl_rows": [
+        {
+          "symbol": "CRCL",
+          "underlying": "CRCL",
+          "symbols": "CCUP, CRCA, CRCG, CRCL",
+          "description": "CCUP, CRCA, CRCG, CRCL",
+          "display_name": "CRCL",
+          "primary_key": "CRCL",
+          "realized_pnl": 2056.0254808045866,
+          "unrealized_pnl": 2908.1161739893205,
+          "borrow_fees": -433.84,
+          "short_credit_interest": 48.66203624944518,
+          "total_pnl": 4578.963691043353
+        },
         {
           "symbol": "CRML",
           "underlying": "CRML",
@@ -157,10 +170,10 @@
           "display_name": "IREN",
           "primary_key": "IREN",
           "realized_pnl": -632.87584549,
-          "unrealized_pnl": 4988.641050875875,
+          "unrealized_pnl": 4897.270199,
           "borrow_fees": -838.4,
           "short_credit_interest": 119.016524099679,
-          "total_pnl": 3636.3817294855535
+          "total_pnl": 3545.0108776096786
         },
         {
           "symbol": "NVTS",
@@ -202,6 +215,19 @@
           "total_pnl": 2643.9944430917685
         },
         {
+          "symbol": "LITE",
+          "underlying": "LITE",
+          "symbols": "LITE, LITX",
+          "description": "LITE, LITX",
+          "display_name": "LITE",
+          "primary_key": "LITE",
+          "realized_pnl": 69.595362,
+          "unrealized_pnl": 2465.376015,
+          "borrow_fees": -92.48,
+          "short_credit_interest": 42.1010860150306,
+          "total_pnl": 2484.5924630150303
+        },
+        {
           "symbol": "COIN",
           "underlying": "COIN",
           "symbols": "COIA, COIG, COIN, CONL, CONX",
@@ -228,6 +254,19 @@
           "total_pnl": 2306.164207584143
         },
         {
+          "symbol": "RKLB",
+          "underlying": "RKLB",
+          "symbols": "RKLB, RKLX",
+          "description": "RKLB, RKLX",
+          "display_name": "RKLB",
+          "primary_key": "RKLB",
+          "realized_pnl": 2951.76394965,
+          "unrealized_pnl": -871.571292978525,
+          "borrow_fees": -113.78,
+          "short_credit_interest": 31.379265196940075,
+          "total_pnl": 1997.791921868415
+        },
+        {
           "symbol": "SOXX",
           "underlying": "SOXX",
           "symbols": "SOXL, SOXX",
@@ -241,32 +280,6 @@
           "total_pnl": 1922.8953546582925
         },
         {
-          "symbol": "RKLB",
-          "underlying": "RKLB",
-          "symbols": "RKLB, RKLX",
-          "description": "RKLB, RKLX",
-          "display_name": "RKLB",
-          "primary_key": "RKLB",
-          "realized_pnl": 2951.76394965,
-          "unrealized_pnl": -1040.0442769216916,
-          "borrow_fees": -113.78,
-          "short_credit_interest": 31.379265196940075,
-          "total_pnl": 1829.3189379252483
-        },
-        {
-          "symbol": "LITE",
-          "underlying": "LITE",
-          "symbols": "LITE, LITX",
-          "description": "LITE, LITX",
-          "display_name": "LITE",
-          "primary_key": "LITE",
-          "realized_pnl": 69.595362,
-          "unrealized_pnl": 1570.1638156161898,
-          "borrow_fees": -92.48,
-          "short_credit_interest": 42.1010860150306,
-          "total_pnl": 1589.3802636312205
-        },
-        {
           "symbol": "CRWV",
           "underlying": "CRWV",
           "symbols": "CRWG, CRWU, CRWV, CWVX",
@@ -274,10 +287,10 @@
           "display_name": "CRWV",
           "primary_key": "CRWV",
           "realized_pnl": -605.295763708523,
-          "unrealized_pnl": 2490.6955612976817,
+          "unrealized_pnl": 2343.511250584176,
           "borrow_fees": -427.18,
           "short_credit_interest": 86.75803651483986,
-          "total_pnl": 1544.9778341039987
+          "total_pnl": 1397.7935233904932
         },
         {
           "symbol": "MSTR",
@@ -319,19 +332,6 @@
           "total_pnl": 1202.677125291132
         },
         {
-          "symbol": "RGTI",
-          "underlying": "RGTI",
-          "symbols": "RGTI, RGTU, RGTX",
-          "description": "RGTI, RGTU, RGTX",
-          "display_name": "RGTI",
-          "primary_key": "RGTI",
-          "realized_pnl": 1754.2335006100006,
-          "unrealized_pnl": -271.0001952415033,
-          "borrow_fees": -315.9,
-          "short_credit_interest": 22.182446519301596,
-          "total_pnl": 1189.5157518877995
-        },
-        {
           "symbol": "XRPZ",
           "underlying": "XRPZ",
           "symbols": "GXRP, UXRP, XRPT, XXRP",
@@ -343,6 +343,19 @@
           "borrow_fees": -145.99,
           "short_credit_interest": 19.954340186863178,
           "total_pnl": 1051.6268994668635
+        },
+        {
+          "symbol": "RGTI",
+          "underlying": "RGTI",
+          "symbols": "RGTI, RGTU, RGTX",
+          "description": "RGTI, RGTU, RGTX",
+          "display_name": "RGTI",
+          "primary_key": "RGTI",
+          "realized_pnl": 1754.2335006100006,
+          "unrealized_pnl": -412.11393,
+          "borrow_fees": -315.9,
+          "short_credit_interest": 22.182446519301596,
+          "total_pnl": 1048.4020171293027
         },
         {
           "symbol": "CIFR",
@@ -475,19 +488,6 @@
           "total_pnl": 740.7445001029255
         },
         {
-          "symbol": "QBTS",
-          "underlying": "QBTS",
-          "symbols": "QBTS, QBTX",
-          "description": "QBTS, QBTX",
-          "display_name": "QBTS",
-          "primary_key": "QBTS",
-          "realized_pnl": 2280.114364158638,
-          "unrealized_pnl": -1174.5557931981286,
-          "borrow_fees": -405.19,
-          "short_credit_interest": 21.73730230476554,
-          "total_pnl": 722.1058732652755
-        },
-        {
           "symbol": "ASTS",
           "underlying": "ASTS",
           "symbols": "ASTS, ASTX",
@@ -495,10 +495,10 @@
           "display_name": "ASTS",
           "primary_key": "ASTS",
           "realized_pnl": 121.69251998999998,
-          "unrealized_pnl": 746.8177947564682,
+          "unrealized_pnl": 704.4708875493602,
           "borrow_fees": -232.87,
           "short_credit_interest": 80.7450312802754,
-          "total_pnl": 716.3853460267433
+          "total_pnl": 674.0384388196353
         },
         {
           "symbol": "KEEL",
@@ -655,6 +655,19 @@
           "borrow_fees": -231.22,
           "short_credit_interest": 8.32408732449106,
           "total_pnl": 459.7891728344912
+        },
+        {
+          "symbol": "QBTS",
+          "underlying": "QBTS",
+          "symbols": "QBTS, QBTX",
+          "description": "QBTS, QBTX",
+          "display_name": "QBTS",
+          "primary_key": "QBTS",
+          "realized_pnl": 2280.114364158638,
+          "unrealized_pnl": -1442.1267299179665,
+          "borrow_fees": -405.19,
+          "short_credit_interest": 21.73730230476554,
+          "total_pnl": 454.53493654543854
         },
         {
           "symbol": "UUUU",
@@ -2204,32 +2217,6 @@
           "total_pnl": -241.4442240264716
         },
         {
-          "symbol": "CRCL",
-          "underlying": "CRCL",
-          "symbols": "CCUP, CRCA, CRCG, CRCL",
-          "description": "CCUP, CRCA, CRCG, CRCL",
-          "display_name": "CRCL",
-          "primary_key": "CRCL",
-          "realized_pnl": 2056.0254808045866,
-          "unrealized_pnl": -1958.674702349801,
-          "borrow_fees": -433.84,
-          "short_credit_interest": 48.66203624944518,
-          "total_pnl": -287.8271852957696
-        },
-        {
-          "symbol": "BE",
-          "underlying": "BE",
-          "symbols": "BE, BEG, BEX",
-          "description": "BE, BEG, BEX",
-          "display_name": "BE",
-          "primary_key": "BE",
-          "realized_pnl": 3137.23112578,
-          "unrealized_pnl": -3263.9422830842686,
-          "borrow_fees": -299.05,
-          "short_credit_interest": 130.69276164197862,
-          "total_pnl": -295.06839566229064
-        },
-        {
           "symbol": "CNC",
           "underlying": "CNC",
           "symbols": "CNC, CNCG",
@@ -2373,17 +2360,17 @@
           "total_pnl": -391.8391819517401
         },
         {
-          "symbol": "SNDK",
-          "underlying": "SNDK",
-          "symbols": "SNDK, SNDU, SNXX",
-          "description": "SNDK, SNDU, SNXX",
-          "display_name": "SNDK",
-          "primary_key": "SNDK",
-          "realized_pnl": -3315.3140106400024,
-          "unrealized_pnl": 2993.778294139167,
-          "borrow_fees": -215.42,
-          "short_credit_interest": 50.66948650294587,
-          "total_pnl": -486.2862299978879
+          "symbol": "BE",
+          "underlying": "BE",
+          "symbols": "BE, BEG, BEX",
+          "description": "BE, BEG, BEX",
+          "display_name": "BE",
+          "primary_key": "BE",
+          "realized_pnl": 3137.23112578,
+          "unrealized_pnl": -3425.876806,
+          "borrow_fees": -299.05,
+          "short_credit_interest": 130.69276164197862,
+          "total_pnl": -457.002918578024
         },
         {
           "symbol": "CVNA",
@@ -2529,6 +2516,19 @@
           "total_pnl": -1262.032046884809
         },
         {
+          "symbol": "SNDK",
+          "underlying": "SNDK",
+          "symbols": "SNDK, SNDU, SNXX",
+          "description": "SNDK, SNDU, SNXX",
+          "display_name": "SNDK",
+          "primary_key": "SNDK",
+          "realized_pnl": -3315.3140106400024,
+          "unrealized_pnl": 2187.5437960000017,
+          "borrow_fees": -215.42,
+          "short_credit_interest": 50.66948650294587,
+          "total_pnl": -1292.520728137053
+        },
+        {
           "symbol": "HIMS",
           "underlying": "HIMS",
           "symbols": "HIMS, HIMZ",
@@ -2581,19 +2581,6 @@
           "total_pnl": -1741.9474832474627
         },
         {
-          "symbol": "NBIS",
-          "underlying": "NBIS",
-          "symbols": "NBIG, NBIL, NBIS, NEBX",
-          "description": "NBIG, NBIL, NBIS, NEBX",
-          "display_name": "NBIS",
-          "primary_key": "NBIS",
-          "realized_pnl": 615.0170772500005,
-          "unrealized_pnl": -2301.50186712512,
-          "borrow_fees": -388.58,
-          "short_credit_interest": 143.23222860101205,
-          "total_pnl": -1931.83256127411
-        },
-        {
           "symbol": "AMZN",
           "underlying": "AMZN",
           "symbols": "AMZN, AMZU, AMZZ",
@@ -2633,6 +2620,19 @@
           "total_pnl": -2283.8869345906523
         },
         {
+          "symbol": "NBIS",
+          "underlying": "NBIS",
+          "symbols": "NBIG, NBIL, NBIS, NEBX",
+          "description": "NBIG, NBIL, NBIS, NEBX",
+          "display_name": "NBIS",
+          "primary_key": "NBIS",
+          "realized_pnl": 615.0170772500005,
+          "unrealized_pnl": -2948.294364000001,
+          "borrow_fees": -388.58,
+          "short_credit_interest": 143.23222860101205,
+          "total_pnl": -2578.625058148988
+        },
+        {
           "symbol": "CLSK",
           "underlying": "CLSK",
           "symbols": "CLSK, CLSX",
@@ -2653,10 +2653,10 @@
           "display_name": "AMD",
           "primary_key": "AMD",
           "realized_pnl": -13436.573931775674,
-          "unrealized_pnl": 7703.001337302734,
+          "unrealized_pnl": 7656.168084871791,
           "borrow_fees": -293.61,
           "short_credit_interest": 17.567946452769636,
-          "total_pnl": -6031.46464802017
+          "total_pnl": -6078.297900451114
         },
         {
           "symbol": "MU",
@@ -2683,16 +2683,23 @@
         {
           "underlying": "NBIS",
           "symbols": "NBIG, NBIL, NBIS, NEBX",
-          "net_notional_usd": -24616.908271268265,
-          "gross_notional_usd": 121191.29481325172,
+          "net_notional_usd": -13370.248277432,
+          "gross_notional_usd": 132437.954807088,
           "n_legs": 4
         },
         {
           "underlying": "IREN",
           "symbols": "IRE, IREG, IREN, IREX",
-          "net_notional_usd": -11303.618720120718,
-          "gross_notional_usd": 110237.1413307143,
+          "net_notional_usd": 3618.240182282501,
+          "gross_notional_usd": 125159.0002331175,
           "n_legs": 4
+        },
+        {
+          "underlying": "BE",
+          "symbols": "BE, BEG, BEX",
+          "net_notional_usd": -20017.20423433061,
+          "gross_notional_usd": 113119.3540583306,
+          "n_legs": 3
         },
         {
           "underlying": "AAOI",
@@ -2702,31 +2709,24 @@
           "n_legs": 2
         },
         {
-          "underlying": "BE",
-          "symbols": "BE, BEG, BEX",
-          "net_notional_usd": -30519.95864550344,
-          "gross_notional_usd": 102616.59964715775,
-          "n_legs": 3
-        },
-        {
           "underlying": "CRWV",
           "symbols": "CRWG, CRWU, CRWV, CWVX",
-          "net_notional_usd": -16599.23000433235,
-          "gross_notional_usd": 72054.10272700764,
+          "net_notional_usd": -9553.85768708854,
+          "gross_notional_usd": 79099.47504425146,
           "n_legs": 4
+        },
+        {
+          "underlying": "ASTS",
+          "symbols": "ASTS, ASTX",
+          "net_notional_usd": -5065.801691140005,
+          "gross_notional_usd": 77337.16169114,
+          "n_legs": 2
         },
         {
           "underlying": "EOSE",
           "symbols": "EOSE, EOSU",
           "net_notional_usd": -3587.965829439996,
           "gross_notional_usd": 61819.76582944,
-          "n_legs": 2
-        },
-        {
-          "underlying": "ASTS",
-          "symbols": "ASTS, ASTX",
-          "net_notional_usd": -21250.63624264093,
-          "gross_notional_usd": 61152.32713963908,
           "n_legs": 2
         },
         {
@@ -2739,8 +2739,8 @@
         {
           "underlying": "SNDK",
           "symbols": "SNDK, SNDU, SNXX",
-          "net_notional_usd": 1037.0574254863732,
-          "gross_notional_usd": 52556.15714884637,
+          "net_notional_usd": -1727.2998616800014,
+          "gross_notional_usd": 49791.79986168,
           "n_legs": 3
         },
         {
@@ -2774,8 +2774,8 @@
         {
           "underlying": "LITE",
           "symbols": "LITE, LITX",
-          "net_notional_usd": -5870.370126586367,
-          "gross_notional_usd": 37163.89880329363,
+          "net_notional_usd": 2282.865535060002,
+          "gross_notional_usd": 45317.13446494,
           "n_legs": 2
         },
         {
@@ -2849,6 +2849,13 @@
           "n_legs": 2
         },
         {
+          "underlying": "RKLB",
+          "symbols": "RKLB, RKLX",
+          "net_notional_usd": -4200.151418449999,
+          "gross_notional_usd": 27792.95141845,
+          "n_legs": 2
+        },
+        {
           "underlying": "CRDO",
           "symbols": "CRDO, CRDU",
           "net_notional_usd": -1389.4446537600015,
@@ -2874,13 +2881,6 @@
           "symbols": "UUUG, UUUU",
           "net_notional_usd": -297.0705637499996,
           "gross_notional_usd": 23746.03056375,
-          "n_legs": 2
-        },
-        {
-          "underlying": "RKLB",
-          "symbols": "RKLB, RKLX",
-          "net_notional_usd": -8346.658912780145,
-          "gross_notional_usd": 23646.44392411985,
           "n_legs": 2
         },
         {
@@ -2921,22 +2921,29 @@
         {
           "underlying": "RGTI",
           "symbols": "RGTI, RGTU, RGTX",
-          "net_notional_usd": -3705.996635518238,
-          "gross_notional_usd": 18872.28692832176,
+          "net_notional_usd": -3215.061781919999,
+          "gross_notional_usd": 19363.22178192,
           "n_legs": 3
+        },
+        {
+          "underlying": "QBTS",
+          "symbols": "QBTS, QBTX",
+          "net_notional_usd": -3436.2860883199983,
+          "gross_notional_usd": 18595.94608832,
+          "n_legs": 2
         },
         {
           "underlying": "AMD",
           "symbols": "AMD, AMDG, AMDL, AMUU",
-          "net_notional_usd": -220.15292283295503,
-          "gross_notional_usd": 17651.118977830247,
+          "net_notional_usd": 426.4195075443472,
+          "gross_notional_usd": 18297.69140820755,
           "n_legs": 4
         },
         {
           "underlying": "COIN",
           "symbols": "COIA, COIG, COIN, CONL, CONX",
-          "net_notional_usd": 18.63142237138618,
-          "gross_notional_usd": 17509.98624033139,
+          "net_notional_usd": 22.01532381214838,
+          "gross_notional_usd": 17513.37014177215,
           "n_legs": 5
         },
         {
@@ -2958,13 +2965,6 @@
           "symbols": "WDC, WDCX",
           "net_notional_usd": -1169.7289490700005,
           "gross_notional_usd": 16097.76160707,
-          "n_legs": 2
-        },
-        {
-          "underlying": "QBTS",
-          "symbols": "QBTS, QBTX",
-          "net_notional_usd": -6128.642751130301,
-          "gross_notional_usd": 15903.589425509696,
           "n_legs": 2
         },
         {
@@ -3339,13 +3339,6 @@
           "n_legs": 2
         },
         {
-          "underlying": "MSTR",
-          "symbols": "MSTP, MSTR, MSTU, MSTX",
-          "net_notional_usd": 47.145472611725154,
-          "gross_notional_usd": 4979.734401211725,
-          "n_legs": 4
-        },
-        {
           "underlying": "TEM",
           "symbols": "TEM, TEMT",
           "net_notional_usd": -13.907775999999558,
@@ -3358,6 +3351,13 @@
           "net_notional_usd": -39.19772543299996,
           "gross_notional_usd": 4864.0777254330005,
           "n_legs": 2
+        },
+        {
+          "underlying": "MSTR",
+          "symbols": "MSTP, MSTR, MSTU, MSTX",
+          "net_notional_usd": -69.07368365823208,
+          "gross_notional_usd": 4863.515244941767,
+          "n_legs": 4
         },
         {
           "underlying": "MRVL",
@@ -3835,6 +3835,19 @@
       "n_exposure_leg_rows": 0,
       "winners": [
         {
+          "symbol": "CRCL",
+          "underlying": "CRCL",
+          "symbols": "CCUP, CRCA, CRCG, CRCL",
+          "description": "CCUP, CRCA, CRCG, CRCL",
+          "display_name": "CRCL",
+          "primary_key": "CRCL",
+          "realized_pnl": 2056.0254808045866,
+          "unrealized_pnl": 2908.1161739893205,
+          "borrow_fees": -433.84,
+          "short_credit_interest": 48.66203624944518,
+          "total_pnl": 4578.963691043353
+        },
+        {
           "symbol": "CRML",
           "underlying": "CRML",
           "symbols": "CRML, CRMU, CRMX",
@@ -3881,23 +3894,10 @@
           "display_name": "IREN",
           "primary_key": "IREN",
           "realized_pnl": -632.87584549,
-          "unrealized_pnl": 4988.641050875875,
+          "unrealized_pnl": 4897.270199,
           "borrow_fees": -838.4,
           "short_credit_interest": 119.016524099679,
-          "total_pnl": 3636.3817294855535
-        },
-        {
-          "symbol": "NVTS",
-          "underlying": "NVTS",
-          "symbols": "NVTS, NVTX",
-          "description": "NVTS, NVTX",
-          "display_name": "NVTS",
-          "primary_key": "NVTS",
-          "realized_pnl": -1873.411730910004,
-          "unrealized_pnl": 6259.259091,
-          "borrow_fees": -1132.73,
-          "short_credit_interest": 55.46335028276639,
-          "total_pnl": 3308.5807103727493
+          "total_pnl": 3545.0108776096786
         }
       ],
       "losers": [
@@ -3922,10 +3922,10 @@
           "display_name": "AMD",
           "primary_key": "AMD",
           "realized_pnl": -13436.573931775674,
-          "unrealized_pnl": 7703.001337302734,
+          "unrealized_pnl": 7656.168084871791,
           "borrow_fees": -293.61,
           "short_credit_interest": 17.567946452769636,
-          "total_pnl": -6031.46464802017
+          "total_pnl": -6078.297900451114
         },
         {
           "symbol": "CLSK",
@@ -3941,6 +3941,19 @@
           "total_pnl": -4132.186825884881
         },
         {
+          "symbol": "NBIS",
+          "underlying": "NBIS",
+          "symbols": "NBIG, NBIL, NBIS, NEBX",
+          "description": "NBIG, NBIL, NBIS, NEBX",
+          "display_name": "NBIS",
+          "primary_key": "NBIS",
+          "realized_pnl": 615.0170772500005,
+          "unrealized_pnl": -2948.294364000001,
+          "borrow_fees": -388.58,
+          "short_credit_interest": 143.23222860101205,
+          "total_pnl": -2578.625058148988
+        },
+        {
           "symbol": "MSFT",
           "underlying": "MSFT",
           "symbols": "MSFL, MSFT, MSFU, MSFX",
@@ -3952,19 +3965,6 @@
           "borrow_fees": -182.0,
           "short_credit_interest": 2.526967649348032,
           "total_pnl": -2283.8869345906523
-        },
-        {
-          "symbol": "IONQ",
-          "underlying": "IONQ",
-          "symbols": "IONL, IONQ, IONX, QPUX",
-          "description": "IONL, IONQ, IONX, QPUX",
-          "display_name": "IONQ",
-          "primary_key": "IONQ",
-          "realized_pnl": 180.67392671751168,
-          "unrealized_pnl": -2018.26176397326,
-          "borrow_fees": -456.71,
-          "short_credit_interest": 28.704841571396024,
-          "total_pnl": -2265.592995684352
         }
       ]
     },
@@ -3972,8 +3972,8 @@
       "bucket": "bucket_2",
       "bucket_label": "Bucket 2 (yield boost)",
       "exposure_header": {
-        "attribution_net_usd": -17852.56929056305,
-        "attribution_gross_usd": 825521.5164166843,
+        "attribution_net_usd": -13585.301322414605,
+        "attribution_gross_usd": 829788.7843848328,
         "source": "totals.json"
       },
       "pnl_rows": [
@@ -3998,10 +3998,10 @@
           "display_name": "AMD",
           "primary_key": "AMD",
           "realized_pnl": 7586.34538559568,
-          "unrealized_pnl": 8336.25604202888,
+          "unrealized_pnl": 8308.341687128206,
           "borrow_fees": -1977.25,
           "short_credit_interest": 416.7747952303201,
-          "total_pnl": 7570.5862228548785
+          "total_pnl": 7542.671867954205
         },
         {
           "symbol": "HOOD",
@@ -4030,6 +4030,19 @@
           "total_pnl": 5895.075995626574
         },
         {
+          "symbol": "MSTR",
+          "underlying": "MSTR",
+          "symbols": "MSTR, MSTW, MSTY, MTYY",
+          "description": "MSTR, MSTW, MSTY, MTYY",
+          "display_name": "MSTR",
+          "primary_key": "MSTR",
+          "realized_pnl": 2994.4395374968467,
+          "unrealized_pnl": 21684.309893206384,
+          "borrow_fees": -1936.65,
+          "short_credit_interest": 622.4738486875771,
+          "total_pnl": 5488.533279390809
+        },
+        {
           "symbol": "IONQ",
           "underlying": "IONQ",
           "symbols": "IONQ, IOYY",
@@ -4056,19 +4069,6 @@
           "total_pnl": 5363.578562742786
         },
         {
-          "symbol": "MSTR",
-          "underlying": "MSTR",
-          "symbols": "MSTR, MSTW, MSTY, MTYY",
-          "description": "MSTR, MSTW, MSTY, MTYY",
-          "display_name": "MSTR",
-          "primary_key": "MSTR",
-          "realized_pnl": 2994.4395374968467,
-          "unrealized_pnl": 21010.933306326733,
-          "borrow_fees": -1936.65,
-          "short_credit_interest": 622.4738486875771,
-          "total_pnl": 4815.156692511158
-        },
-        {
           "symbol": "COIN",
           "underlying": "COIN",
           "symbols": "COIN, COIW, CONY, COYY",
@@ -4076,10 +4076,10 @@
           "display_name": "COIN",
           "primary_key": "COIN",
           "realized_pnl": 5115.62244441782,
-          "unrealized_pnl": 7018.044358702698,
+          "unrealized_pnl": 7211.941153999998,
           "borrow_fees": -1101.88,
           "short_credit_interest": 363.76849711415485,
-          "total_pnl": 4709.975300234673
+          "total_pnl": 4903.872095531973
         },
         {
           "symbol": "RIOT",
@@ -4106,19 +4106,6 @@
           "borrow_fees": -159.01,
           "short_credit_interest": 147.70584193133763,
           "total_pnl": 3050.78454843092
-        },
-        {
-          "symbol": "QBTS",
-          "underlying": "QBTS",
-          "symbols": "QBTS, QBY",
-          "description": "QBTS, QBY",
-          "display_name": "QBTS",
-          "primary_key": "QBTS",
-          "realized_pnl": 2274.6936289613627,
-          "unrealized_pnl": 5030.908627232572,
-          "borrow_fees": -1015.21,
-          "short_credit_interest": 279.1022160993494,
-          "total_pnl": 1885.364472293284
         },
         {
           "symbol": "TSM",
@@ -4158,6 +4145,19 @@
           "borrow_fees": -35.21,
           "short_credit_interest": 0.0,
           "total_pnl": 1390.44038577
+        },
+        {
+          "symbol": "QBTS",
+          "underlying": "QBTS",
+          "symbols": "QBTS, QBY",
+          "description": "QBTS, QBY",
+          "display_name": "QBTS",
+          "primary_key": "QBTS",
+          "realized_pnl": 2274.6936289613627,
+          "unrealized_pnl": 4441.905051037266,
+          "borrow_fees": -1015.21,
+          "short_credit_interest": 279.1022160993494,
+          "total_pnl": 1296.360896097978
         },
         {
           "symbol": "PYPL",
@@ -4251,19 +4251,6 @@
           "total_pnl": 575.5320815400001
         },
         {
-          "symbol": "CRWV",
-          "underlying": "CRWV",
-          "symbols": "CRWV, CWY",
-          "description": "CRWV, CWY",
-          "display_name": "CRWV",
-          "primary_key": "CRWV",
-          "realized_pnl": 85.621675078523,
-          "unrealized_pnl": 1579.3058076283346,
-          "borrow_fees": -70.78,
-          "short_credit_interest": 112.96863932897908,
-          "total_pnl": 496.5261220358367
-        },
-        {
           "symbol": "ASML",
           "underlying": "ASML",
           "symbols": "ASML",
@@ -4275,6 +4262,19 @@
           "borrow_fees": 0.0,
           "short_credit_interest": 0.0,
           "total_pnl": 468.8904240000001
+        },
+        {
+          "symbol": "CRWV",
+          "underlying": "CRWV",
+          "symbols": "CRWV, CWY",
+          "description": "CRWV, CWY",
+          "display_name": "CRWV",
+          "primary_key": "CRWV",
+          "realized_pnl": 85.621675078523,
+          "unrealized_pnl": 1550.9738354158235,
+          "borrow_fees": -70.78,
+          "short_credit_interest": 112.96863932897908,
+          "total_pnl": 468.1941498233259
         },
         {
           "symbol": "META",
@@ -4492,25 +4492,25 @@
           "display_name": "CRCL",
           "primary_key": "CRCL",
           "realized_pnl": -4120.600640184587,
-          "unrealized_pnl": -3252.254241778473,
+          "unrealized_pnl": -1923.6773979893212,
           "borrow_fees": -59.97,
           "short_credit_interest": 115.64935847617988,
-          "total_pnl": -7317.17552348688
+          "total_pnl": -5988.598679697729
         }
       ],
       "exposure_rows": [
         {
           "underlying": "MSTR",
           "symbols": "MSTR, MTYY",
-          "net_notional_usd": -7964.721307000975,
-          "gross_notional_usd": 89617.67432566603,
+          "net_notional_usd": -9852.50011711244,
+          "gross_notional_usd": 87729.89551555456,
           "n_legs": 2
         },
         {
           "underlying": "COIN",
           "symbols": "COIN, COYY",
-          "net_notional_usd": 73.90771945506276,
-          "gross_notional_usd": 69459.17090581506,
+          "net_notional_usd": 87.33108742785407,
+          "gross_notional_usd": 69472.59427378785,
           "n_legs": 2
         },
         {
@@ -4558,8 +4558,8 @@
         {
           "underlying": "AMD",
           "symbols": "AMD, AMYY",
-          "net_notional_usd": -634.3442448776805,
-          "gross_notional_usd": 50859.58249000233,
+          "net_notional_usd": 1228.6766718040562,
+          "gross_notional_usd": 52722.60340668407,
           "n_legs": 2
         },
         {
@@ -4593,8 +4593,8 @@
         {
           "underlying": "QBTS",
           "symbols": "QBTS, QBY",
-          "net_notional_usd": -9257.5643975459,
-          "gross_notional_usd": 19032.51107192529,
+          "net_notional_usd": -6565.207734735596,
+          "gross_notional_usd": 21724.8677347356,
           "n_legs": 2
         },
         {
@@ -4605,17 +4605,17 @@
           "n_legs": 2
         },
         {
+          "underlying": "CRWV",
+          "symbols": "CRWV, CWY",
+          "net_notional_usd": 1614.870226218541,
+          "gross_notional_usd": 14043.13060261854,
+          "n_legs": 2
+        },
+        {
           "underlying": "CRCL",
           "symbols": "CRCL, CRY",
           "net_notional_usd": 826.9734465781876,
           "gross_notional_usd": 12470.044872564187,
-          "n_legs": 2
-        },
-        {
-          "underlying": "CRWV",
-          "symbols": "CRWV, CWY",
-          "net_notional_usd": 28.624395423463284,
-          "gross_notional_usd": 12456.884771823465,
           "n_legs": 2
         }
       ],
@@ -4645,10 +4645,10 @@
           "display_name": "AMD",
           "primary_key": "AMD",
           "realized_pnl": 7586.34538559568,
-          "unrealized_pnl": 8336.25604202888,
+          "unrealized_pnl": 8308.341687128206,
           "borrow_fees": -1977.25,
           "short_credit_interest": 416.7747952303201,
-          "total_pnl": 7570.5862228548785
+          "total_pnl": 7542.671867954205
         },
         {
           "symbol": "HOOD",
@@ -4677,17 +4677,17 @@
           "total_pnl": 5895.075995626574
         },
         {
-          "symbol": "IONQ",
-          "underlying": "IONQ",
-          "symbols": "IONQ, IOYY",
-          "description": "IONQ, IOYY",
-          "display_name": "IONQ",
-          "primary_key": "IONQ",
-          "realized_pnl": 10879.31340040249,
-          "unrealized_pnl": 9274.13073197326,
-          "borrow_fees": -1793.94,
-          "short_credit_interest": 509.3972861301968,
-          "total_pnl": 5410.691418505947
+          "symbol": "MSTR",
+          "underlying": "MSTR",
+          "symbols": "MSTR, MSTW, MSTY, MTYY",
+          "description": "MSTR, MSTW, MSTY, MTYY",
+          "display_name": "MSTR",
+          "primary_key": "MSTR",
+          "realized_pnl": 2994.4395374968467,
+          "unrealized_pnl": 21684.309893206384,
+          "borrow_fees": -1936.65,
+          "short_credit_interest": 622.4738486875771,
+          "total_pnl": 5488.533279390809
         }
       ],
       "losers": [
@@ -4699,10 +4699,10 @@
           "display_name": "CRCL",
           "primary_key": "CRCL",
           "realized_pnl": -4120.600640184587,
-          "unrealized_pnl": -3252.254241778473,
+          "unrealized_pnl": -1923.6773979893212,
           "borrow_fees": -59.97,
           "short_credit_interest": 115.64935847617988,
-          "total_pnl": -7317.17552348688
+          "total_pnl": -5988.598679697729
         },
         {
           "symbol": "BABA",
@@ -5206,25 +5206,25 @@
       "bucket": "bucket_4",
       "bucket_label": "Bucket 4 (inverse / decay)",
       "exposure_header": {
-        "attribution_net_usd": 150596.50608263447,
-        "attribution_gross_usd": 150596.50608263447,
-        "pair_view_net_usd": 149232.6560826345,
-        "pair_view_gross_usd": 240717.84807941155,
+        "attribution_net_usd": 73175.34337756217,
+        "attribution_gross_usd": 73175.34337756217,
+        "pair_view_net_usd": 73418.22411843776,
+        "pair_view_gross_usd": 316532.2800436082,
         "source": "totals.json ratio-split (sleeve table); pair CSV is detail-only"
       },
       "pnl_rows": [
         {
           "symbol": "NBIS",
           "underlying": "NBIS",
-          "symbols": "NBIS, NBIZ",
-          "description": "NBIS, NBIZ",
+          "symbols": "NBIZ",
+          "description": "NBIZ",
           "display_name": "NBIS",
           "primary_key": "NBIS",
           "realized_pnl": 0.0,
-          "unrealized_pnl": 6903.32297512512,
+          "unrealized_pnl": 7550.115472,
           "borrow_fees": -116.49,
           "short_credit_interest": 25.13516348416865,
-          "total_pnl": 6811.968138609289
+          "total_pnl": 7458.760635484169
         },
         {
           "symbol": "QBTS",
@@ -5234,62 +5234,49 @@
           "display_name": "QBTS",
           "primary_key": "QBTS",
           "realized_pnl": 0.0,
-          "unrealized_pnl": 6897.459545965557,
+          "unrealized_pnl": 7754.0340588807,
           "borrow_fees": -407.01,
           "short_credit_interest": 42.88470249950903,
-          "total_pnl": 6533.334248465066
-        },
-        {
-          "symbol": "CRCL",
-          "underlying": "CRCL",
-          "symbols": "CRCD, CRCL",
-          "description": "CRCD, CRCL",
-          "display_name": "CRCL",
-          "primary_key": "CRCL",
-          "realized_pnl": 0.0,
-          "unrealized_pnl": 3790.6143261282728,
-          "borrow_fees": -401.55,
-          "short_credit_interest": 18.98373497839393,
-          "total_pnl": 3408.0480611066664
+          "total_pnl": 7389.908761380209
         },
         {
           "symbol": "IREN",
           "underlying": "IREN",
-          "symbols": "IREN, IREZ",
-          "description": "IREN, IREZ",
+          "symbols": "IREZ",
+          "description": "IREZ",
           "display_name": "IREN",
           "primary_key": "IREN",
           "realized_pnl": 0.0,
-          "unrealized_pnl": 2865.688937124124,
+          "unrealized_pnl": 2957.059789,
           "borrow_fees": -739.04,
           "short_credit_interest": 31.2887426339876,
-          "total_pnl": 2157.937679758112
+          "total_pnl": 2249.3085316339875
         },
         {
           "symbol": "CRWV",
           "underlying": "CRWV",
-          "symbols": "CORD, CRWV",
-          "description": "CORD, CRWV",
+          "symbols": "CORD",
+          "description": "CORD",
           "display_name": "CRWV",
           "primary_key": "CRWV",
           "realized_pnl": 0.0,
-          "unrealized_pnl": 2085.998345073984,
+          "unrealized_pnl": 2261.514628,
           "borrow_fees": -295.47,
           "short_credit_interest": 29.241094888169343,
-          "total_pnl": 1819.769439962153
+          "total_pnl": 1995.2857228881687
         },
         {
           "symbol": "BE",
           "underlying": "BE",
-          "symbols": "BE, BEZ",
-          "description": "BE, BEZ",
+          "symbols": "BEZ",
+          "description": "BEZ",
           "display_name": "BE",
           "primary_key": "BE",
           "realized_pnl": 0.0,
-          "unrealized_pnl": 1861.070765084268,
+          "unrealized_pnl": 2023.005288,
           "borrow_fees": -718.43,
           "short_credit_interest": 22.75420501411416,
-          "total_pnl": 1165.3949700983817
+          "total_pnl": 1327.3294930141142
         },
         {
           "symbol": "SPCX",
@@ -5303,19 +5290,6 @@
           "borrow_fees": 0.0,
           "short_credit_interest": 37.77312994042769,
           "total_pnl": 725.2593469404277
-        },
-        {
-          "symbol": "MSTR",
-          "underlying": "MSTR",
-          "symbols": "MSTR, MSTZ",
-          "description": "MSTR, MSTZ",
-          "display_name": "MSTR",
-          "primary_key": "MSTR",
-          "realized_pnl": 0.0,
-          "unrealized_pnl": 646.041845673268,
-          "borrow_fees": -33.3,
-          "short_credit_interest": 13.085456827934246,
-          "total_pnl": 625.8273025012022
         },
         {
           "symbol": "XLK",
@@ -5333,28 +5307,15 @@
         {
           "symbol": "AMD",
           "underlying": "AMD",
-          "symbols": "AMD, DAMD",
-          "description": "AMD, DAMD",
+          "symbols": "DAMD",
+          "description": "DAMD",
           "display_name": "AMD",
           "primary_key": "AMD",
           "realized_pnl": 0.0,
-          "unrealized_pnl": 192.03028266838456,
+          "unrealized_pnl": 266.77789,
           "borrow_fees": -6.13,
           "short_credit_interest": 5.824413303195222,
-          "total_pnl": 191.7246959715798
-        },
-        {
-          "symbol": "COIN",
-          "underlying": "COIN",
-          "symbols": "COIN, CONI",
-          "description": "COIN, CONI",
-          "display_name": "COIN",
-          "primary_key": "COIN",
-          "realized_pnl": 0.0,
-          "unrealized_pnl": 162.88605329729992,
-          "borrow_fees": -12.81,
-          "short_credit_interest": 1.239240200902727,
-          "total_pnl": 151.31529349820264
+          "total_pnl": 266.47230330319525
         },
         {
           "symbol": "QQQ",
@@ -5383,6 +5344,19 @@
           "total_pnl": 4.4114826
         },
         {
+          "symbol": "COIN",
+          "underlying": "COIN",
+          "symbols": "CONI",
+          "description": "CONI",
+          "display_name": "COIN",
+          "primary_key": "COIN",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -31.010742,
+          "borrow_fees": -12.81,
+          "short_credit_interest": 1.239240200902727,
+          "total_pnl": -42.58150179909728
+        },
+        {
           "symbol": "BKNG",
           "underlying": "BKNG",
           "symbols": "BKNU",
@@ -5394,6 +5368,19 @@
           "borrow_fees": 0.0,
           "short_credit_interest": 0.0,
           "total_pnl": -42.80836925
+        },
+        {
+          "symbol": "MSTR",
+          "underlying": "MSTR",
+          "symbols": "MSTR, MSTZ",
+          "description": "MSTR, MSTZ",
+          "display_name": "MSTR",
+          "primary_key": "MSTR",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -27.334741206384933,
+          "borrow_fees": -33.3,
+          "short_credit_interest": 13.085456827934246,
+          "total_pnl": -47.54928437845069
         },
         {
           "symbol": "DIA",
@@ -5409,19 +5396,6 @@
           "total_pnl": -54.43064591
         },
         {
-          "symbol": "LITE",
-          "underlying": "LITE",
-          "symbols": "LITE, LITZ",
-          "description": "LITE, LITZ",
-          "display_name": "LITE",
-          "primary_key": "LITE",
-          "realized_pnl": 0.0,
-          "unrealized_pnl": -113.83377461618988,
-          "borrow_fees": -11.96,
-          "short_credit_interest": 32.316828692366194,
-          "total_pnl": -93.47694592382368
-        },
-        {
           "symbol": "ASTS",
           "underlying": "ASTS",
           "symbols": "ASTN, ASTS",
@@ -5429,36 +5403,36 @@
           "display_name": "ASTS",
           "primary_key": "ASTS",
           "realized_pnl": 0.0,
-          "unrealized_pnl": 338.2139662435316,
+          "unrealized_pnl": 380.5608734506393,
           "borrow_fees": -661.14,
           "short_credit_interest": 58.99623280552798,
-          "total_pnl": -263.92980095094043
+          "total_pnl": -221.5828937438327
         },
         {
           "symbol": "RGTI",
           "underlying": "RGTI",
-          "symbols": "RGTI, RGTZ",
-          "description": "RGTI, RGTZ",
+          "symbols": "RGTZ",
+          "description": "RGTZ",
           "display_name": "RGTI",
           "primary_key": "RGTI",
           "realized_pnl": 0.0,
-          "unrealized_pnl": -779.9885097584967,
+          "unrealized_pnl": -638.874775,
           "borrow_fees": -34.370000000000005,
           "short_credit_interest": 20.884669697776896,
-          "total_pnl": -793.4738400607198
+          "total_pnl": -652.3601053022231
         },
         {
-          "symbol": "SNDK",
-          "underlying": "SNDK",
-          "symbols": "SNDK",
-          "description": "SNDK",
-          "display_name": "SNDK",
-          "primary_key": "SNDK",
+          "symbol": "LITE",
+          "underlying": "LITE",
+          "symbols": "LITZ",
+          "description": "LITZ",
+          "display_name": "LITE",
+          "primary_key": "LITE",
           "realized_pnl": 0.0,
-          "unrealized_pnl": -806.2344981391659,
-          "borrow_fees": 0.0,
-          "short_credit_interest": 0.0,
-          "total_pnl": -806.2344981391659
+          "unrealized_pnl": -1009.045974,
+          "borrow_fees": -11.96,
+          "short_credit_interest": 32.316828692366194,
+          "total_pnl": -988.6891453076338
         },
         {
           "symbol": "RKLB",
@@ -5468,39 +5442,73 @@
           "display_name": "RKLB",
           "primary_key": "RKLB",
           "realized_pnl": 0.0,
-          "unrealized_pnl": -904.4148730783086,
+          "unrealized_pnl": -1072.8878570214752,
           "borrow_fees": -243.74,
           "short_credit_interest": 20.995642930459024,
-          "total_pnl": -1127.1592301478497
+          "total_pnl": -1295.632214091016
+        },
+        {
+          "symbol": "CRCL",
+          "underlying": "CRCL",
+          "symbols": "CRCD",
+          "description": "CRCD",
+          "display_name": "CRCL",
+          "primary_key": "CRCL",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -2404.753394,
+          "borrow_fees": -401.55,
+          "short_credit_interest": 18.98373497839393,
+          "total_pnl": -2787.319659021606
         }
       ],
       "exposure_rows": [
         {
           "underlying": "ASTS",
           "symbols": "ASTN, ASTS",
-          "net_notional_usd": 28390.77723818093,
-          "gross_notional_usd": 32156.78813517908,
+          "net_notional_usd": 12205.942686680006,
+          "gross_notional_usd": 48341.622686680006,
           "n_legs": 2
         },
         {
-          "underlying": "QBTS",
-          "symbols": "QBTS, QBTZ",
-          "net_notional_usd": 19713.287145340604,
-          "gross_notional_usd": 24103.520494099397,
+          "underlying": "IREN",
+          "symbols": "IREN, IREZ",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 32121.720415400006,
           "n_legs": 2
         },
         {
           "underlying": "CRWV",
           "symbols": "CORD, CRWV",
-          "net_notional_usd": 8631.618148038891,
-          "gross_notional_usd": 21371.40003796111,
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 30003.018186,
+          "n_legs": 2
+        },
+        {
+          "underlying": "QBTS",
+          "symbols": "QBTS, QBTZ",
+          "net_notional_usd": 14328.573819719995,
+          "gross_notional_usd": 29488.23381972,
           "n_legs": 2
         },
         {
           "underlying": "LITE",
           "symbols": "LITE, LITZ",
-          "net_notional_usd": 12797.86438408637,
-          "gross_notional_usd": 20291.39306079363,
+          "net_notional_usd": 4644.62872244,
+          "gross_notional_usd": 28444.62872244,
+          "n_legs": 2
+        },
+        {
+          "underlying": "NBIS",
+          "symbols": "NBIS, NBIZ",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 26180.146529656,
+          "n_legs": 2
+        },
+        {
+          "underlying": "BE",
+          "symbols": "BE, BEZ",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 23373.229824,
           "n_legs": 2
         },
         {
@@ -5518,81 +5526,46 @@
           "n_legs": 2
         },
         {
-          "underlying": "IREN",
-          "symbols": "IREN, IREZ",
-          "net_notional_usd": 14921.85890240322,
-          "gross_notional_usd": 17199.861512996787,
-          "n_legs": 2
-        },
-        {
-          "underlying": "NBIS",
-          "symbols": "NBIS, NBIZ",
-          "net_notional_usd": 11246.65999383626,
-          "gross_notional_usd": 14933.486535819742,
+          "underlying": "RKLB",
+          "symbols": "RKLB, RKLZ",
+          "net_notional_usd": 4854.661443099999,
+          "gross_notional_usd": 16651.0614431,
           "n_legs": 2
         },
         {
           "underlying": "RGTI",
           "symbols": "RGTI, RGTZ",
-          "net_notional_usd": 7064.535998923239,
-          "gross_notional_usd": 14156.746291726762,
+          "net_notional_usd": 6573.601145325,
+          "gross_notional_usd": 14647.681145325,
           "n_legs": 2
         },
         {
           "underlying": "MSTR",
           "symbols": "MSDD, MSTR, MSTZ",
-          "net_notional_usd": 7302.663028315749,
-          "gross_notional_usd": 13861.135920804249,
+          "net_notional_usd": 9306.660994697177,
+          "gross_notional_usd": 11857.137954422824,
           "n_legs": 3
-        },
-        {
-          "underlying": "BE",
-          "symbols": "BE, BEZ",
-          "net_notional_usd": 10502.754411172848,
-          "gross_notional_usd": 12870.47541282715,
-          "n_legs": 2
-        },
-        {
-          "underlying": "RKLB",
-          "symbols": "RKLB, RKLZ",
-          "net_notional_usd": 9001.168937430146,
-          "gross_notional_usd": 12504.553948769852,
-          "n_legs": 2
         },
         {
           "underlying": "SVIX",
           "symbols": "SVIX, UVIX",
-          "net_notional_usd": 577.4245656000003,
-          "gross_notional_usd": 11156.6245656,
+          "net_notional_usd": 2184.15530647559,
+          "gross_notional_usd": 9549.89382472441,
           "n_legs": 2
         },
         {
           "underlying": "AMD",
           "symbols": "AMD, DAMD",
-          "net_notional_usd": 2509.5933470590403,
-          "gross_notional_usd": 3531.917647180959,
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 6041.51099424,
           "n_legs": 2
-        },
-        {
-          "underlying": "SNDK",
-          "symbols": "SNDK",
-          "net_notional_usd": -2764.357287166375,
-          "gross_notional_usd": 2764.357287166375,
-          "n_legs": 1
         },
         {
           "underlying": "COIN",
           "symbols": "COIN, CONI",
-          "net_notional_usd": 16.80726941355124,
-          "gross_notional_usd": 1203.7435573864489,
-          "n_legs": 2
-        },
-        {
-          "underlying": "AXON",
-          "symbols": "AXON",
           "net_notional_usd": 0.0,
-          "gross_notional_usd": 0.0,
-          "n_legs": 1
+          "gross_notional_usd": 1220.5508268,
+          "n_legs": 2
         },
         {
           "underlying": "BMNR",
@@ -5602,8 +5575,29 @@
           "n_legs": 1
         },
         {
+          "underlying": "AXON",
+          "symbols": "AXON",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
           "underlying": "BLSH",
           "symbols": "BLSH",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
+          "underlying": "IWM",
+          "symbols": "IWM",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
+          "underlying": "KEEL",
+          "symbols": "KEEL",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 0.0,
           "n_legs": 1
@@ -5623,8 +5617,8 @@
           "n_legs": 1
         },
         {
-          "underlying": "IWM",
-          "symbols": "IWM",
+          "underlying": "DKNG",
+          "symbols": "DKNG",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 0.0,
           "n_legs": 1
@@ -5632,13 +5626,6 @@
         {
           "underlying": "HOOD",
           "symbols": "HOOD",
-          "net_notional_usd": 0.0,
-          "gross_notional_usd": 0.0,
-          "n_legs": 1
-        },
-        {
-          "underlying": "DKNG",
-          "symbols": "DKNG",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 0.0,
           "n_legs": 1
@@ -5667,13 +5654,6 @@
         {
           "underlying": "MU",
           "symbols": "MU",
-          "net_notional_usd": 0.0,
-          "gross_notional_usd": 0.0,
-          "n_legs": 1
-        },
-        {
-          "underlying": "KEEL",
-          "symbols": "KEEL",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 0.0,
           "n_legs": 1
@@ -5714,6 +5694,13 @@
           "n_legs": 1
         },
         {
+          "underlying": "SNDK",
+          "symbols": "SNDK",
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0,
+          "n_legs": 1
+        },
+        {
           "underlying": "SPY",
           "symbols": "SPY",
           "net_notional_usd": 0.0,
@@ -5728,15 +5715,15 @@
           "n_legs": 1
         },
         {
-          "underlying": "XOP",
-          "symbols": "XOP",
+          "underlying": "TSM",
+          "symbols": "TSM",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 0.0,
           "n_legs": 1
         },
         {
-          "underlying": "TSM",
-          "symbols": "TSM",
+          "underlying": "XOP",
+          "symbols": "XOP",
           "net_notional_usd": 0.0,
           "gross_notional_usd": 0.0,
           "n_legs": 1
@@ -5761,8 +5748,8 @@
           "underlying": "AMD",
           "symbol": "AMD",
           "leg_type": "underlying",
-          "net_notional_usd": -511.1621500609596,
-          "gross_notional_usd": 511.1621500609596
+          "net_notional_usd": -3020.75549712,
+          "gross_notional_usd": 3020.75549712
         },
         {
           "underlying": "ASTS",
@@ -5775,8 +5762,8 @@
           "underlying": "ASTS",
           "symbol": "ASTS",
           "leg_type": "underlying",
-          "net_notional_usd": -1883.0054484990767,
-          "gross_notional_usd": 1883.0054484990767
+          "net_notional_usd": -18067.84,
+          "gross_notional_usd": 18067.84
         },
         {
           "underlying": "AXON",
@@ -5796,8 +5783,8 @@
           "underlying": "BE",
           "symbol": "BE",
           "leg_type": "underlying",
-          "net_notional_usd": -1183.8605008271518,
-          "gross_notional_usd": 1183.8605008271518
+          "net_notional_usd": -11686.614912,
+          "gross_notional_usd": 11686.614912
         },
         {
           "underlying": "BLSH",
@@ -5824,8 +5811,8 @@
           "underlying": "COIN",
           "symbol": "COIN",
           "leg_type": "underlying",
-          "net_notional_usd": -593.4681439864488,
-          "gross_notional_usd": 593.4681439864488
+          "net_notional_usd": -610.2754134,
+          "gross_notional_usd": 610.2754134
         },
         {
           "underlying": "CRCL",
@@ -5852,8 +5839,8 @@
           "underlying": "CRWV",
           "symbol": "CRWV",
           "leg_type": "underlying",
-          "net_notional_usd": -6369.890944961109,
-          "gross_notional_usd": 6369.890944961109
+          "net_notional_usd": -15001.509093,
+          "gross_notional_usd": 15001.509093
         },
         {
           "underlying": "DKNG",
@@ -5894,8 +5881,8 @@
           "underlying": "IREN",
           "symbol": "IREN",
           "leg_type": "underlying",
-          "net_notional_usd": -1139.001305296783,
-          "gross_notional_usd": 1139.001305296783
+          "net_notional_usd": -16060.860207700003,
+          "gross_notional_usd": 16060.860207700003
         },
         {
           "underlying": "IWM",
@@ -5922,8 +5909,8 @@
           "underlying": "LITE",
           "symbol": "LITE",
           "leg_type": "underlying",
-          "net_notional_usd": -3746.764338353631,
-          "gross_notional_usd": 3746.764338353631
+          "net_notional_usd": -11900.0,
+          "gross_notional_usd": 11900.0
         },
         {
           "underlying": "MSTR",
@@ -5943,8 +5930,8 @@
           "underlying": "MSTR",
           "symbol": "MSTR",
           "leg_type": "underlying",
-          "net_notional_usd": -3279.23644624425,
-          "gross_notional_usd": 3279.23644624425
+          "net_notional_usd": -1275.238479862825,
+          "gross_notional_usd": 1275.238479862825
         },
         {
           "underlying": "MU",
@@ -5964,8 +5951,8 @@
           "underlying": "NBIS",
           "symbol": "NBIS",
           "leg_type": "underlying",
-          "net_notional_usd": -1843.413270991742,
-          "gross_notional_usd": 1843.413270991742
+          "net_notional_usd": -13090.073264828,
+          "gross_notional_usd": 13090.073264828
         },
         {
           "underlying": "NEM",
@@ -6013,8 +6000,8 @@
           "underlying": "QBTS",
           "symbol": "QBTS",
           "leg_type": "underlying",
-          "net_notional_usd": -2195.116674379395,
-          "gross_notional_usd": 2195.116674379395
+          "net_notional_usd": -7579.830000000001,
+          "gross_notional_usd": 7579.830000000001
         },
         {
           "underlying": "QQQ",
@@ -6041,8 +6028,8 @@
           "underlying": "RGTI",
           "symbol": "RGTI",
           "leg_type": "underlying",
-          "net_notional_usd": -3546.105146401761,
-          "gross_notional_usd": 3546.105146401761
+          "net_notional_usd": -4037.04,
+          "gross_notional_usd": 4037.04
         },
         {
           "underlying": "RKLB",
@@ -6055,8 +6042,8 @@
           "underlying": "RKLB",
           "symbol": "RKLB",
           "leg_type": "underlying",
-          "net_notional_usd": -1751.6925056698522,
-          "gross_notional_usd": 1751.6925056698522
+          "net_notional_usd": -5898.2,
+          "gross_notional_usd": 5898.2
         },
         {
           "underlying": "SMCI",
@@ -6069,8 +6056,8 @@
           "underlying": "SNDK",
           "symbol": "SNDK",
           "leg_type": "underlying",
-          "net_notional_usd": -2764.357287166375,
-          "gross_notional_usd": 2764.357287166375
+          "net_notional_usd": 0.0,
+          "gross_notional_usd": 0.0
         },
         {
           "underlying": "SPCX",
@@ -6097,8 +6084,8 @@
           "underlying": "SVIX",
           "symbol": "SVIX",
           "leg_type": "underlying",
-          "net_notional_usd": -5289.599999999999,
-          "gross_notional_usd": 5289.599999999999
+          "net_notional_usd": -3682.86925912441,
+          "gross_notional_usd": 3682.86925912441
         },
         {
           "underlying": "TSLA",
@@ -6129,22 +6116,22 @@
           "gross_notional_usd": 0.0
         }
       ],
-      "n_pnl_rows": 20,
+      "n_pnl_rows": 19,
       "n_exposure_rows": 39,
       "n_exposure_leg_rows": 54,
       "winners": [
         {
           "symbol": "NBIS",
           "underlying": "NBIS",
-          "symbols": "NBIS, NBIZ",
-          "description": "NBIS, NBIZ",
+          "symbols": "NBIZ",
+          "description": "NBIZ",
           "display_name": "NBIS",
           "primary_key": "NBIS",
           "realized_pnl": 0.0,
-          "unrealized_pnl": 6903.32297512512,
+          "unrealized_pnl": 7550.115472,
           "borrow_fees": -116.49,
           "short_credit_interest": 25.13516348416865,
-          "total_pnl": 6811.968138609289
+          "total_pnl": 7458.760635484169
         },
         {
           "symbol": "QBTS",
@@ -6154,52 +6141,65 @@
           "display_name": "QBTS",
           "primary_key": "QBTS",
           "realized_pnl": 0.0,
-          "unrealized_pnl": 6897.459545965557,
+          "unrealized_pnl": 7754.0340588807,
           "borrow_fees": -407.01,
           "short_credit_interest": 42.88470249950903,
-          "total_pnl": 6533.334248465066
-        },
-        {
-          "symbol": "CRCL",
-          "underlying": "CRCL",
-          "symbols": "CRCD, CRCL",
-          "description": "CRCD, CRCL",
-          "display_name": "CRCL",
-          "primary_key": "CRCL",
-          "realized_pnl": 0.0,
-          "unrealized_pnl": 3790.6143261282728,
-          "borrow_fees": -401.55,
-          "short_credit_interest": 18.98373497839393,
-          "total_pnl": 3408.0480611066664
+          "total_pnl": 7389.908761380209
         },
         {
           "symbol": "IREN",
           "underlying": "IREN",
-          "symbols": "IREN, IREZ",
-          "description": "IREN, IREZ",
+          "symbols": "IREZ",
+          "description": "IREZ",
           "display_name": "IREN",
           "primary_key": "IREN",
           "realized_pnl": 0.0,
-          "unrealized_pnl": 2865.688937124124,
+          "unrealized_pnl": 2957.059789,
           "borrow_fees": -739.04,
           "short_credit_interest": 31.2887426339876,
-          "total_pnl": 2157.937679758112
+          "total_pnl": 2249.3085316339875
         },
         {
           "symbol": "CRWV",
           "underlying": "CRWV",
-          "symbols": "CORD, CRWV",
-          "description": "CORD, CRWV",
+          "symbols": "CORD",
+          "description": "CORD",
           "display_name": "CRWV",
           "primary_key": "CRWV",
           "realized_pnl": 0.0,
-          "unrealized_pnl": 2085.998345073984,
+          "unrealized_pnl": 2261.514628,
           "borrow_fees": -295.47,
           "short_credit_interest": 29.241094888169343,
-          "total_pnl": 1819.769439962153
+          "total_pnl": 1995.2857228881687
+        },
+        {
+          "symbol": "BE",
+          "underlying": "BE",
+          "symbols": "BEZ",
+          "description": "BEZ",
+          "display_name": "BE",
+          "primary_key": "BE",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": 2023.005288,
+          "borrow_fees": -718.43,
+          "short_credit_interest": 22.75420501411416,
+          "total_pnl": 1327.3294930141142
         }
       ],
       "losers": [
+        {
+          "symbol": "CRCL",
+          "underlying": "CRCL",
+          "symbols": "CRCD",
+          "description": "CRCD",
+          "display_name": "CRCL",
+          "primary_key": "CRCL",
+          "realized_pnl": 0.0,
+          "unrealized_pnl": -2404.753394,
+          "borrow_fees": -401.55,
+          "short_credit_interest": 18.98373497839393,
+          "total_pnl": -2787.319659021606
+        },
         {
           "symbol": "RKLB",
           "underlying": "RKLB",
@@ -6208,36 +6208,36 @@
           "display_name": "RKLB",
           "primary_key": "RKLB",
           "realized_pnl": 0.0,
-          "unrealized_pnl": -904.4148730783086,
+          "unrealized_pnl": -1072.8878570214752,
           "borrow_fees": -243.74,
           "short_credit_interest": 20.995642930459024,
-          "total_pnl": -1127.1592301478497
+          "total_pnl": -1295.632214091016
         },
         {
-          "symbol": "SNDK",
-          "underlying": "SNDK",
-          "symbols": "SNDK",
-          "description": "SNDK",
-          "display_name": "SNDK",
-          "primary_key": "SNDK",
+          "symbol": "LITE",
+          "underlying": "LITE",
+          "symbols": "LITZ",
+          "description": "LITZ",
+          "display_name": "LITE",
+          "primary_key": "LITE",
           "realized_pnl": 0.0,
-          "unrealized_pnl": -806.2344981391659,
-          "borrow_fees": 0.0,
-          "short_credit_interest": 0.0,
-          "total_pnl": -806.2344981391659
+          "unrealized_pnl": -1009.045974,
+          "borrow_fees": -11.96,
+          "short_credit_interest": 32.316828692366194,
+          "total_pnl": -988.6891453076338
         },
         {
           "symbol": "RGTI",
           "underlying": "RGTI",
-          "symbols": "RGTI, RGTZ",
-          "description": "RGTI, RGTZ",
+          "symbols": "RGTZ",
+          "description": "RGTZ",
           "display_name": "RGTI",
           "primary_key": "RGTI",
           "realized_pnl": 0.0,
-          "unrealized_pnl": -779.9885097584967,
+          "unrealized_pnl": -638.874775,
           "borrow_fees": -34.370000000000005,
           "short_credit_interest": 20.884669697776896,
-          "total_pnl": -793.4738400607198
+          "total_pnl": -652.3601053022231
         },
         {
           "symbol": "ASTS",
@@ -6247,23 +6247,10 @@
           "display_name": "ASTS",
           "primary_key": "ASTS",
           "realized_pnl": 0.0,
-          "unrealized_pnl": 338.2139662435316,
+          "unrealized_pnl": 380.5608734506393,
           "borrow_fees": -661.14,
           "short_credit_interest": 58.99623280552798,
-          "total_pnl": -263.92980095094043
-        },
-        {
-          "symbol": "LITE",
-          "underlying": "LITE",
-          "symbols": "LITE, LITZ",
-          "description": "LITE, LITZ",
-          "display_name": "LITE",
-          "primary_key": "LITE",
-          "realized_pnl": 0.0,
-          "unrealized_pnl": -113.83377461618988,
-          "borrow_fees": -11.96,
-          "short_credit_interest": 32.316828692366194,
-          "total_pnl": -93.47694592382368
+          "total_pnl": -221.5828937438327
         }
       ]
     },
@@ -19342,8 +19329,8 @@
         "name": "bucket_net_vs_book_net",
         "status": "ok",
         "book_value": 50299.889834500515,
-        "component_sum": 50938.201924976136,
-        "diff_abs_usd": 638.3120904756215,
+        "component_sum": 50938.20192497611,
+        "diff_abs_usd": 638.3120904755924,
         "tol_abs_usd": 10000.0,
         "components_included": [
           "bucket_1",
@@ -19367,7 +19354,7 @@
         "exposure_rows": 14
       },
       "bucket_4": {
-        "pnl_rows": 20,
+        "pnl_rows": 19,
         "exposure_rows": 39
       },
       "bucket_5": {
@@ -26539,63 +26526,30 @@
         "bucket": "bucket_1",
         "bucket_label": "Bucket 1 (core leveraged)",
         "n_names": 165,
-        "net_notional_usd": -76516.13486709526,
-        "gross_notional_usd": 2480345.156211391,
-        "beta_weighted_net_usd": -255888.81805851823,
-        "beta_weighted_gross_usd": 7894645.696192419,
-        "beta_weighted_net_qqq_usd": -186367.61596353847,
-        "beta_weighted_net_iwm_usd": -148486.56609184045,
-        "beta_weighted_net_btc_usd": -52061.23343422853,
-        "net_beta_to_spy": -0.09054037097292454,
-        "net_beta_to_qqq": -0.06594189310304097,
-        "net_beta_to_iwm": -0.05253855514458803,
-        "net_beta_to_btc": -0.018420669665077466,
-        "gross_beta_to_spy": 2.793338745539098,
-        "implied_avg_beta": 3.344246523991109,
+        "net_notional_usd": -3362.2401301714417,
+        "gross_notional_usd": 2553499.050948315,
+        "beta_weighted_net_usd": -13832.696106906122,
+        "beta_weighted_gross_usd": 8136701.818144029,
+        "beta_weighted_net_qqq_usd": -12508.365434058724,
+        "beta_weighted_net_iwm_usd": 6245.7432945772525,
+        "beta_weighted_net_btc_usd": 4270.92250734868,
+        "net_beta_to_spy": -0.0048943812651813445,
+        "net_beta_to_qqq": -0.004425797325796368,
+        "net_beta_to_iwm": 0.0022099125674313767,
+        "net_beta_to_btc": 0.0015111676670589477,
+        "gross_beta_to_spy": 2.8789847352468403,
+        "implied_avg_beta": 4.114130928001501,
         "top_beta_names": [
           {
             "underlying": "BE",
             "symbols": "BE, BEG, BEX",
-            "net_notional_usd": -30519.95864550344,
+            "net_notional_usd": -20017.20423433061,
             "beta_to_spy": 4.162849671111322,
             "beta_to_qqq": 3.000404781242975,
             "beta_to_iwm": 2.487718352371549,
             "beta_to_btc": 0.6152952354673331,
             "beta_source": "computed",
-            "beta_weighted_net_usd": -127049.99980976514
-          },
-          {
-            "underlying": "NBIS",
-            "symbols": "NBIG, NBIL, NBIS, NEBX",
-            "net_notional_usd": -24616.908271268265,
-            "beta_to_spy": 3.1657766037233936,
-            "beta_to_qqq": 2.3534953002690893,
-            "beta_to_iwm": 1.7132813708009993,
-            "beta_to_btc": 0.9096408660575415,
-            "beta_source": "computed",
-            "beta_weighted_net_usd": -77931.63226118597
-          },
-          {
-            "underlying": "ASTS",
-            "symbols": "ASTS, ASTX",
-            "net_notional_usd": -21250.63624264093,
-            "beta_to_spy": 3.228723229175,
-            "beta_to_qqq": 2.261368472124903,
-            "beta_to_iwm": 2.3705932982039917,
-            "beta_to_btc": 0.8280107497350888,
-            "beta_source": "computed",
-            "beta_weighted_net_usd": -68612.42287136291
-          },
-          {
-            "underlying": "CRWV",
-            "symbols": "CRWG, CRWU, CRWV, CWVX",
-            "net_notional_usd": -16599.23000433235,
-            "beta_to_spy": 2.920453197830077,
-            "beta_to_qqq": 2.0582777632519456,
-            "beta_to_iwm": 1.6511744818688092,
-            "beta_to_btc": 0.7549875276052053,
-            "beta_source": "computed",
-            "beta_weighted_net_usd": -48477.27434766937
+            "beta_weighted_net_usd": -83328.61206345134
           },
           {
             "underlying": "AAOI",
@@ -26607,51 +26561,106 @@
             "beta_to_btc": 0.7913305080566067,
             "beta_source": "computed",
             "beta_weighted_net_usd": 45362.00465707837
+          },
+          {
+            "underlying": "NBIS",
+            "symbols": "NBIG, NBIL, NBIS, NEBX",
+            "net_notional_usd": -13370.248277432,
+            "beta_to_spy": 3.1657766037233936,
+            "beta_to_qqq": 2.3534953002690893,
+            "beta_to_iwm": 1.7132813708009993,
+            "beta_to_btc": 0.9096408660575415,
+            "beta_source": "computed",
+            "beta_weighted_net_usd": -42327.21918266723
+          },
+          {
+            "underlying": "CRML",
+            "symbols": "CRML, CRMU, CRMX",
+            "net_notional_usd": 10128.347510920416,
+            "beta_to_spy": 3.6140463211839493,
+            "beta_to_qqq": 2.4537996123087606,
+            "beta_to_iwm": 2.8322167514189083,
+            "beta_to_btc": 0.9564920377487268,
+            "beta_source": "computed",
+            "beta_weighted_net_usd": 36604.317061514535
+          },
+          {
+            "underlying": "CRWV",
+            "symbols": "CRWG, CRWU, CRWV, CWVX",
+            "net_notional_usd": -9553.85768708854,
+            "beta_to_spy": 2.920453197830077,
+            "beta_to_qqq": 2.0582777632519456,
+            "beta_to_iwm": 1.6511744818688092,
+            "beta_to_btc": 0.7549875276052053,
+            "beta_source": "computed",
+            "beta_weighted_net_usd": -27901.59423387119
           }
         ],
-        "pct_of_total_beta_net": -0.7915814436597092,
-        "pct_of_portfolio_beta_net": -1.336354532945072,
-        "pct_of_bucket_sum_beta_net": -0.7915814436597092
+        "pct_of_total_beta_net": -0.04202838292812434,
+        "pct_of_portfolio_beta_net": -0.07223991374679097,
+        "pct_of_bucket_sum_beta_net": -0.04202838292812434
       },
       {
         "bucket": "bucket_2",
         "bucket_label": "Bucket 2 (yield boost)",
         "n_names": 17,
-        "net_notional_usd": -17852.56929056305,
-        "gross_notional_usd": 825521.5164166844,
-        "beta_weighted_net_usd": -62582.18118894522,
-        "beta_weighted_gross_usd": 2322306.7071150527,
-        "beta_weighted_net_qqq_usd": -43007.57574167577,
-        "beta_weighted_net_iwm_usd": -42746.73183159798,
-        "beta_weighted_net_btc_usd": -20989.785178221362,
-        "net_beta_to_spy": -0.022143264970046858,
-        "net_beta_to_qqq": -0.015217241190300816,
-        "net_beta_to_iwm": -0.015124947574019894,
-        "net_beta_to_btc": -0.007426752568154639,
-        "gross_beta_to_spy": 0.8216947984300884,
-        "implied_avg_beta": 3.5054999742824946,
+        "net_notional_usd": -13585.301322414607,
+        "gross_notional_usd": 829788.7843848327,
+        "beta_weighted_net_usd": -47265.7409214574,
+        "beta_weighted_gross_usd": 2337623.1473825406,
+        "beta_weighted_net_qqq_usd": -31726.799330325466,
+        "beta_weighted_net_iwm_usd": -32417.83599702495,
+        "beta_weighted_net_btc_usd": -18419.660016129164,
+        "net_beta_to_spy": -0.01672389497051114,
+        "net_beta_to_qqq": -0.011225797996746728,
+        "net_beta_to_iwm": -0.011470305422407494,
+        "net_beta_to_btc": -0.006517372911051138,
+        "gross_beta_to_spy": 0.8271141684296242,
+        "implied_avg_beta": 3.479182375106608,
         "top_beta_names": [
-          {
-            "underlying": "QBTS",
-            "symbols": "QBTS, QBY",
-            "net_notional_usd": -9257.5643975459,
-            "beta_to_spy": 4.077310935356446,
-            "beta_to_qqq": 2.777674442031656,
-            "beta_to_iwm": 3.030288810450386,
-            "beta_to_btc": 1.0886970929065358,
-            "beta_source": "computed",
-            "beta_weighted_net_usd": -37745.96855288041
-          },
           {
             "underlying": "MSTR",
             "symbols": "MSTR, MTYY",
-            "net_notional_usd": -7964.721307000975,
+            "net_notional_usd": -9852.50011711244,
             "beta_to_spy": 3.0464572926156737,
             "beta_to_qqq": 2.084646992555535,
             "beta_to_iwm": 1.8210383914859636,
             "beta_to_btc": 1.370137609272226,
             "beta_source": "computed",
-            "beta_weighted_net_usd": -24264.18330936456
+            "beta_weighted_net_usd": -30015.22083227397
+          },
+          {
+            "underlying": "QBTS",
+            "symbols": "QBTS, QBY",
+            "net_notional_usd": -6565.207734735596,
+            "beta_to_spy": 4.077310935356446,
+            "beta_to_qqq": 2.777674442031656,
+            "beta_to_iwm": 3.030288810450386,
+            "beta_to_btc": 1.0886970929065358,
+            "beta_source": "computed",
+            "beta_weighted_net_usd": -26768.39328972417
+          },
+          {
+            "underlying": "CRWV",
+            "symbols": "CRWV, CWY",
+            "net_notional_usd": 1614.870226218541,
+            "beta_to_spy": 2.920453197830077,
+            "beta_to_qqq": 2.0582777632519456,
+            "beta_to_iwm": 1.6511744818688092,
+            "beta_to_btc": 0.7549875276052053,
+            "beta_source": "computed",
+            "beta_weighted_net_usd": 4716.152916240518
+          },
+          {
+            "underlying": "AMD",
+            "symbols": "AMD, AMYY",
+            "net_notional_usd": 1228.6766718040562,
+            "beta_to_spy": 2.9068621008108337,
+            "beta_to_qqq": 2.3858230233942064,
+            "beta_to_iwm": 1.5907724675575985,
+            "beta_to_btc": 0.5435024876928325,
+            "beta_source": "computed",
+            "beta_weighted_net_usd": 3571.5936514176024
           },
           {
             "underlying": "CRCL",
@@ -26663,33 +26672,11 @@
             "beta_to_btc": 1.1767036801997475,
             "beta_source": "computed",
             "beta_weighted_net_usd": 2508.9713680966415
-          },
-          {
-            "underlying": "AMD",
-            "symbols": "AMD, AMYY",
-            "net_notional_usd": -634.3442448776805,
-            "beta_to_spy": 2.9068621008108337,
-            "beta_to_qqq": 2.3858230233942064,
-            "beta_to_iwm": 1.5907724675575985,
-            "beta_to_btc": 0.5435024876928325,
-            "beta_source": "computed",
-            "beta_weighted_net_usd": -1843.9512443023962
-          },
-          {
-            "underlying": "IBIT",
-            "symbols": "IBIT, XBTY",
-            "net_notional_usd": -707.1650652508397,
-            "beta_to_spy": 1.802702866980832,
-            "beta_to_qqq": 1.247344521324664,
-            "beta_to_iwm": 1.1225516063082652,
-            "beta_to_btc": 0.962293573180727,
-            "beta_source": "computed",
-            "beta_weighted_net_usd": -1274.8084905563758
           }
         ],
-        "pct_of_total_beta_net": -0.1935953814190892,
-        "pct_of_portfolio_beta_net": -0.3268293712400957,
-        "pct_of_bucket_sum_beta_net": -0.1935953814190892
+        "pct_of_total_beta_net": -0.14360921713856964,
+        "pct_of_portfolio_beta_net": -0.24684074752712443,
+        "pct_of_bucket_sum_beta_net": -0.14360921713856964
       },
       {
         "bucket": "bucket_3",
@@ -26765,39 +26752,28 @@
             "beta_weighted_net_usd": 11786.582069040001
           }
         ],
-        "pct_of_total_beta_net": 0.36114501750467704,
+        "pct_of_total_beta_net": 0.3547097903234463,
         "pct_of_portfolio_beta_net": 0.6096880934469882,
-        "pct_of_bucket_sum_beta_net": 0.36114501750467704
+        "pct_of_bucket_sum_beta_net": 0.3547097903234463
       },
       {
         "bucket": "bucket_4",
         "bucket_label": "Bucket 4 (inverse / decay)",
         "n_names": 39,
-        "net_notional_usd": 149232.6560826345,
-        "gross_notional_usd": 240717.84807941157,
-        "beta_weighted_net_usd": 522881.38654542493,
-        "beta_weighted_gross_usd": 823862.4634197154,
-        "beta_weighted_net_qqq_usd": 338792.47283188463,
-        "beta_weighted_net_iwm_usd": 262309.8860011794,
-        "beta_weighted_net_btc_usd": 133214.81730354874,
-        "net_beta_to_spy": 0.18500954856821256,
-        "net_beta_to_qqq": 0.11987392182966934,
-        "net_beta_to_iwm": 0.09281231813334305,
-        "net_beta_to_btc": 0.047134998196737984,
-        "gross_beta_to_spy": 0.29150477787438983,
-        "implied_avg_beta": 3.5038000412985357,
+        "net_notional_usd": 73418.22411843776,
+        "gross_notional_usd": 316532.2800436083,
+        "beta_weighted_net_usd": 271373.5325615126,
+        "beta_weighted_gross_usd": 1075370.3174036278,
+        "beta_weighted_net_qqq_usd": 157232.67913835394,
+        "beta_weighted_net_iwm_usd": 100422.66305949862,
+        "beta_weighted_net_btc_usd": 75204.89711649016,
+        "net_beta_to_spy": 0.09601928093916746,
+        "net_beta_to_qqq": 0.05563316602211913,
+        "net_beta_to_iwm": 0.03553224887465277,
+        "net_beta_to_btc": 0.026609522587073345,
+        "gross_beta_to_spy": 0.38049504550343494,
+        "implied_avg_beta": 3.6962693639079953,
         "top_beta_names": [
-          {
-            "underlying": "ASTS",
-            "symbols": "ASTN, ASTS",
-            "net_notional_usd": 28390.77723818093,
-            "beta_to_spy": 3.228723229175,
-            "beta_to_qqq": 2.261368472124903,
-            "beta_to_iwm": 2.3705932982039917,
-            "beta_to_btc": 0.8280107497350888,
-            "beta_source": "computed",
-            "beta_weighted_net_usd": 91665.96196324761
-          },
           {
             "underlying": "SPCX",
             "symbols": "SSPC",
@@ -26812,40 +26788,51 @@
           {
             "underlying": "QBTS",
             "symbols": "QBTS, QBTZ",
-            "net_notional_usd": 19713.287145340604,
+            "net_notional_usd": 14328.573819719995,
             "beta_to_spy": 4.077310935356446,
             "beta_to_qqq": 2.777674442031656,
             "beta_to_iwm": 3.030288810450386,
             "beta_to_btc": 1.0886970929065358,
             "beta_source": "computed",
-            "beta_weighted_net_usd": 80377.20124951891
+            "beta_weighted_net_usd": 58422.05072320642
           },
           {
-            "underlying": "IREN",
-            "symbols": "IREN, IREZ",
-            "net_notional_usd": 14921.85890240322,
-            "beta_to_spy": 3.374373396812159,
-            "beta_to_qqq": 2.4655853455556325,
-            "beta_to_iwm": 2.223464968689782,
-            "beta_to_btc": 0.879059338069258,
+            "underlying": "ASTS",
+            "symbols": "ASTN, ASTS",
+            "net_notional_usd": 12205.942686680006,
+            "beta_to_spy": 3.228723229175,
+            "beta_to_qqq": 2.261368472124903,
+            "beta_to_iwm": 2.3705932982039917,
+            "beta_to_btc": 0.8280107497350888,
             "beta_source": "computed",
-            "beta_weighted_net_usd": 50351.92371125411
+            "beta_weighted_net_usd": 39409.610686462445
           },
           {
-            "underlying": "BE",
-            "symbols": "BE, BEZ",
-            "net_notional_usd": 10502.754411172848,
-            "beta_to_spy": 4.162849671111322,
-            "beta_to_qqq": 3.000404781242975,
-            "beta_to_iwm": 2.487718352371549,
-            "beta_to_btc": 0.6152952354673331,
+            "underlying": "MSTR",
+            "symbols": "MSDD, MSTR, MSTZ",
+            "net_notional_usd": 9306.660994697177,
+            "beta_to_spy": 3.0464572926156737,
+            "beta_to_qqq": 2.084646992555535,
+            "beta_to_iwm": 1.8210383914859636,
+            "beta_to_btc": 1.370137609272226,
             "beta_source": "computed",
-            "beta_weighted_net_usd": 43721.38774631387
+            "beta_weighted_net_usd": 28352.345257197052
+          },
+          {
+            "underlying": "RGTI",
+            "symbols": "RGTI, RGTZ",
+            "net_notional_usd": 6573.601145325,
+            "beta_to_spy": 3.7861883491392807,
+            "beta_to_qqq": 2.5849440941177337,
+            "beta_to_iwm": 2.9082848958095755,
+            "beta_to_btc": 0.973856788505168,
+            "beta_source": "computed",
+            "beta_weighted_net_usd": 24888.89206831815
           }
         ],
-        "pct_of_total_beta_net": 1.617511878654127,
-        "pct_of_portfolio_beta_net": 2.7306973255188796,
-        "pct_of_bucket_sum_beta_net": 1.617511878654127
+        "pct_of_total_beta_net": 0.8245240591498867,
+        "pct_of_portfolio_beta_net": 1.4172219525315917,
+        "pct_of_bucket_sum_beta_net": 0.8245240591498867
       },
       {
         "bucket": "bucket_5",
@@ -26888,9 +26875,9 @@
             "beta_weighted_net_usd": -19307.504295301864
           }
         ],
-        "pct_of_total_beta_net": 0.006519928919994401,
+        "pct_of_total_beta_net": 0.00640375059336112,
         "pct_of_portfolio_beta_net": 0.011006999515339531,
-        "pct_of_bucket_sum_beta_net": 0.006519928919994401
+        "pct_of_bucket_sum_beta_net": 0.00640375059336112
       }
     ],
     "totals": {
@@ -26910,8 +26897,8 @@
       "beta_coverage_gross_pct": 1.0,
       "btc_beta_coverage_gross_pct": 1.0,
       "n_btc_beta_names": 167,
-      "by_bucket_beta_weighted_net_usd": 323262.77998063026,
-      "by_bucket_net_beta_to_spy": 0.11437909730972257,
+      "by_bucket_beta_weighted_net_usd": 329127.48821581784,
+      "by_bucket_net_beta_to_spy": 0.1164541893879564,
       "by_bucket_reconciles": false
     },
     "beta_provenance_counts": {
@@ -26926,7 +26913,7 @@
   "concentration_panel": {
     "available": true,
     "totals": {
-      "n_underlyings": 200,
+      "n_underlyings": 199,
       "n_sectors": 24,
       "total_gross_usd": 3462391.0908011855,
       "top5_pct_nav": 0.2254798746674436,
@@ -26957,10 +26944,10 @@
         "underlying": "NBIS",
         "bucket": "bucket_1",
         "sector": "software",
-        "gross_notional_usd": 121191.29481325172,
-        "net_notional_usd": -24616.908271268265,
-        "pct_nav_gross": 0.04288075139169063,
-        "pct_book_gross": 0.03500219693125668,
+        "gross_notional_usd": 132437.954807088,
+        "net_notional_usd": -13370.248277432,
+        "pct_nav_gross": 0.046860123275832215,
+        "pct_book_gross": 0.03825043195118733,
         "status": "ok",
         "limit": {
           "warn": 0.2,
@@ -26972,10 +26959,25 @@
         "underlying": "IREN",
         "bucket": "bucket_1",
         "sector": "crypto-equity",
-        "gross_notional_usd": 110237.1413307143,
-        "net_notional_usd": -11303.618720120718,
-        "pct_nav_gross": 0.03900487620680279,
-        "pct_book_gross": 0.031838442983402486,
+        "gross_notional_usd": 125159.0002331175,
+        "net_notional_usd": 3618.240182282501,
+        "pct_nav_gross": 0.044284632668533996,
+        "pct_book_gross": 0.036148140678168204,
+        "status": "ok",
+        "limit": {
+          "warn": 0.2,
+          "hard": 0.2
+        },
+        "trim_to_warn_usd": 0.0
+      },
+      {
+        "underlying": "BE",
+        "bucket": "bucket_1",
+        "sector": "clean",
+        "gross_notional_usd": 113119.3540583306,
+        "net_notional_usd": -20017.20423433061,
+        "pct_nav_gross": 0.04002468086869149,
+        "pct_book_gross": 0.03267087717469697,
         "status": "ok",
         "limit": {
           "warn": 0.2,
@@ -26999,28 +27001,13 @@
         "trim_to_warn_usd": 0.0
       },
       {
-        "underlying": "BE",
-        "bucket": "bucket_1",
-        "sector": "clean",
-        "gross_notional_usd": 102616.59964715775,
-        "net_notional_usd": -30519.95864550344,
-        "pct_nav_gross": 0.036308522859756345,
-        "pct_book_gross": 0.029637495290404246,
-        "status": "ok",
-        "limit": {
-          "warn": 0.2,
-          "hard": 0.2
-        },
-        "trim_to_warn_usd": 0.0
-      },
-      {
         "underlying": "MSTR",
         "bucket": "bucket_2",
         "sector": "crypto-equity",
-        "gross_notional_usd": 89617.67432566603,
-        "net_notional_usd": -7964.721307000975,
-        "pct_nav_gross": 0.031709152204224,
-        "pct_book_gross": 0.025883174943396935,
+        "gross_notional_usd": 87729.89551555456,
+        "net_notional_usd": -9852.50011711244,
+        "pct_nav_gross": 0.031041205104858246,
+        "pct_book_gross": 0.02533795091739742,
         "status": "ok",
         "limit": {
           "warn": 0.2,
@@ -27032,10 +27019,25 @@
         "underlying": "CRWV",
         "bucket": "bucket_1",
         "sector": "software",
-        "gross_notional_usd": 72054.10272700764,
-        "net_notional_usd": -16599.23000433235,
-        "pct_nav_gross": 0.02549468648345776,
-        "pct_book_gross": 0.020810503734959233,
+        "gross_notional_usd": 79099.47504425146,
+        "net_notional_usd": -9553.85768708854,
+        "pct_nav_gross": 0.027987529383297766,
+        "pct_book_gross": 0.022845332306451874,
+        "status": "ok",
+        "limit": {
+          "warn": 0.2,
+          "hard": 0.2
+        },
+        "trim_to_warn_usd": 0.0
+      },
+      {
+        "underlying": "ASTS",
+        "bucket": "bucket_1",
+        "sector": "space",
+        "gross_notional_usd": 77337.16169114,
+        "net_notional_usd": -5065.801691140005,
+        "pct_nav_gross": 0.027363975349276783,
+        "pct_book_gross": 0.02233634493128402,
         "status": "ok",
         "limit": {
           "warn": 0.2,
@@ -27047,10 +27049,10 @@
         "underlying": "COIN",
         "bucket": "bucket_2",
         "sector": "crypto-equity",
-        "gross_notional_usd": 69459.17090581506,
-        "net_notional_usd": 73.90771945506276,
-        "pct_nav_gross": 0.024576529560764504,
-        "pct_book_gross": 0.02006104136830552,
+        "gross_notional_usd": 69472.59427378785,
+        "net_notional_usd": 87.33108742785407,
+        "pct_nav_gross": 0.024581279110686943,
+        "pct_book_gross": 0.020064918275223532,
         "status": "ok",
         "limit": {
           "warn": 0.2,
@@ -27119,21 +27121,6 @@
         "trim_to_warn_usd": 0.0
       },
       {
-        "underlying": "ASTS",
-        "bucket": "bucket_1",
-        "sector": "space",
-        "gross_notional_usd": 61152.32713963908,
-        "net_notional_usd": -21250.63624264093,
-        "pct_nav_gross": 0.021637344011704276,
-        "pct_book_gross": 0.0176618774528699,
-        "status": "ok",
-        "limit": {
-          "warn": 0.2,
-          "hard": 0.2
-        },
-        "trim_to_warn_usd": 0.0
-      },
-      {
         "underlying": "IONQ",
         "bucket": "bucket_2",
         "sector": "quantum",
@@ -27194,13 +27181,13 @@
         "trim_to_warn_usd": 0.0
       },
       {
-        "underlying": "SNDK",
-        "bucket": "bucket_1",
+        "underlying": "AMD",
+        "bucket": "bucket_2",
         "sector": "semis",
-        "gross_notional_usd": 52556.15714884637,
-        "net_notional_usd": 1037.0574254863732,
-        "pct_nav_gross": 0.018595787034663146,
-        "pct_book_gross": 0.015179150988597609,
+        "gross_notional_usd": 52722.60340668407,
+        "net_notional_usd": 1228.6766718040562,
+        "pct_nav_gross": 0.01865468021352896,
+        "pct_book_gross": 0.015227223622067559,
         "status": "ok",
         "limit": {
           "warn": 0.2,
@@ -27209,13 +27196,13 @@
         "trim_to_warn_usd": 0.0
       },
       {
-        "underlying": "AMD",
-        "bucket": "bucket_2",
+        "underlying": "SNDK",
+        "bucket": "bucket_1",
         "sector": "semis",
-        "gross_notional_usd": 50859.58249000233,
-        "net_notional_usd": -634.3442448776805,
-        "pct_nav_gross": 0.017995493125142356,
-        "pct_book_gross": 0.01468915011511123,
+        "gross_notional_usd": 49791.79986168,
+        "net_notional_usd": -1727.2998616800014,
+        "pct_nav_gross": 0.017617682808848508,
+        "pct_book_gross": 0.014380755540287147,
         "status": "ok",
         "limit": {
           "warn": 0.2,
@@ -27269,6 +27256,21 @@
         "trim_to_warn_usd": 0.0
       },
       {
+        "underlying": "ASTS",
+        "bucket": "bucket_4",
+        "sector": "space",
+        "gross_notional_usd": 48341.622686680006,
+        "net_notional_usd": 12205.942686680006,
+        "pct_nav_gross": 0.017104570980058315,
+        "pct_book_gross": 0.0139619186333725,
+        "status": "ok",
+        "limit": {
+          "warn": 0.3,
+          "hard": 0.3
+        },
+        "trim_to_warn_usd": 0.0
+      },
+      {
         "underlying": "SMCI",
         "bucket": "bucket_2",
         "sector": "semis",
@@ -27291,21 +27293,6 @@
         "net_notional_usd": 4056.884953099998,
         "pct_nav_gross": 0.01632699807762257,
         "pct_book_gross": 0.013327210542302556,
-        "status": "ok",
-        "limit": {
-          "warn": 0.2,
-          "hard": 0.2
-        },
-        "trim_to_warn_usd": 0.0
-      },
-      {
-        "underlying": "ONDS",
-        "bucket": "bucket_1",
-        "sector": "drones",
-        "gross_notional_usd": 45711.6986154,
-        "net_notional_usd": 2992.881384599997,
-        "pct_nav_gross": 0.016174032854746945,
-        "pct_book_gross": 0.013202349883826228,
         "status": "ok",
         "limit": {
           "warn": 0.2,
@@ -34956,20 +34943,20 @@
     "kept_underlyings": 200,
     "net_exposure_total": 50299.889834500515,
     "gross_exposure_total": 3462391.090801185,
-    "net_exposure_bucket_1": -76516.13486709529,
-    "gross_exposure_bucket_1": 2480345.156211391,
-    "net_exposure_bucket_2": -17852.56929056305,
-    "gross_exposure_bucket_2": 825521.5164166843,
+    "net_exposure_bucket_1": -3362.2401301714563,
+    "gross_exposure_bucket_1": 2553499.050948315,
+    "net_exposure_bucket_2": -13585.301322414605,
+    "gross_exposure_bucket_2": 829788.7843848328,
     "net_exposure_bucket_3": 97287.28527892937,
     "gross_exposure_bucket_3": 98563.90945988058,
     "net_exposure_bucket_5": 577.4245656000003,
     "gross_exposure_bucket_5": 11156.6245656,
-    "net_exposure_bucket_4": 150596.50608263447,
-    "gross_exposure_bucket_4": 150596.50608263447,
+    "net_exposure_bucket_4": 73175.34337756217,
+    "gross_exposure_bucket_4": 73175.34337756217,
     "net_exposure_unbucketed": -5289.599999999999,
     "gross_exposure_unbucketed": 5289.599999999999,
-    "net_exposure_bucket_4_pair": 149232.6560826345,
-    "gross_exposure_bucket_4_pair": 240717.84807941155,
+    "net_exposure_bucket_4_pair": 73418.22411843776,
+    "gross_exposure_bucket_4_pair": 316532.2800436082,
     "yfinance_override": false,
     "yfinance_symbols_overridden": 0,
     "bucket_split_method": "held_exposure",
@@ -35106,9 +35093,9 @@
       "SMZ"
     ],
     "bucket_pnl": {
-      "bucket_2": 55970.36323003883,
-      "bucket_4": 20796.82527961858,
-      "bucket_1": 17992.55997794236,
+      "bucket_2": 57520.96355269644,
+      "bucket_1": 21571.65452597291,
+      "bucket_4": 15667.130408930412,
       "bucket_3": 6633.818886076706,
       "bucket_5": 285.14934326351226
     }
@@ -35118,14 +35105,14 @@
       {
         "bucket": "bucket_1",
         "bucket_label": "Bucket 1 (core leveraged)",
-        "exposure_gross_usd": 2480345.156211391,
-        "exposure_net_usd": -76516.13486709529,
+        "exposure_gross_usd": 2553499.050948315,
+        "exposure_net_usd": -3362.2401301714563,
         "target_gross_usd": 1904315.0999406518,
-        "actual_weight": 0.716367704041616,
+        "actual_weight": 0.7374958472289288,
         "target_weight": 0.55,
-        "drift_pp": 16.636770404161595,
+        "drift_pp": 18.749584722892877,
         "drift_status": "hard",
-        "pnl_usd": 17992.55997794236,
+        "pnl_usd": 21571.65452597291,
         "net_capital_usd": null,
         "gross_capital_usd": null,
         "margin_req_usd": null,
@@ -35140,14 +35127,14 @@
       {
         "bucket": "bucket_2",
         "bucket_label": "Bucket 2 (yield boost)",
-        "exposure_gross_usd": 825521.5164166843,
-        "exposure_net_usd": -17852.56929056305,
+        "exposure_gross_usd": 829788.7843848328,
+        "exposure_net_usd": -13585.301322414605,
         "target_gross_usd": 692478.2181602371,
-        "actual_weight": 0.23842526588342783,
+        "actual_weight": 0.23965772861113233,
         "target_weight": 0.2,
-        "drift_pp": 3.842526588342782,
+        "drift_pp": 3.9657728611132317,
         "drift_status": "ok",
-        "pnl_usd": 55970.36323003883,
+        "pnl_usd": 57520.96355269644,
         "net_capital_usd": null,
         "gross_capital_usd": null,
         "margin_req_usd": null,
@@ -35184,14 +35171,14 @@
       {
         "bucket": "bucket_4",
         "bucket_label": "Bucket 4 (inverse / decay)",
-        "exposure_gross_usd": 150596.50608263447,
-        "exposure_net_usd": 150596.50608263447,
+        "exposure_gross_usd": 73175.34337756217,
+        "exposure_net_usd": 73175.34337756217,
         "target_gross_usd": 865597.7727002962,
-        "actual_weight": 0.04349494385043227,
+        "actual_weight": 0.021134337935414933,
         "target_weight": 0.25,
-        "drift_pp": -20.650505614956774,
+        "drift_pp": -22.886566206458507,
         "drift_status": "hard",
-        "pnl_usd": 20796.82527961858,
+        "pnl_usd": 15667.130408930412,
         "net_capital_usd": null,
         "gross_capital_usd": null,
         "margin_req_usd": null,
@@ -35236,9 +35223,9 @@
     "book_gross_usd": 3462391.090801185,
     "book_net_usd": 50299.889834500515,
     "bucket_gross_usd": 3461752.77871071,
-    "bucket_net_usd": 50938.201924976136,
+    "bucket_net_usd": 50938.20192497611,
     "gross_diff_pct": 0.00018435586094562445,
-    "net_diff_abs_usd": 638.3120904756215,
+    "net_diff_abs_usd": 638.3120904755924,
     "tol_gross_pct": 0.005,
     "tol_net_abs_usd": 10000.0,
     "components_included": [
@@ -35530,12 +35517,12 @@
       },
       {
         "date": "2026-05-13",
-        "cum_pnl_usd": 43043.28531457,
+        "cum_pnl_usd": 43043.28531457001,
         "equity_usd": 2869283.2853145697
       },
       {
         "date": "2026-05-14",
-        "cum_pnl_usd": 41042.53531157,
+        "cum_pnl_usd": 41042.53531156999,
         "equity_usd": 2867282.5353115695
       },
       {
@@ -35545,7 +35532,7 @@
       },
       {
         "date": "2026-05-18",
-        "cum_pnl_usd": 64272.01100860001,
+        "cum_pnl_usd": 64272.011008600006,
         "equity_usd": 2890512.0110086
       },
       {
@@ -35570,7 +35557,7 @@
       },
       {
         "date": "2026-05-25",
-        "cum_pnl_usd": 86282.04051644,
+        "cum_pnl_usd": 86282.04051643999,
         "equity_usd": 2912522.0405164394
       },
       {
@@ -35580,12 +35567,12 @@
       },
       {
         "date": "2026-05-27",
-        "cum_pnl_usd": 84098.81402327001,
+        "cum_pnl_usd": 84098.81402326998,
         "equity_usd": 2910338.8140232693
       },
       {
         "date": "2026-05-28",
-        "cum_pnl_usd": 70604.40057586,
+        "cum_pnl_usd": 70604.40057585998,
         "equity_usd": 2896844.4005758595
       },
       {
@@ -35595,7 +35582,7 @@
       },
       {
         "date": "2026-06-01",
-        "cum_pnl_usd": 97239.82556723,
+        "cum_pnl_usd": 97239.82556722996,
         "equity_usd": 2923479.8255672297
       },
       {
@@ -35615,7 +35602,7 @@
       },
       {
         "date": "2026-06-05",
-        "cum_pnl_usd": 79196.07285797002,
+        "cum_pnl_usd": 79196.07285797001,
         "equity_usd": 2905436.0728579694
       },
       {
@@ -35625,12 +35612,12 @@
       },
       {
         "date": "2026-06-10",
-        "cum_pnl_usd": 70901.55373327997,
+        "cum_pnl_usd": 70901.55373327999,
         "equity_usd": 2897141.5537332795
       },
       {
         "date": "2026-06-11",
-        "cum_pnl_usd": 54414.30679694999,
+        "cum_pnl_usd": 54414.30679695,
         "equity_usd": 2880654.3067969494
       },
       {
@@ -35673,16 +35660,16 @@
         ],
         "bucket_detail": {
           "bucket_1": {
-            "net_usd": -24616.908271268265,
-            "gross_usd": 121191.29481325172
+            "net_usd": -13370.248277432,
+            "gross_usd": 132437.954807088
           },
           "bucket_4": {
-            "net_usd": 11246.65999383626,
-            "gross_usd": 14933.486535819742
+            "net_usd": 0.0,
+            "gross_usd": 26180.146529656
           }
         },
-        "net_usd": -13370.248277432005,
-        "gross_usd": 136124.78134907148
+        "net_usd": -13370.248277432,
+        "gross_usd": 158618.101336744
       },
       {
         "underlying": "IREN",
@@ -35692,16 +35679,16 @@
         ],
         "bucket_detail": {
           "bucket_1": {
-            "net_usd": -11303.618720120718,
-            "gross_usd": 110237.1413307143
+            "net_usd": 3618.240182282501,
+            "gross_usd": 125159.0002331175
           },
           "bucket_4": {
-            "net_usd": 14921.85890240322,
-            "gross_usd": 17199.861512996787
+            "net_usd": 0.0,
+            "gross_usd": 32121.720415400006
           }
         },
-        "net_usd": 3618.240182282503,
-        "gross_usd": 127437.00284371109
+        "net_usd": 3618.240182282501,
+        "gross_usd": 157280.7206485175
       },
       {
         "underlying": "BE",
@@ -35711,40 +35698,35 @@
         ],
         "bucket_detail": {
           "bucket_1": {
-            "net_usd": -30519.95864550344,
-            "gross_usd": 102616.59964715775
+            "net_usd": -20017.20423433061,
+            "gross_usd": 113119.3540583306
           },
           "bucket_4": {
-            "net_usd": 10502.754411172848,
-            "gross_usd": 12870.47541282715
+            "net_usd": 0.0,
+            "gross_usd": 23373.229824
           }
         },
-        "net_usd": -20017.204234330595,
-        "gross_usd": 115487.0750599849
+        "net_usd": -20017.20423433061,
+        "gross_usd": 136492.5838823306
       },
       {
-        "underlying": "MSTR",
+        "underlying": "ASTS",
         "buckets": [
           "bucket_1",
-          "bucket_2",
           "bucket_4"
         ],
         "bucket_detail": {
           "bucket_1": {
-            "net_usd": 47.145472611725154,
-            "gross_usd": 4979.734401211725
-          },
-          "bucket_2": {
-            "net_usd": -7964.721307000975,
-            "gross_usd": 89617.67432566603
+            "net_usd": -5065.801691140005,
+            "gross_usd": 77337.16169114
           },
           "bucket_4": {
-            "net_usd": 7302.663028315749,
-            "gross_usd": 13861.135920804249
+            "net_usd": 12205.942686680006,
+            "gross_usd": 48341.622686680006
           }
         },
-        "net_usd": -614.9128060735002,
-        "gross_usd": 108458.54464768199
+        "net_usd": 7140.140995540001,
+        "gross_usd": 125678.78437782
       },
       {
         "underlying": "CRWV",
@@ -35755,39 +35737,44 @@
         ],
         "bucket_detail": {
           "bucket_1": {
-            "net_usd": -16599.23000433235,
-            "gross_usd": 72054.10272700764
+            "net_usd": -9553.85768708854,
+            "gross_usd": 79099.47504425146
           },
           "bucket_2": {
-            "net_usd": 28.624395423463284,
-            "gross_usd": 12456.884771823465
+            "net_usd": 1614.870226218541,
+            "gross_usd": 14043.13060261854
           },
           "bucket_4": {
-            "net_usd": 8631.618148038891,
-            "gross_usd": 21371.40003796111
+            "net_usd": 0.0,
+            "gross_usd": 30003.018186
           }
         },
-        "net_usd": -7938.987460869994,
-        "gross_usd": 105882.38753679222
+        "net_usd": -7938.98746087,
+        "gross_usd": 123145.62383287
       },
       {
-        "underlying": "ASTS",
+        "underlying": "MSTR",
         "buckets": [
           "bucket_1",
+          "bucket_2",
           "bucket_4"
         ],
         "bucket_detail": {
           "bucket_1": {
-            "net_usd": -21250.63624264093,
-            "gross_usd": 61152.32713963908
+            "net_usd": -69.07368365823208,
+            "gross_usd": 4863.515244941767
+          },
+          "bucket_2": {
+            "net_usd": -9852.50011711244,
+            "gross_usd": 87729.89551555456
           },
           "bucket_4": {
-            "net_usd": 28390.77723818093,
-            "gross_usd": 32156.78813517908
+            "net_usd": 9306.660994697177,
+            "gross_usd": 11857.137954422824
           }
         },
-        "net_usd": 7140.140995540001,
-        "gross_usd": 93309.11527481815
+        "net_usd": -614.9128060734965,
+        "gross_usd": 104450.54871491915
       },
       {
         "underlying": "HOOD",
@@ -35846,20 +35833,20 @@
         ],
         "bucket_detail": {
           "bucket_1": {
-            "net_usd": 18.63142237138618,
-            "gross_usd": 17509.98624033139
+            "net_usd": 22.01532381214838,
+            "gross_usd": 17513.37014177215
           },
           "bucket_2": {
-            "net_usd": 73.90771945506276,
-            "gross_usd": 69459.17090581506
+            "net_usd": 87.33108742785407,
+            "gross_usd": 69472.59427378785
           },
           "bucket_4": {
-            "net_usd": 16.80726941355124,
-            "gross_usd": 1203.7435573864489
+            "net_usd": 0.0,
+            "gross_usd": 1220.5508268
           }
         },
-        "net_usd": 109.34641124000018,
-        "gross_usd": 88172.9007035329
+        "net_usd": 109.34641124000245,
+        "gross_usd": 88206.51524236
       },
       {
         "underlying": "CRCL",
@@ -35886,6 +35873,30 @@
         "gross_usd": 80760.196380743
       },
       {
+        "underlying": "AMD",
+        "buckets": [
+          "bucket_1",
+          "bucket_2",
+          "bucket_4"
+        ],
+        "bucket_detail": {
+          "bucket_1": {
+            "net_usd": 426.4195075443472,
+            "gross_usd": 18297.69140820755
+          },
+          "bucket_2": {
+            "net_usd": 1228.6766718040562,
+            "gross_usd": 52722.60340668407
+          },
+          "bucket_4": {
+            "net_usd": 0.0,
+            "gross_usd": 6041.51099424
+          }
+        },
+        "net_usd": 1655.0961793484034,
+        "gross_usd": 77061.80580913162
+      },
+      {
         "underlying": "RIOT",
         "buckets": [
           "bucket_1",
@@ -35903,6 +35914,25 @@
         },
         "net_usd": 2664.926232820004,
         "gross_usd": 75172.07376717999
+      },
+      {
+        "underlying": "LITE",
+        "buckets": [
+          "bucket_1",
+          "bucket_4"
+        ],
+        "bucket_detail": {
+          "bucket_1": {
+            "net_usd": 2282.865535060002,
+            "gross_usd": 45317.13446494
+          },
+          "bucket_4": {
+            "net_usd": 4644.62872244,
+            "gross_usd": 28444.62872244
+          }
+        },
+        "net_usd": 6927.494257500002,
+        "gross_usd": 73761.76318738
       },
       {
         "underlying": "IBIT",
@@ -35929,7 +35959,7 @@
         "gross_usd": 73492.53237048
       },
       {
-        "underlying": "AMD",
+        "underlying": "QBTS",
         "buckets": [
           "bucket_1",
           "bucket_2",
@@ -35937,20 +35967,20 @@
         ],
         "bucket_detail": {
           "bucket_1": {
-            "net_usd": -220.15292283295503,
-            "gross_usd": 17651.118977830247
+            "net_usd": -3436.2860883199983,
+            "gross_usd": 18595.94608832
           },
           "bucket_2": {
-            "net_usd": -634.3442448776805,
-            "gross_usd": 50859.58249000233
+            "net_usd": -6565.207734735596,
+            "gross_usd": 21724.8677347356
           },
           "bucket_4": {
-            "net_usd": 2509.5933470590403,
-            "gross_usd": 3531.917647180959
+            "net_usd": 14328.573819719995,
+            "gross_usd": 29488.23381972
           }
         },
-        "net_usd": 1655.0961793484048,
-        "gross_usd": 72042.61911501354
+        "net_usd": 4327.079996664401,
+        "gross_usd": 69809.04764277561
       },
       {
         "underlying": "MU",
@@ -36039,68 +36069,6 @@
         "gross_usd": 62262.27309241
       },
       {
-        "underlying": "QBTS",
-        "buckets": [
-          "bucket_1",
-          "bucket_2",
-          "bucket_4"
-        ],
-        "bucket_detail": {
-          "bucket_1": {
-            "net_usd": -6128.642751130301,
-            "gross_usd": 15903.589425509696
-          },
-          "bucket_2": {
-            "net_usd": -9257.5643975459,
-            "gross_usd": 19032.51107192529
-          },
-          "bucket_4": {
-            "net_usd": 19713.287145340604,
-            "gross_usd": 24103.520494099397
-          }
-        },
-        "net_usd": 4327.079996664403,
-        "gross_usd": 59039.62099153438
-      },
-      {
-        "underlying": "LITE",
-        "buckets": [
-          "bucket_1",
-          "bucket_4"
-        ],
-        "bucket_detail": {
-          "bucket_1": {
-            "net_usd": -5870.370126586367,
-            "gross_usd": 37163.89880329363
-          },
-          "bucket_4": {
-            "net_usd": 12797.86438408637,
-            "gross_usd": 20291.39306079363
-          }
-        },
-        "net_usd": 6927.494257500002,
-        "gross_usd": 57455.29186408727
-      },
-      {
-        "underlying": "SNDK",
-        "buckets": [
-          "bucket_1",
-          "bucket_4"
-        ],
-        "bucket_detail": {
-          "bucket_1": {
-            "net_usd": 1037.0574254863732,
-            "gross_usd": 52556.15714884637
-          },
-          "bucket_4": {
-            "net_usd": -2764.357287166375,
-            "gross_usd": 2764.357287166375
-          }
-        },
-        "net_usd": -1727.2998616800019,
-        "gross_usd": 55320.514436012745
-      },
-      {
         "underlying": "BABA",
         "buckets": [
           "bucket_1",
@@ -36118,6 +36086,25 @@
         },
         "net_usd": -231.86693172000335,
         "gross_usd": 51854.06693171999
+      },
+      {
+        "underlying": "SNDK",
+        "buckets": [
+          "bucket_1",
+          "bucket_4"
+        ],
+        "bucket_detail": {
+          "bucket_1": {
+            "net_usd": -1727.2998616800014,
+            "gross_usd": 49791.79986168
+          },
+          "bucket_4": {
+            "net_usd": 0.0,
+            "gross_usd": 0.0
+          }
+        },
+        "net_usd": -1727.2998616800014,
+        "gross_usd": 49791.79986168
       },
       {
         "underlying": "TSM",
@@ -36144,6 +36131,25 @@
         "gross_usd": 47736.580138410005
       },
       {
+        "underlying": "RKLB",
+        "buckets": [
+          "bucket_1",
+          "bucket_4"
+        ],
+        "bucket_detail": {
+          "bucket_1": {
+            "net_usd": -4200.151418449999,
+            "gross_usd": 27792.95141845
+          },
+          "bucket_4": {
+            "net_usd": 4854.661443099999,
+            "gross_usd": 16651.0614431
+          }
+        },
+        "net_usd": 654.5100246499997,
+        "gross_usd": 44444.01286155
+      },
+      {
         "underlying": "HIMS",
         "buckets": [
           "bucket_1",
@@ -36161,25 +36167,6 @@
         },
         "net_usd": 605.461026959998,
         "gross_usd": 39901.278973039996
-      },
-      {
-        "underlying": "RKLB",
-        "buckets": [
-          "bucket_1",
-          "bucket_4"
-        ],
-        "bucket_detail": {
-          "bucket_1": {
-            "net_usd": -8346.658912780145,
-            "gross_usd": 23646.44392411985
-          },
-          "bucket_4": {
-            "net_usd": 9001.168937430146,
-            "gross_usd": 12504.553948769852
-          }
-        },
-        "net_usd": 654.5100246500006,
-        "gross_usd": 36150.9978728897
       },
       {
         "underlying": "KEEL",
@@ -36227,16 +36214,16 @@
         ],
         "bucket_detail": {
           "bucket_1": {
-            "net_usd": -3705.996635518238,
-            "gross_usd": 18872.28692832176
+            "net_usd": -3215.061781919999,
+            "gross_usd": 19363.22178192
           },
           "bucket_4": {
-            "net_usd": 7064.535998923239,
-            "gross_usd": 14156.746291726762
+            "net_usd": 6573.601145325,
+            "gross_usd": 14647.681145325
           }
         },
         "net_usd": 3358.5393634050015,
-        "gross_usd": 33029.03322004852
+        "gross_usd": 34010.902927245
       },
       {
         "underlying": "OKLO",
@@ -36258,25 +36245,6 @@
         "gross_usd": 28760.639679
       },
       {
-        "underlying": "SVIX",
-        "buckets": [
-          "bucket_4",
-          "bucket_5"
-        ],
-        "bucket_detail": {
-          "bucket_4": {
-            "net_usd": 577.4245656000003,
-            "gross_usd": 11156.6245656
-          },
-          "bucket_5": {
-            "net_usd": -5289.599999999999,
-            "gross_usd": 5289.599999999999
-          }
-        },
-        "net_usd": 1154.8491312000006,
-        "gross_usd": 22313.2491312
-      },
-      {
         "underlying": "XRPZ",
         "buckets": [
           "bucket_1",
@@ -36294,6 +36262,25 @@
         },
         "net_usd": 998.6047714699998,
         "gross_usd": 21395.79522853
+      },
+      {
+        "underlying": "SVIX",
+        "buckets": [
+          "bucket_4",
+          "bucket_5"
+        ],
+        "bucket_detail": {
+          "bucket_4": {
+            "net_usd": 2184.15530647559,
+            "gross_usd": 9549.89382472441
+          },
+          "bucket_5": {
+            "net_usd": -5289.599999999999,
+            "gross_usd": 5289.599999999999
+          }
+        },
+        "net_usd": 2761.57987207559,
+        "gross_usd": 20706.518390324407
       },
       {
         "underlying": "NET",
@@ -36509,7 +36496,7 @@
       {
         "underlying": "MSTR",
         "symbols": "MSTP, MSTR, MSTU, MSTW, MSTX, MSTY, MSTZ, MTYY",
-        "total_pnl": 6704.636798357662
+        "total_pnl": 6704.636798357659
       },
       {
         "underlying": "IREN",
@@ -36524,7 +36511,7 @@
       {
         "underlying": "NBIS",
         "symbols": "NBIG, NBIL, NBIS, NBIZ, NEBX",
-        "total_pnl": 4880.13557733518
+        "total_pnl": 4880.135577335183
       },
       {
         "underlying": "CRML",
@@ -36556,7 +36543,7 @@
       {
         "underlying": "SNDK",
         "symbols": "SNDK, SNDU, SNXX",
-        "total_pnl": -1292.5207281370538
+        "total_pnl": -1292.520728137053
       },
       {
         "underlying": "RDW",
@@ -36587,7 +36574,7 @@
         "bucket_5"
       ],
       "gross_usd": 3467619.8032763097,
-      "net_usd": 51515.626490576135,
+      "net_usd": 51515.626490576105,
       "pnl_usd": 95044.89783086328,
       "pnl_pct_nav": 0.03362945037606972,
       "gross_pct_nav": 1.2269374870061673,
@@ -37830,8 +37817,8 @@
       "nav_usd": 1848060.0,
       "gross_pct_nav": 1.5799633150099504,
       "net_pct_nav": 0.029448667449166875,
-      "pnl_pct_nav": 0.03135291072618856,
-      "pnl_cum_usd": 57942.06019664003,
+      "pnl_pct_nav": 0.03135291072618853,
+      "pnl_cum_usd": 57942.06019663997,
       "worst_shock_pct_nav": -0.03188855894641516,
       "worst_shock_label": "SPX -20%",
       "net_beta_to_spy": 0.1594427947320758,
@@ -37860,8 +37847,8 @@
       "nav_usd": 2227750.0000000005,
       "gross_pct_nav": 1.5236386419802668,
       "net_pct_nav": 0.0223531076037078,
-      "pnl_pct_nav": 0.025070667887716305,
-      "pnl_cum_usd": 55851.18038686001,
+      "pnl_pct_nav": 0.02507066788771628,
+      "pnl_cum_usd": 55851.18038685995,
       "worst_shock_pct_nav": -0.02357496654873031,
       "worst_shock_label": "SPX -20%",
       "net_beta_to_spy": 0.11787483274365156,
@@ -37875,8 +37862,8 @@
       "nav_usd": 1982880.0,
       "gross_pct_nav": 1.5955685074324952,
       "net_pct_nav": 0.0021455983783808903,
-      "pnl_pct_nav": 0.034628555313599395,
-      "pnl_cum_usd": 68664.26976022997,
+      "pnl_pct_nav": 0.034628555313599416,
+      "pnl_cum_usd": 68664.26976023,
       "worst_shock_pct_nav": -0.0005326822795657149,
       "worst_shock_label": "SPX -20%",
       "net_beta_to_spy": 0.002663411397828576,
@@ -37890,8 +37877,8 @@
       "nav_usd": 2165300.0,
       "gross_pct_nav": 1.5504415431089806,
       "net_pct_nav": -0.006382955024742978,
-      "pnl_pct_nav": 0.03984761488774766,
-      "pnl_cum_usd": 86282.04051644,
+      "pnl_pct_nav": 0.03984761488774764,
+      "pnl_cum_usd": 86282.04051643997,
       "worst_shock_pct_nav": 0.00030633540894673235,
       "worst_shock_label": "SPX -1%",
       "net_beta_to_spy": -0.03063354089467323,
@@ -37905,8 +37892,8 @@
       "nav_usd": 2165300.0,
       "gross_pct_nav": 1.5504415431089806,
       "net_pct_nav": -0.006382955024742978,
-      "pnl_pct_nav": 0.03984761488774766,
-      "pnl_cum_usd": 86282.04051644,
+      "pnl_pct_nav": 0.03984761488774764,
+      "pnl_cum_usd": 86282.04051643997,
       "worst_shock_pct_nav": 0.00030633540894673235,
       "worst_shock_label": "SPX -1%",
       "net_beta_to_spy": -0.03063354089467323,
@@ -37920,8 +37907,8 @@
       "nav_usd": 2165300.0,
       "gross_pct_nav": 1.5504415431089806,
       "net_pct_nav": -0.006382955024742978,
-      "pnl_pct_nav": 0.03984783310231378,
-      "pnl_cum_usd": 86282.51301644003,
+      "pnl_pct_nav": 0.03984783310231377,
+      "pnl_cum_usd": 86282.51301644,
       "worst_shock_pct_nav": 0.00030633540894673235,
       "worst_shock_label": "SPX -1%",
       "net_beta_to_spy": -0.03063354089467323,
@@ -37935,8 +37922,8 @@
       "nav_usd": 2379325.0,
       "gross_pct_nav": 1.4878764260380193,
       "net_pct_nav": -0.024195524826095632,
-      "pnl_pct_nav": 0.03534566064882687,
-      "pnl_cum_usd": 84098.81402326998,
+      "pnl_pct_nav": 0.03534566064882689,
+      "pnl_cum_usd": 84098.81402327004,
       "worst_shock_pct_nav": 0.0009059929615183063,
       "worst_shock_label": "SPX -1%",
       "net_beta_to_spy": -0.09059929615183063,
@@ -37965,8 +37952,8 @@
       "nav_usd": 2180400.0,
       "gross_pct_nav": 1.4873982727842023,
       "net_pct_nav": 0.020244474733767014,
-      "pnl_pct_nav": 0.03529946932843054,
-      "pnl_cum_usd": 76966.96292370994,
+      "pnl_pct_nav": 0.03529946932843059,
+      "pnl_cum_usd": 76966.96292371006,
       "worst_shock_pct_nav": -0.014134963022887343,
       "worst_shock_label": "SPX -20%",
       "net_beta_to_spy": 0.07067481511443673,
@@ -38010,8 +37997,8 @@
       "nav_usd": 2477120.0,
       "gross_pct_nav": 1.4357545412550439,
       "net_pct_nav": 0.011673681671808284,
-      "pnl_pct_nav": 0.03756560168272836,
-      "pnl_cum_usd": 93054.50324032007,
+      "pnl_pct_nav": 0.037565601682728336,
+      "pnl_cum_usd": 93054.50324032002,
       "worst_shock_pct_nav": -0.010805218144555734,
       "worst_shock_label": "SPX -20%",
       "net_beta_to_spy": 0.05402609072277867,
@@ -38025,8 +38012,8 @@
       "nav_usd": 2598999.9999999995,
       "gross_pct_nav": 1.39998036984887,
       "net_pct_nav": 0.0017935403794677235,
-      "pnl_pct_nav": 0.03113699777716044,
-      "pnl_cum_usd": 80925.05722283997,
+      "pnl_pct_nav": 0.03113699777716046,
+      "pnl_cum_usd": 80925.05722284003,
       "worst_shock_pct_nav": -0.0023551066689162974,
       "worst_shock_label": "SPX -20%",
       "net_beta_to_spy": 0.011775533344581486,
@@ -38040,8 +38027,8 @@
       "nav_usd": 2671300.0,
       "gross_pct_nav": 1.3081080247042414,
       "net_pct_nav": 0.032252243377144635,
-      "pnl_pct_nav": 0.0285589951931045,
-      "pnl_cum_usd": 76289.64385934005,
+      "pnl_pct_nav": 0.02855899519310448,
+      "pnl_cum_usd": 76289.64385934,
       "worst_shock_pct_nav": -0.022493147122464446,
       "worst_shock_label": "SPX -20%",
       "net_beta_to_spy": 0.11246573561232223,
@@ -38055,8 +38042,8 @@
       "nav_usd": 2700749.9999999995,
       "gross_pct_nav": 1.2695542451078268,
       "net_pct_nav": 0.008777455991299242,
-      "pnl_pct_nav": 0.029323733354797734,
-      "pnl_cum_usd": 79196.07285796996,
+      "pnl_pct_nav": 0.029323733354797755,
+      "pnl_cum_usd": 79196.07285797002,
       "worst_shock_pct_nav": -0.005350150934877093,
       "worst_shock_label": "SPX -20%",
       "net_beta_to_spy": 0.026750754674385466,
@@ -38070,8 +38057,8 @@
       "nav_usd": 2649150.0,
       "gross_pct_nav": 1.2000236021287423,
       "net_pct_nav": 0.07345699347060845,
-      "pnl_pct_nav": 0.03306886545115225,
-      "pnl_cum_usd": 87604.38490991999,
+      "pnl_pct_nav": 0.033068865451152264,
+      "pnl_cum_usd": 87604.38490992002,
       "worst_shock_pct_nav": -0.04978211787345878,
       "worst_shock_label": "SPX -20%",
       "net_beta_to_spy": 0.24891058936729385,
@@ -38085,8 +38072,8 @@
       "nav_usd": 2679200.0,
       "gross_pct_nav": 1.234759548743061,
       "net_pct_nav": 0.06383433185486619,
-      "pnl_pct_nav": 0.03801190334218051,
-      "pnl_cum_usd": 101841.49143437002,
+      "pnl_pct_nav": 0.03801190334218052,
+      "pnl_cum_usd": 101841.49143437005,
       "worst_shock_pct_nav": -0.04277711963639792,
       "worst_shock_label": "SPX -20%",
       "net_beta_to_spy": 0.2138855981819896,
@@ -38175,8 +38162,8 @@
       "nav_usd": 2811200.0000000005,
       "gross_pct_nav": 1.1909096857800692,
       "net_pct_nav": 0.02408457765634766,
-      "pnl_pct_nav": 0.02622738502310048,
-      "pnl_cum_usd": 73730.42477694008,
+      "pnl_pct_nav": 0.02622738502310046,
+      "pnl_cum_usd": 73730.42477694002,
       "worst_shock_pct_nav": -0.018090456165870163,
       "worst_shock_label": "SPX -20%",
       "net_beta_to_spy": 0.0904522808293508,
@@ -38205,8 +38192,8 @@
       "nav_usd": 2826239.9999999995,
       "gross_pct_nav": 1.2250874273951207,
       "net_pct_nav": 0.01779745875597986,
-      "pnl_pct_nav": 0.03597646916643312,
-      "pnl_cum_usd": 101678.13621693992,
+      "pnl_pct_nav": 0.03597646916643314,
+      "pnl_cum_usd": 101678.13621693998,
       "worst_shock_pct_nav": -0.013550351907497295,
       "worst_shock_label": "SPX -20%",
       "net_beta_to_spy": 0.06775175953748647,
@@ -38233,31 +38220,31 @@
     {
       "run_date": "2026-06-23",
       "nav_usd": 2829900.0,
-      "gross_pct_nav": 1.2221696509314763,
-      "net_pct_nav": 0.02972778364992533,
-      "pnl_pct_nav": 0.03405489593056999,
-      "pnl_cum_usd": 96371.94999392002,
-      "worst_shock_pct_nav": -0.021227287882408293,
+      "gross_pct_nav": 1.2221698364036868,
+      "net_pct_nav": 0.02972759071003025,
+      "pnl_pct_nav": 0.03399567199562531,
+      "pnl_cum_usd": 96204.35218042007,
+      "worst_shock_pct_nav": -0.021227244107700313,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.10613643941204144,
-      "top10_pct_nav": 0.3908656784086995,
-      "hhi_underlying": 185.23189599932851,
-      "n_alerts": 21,
+      "net_beta_to_spy": 0.10613622053850155,
+      "top10_pct_nav": 0.3908657158240326,
+      "hhi_underlying": 185.23182381684023,
+      "n_alerts": 20,
       "n_alerts_hard": 8
     },
     {
       "run_date": "2026-06-24",
       "nav_usd": 2788700.0000000005,
-      "gross_pct_nav": 1.171101775660256,
-      "net_pct_nav": 0.05382737628309586,
-      "pnl_pct_nav": 0.022987425600788893,
-      "pnl_cum_usd": 64105.03377292,
-      "worst_shock_pct_nav": -0.0379945993938044,
+      "gross_pct_nav": 1.1711019554220572,
+      "net_pct_nav": 0.05382718884855853,
+      "pnl_pct_nav": 0.022927326696819312,
+      "pnl_cum_usd": 63937.43595942002,
+      "worst_shock_pct_nav": -0.03799455965983514,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.18997299696902198,
-      "top10_pct_nav": 0.37122215414766185,
-      "hhi_underlying": 183.30920002758302,
-      "n_alerts": 21,
+      "net_beta_to_spy": 0.18997279829917568,
+      "top10_pct_nav": 0.37122218877257285,
+      "hhi_underlying": 183.3091229822909,
+      "n_alerts": 20,
       "n_alerts_hard": 8
     },
     {
@@ -38278,46 +38265,46 @@
     {
       "run_date": "2026-06-26",
       "nav_usd": 3175999.999999999,
-      "gross_pct_nav": 1.289925564893484,
-      "net_pct_nav": 0.018622799934305812,
-      "pnl_pct_nav": 0.01407149494650505,
-      "pnl_cum_usd": 44691.06795010003,
-      "worst_shock_pct_nav": -0.01748924332229567,
+      "gross_pct_nav": 1.289925482587384,
+      "net_pct_nav": 0.018622873548743087,
+      "pnl_pct_nav": 0.0140187248540932,
+      "pnl_cum_usd": 44523.47013659999,
+      "worst_shock_pct_nav": -0.01748932097566993,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.08744621661147833,
-      "top10_pct_nav": 0.4552630473625749,
-      "hhi_underlying": 205.62187003485317,
+      "net_beta_to_spy": 0.08744660487834963,
+      "top10_pct_nav": 0.45526314174527016,
+      "hhi_underlying": 205.6219089290738,
       "n_alerts": 16,
       "n_alerts_hard": 3
     },
     {
       "run_date": "2026-06-28",
       "nav_usd": 3458399.9999999995,
-      "gross_pct_nav": 1.3592395682690899,
-      "net_pct_nav": 0.014483208645771267,
-      "pnl_pct_nav": 0.020800388373577384,
-      "pnl_cum_usd": 71936.06315118002,
-      "worst_shock_pct_nav": -0.009728287335628116,
+      "gross_pct_nav": 1.3592396063246104,
+      "net_pct_nav": 0.014483162512839393,
+      "pnl_pct_nav": 0.020751927289405513,
+      "pnl_cum_usd": 71768.46533768001,
+      "worst_shock_pct_nav": -0.009728296646823132,
       "worst_shock_label": "SPX -20%",
-      "net_beta_to_spy": 0.048641436678140575,
-      "top10_pct_nav": 0.4995088000547868,
-      "hhi_underlying": 215.0426769679252,
+      "net_beta_to_spy": 0.048641483234115664,
+      "top10_pct_nav": 0.4995089444900023,
+      "hhi_underlying": 215.04272425305973,
       "n_alerts": 15,
       "n_alerts_hard": 2
     },
     {
       "run_date": "2026-06-30",
       "nav_usd": 3487649.9999999995,
-      "gross_pct_nav": 1.400340847043752,
-      "net_pct_nav": -0.02399185967926862,
-      "pnl_pct_nav": 0.022562873548911164,
-      "pnl_cum_usd": 78691.40593286001,
-      "worst_shock_pct_nav": 0.0007719996802257716,
+      "gross_pct_nav": 1.4003407295332204,
+      "net_pct_nav": -0.02399174216873675,
+      "pnl_pct_nav": 0.022562873548934097,
+      "pnl_cum_usd": 78691.40593293999,
+      "worst_shock_pct_nav": 0.00077199708201596,
       "worst_shock_label": "SPX -1%",
-      "net_beta_to_spy": -0.07719996802257716,
-      "top10_pct_nav": 0.5181444268542856,
-      "hhi_underlying": 217.53538009708754,
-      "n_alerts": 16,
+      "net_beta_to_spy": -0.077199708201596,
+      "top10_pct_nav": 0.5181444849348871,
+      "hhi_underlying": 217.53543999017694,
+      "n_alerts": 15,
       "n_alerts_hard": 2
     },
     {
@@ -38325,13 +38312,13 @@
       "nav_usd": 3509499.9999999995,
       "gross_pct_nav": 1.3937073973502527,
       "net_pct_nav": -0.03741308562915605,
-      "pnl_pct_nav": 0.01570320802406041,
-      "pnl_cum_usd": 55110.40856044,
-      "worst_shock_pct_nav": 0.0011998440785331273,
+      "pnl_pct_nav": 0.015703208024037605,
+      "pnl_cum_usd": 55110.40856035997,
+      "worst_shock_pct_nav": 0.0012240908703299047,
       "worst_shock_label": "SPX -1%",
-      "net_beta_to_spy": -0.11998440785331271,
+      "net_beta_to_spy": -0.12240908703299046,
       "top10_pct_nav": 0.5147420222733404,
-      "hhi_underlying": 215.91357695410508,
+      "hhi_underlying": 215.91357695410514,
       "n_alerts": 16,
       "n_alerts_hard": 2
     },
@@ -38356,12 +38343,12 @@
     "delta_nav_usd": -683260.0,
     "delta_gross_pct_nav": -0.16861996995513207,
     "delta_net_pct_nav": 0.05521054438513591,
-    "delta_pnl_pct_nav": 0.02027346653894202,
-    "delta_pnl_cum_usd": 46568.30815649996,
-    "delta_worst_shock_pct_nav": -0.014750195986030421,
-    "delta_net_beta_to_spy": 0.18773616739079918,
+    "delta_pnl_pct_nav": 0.020273466538964825,
+    "delta_pnl_cum_usd": 46568.308156579995,
+    "delta_worst_shock_pct_nav": -0.014774442777827199,
+    "delta_net_beta_to_spy": 0.19016084657047694,
     "delta_top10_pct_nav": -0.12533103833896636,
-    "delta_hhi_underlying": -33.290649071391925,
+    "delta_hhi_underlying": -33.29064907139198,
     "delta_n_alerts": 4.0,
     "delta_n_alerts_hard": 6.0
   },

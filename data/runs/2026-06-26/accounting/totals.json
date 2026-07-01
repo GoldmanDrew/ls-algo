@@ -1,7 +1,7 @@
 {
   "run_date": "2026-06-26",
   "fifo_summary_present": true,
-  "total_realized_pnl": 106385.95227560005,
+  "total_realized_pnl": 106385.9522756,
   "total_unrealized_pnl": 115552.10786099997,
   "total_dividends": 691.5099999999999,
   "total_withholding_tax": -17.16,
@@ -23,20 +23,20 @@
   "kept_underlyings": 205,
   "net_exposure_total": 59146.246390808024,
   "gross_exposure_total": 4096803.3326975307,
-  "net_exposure_bucket_1": -24164.943875860976,
-  "gross_exposure_bucket_1": 3174070.7596445074,
-  "net_exposure_bucket_2": -189200.4643022351,
-  "gross_exposure_bucket_2": 648959.4098650493,
+  "net_exposure_bucket_1": -2158.601905279851,
+  "gross_exposure_bucket_1": 3196077.1016150885,
+  "net_exposure_bucket_2": -182891.34976814737,
+  "gross_exposure_bucket_2": 655268.5243991369,
   "net_exposure_bucket_3": 106708.49419246051,
   "gross_exposure_bucket_3": 107970.0028115307,
   "net_exposure_bucket_5": -94.0387749199981,
   "gross_exposure_bucket_5": 42061.641225080006,
-  "net_exposure_bucket_4": 273142.4088784393,
-  "gross_exposure_bucket_4": 273142.4088784393,
+  "net_exposure_bucket_4": 244826.95237377047,
+  "gross_exposure_bucket_4": 244826.95237377047,
   "net_exposure_unbucketed": 0.0,
   "gross_exposure_unbucketed": 0.0,
-  "net_exposure_bucket_4_pair": 249310.5688784393,
-  "gross_exposure_bucket_4_pair": 567369.8063727998,
+  "net_exposure_bucket_4_pair": 220995.1123737705,
+  "gross_exposure_bucket_4_pair": 595685.2628774686,
   "yfinance_override": false,
   "yfinance_symbols_overridden": 0,
   "bucket_split_method": "held_exposure",
@@ -167,10 +167,10 @@
     "SMZ"
   ],
   "bucket_pnl": {
-    "bucket_1": 24544.717018852134,
-    "bucket_2": 11261.814419531041,
-    "bucket_4": 6875.591768445825,
+    "bucket_1": 41031.160437971586,
+    "bucket_2": 15371.425041216631,
     "bucket_3": 1582.714032196799,
-    "bucket_5": 258.6328975741941
+    "bucket_5": 258.6328975741941,
+    "bucket_4": -13720.462272359226
   }
 }

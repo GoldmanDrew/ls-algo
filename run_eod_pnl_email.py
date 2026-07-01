@@ -175,17 +175,36 @@ def load_outputs(run_date: str) -> tuple[Path, Path, Path, Path, dict]:
     return pnl_under, pnl_symbol, pnl_bucket, totals, totals_obj
 
 
+def _b4_structural_short_row(sr: pd.Series, underlying: str, section_bucket: str | None) -> bool:
+    """True when a per-symbol row is the B4 synthetic structural-short slice.
+
+    In Bucket 4 the row whose symbol equals the underlying is not a physical
+    long spot line but the synthetic short that mirrors the B1 long (booked
+    against the spot symbol). Flag it so the email can label it clearly instead
+    of showing a bare ``MSTR`` that reads like a long position.
+    """
+    row_bucket = section_bucket
+    if "bucket" in sr and pd.notna(sr.get("bucket")):
+        row_bucket = str(sr.get("bucket"))
+    return row_bucket == "bucket_4" and str(sr.get("symbol", "")) == str(underlying)
+
+
 def _format_underlying_section(
     df: pd.DataFrame,
     sym_df: pd.DataFrame,
     section_label: str | None = None,
     *,
     max_rows: int | None = None,
+    section_bucket: str | None = None,
 ) -> tuple[str, float]:
     """
     Format a single section of the underlying table.
     Returns (formatted_text, section_total).
+
+    ``section_bucket`` lets B4 sections relabel the structural-short slice (the
+    row whose symbol == underlying) so it does not read as a long spot line.
     """
+    _STRUCT_SHORT_SUFFIX = " (structural short)"
     # Drop rows with missing underlying (delisted ETFs, mapping gaps)
     df = df.dropna(subset=["underlying"]).copy()
     df["underlying"] = df["underlying"].astype(str)
@@ -211,7 +230,11 @@ def _format_underlying_section(
     # Column widths
     all_labels = list(df["underlying"].astype(str))
     if not sym_df.empty and "symbol" in sym_df.columns:
-        all_labels += ["  " + s for s in sym_df["symbol"].astype(str)]
+        for _, _sr in sym_df.iterrows():
+            _lbl = "  " + str(_sr["symbol"])
+            if _b4_structural_short_row(_sr, str(_sr.get("underlying", "")), section_bucket):
+                _lbl += _STRUCT_SHORT_SUFFIX
+            all_labels.append(_lbl)
     all_labels += ["TOTAL"]
     label_width = max(12, max(len(s) for s in all_labels))
 
@@ -237,6 +260,8 @@ def _format_underlying_section(
             syms = sym_df[sym_df["underlying"] == underlying].sort_values("total_pnl", ascending=False)
             for _, sr in syms.iterrows():
                 sym_label = "  " + str(sr["symbol"])
+                if _b4_structural_short_row(sr, underlying, section_bucket):
+                    sym_label += _STRUCT_SHORT_SUFFIX
                 sym_pnl = f"{float(sr['total_pnl']):,.2f}"
                 detail = ""
                 if "realized_pnl" in sr and "unrealized_pnl" in sr:
@@ -356,7 +381,7 @@ def format_bucket_pnl_section(
             sym_df = pd.DataFrame()
 
     if "underlying" in df.columns:
-        return _format_underlying_section(df, sym_df, max_rows=top_n)
+        return _format_underlying_section(df, sym_df, max_rows=top_n, section_bucket=bucket)
 
     if "symbol" not in df.columns:
         return f"({bucket} data missing underlying/symbol columns)", 0.0
@@ -435,6 +460,34 @@ def format_bucket_exposure_section(
     lines = [table_text]
     if truncated:
         lines.append(f"  ... and {truncated} more underlyings (table truncated)")
+
+    if bucket == "bucket_2":
+        # The rolled-up net nets the long spot slice against the short yieldboost
+        # overlay, so B2 reads as ~0/negative even though it holds a large long
+        # spot book. Surface the long spot slice (pre-overlay) separately.
+        try:
+            detail_path = exposure_csv.parent / "bucket_exposure_detail.csv"
+            if detail_path.exists():
+                dd = pd.read_csv(detail_path)
+                for _c in ("net_notional_usd", "_ratio_b2"):
+                    dd[_c] = pd.to_numeric(dd.get(_c), errors="coerce").fillna(0.0)
+                if blocked_keys and "underlying" in dd.columns:
+                    dd = dd[~dd["underlying"].astype(str).isin(blocked_keys)]
+                spot = dd[dd["leg_class"].astype(str).str.startswith("spot")].copy()
+                spot_b2_net = float((spot["net_notional_usd"] * spot["_ratio_b2"]).sum())
+                overlay_net = net_total - spot_b2_net
+                lines.extend(
+                    [
+                        "",
+                        (
+                            f"B2 long spot (pre-overlay): {spot_b2_net:,.2f}"
+                            f"   |   yieldboost overlay: {overlay_net:,.2f}"
+                            f"   |   net after overlay: {net_total:,.2f}"
+                        ),
+                    ]
+                )
+        except Exception:
+            pass
 
     if bucket == "bucket_4" and exposure_detail_csv and exposure_detail_csv.exists():
         try:

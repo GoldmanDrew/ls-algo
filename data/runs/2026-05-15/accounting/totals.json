@@ -23,20 +23,20 @@
   "kept_underlyings": 198,
   "net_exposure_total": -685171.1312114708,
   "gross_exposure_total": 4141853.820893071,
-  "net_exposure_bucket_1": -630235.735319779,
-  "gross_exposure_bucket_1": 3954800.898872405,
-  "net_exposure_bucket_2": -35593.72992492679,
-  "gross_exposure_bucket_2": 205425.7618254312,
+  "net_exposure_bucket_1": -650309.1165759183,
+  "gross_exposure_bucket_1": 3934727.5176162655,
+  "net_exposure_bucket_2": -37217.48580899936,
+  "gross_exposure_bucket_2": 203802.00594135866,
   "net_exposure_bucket_3": 84956.1703170264,
   "gross_exposure_bucket_3": 85924.9964790264,
   "net_exposure_bucket_5": 0.0,
   "gross_exposure_bucket_5": 0.0,
-  "net_exposure_bucket_4": -18857.25288576512,
-  "gross_exposure_bucket_4": -18857.25288576512,
+  "net_exposure_bucket_4": 2839.8842544466606,
+  "gross_exposure_bucket_4": 2839.8842544466606,
   "net_exposure_unbucketed": 0.0,
   "gross_exposure_unbucketed": 0.0,
-  "net_exposure_bucket_4_pair": -9564.966085765122,
-  "gross_exposure_bucket_4_pair": 131206.4581673651,
+  "net_exposure_bucket_4_pair": 12132.171054446659,
+  "gross_exposure_bucket_4_pair": 109509.32102715335,
   "yfinance_override": false,
   "yfinance_symbols_overridden": 0,
   "bucket_split_method": "held_exposure",
@@ -156,9 +156,9 @@
     "SMZ"
   ],
   "bucket_pnl": {
-    "bucket_2": 30821.168894904244,
+    "bucket_2": 31331.128620213585,
     "bucket_3": 10616.17897549071,
-    "bucket_1": 5474.2552512658,
-    "bucket_4": -1543.0355634507475
+    "bucket_1": 3157.2771986778807,
+    "bucket_4": 263.9827638278328
   }
 }

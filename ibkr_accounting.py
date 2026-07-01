@@ -2790,6 +2790,150 @@ def compute_plan_b4_structural_qty(
     return b4_usd / float(spot_mark_base)
 
 
+def compute_plan_b4_net_short_usd(
+    plan_sleeve_usd: dict[str, dict[str, float]],
+    underlying: str,
+) -> float:
+    """Net PLANNED short underlying USD = B4 short target minus the B1/B2 long target.
+
+    This is "how much the trade plan wanted to be net short" for the name: the
+    ``inverse_decay_bucket4`` underlying short leg (negative ``long_usd``) netted
+    against the core-leveraged / yieldboost long underlying targets (positive).
+    Returns a NEGATIVE dollar amount when the plan is net short (the B4 structural
+    short slice), and ``0.0`` when the plan nets long (no structural short — the
+    long book already covers the intended exposure).
+    """
+    w = plan_sleeve_usd.get(canonical_symbol(str(underlying))) or {}
+    net = float(w.get("b1", 0.0)) + float(w.get("b2", 0.0)) + float(w.get("b4", 0.0))
+    return net if net < 0.0 else 0.0
+
+
+def compute_plan_b4_net_short_qty(
+    plan_sleeve_usd: dict[str, dict[str, float]],
+    underlying: str,
+    spot_mark_base: float,
+) -> float:
+    """Signed share qty for the net planned short (``<= 0``); 0 when plan nets long."""
+    net_usd = compute_plan_b4_net_short_usd(plan_sleeve_usd, underlying)
+    if net_usd >= 0.0 or abs(float(spot_mark_base)) <= 1e-12:
+        return 0.0
+    return net_usd / float(spot_mark_base)
+
+
+def _load_underlying_marks_fast(pos_xml: Path, symbols: set[str]) -> dict[str, float]:
+    """Base-currency marks (``markPrice × fxRateToBase``) for ``symbols`` only.
+
+    Lightweight XML scan (no DataFrame build) used by the B4 plan-tracked PnL
+    integrator, which needs one mark per name at each plan-change boundary.
+    """
+    out: dict[str, float] = {}
+    if not Path(pos_xml).exists():
+        return out
+    want = {canonical_symbol(str(s)) for s in symbols}
+    try:
+        tree = ET.parse(pos_xml)
+    except Exception:
+        return out
+    for op in tree.iter("OpenPosition"):
+        sym = canonical_symbol(str(op.get("symbol", "") or ""))
+        if sym not in want or sym in out:
+            continue
+        try:
+            mk = float(op.get("markPrice", 0.0) or 0.0) * float(
+                op.get("fxRateToBase", 1.0) or 1.0
+            )
+        except (TypeError, ValueError):
+            continue
+        if mk > 0:
+            out[sym] = mk
+    return out
+
+
+def compute_b4_plan_tracked_short_unrealized(
+    *,
+    underlyings: set[str],
+    inception_date: str,
+    run_date: str,
+    runs_root: Path,
+    etf_to_delta: dict[str, float],
+    plan_sleeve_first: bool = True,
+) -> dict[str, float]:
+    """Cumulative unrealized PnL of the net planned B4 short, tracked over time.
+
+    The structural short is a piecewise-constant share position: it changes only
+    when the trade plan changes. Between plan updates the held short qty is fixed,
+    so the path integral of ``qty · Δmark`` telescopes to segment endpoints. We
+    therefore evaluate the underlying's mark and the net planned short qty at each
+    plan-change boundary in ``[inception_date, run_date]`` (carrying the last known
+    plan forward) and sum ``qty(bᵢ) · (mark(bᵢ₊₁) − mark(bᵢ))`` across segments.
+
+    A short qty is negative, so a falling underlying accrues a POSITIVE PnL while
+    a rising one accrues a loss — measured only from ``inception_date`` forward.
+    """
+    result: dict[str, float] = {u: 0.0 for u in underlyings}
+    if not underlyings or not inception_date or run_date < inception_date:
+        return result
+
+    # Plan-change dates = run dirs carrying a proposed_trades.csv. Include the
+    # latest plan on/at each boundary via carry-forward. Boundaries are the
+    # inception, every plan date strictly inside the window, and the run date.
+    plan_dates: list[str] = []
+    if runs_root.exists():
+        for child in runs_root.iterdir():
+            if child.is_dir() and (child / "proposed_trades.csv").exists():
+                plan_dates.append(child.name)
+    plan_dates.sort()
+
+    boundaries = {inception_date, run_date}
+    for pd_ in plan_dates:
+        if inception_date < pd_ <= run_date:
+            boundaries.add(pd_)
+    boundary_list = sorted(boundaries)
+
+    def _latest_plan_on_or_before(day: str) -> str | None:
+        cands = [p for p in plan_dates if p <= day]
+        return cands[-1] if cands else None
+
+    _plan_cache: dict[str, dict[str, dict[str, float]]] = {}
+
+    def _plan_for(day: str) -> dict[str, dict[str, float]]:
+        pdate = _latest_plan_on_or_before(day)
+        if pdate is None:
+            return {}
+        if pdate not in _plan_cache:
+            _plan_cache[pdate] = load_plan_sleeve_bucket_usd(
+                runs_root / pdate / "proposed_trades.csv",
+                etf_to_delta,
+                sleeve_first=plan_sleeve_first,
+            )
+        return _plan_cache[pdate]
+
+    # Per underlying, build the ordered (mark, qty) samples at boundaries that
+    # have a valid mark, then integrate consecutive segments.
+    samples: dict[str, list[tuple[float, float]]] = {u: [] for u in underlyings}
+    for b in boundary_list:
+        marks = _load_underlying_marks_fast(
+            runs_root / b / "ibkr_flex" / "flex_positions.xml", underlyings
+        )
+        plan = _plan_for(b)
+        for u in underlyings:
+            mk = float(marks.get(u, 0.0))
+            if mk <= 0:
+                continue
+            qty = compute_plan_b4_net_short_qty(plan, u, mk)
+            samples[u].append((mk, qty))
+
+    for u in underlyings:
+        seq = samples[u]
+        cum = 0.0
+        for i in range(len(seq) - 1):
+            mk_i, qty_i = seq[i]
+            mk_next, _ = seq[i + 1]
+            cum += qty_i * (mk_next - mk_i)
+        result[u] = cum
+    return result
+
+
 def compute_implied_b4_short(
     underlying: str,
     pos: pd.DataFrame,
@@ -2939,7 +3083,9 @@ def resolve_b4_structural_short_usd_by_underlying(
             if abs(_qty) > 1e-9 and _mark > 1e-12:
                 out[u_str] = _qty * _mark
                 continue
-            _plan_usd = float((plan_sleeve_usd.get(u_str) or {}).get("b4", 0.0))
+            # Net PLANNED short USD (B4 short target netted against B1/B2 long),
+            # matching the qty basis used for attribution.
+            _plan_usd = compute_plan_b4_net_short_usd(plan_sleeve_usd, u_str)
             if abs(_plan_usd) >= float(b4_attribution_min_usd):
                 out[u_str] = _plan_usd
                 continue
@@ -4504,38 +4650,13 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     trade_events = parse_trade_events(flex_trades_path)
     pos = parse_open_positions(flex_positions_path)
 
-    # ── B4 structural-short inception marks (point-in-time attribution) ──────
-    # The synthetic B4 short is measured from the sleeve's go-live date, so its
-    # unrealized PnL reflects only the underlying's move since then (not the
-    # since-inception spot line). Read the underlying spot marks captured on the
-    # inception run; names absent there get no structural short (safe: they are
-    # treated as not-yet-hedged). ``_b4_inject_active`` gates the whole feature.
+    # ── B4 structural-short point-in-time gate ───────────────────────────────
+    # The net planned B4 short is measured from the sleeve's go-live date via a
+    # plan-tracked path integral (see ``compute_b4_plan_tracked_short_unrealized``),
+    # so its unrealized PnL reflects only the underlying's move since then. The
+    # ``_b4_inject_active`` flag gates the whole feature (no structural short on
+    # runs before the go-live date; the pre-inception move stays in B1/B2).
     _b4_inject_active = bool(b4_inject_start_date) and run_date >= b4_inject_start_date
-    _b4_inject_ref_marks: dict[str, float] = {}
-    if _b4_inject_active:
-        _inject_pos_path = (
-            PROJECT_ROOT / "data" / "runs" / b4_inject_start_date / "ibkr_flex" / "flex_positions.xml"
-        )
-        if _inject_pos_path.exists():
-            try:
-                _inject_pos = parse_open_positions(_inject_pos_path)
-                for _, _ir in _inject_pos.iterrows():
-                    try:
-                        _isym = canonical_symbol(str(_ir.get("symbol", "") or ""))
-                        _imk = float(_ir.get("markPrice", 0.0) or 0.0) * float(
-                            _ir.get("fxRateToBase", 1.0) or 1.0
-                        )
-                    except (TypeError, ValueError):
-                        continue
-                    if _isym and _imk > 0:
-                        _b4_inject_ref_marks[_isym] = _imk
-            except Exception as _e:  # noqa: BLE001 - tolerate a missing/short snapshot
-                print(f"[ACCOUNTING] WARN: could not load B4 inception marks: {_e}")
-        else:
-            print(
-                f"[ACCOUNTING] WARN: B4 inception snapshot missing at {_inject_pos_path}; "
-                "structural-short PnL will be zero until it is available."
-            )
 
     cash = parse_cash_transactions(flex_cash_path)
     borrow_details = parse_borrow_fee_details(flex_borrow_details_path, run_date)
@@ -5743,17 +5864,14 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     for _u in _all_underlyings:
         _u_str = str(_u)
         _mark_u = float(_spot_marks.get(_u_str, 0.0))
+        # B4 structural short = the NET PLANNED short from the trade plan (B4 short
+        # target netted against the B1/B2 long target), NOT a mirror of the B1
+        # long. Negative when the plan is net short; 0 when the plan nets long.
         _plan_q_u = (
-            compute_plan_b4_structural_qty(_plan_sleeve_usd, _u_str, _mark_u)
+            compute_plan_b4_net_short_qty(_plan_sleeve_usd, _u_str, _mark_u)
             if _b4_inject_active
             else 0.0
         )
-        # Cap the plan mirror at the actual long line (no invert / no exceed).
-        _actual_q_u = float(_spot_qty.get(_u_str, 0.0))
-        if _plan_q_u < 0 and _actual_q_u > 0:
-            _plan_q_u = max(_plan_q_u, -_actual_q_u)
-        elif _actual_q_u <= 0 or _plan_q_u > 0:
-            _plan_q_u = 0.0
         _plan_b4_qty_by_u[_u_str] = _plan_q_u
         if _u_str not in ledger_plan_seed_b4_underlyings or _u_str not in _plan_ratio_b4:
             continue
@@ -5781,8 +5899,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     for _u in _all_underlyings:
         _u_str = str(_u)
         _plan_q = float(_plan_b4_qty_by_u.get(_u_str, 0.0))
-        # Derive USD from the (already capped) plan qty so the persisted short
-        # equals the capped number used everywhere else.
+        # Derive USD from the net-planned-short qty so the persisted short equals
+        # the number used everywhere else (exposure + PnL).
         _plan_usd = _plan_q * float(_spot_marks.get(_u_str, 0.0))
         _imp_q = float(_implied_b4_short_qty.get(_u_str, 0.0))
         _imp_usd = float(_implied_b4_short_usd.get(_u_str, 0.0))
@@ -5803,21 +5921,23 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             _b4_struct_usd_by_u[_u_str] = _imp_usd
             _b4_struct_src_by_u[_u_str] = "etf_implied"
 
-    # ── Point-in-time B4 structural-short unrealized PnL ─────────────────────
-    # The synthetic short's PnL is booked only for the underlying's move *since*
-    # the sleeve went live: ``short_qty × (mark_now − mark_at_inception)``. The
-    # short qty is negative, so a rising underlying (long gains) shows as a B4
-    # loss while B1/B2 keep the full long move — with no retroactive attribution
-    # of the pre-inception spot line. Names with no inception mark contribute 0.
+    # ── Plan-tracked point-in-time B4 structural-short unrealized PnL ─────────
+    # The net planned short is a piecewise-constant share position that changes
+    # only when the trade plan changes. We integrate ``qty · Δmark`` across
+    # plan-change boundaries from the sleeve go-live date to the run date, using
+    # each boundary's plan target (last known plan carried forward). The short
+    # qty is negative, so a falling underlying accrues a B4 gain while B1/B2 keep
+    # the rest of the spot move — measured only from inception forward.
     _b4_pit_unrealized_usd: dict[str, float] = {}
     if _b4_inject_active:
-        for _u_str, _sq in _b4_struct_qty_by_u.items():
-            _ref_mk = float(_b4_inject_ref_marks.get(_u_str, 0.0))
-            _now_mk = float(_spot_marks.get(_u_str, 0.0))
-            if _ref_mk > 1e-12 and _now_mk > 1e-12 and abs(_sq) > 1e-12:
-                _b4_pit_unrealized_usd[_u_str] = _sq * (_now_mk - _ref_mk)
-            else:
-                _b4_pit_unrealized_usd[_u_str] = 0.0
+        _b4_pit_unrealized_usd = compute_b4_plan_tracked_short_unrealized(
+            underlyings=set(_b4_struct_qty_by_u.keys()),
+            inception_date=b4_inject_start_date,
+            run_date=run_date,
+            runs_root=PROJECT_ROOT / "data" / "runs",
+            etf_to_delta=etf_to_delta_map,
+            plan_sleeve_first=plan_sleeve_first,
+        )
 
     _spot_exposure_ratio_map: dict[str, SpotBucketRatios] = {}
     _hedge_spot_meta_map: dict[str, HedgeRatioSpotMeta] = {}

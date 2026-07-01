@@ -1536,11 +1536,21 @@ def _plot_summary_page(
     tbl = ax.table(cellText=cells, colLabels=headers, loc="center", cellLoc="center")
     tbl.auto_set_font_size(False)
     tbl.set_fontsize(8)
-    tbl.scale(1.0, 1.35)
+    # Size each column to its widest cell so long values (pair names, the
+    # ``inverse_decay b4`` sleeve label) stop overflowing into their neighbours,
+    # then left-align the two text columns so they read cleanly.
+    tbl.auto_set_column_width(col=list(range(len(headers))))
+    _left_align_cols = {0, 1}  # Pair, Sleeve
+    for (r, c), cell in tbl.get_celld().items():
+        if r >= 1 and c in _left_align_cols:
+            cell.set_text_props(ha="left")
+            cell.PAD = 0.04
+    tbl.scale(1.0, 1.45)
     for c in range(len(headers)):
         hdr = tbl[0, c]
         hdr.set_facecolor("#1f2937")
-        hdr.set_text_props(color="white", fontweight="bold")
+        hdr.set_text_props(color="white", fontweight="bold",
+                           ha="left" if c in _left_align_cols else "center")
     for r in range(1, n + 1):
         rt = ratchet_by_pair.get(str(active.iloc[r - 1]["pair"]), {})
         released = bool(rt.get("released", False)) if rt else False

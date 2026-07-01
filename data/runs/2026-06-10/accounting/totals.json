@@ -23,20 +23,20 @@
   "kept_underlyings": 199,
   "net_exposure_total": 223838.7543088498,
   "gross_exposure_total": 3340915.40208083,
-  "net_exposure_bucket_1": 155682.79573605116,
-  "gross_exposure_bucket_1": 2370307.246083172,
-  "net_exposure_bucket_2": 5755.4952157009175,
-  "gross_exposure_bucket_2": 897180.7973144542,
+  "net_exposure_bucket_1": 162340.12411798027,
+  "gross_exposure_bucket_1": 2376964.574465101,
+  "net_exposure_bucket_2": 13921.289553242716,
+  "gross_exposure_bucket_2": 905346.5916519961,
   "net_exposure_bucket_3": 106151.17263161798,
   "gross_exposure_bucket_3": 107428.78795772439,
   "net_exposure_bucket_5": 2468.03013816,
   "gross_exposure_bucket_5": 12217.310138159999,
-  "net_exposure_bucket_4": 67913.91102015089,
-  "gross_exposure_bucket_4": 67913.91102015089,
+  "net_exposure_bucket_4": 53090.78830068,
+  "gross_exposure_bucket_4": 53090.78830068,
   "net_exposure_unbucketed": -4874.639999999999,
   "gross_exposure_unbucketed": 4874.639999999999,
-  "net_exposure_bucket_4_pair": 71028.84782015088,
-  "gross_exposure_bucket_4_pair": 315904.6052775291,
+  "net_exposure_bucket_4_pair": 56657.62855012091,
+  "gross_exposure_bucket_4_pair": 330275.8245475591,
   "yfinance_override": false,
   "yfinance_symbols_overridden": 0,
   "bucket_split_method": "held_exposure",
@@ -172,10 +172,10 @@
     "SMZ"
   ],
   "bucket_pnl": {
-    "bucket_2": 41549.286175532594,
-    "bucket_1": 18952.27530081251,
-    "bucket_4": 7244.934311101477,
+    "bucket_2": 42421.01819537873,
+    "bucket_1": 27027.11042726598,
     "bucket_3": 3160.82314806253,
-    "bucket_5": -5.76520222912265
+    "bucket_5": -5.76520222912265,
+    "bucket_4": -1701.6328351981235
   }
 }
