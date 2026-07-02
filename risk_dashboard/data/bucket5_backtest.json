@@ -1,7 +1,7 @@
 {
   "schema": "bucket5_backtest_panel.v1",
-  "generated_at_utc": "2026-07-02T13:33:16.835004+00:00",
-  "run_date": "2026-07-01",
+  "generated_at_utc": "2026-07-02T15:22:35.897876+00:00",
+  "run_date": "2026-07-02",
   "variants": {
     "B_live": {
       "preset": "B_production",
@@ -13,23 +13,23 @@
         "ladder_per_roll_%": 2.4,
         "rebalances": 173,
         "sleeve_financing_%/yr": -0.005463,
-        "sleeve_carry_%/yr": 0.039173,
-        "combined_CAGR": 0.146131,
-        "combined_Vol": 0.137449,
-        "combined_Sharpe": 1.05538,
+        "sleeve_carry_%/yr": 0.038833,
+        "combined_CAGR": 0.145719,
+        "combined_Vol": 0.137451,
+        "combined_Sharpe": 1.052757,
         "combined_MaxDD": -0.064445,
-        "combined_Calmar": 2.267525,
+        "combined_Calmar": 2.261137,
         "ladder_premium_$": 0.0,
         "aug24": 0.211018,
         "realized_$": 849962.018556,
-        "redeploy_extra_$": 74844.334512,
+        "redeploy_extra_$": 74029.101112,
         "hedge_kind": "ladder",
         "dynamic_budget": true
       },
       "crash": {
-        "crash_mild_-20%": 0.3284728217194112,
-        "crash_severe_-30%": 0.8917576626628462,
-        "crash_volmageddon_-40%": 1.7419192562774568
+        "crash_mild_-20%": 0.3000218009856059,
+        "crash_severe_-30%": 0.8006252061692188,
+        "crash_volmageddon_-40%": 1.5443223038744698
       },
       "meta": {
         "start": "2022-03-30",
@@ -4324,7 +4324,7 @@
           ],
           [
             "2026-07-02",
-            1781577.4544
+            1778869.4397
           ]
         ],
         "drawdown": [
@@ -8598,7 +8598,7 @@
           ],
           [
             "2026-07-02",
-            0.0
+            -0.001
           ]
         ]
       }
@@ -8613,23 +8613,23 @@
         "ladder_per_roll_%": 3.0,
         "rebalances": 173,
         "sleeve_financing_%/yr": -0.005463,
-        "sleeve_carry_%/yr": 0.039173,
-        "combined_CAGR": 0.204473,
-        "combined_Vol": 0.260098,
-        "combined_Sharpe": 0.823527,
+        "sleeve_carry_%/yr": 0.038833,
+        "combined_CAGR": 0.204067,
+        "combined_Vol": 0.2601,
+        "combined_Sharpe": 0.82223,
         "combined_MaxDD": -0.127831,
-        "combined_Calmar": 1.599555,
+        "combined_Calmar": 1.596383,
         "ladder_premium_$": 0.0,
         "aug24": 0.326202,
         "realized_$": 1294612.160982,
-        "redeploy_extra_$": 125914.166889,
+        "redeploy_extra_$": 124675.2494,
         "hedge_kind": "ladder",
         "dynamic_budget": true
       },
       "crash": {
-        "crash_mild_-20%": 0.7891048921748853,
-        "crash_severe_-30%": 2.5508320545584837,
-        "crash_volmageddon_-40%": 5.731803499350975
+        "crash_mild_-20%": 0.7257935918231182,
+        "crash_severe_-30%": 2.297343392404296,
+        "crash_volmageddon_-40%": 5.098624206022671
       },
       "meta": {
         "start": "2022-03-30",
@@ -12924,7 +12924,7 @@
           ],
           [
             "2026-07-02",
-            2198391.1813
+            2195259.4824
           ]
         ],
         "drawdown": [
@@ -17198,7 +17198,7 @@
           ],
           [
             "2026-07-02",
-            -0.0054
+            -0.0068
           ]
         ]
       }
@@ -17213,23 +17213,23 @@
         "ladder_per_roll_%": 2.4,
         "rebalances": 806,
         "sleeve_financing_%/yr": -0.005405,
-        "sleeve_carry_%/yr": 0.01553,
-        "combined_CAGR": 0.131367,
-        "combined_Vol": 0.191617,
-        "combined_Sharpe": 0.733325,
+        "sleeve_carry_%/yr": 0.015454,
+        "combined_CAGR": 0.131289,
+        "combined_Vol": 0.191618,
+        "combined_Sharpe": 0.732968,
         "combined_MaxDD": -0.41614,
-        "combined_Calmar": 0.315679,
+        "combined_Calmar": 0.315493,
         "ladder_premium_$": 0.0,
         "aug24": 0.059785,
         "realized_$": 8949008.449383,
-        "redeploy_extra_$": 2188088.794513,
+        "redeploy_extra_$": 2179468.6004,
         "hedge_kind": "ladder",
         "dynamic_budget": true
       },
       "crash": {
-        "crash_mild_-20%": 0.328472821719418,
-        "crash_severe_-30%": 0.8917576626628635,
-        "crash_volmageddon_-40%": 1.7419192562774932
+        "crash_mild_-20%": 0.30002180098560577,
+        "crash_severe_-30%": 0.8006252061692184,
+        "crash_volmageddon_-40%": 1.5443223038744707
       },
       "meta": {
         "start": "2008-01-02",
@@ -19908,7 +19908,7 @@
           ],
           [
             "2026-07-02",
-            9685708.5302
+            9673552.4885
           ]
         ],
         "drawdown": [
@@ -22566,7 +22566,7 @@
           ],
           [
             "2026-07-02",
-            0.0
+            -0.0008
           ]
         ]
       }
@@ -22581,23 +22581,23 @@
         "ladder_per_roll_%": 3.0,
         "rebalances": 806,
         "sleeve_financing_%/yr": -0.005405,
-        "sleeve_carry_%/yr": 0.015525,
-        "combined_CAGR": 0.156416,
+        "sleeve_carry_%/yr": 0.015454,
+        "combined_CAGR": 0.156349,
         "combined_Vol": 0.173086,
-        "combined_Sharpe": 0.923585,
+        "combined_Sharpe": 0.923249,
         "combined_MaxDD": -0.362588,
-        "combined_Calmar": 0.431387,
+        "combined_Calmar": 0.431202,
         "ladder_premium_$": 0.0,
         "aug24": 0.106608,
         "realized_$": 13696830.52766,
-        "redeploy_extra_$": 3169538.32659,
+        "redeploy_extra_$": 3157400.563035,
         "hedge_kind": "ladder",
         "dynamic_budget": true
       },
       "crash": {
-        "crash_mild_-20%": 0.7891048921748851,
-        "crash_severe_-30%": 2.5508320545584793,
-        "crash_volmageddon_-40%": 5.731803499350964
+        "crash_mild_-20%": 0.7257935918231175,
+        "crash_severe_-30%": 2.297343392404296,
+        "crash_volmageddon_-40%": 5.098624206022669
       },
       "meta": {
         "start": "2008-01-02",
@@ -25276,7 +25276,7 @@
           ],
           [
             "2026-07-02",
-            14490959.5297
+            14475519.6153
           ]
         ],
         "drawdown": [
@@ -27934,7 +27934,7 @@
           ],
           [
             "2026-07-02",
-            0.0
+            -0.0007
           ]
         ]
       }
