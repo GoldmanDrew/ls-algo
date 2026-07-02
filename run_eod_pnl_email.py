@@ -2502,6 +2502,37 @@ def load_position_discrepancies(run_date: str) -> pd.DataFrame:
     target = target[target["symbol"].astype(bool)].copy()
     target = target.groupby("symbol", as_index=False)["target_net_usd"].sum()
 
+    reason_cols = [
+        "purgatory",
+        "purgatory_no_locate",
+        "purgatory_borrow_band",
+        "purgatory_net_edge",
+        "purgatory_vol_ratio",
+    ]
+    plan_reason = plan[["ETF"] + [c for c in reason_cols if c in plan.columns]].copy()
+    plan_reason = plan_reason.rename(columns={"ETF": "symbol"})
+    for c in reason_cols:
+        if c not in plan_reason.columns:
+            plan_reason[c] = False
+        plan_reason[c] = plan_reason[c].fillna(False).astype(bool)
+    if not plan_reason.empty:
+        plan_reason = plan_reason.groupby("symbol", as_index=False)[reason_cols].max()
+    else:
+        plan_reason = pd.DataFrame(columns=["symbol"] + reason_cols)
+
+    def _discrepancy_blocker(row: pd.Series) -> str:
+        if bool(row.get("purgatory_no_locate", False)):
+            return "no_locate"
+        if bool(row.get("purgatory_borrow_band", False)):
+            return "borrow_band"
+        if bool(row.get("purgatory_net_edge", False)):
+            return "net_edge"
+        if bool(row.get("purgatory_vol_ratio", False)):
+            return "vol_ratio"
+        if bool(row.get("purgatory", False)):
+            return "purgatory"
+        return "none"
+
     pos = parse_open_positions(flex_positions_xml)
     if pos.empty:
         actual = pd.DataFrame(columns=["symbol", "actual_net_usd"])
@@ -2529,9 +2560,15 @@ def load_position_discrepancies(run_date: str) -> pd.DataFrame:
     blocked_etfs |= {e for e, u in etf_to_under.items() if u in blacklist}
 
     merged = target.merge(actual, on="symbol", how="outer")
+    merged = merged.merge(plan_reason, on="symbol", how="left")
     merged["target_net_usd"] = pd.to_numeric(merged["target_net_usd"], errors="coerce").fillna(0.0)
     merged["actual_net_usd"] = pd.to_numeric(merged["actual_net_usd"], errors="coerce").fillna(0.0)
     merged["symbol"] = merged["symbol"].astype(str).map(canonical_symbol)
+    for c in reason_cols:
+        if c not in merged.columns:
+            merged[c] = False
+        merged[c] = merged[c].fillna(False).astype(bool)
+    merged["discrepancy_blocker"] = merged.apply(_discrepancy_blocker, axis=1)
     merged = merged[merged["symbol"].isin(allowed_etfs)].copy()
     if blocked_etfs:
         merged = merged[~merged["symbol"].isin(blocked_etfs)].copy()
@@ -2674,6 +2711,12 @@ def write_position_discrepancy_csvs(run_date: str, discrepancy_df: pd.DataFrame)
         "actual_gross_usd",
         "gross_gap_usd",
         "under_exposed",
+        "discrepancy_blocker",
+        "purgatory",
+        "purgatory_no_locate",
+        "purgatory_borrow_band",
+        "purgatory_net_edge",
+        "purgatory_vol_ratio",
     ]
     out = discrepancy_df.copy()
     for c in cols:

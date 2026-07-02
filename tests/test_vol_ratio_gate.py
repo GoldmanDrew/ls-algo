@@ -18,6 +18,46 @@ def _make_df(rows: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def test_purgatory_reason_components_are_emitted() -> None:
+    df = _make_df(
+        [
+            {
+                "ETF": "MTYY",
+                "bucket": "bucket_2",
+                "borrow_current": np.nan,
+                "borrow_missing_from_ftp": True,
+                "exclude_no_shares": True,
+                "net_edge_p50_annual": 0.65,
+                "vol_ratio_outlier": False,
+            },
+            {
+                "ETF": "QBY",
+                "bucket": "bucket_2",
+                "borrow_current": 0.20,
+                "borrow_missing_from_ftp": False,
+                "exclude_no_shares": False,
+                "net_edge_p50_annual": 0.62,
+                "vol_ratio_outlier": False,
+            },
+        ]
+    )
+    out = ds.recompute_purgatory_by_bucket(
+        df,
+        screener_cfg={"per_bucket": {"bucket_2": {"entry_borrow_cap": 0.15, "keep_borrow_cap": 0.25}}},
+        sleeves_cfg=None,
+    )
+
+    mtyy = out.loc[out["ETF"] == "MTYY"].iloc[0]
+    assert bool(mtyy["purgatory"]) is True
+    assert bool(mtyy["purgatory_no_locate"]) is True
+    assert bool(mtyy["purgatory_borrow_band"]) is False
+
+    qby = out.loc[out["ETF"] == "QBY"].iloc[0]
+    assert bool(qby["purgatory"]) is True
+    assert bool(qby["purgatory_no_locate"]) is False
+    assert bool(qby["purgatory_borrow_band"]) is True
+
+
 def test_clean_pair_is_not_outlier() -> None:
     df = _make_df(
         [

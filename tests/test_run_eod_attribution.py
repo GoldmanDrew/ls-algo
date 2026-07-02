@@ -750,6 +750,9 @@ def test_load_position_discrepancies_uses_optimal_target_usd(tmp_path, monkeypat
                 "optimal_long_usd": 5000.0,
                 "optimal_short_usd": -15000.0,
                 "strategy_tag": "ls",
+                "purgatory": True,
+                "purgatory_no_locate": True,
+                "purgatory_borrow_band": False,
             }
         ]
     ).to_csv(run_dir / "proposed_trades.csv", index=False)
@@ -765,6 +768,8 @@ def test_load_position_discrepancies_uses_optimal_target_usd(tmp_path, monkeypat
     df = load_position_discrepancies("2026-05-30")
     row = df[df["symbol"] == "MTYY"].iloc[0]
     assert row["target_net_usd"] == pytest.approx(-15000.0)
+    assert row["discrepancy_blocker"] == "no_locate"
+    assert bool(row["purgatory_no_locate"]) is True
 
 
 def test_load_position_discrepancies_merges_optimal_targets_csv(tmp_path, monkeypatch):

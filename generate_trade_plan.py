@@ -2440,7 +2440,32 @@ def main() -> None:
         _ne_ok = _ne_eff.fillna(-1.0).ge(0.0)
     else:
         _ne_ok = pd.Series(True, index=screened.index)
-    eligible = screened.loc[(screened["purgatory"] != True) & _ne_ok].copy()  # noqa: E712
+
+    def _bool_component(col: str) -> pd.Series:
+        return screened.get(col, pd.Series(False, index=screened.index)).fillna(False).astype(bool)
+
+    purgatory_no_locate = _bool_component("purgatory_no_locate")
+    # Backward-compatible derivation for older screened CSVs that predate explicit
+    # reason columns. Only no-locate can be reconstructed safely from row fields.
+    if "purgatory_no_locate" not in screened.columns:
+        no_shares = screened.get("exclude_no_shares", pd.Series(False, index=screened.index)).fillna(False).astype(bool)
+        missing_ftp = screened.get("borrow_missing_from_ftp", pd.Series(False, index=screened.index)).fillna(False).astype(bool)
+        purgatory_no_locate = no_shares | missing_ftp
+
+    purgatory_borrow_band = _bool_component("purgatory_borrow_band")
+    purgatory_net_edge = _bool_component("purgatory_net_edge")
+    purgatory_vol_ratio = _bool_component("purgatory_vol_ratio")
+    purgatory_any = screened.get("purgatory", pd.Series(False, index=screened.index)).fillna(False).astype(bool)
+    # Rows that are blocked *only* by no-locate should stay out of executable
+    # targets, but remain eligible for structural optimal analysis.
+    purgatory_structural = purgatory_any & ~(
+        purgatory_no_locate
+        & ~purgatory_borrow_band
+        & ~purgatory_net_edge
+        & ~purgatory_vol_ratio
+    )
+
+    eligible = screened.loc[(~purgatory_any) & _ne_ok].copy()
     # Low-N vol fallback: brand-new underlyings may lack vol_underlying_annual but have
     # shorter-window realized vol on the screener row — enough for the B4 entry floor.
     if low_n_keys and low_n_vol_cols:
@@ -3041,6 +3066,103 @@ def main() -> None:
         # **structural-only** pipeline for the optimal end-state target (independent of today's
         # IBKR shares_available + ADV constraints). See ``_run_book_cap_pipeline_quiet``.
         sized_pre_caps = sized.copy()
+        optimal_pre_caps = sized_pre_caps.copy()
+
+        # For structural optimal analysis, no-locate-only rows should be allowed
+        # into the stock sleeve weights: they represent desired exposure that
+        # cannot be opened today. Other purgatory reasons (borrow keep band,
+        # low edge, vol/data-quality) remain excluded from optimal.
+        structural_eligible = screened.loc[(~purgatory_structural) & _ne_ok].copy()
+        if not structural_eligible.empty:
+            try:
+                s_is_yb, s_in_b2, s_in_flow = _b2_b4_universe_masks(
+                    structural_eligible, flow_program_etfs=flow_program_etfs
+                )
+                s_nd = pd.to_numeric(structural_eligible["net_decay_annual"], errors="coerce")
+                s_neg_decay = s_nd < 0
+                s_b = structural_eligible["borrow_annual"]
+                s_core_borrow_ok = (~np.isfinite(s_b)) | (s_b <= b1_entry_borrow_cap)
+                s_yb_borrow_ok = (~np.isfinite(s_b)) | (s_b <= b2_entry_borrow_cap)
+                s_pos_beta = structural_eligible["Delta"].gt(0)
+                s_ne_p50 = pd.to_numeric(structural_eligible.get("net_edge_p50_annual"), errors="coerce")
+                s_yb_edge_ok = (
+                    np.isfinite(s_ne_p50) & (s_ne_p50 >= yb_min_edge)
+                    if yb_min_edge > 0
+                    else pd.Series(True, index=structural_eligible.index)
+                )
+                s_core_pre_decay = (
+                    s_pos_beta
+                    & structural_eligible["delta_abs"].ge(core_delta_min)
+                    & s_core_borrow_ok
+                )
+                s_core_neg_decay_reset = (
+                    s_pos_beta
+                    & structural_eligible["delta_abs"].ge(core_delta_min)
+                    & s_core_borrow_ok
+                    & s_neg_decay
+                )
+                s_core_decay_gate = _core_net_decay_gate_for_core(
+                    structural_eligible,
+                    core_pre_decay=s_core_pre_decay,
+                    core_neg_decay_reset=s_core_neg_decay_reset,
+                    core_rules=core_rules,
+                    state_path=core_decay_state_path,
+                    run_date=args.run_date,
+                )
+                s_in_core = s_core_pre_decay & s_core_decay_gate & ~s_in_b2
+                s_in_yb = (
+                    s_pos_beta
+                    & s_in_b2
+                    & ~s_in_flow
+                    & s_yb_borrow_ok
+                    & s_yb_edge_ok
+                )
+
+                opt_stock_parts: list[pd.DataFrame] = []
+                s_core_names = structural_eligible.loc[s_in_core].copy()
+                if not s_core_names.empty and core_budget > 0:
+                    if core_weight_method == "decay_score":
+                        w = _decay_score_weights(s_core_names, core_weighting_cfg, sleeve_name="core_leveraged")
+                    else:
+                        w = np.ones(len(s_core_names)) / len(s_core_names)
+                    s_core_names["gross_target_usd"] = core_budget * w
+                    s_core_names["sleeve"] = "core_leveraged"
+                    s_core_names["_pre_cap_score_weight"] = w
+                    s_core_names = _with_b1_trend_audit_columns(s_core_names, core_weighting_cfg)
+                    opt_stock_parts.append(s_core_names)
+
+                s_yb_names = structural_eligible.loc[s_in_yb].copy()
+                if yb_enabled and not s_yb_names.empty and yb_budget > 0:
+                    if yb_weight_method == "decay_score":
+                        w = _decay_score_weights(s_yb_names, yb_weighting_cfg, sleeve_name="yieldboost")
+                    else:
+                        w = np.ones(len(s_yb_names)) / len(s_yb_names)
+                    s_yb_names["gross_target_usd"] = yb_budget * w
+                    s_yb_names["sleeve"] = "yieldboost"
+                    s_yb_names["_pre_cap_score_weight"] = w
+                    opt_stock_parts.append(s_yb_names)
+
+                if opt_stock_parts:
+                    opt_stock = pd.concat(opt_stock_parts, axis=0, ignore_index=False)
+                    non_stock = optimal_pre_caps[
+                        ~optimal_pre_caps.get("sleeve", pd.Series("", index=optimal_pre_caps.index))
+                        .astype(str)
+                        .isin(["core_leveraged", "yieldboost"])
+                    ].copy()
+                    optimal_pre_caps = pd.concat([opt_stock, non_stock], axis=0, ignore_index=False)
+                    optimal_pre_caps = optimal_pre_caps[~optimal_pre_caps.index.duplicated(keep="first")].copy()
+                    added = sorted(
+                        set(optimal_pre_caps.index).difference(set(sized_pre_caps.index))
+                    )
+                    if added:
+                        added_syms = ", ".join(sorted(optimal_pre_caps.loc[added, "ETF"].astype(str).map(_norm_sym).tolist()))
+                        print(
+                            "[INFO] optimal-target analysis includes no-locate-only row(s) "
+                            f"excluded from executable sizing: {added_syms}"
+                        )
+            except Exception as ex:
+                print(f"[WARN] optimal no-locate structural eligibility failed ({ex}); using executable pre-cap frame")
+                optimal_pre_caps = sized_pre_caps.copy()
 
         sized, _cap_diag = apply_gross_sizing_book_caps(
             sized,
@@ -3252,7 +3374,7 @@ def main() -> None:
         }
         try:
             optimal_sized, _optimal_diag = _run_book_cap_pipeline_quiet(
-                sized_pre_caps,
+                optimal_pre_caps,
                 target_gross_usd=float(target_gross_usd),
                 delta_floor=float(delta_floor),
                 strategy=strategy,
