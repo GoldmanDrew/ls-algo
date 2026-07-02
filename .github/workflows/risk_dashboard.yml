@@ -77,10 +77,6 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
 
-      - name: Run dashboard tests
-        run: |
-          python -m pytest risk_dashboard/tests tests/test_dashboard_accounting_parity.py tests/test_dashboard_phase0_4.py -q
-
       - name: Resolve run date
         id: date
         run: |
@@ -111,6 +107,10 @@ jobs:
             --fail-if-stale \
             $EXTRA
           echo "gates_passed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Run dashboard tests
+        run: |
+          python -m pytest risk_dashboard/tests tests/test_dashboard_accounting_parity.py tests/test_dashboard_phase0_4.py -q
 
       - name: Commit snapshot
         run: |

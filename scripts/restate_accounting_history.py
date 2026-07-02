@@ -51,6 +51,34 @@ def run_accounting(run_date: str) -> None:
     subprocess.run(cmd, cwd=PROJECT_ROOT, check=True)
 
 
+def finalize_accounting_run(run_date: str) -> None:
+    """Mirror the EOD tail: continuity-adjust bucket CSVs and restore broker NAV."""
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    from run_eod_pnl_email import apply_bucket_pnl_continuity
+    from scripts.run_data_contract import patch_totals_nav
+
+    totals_path = RUNS_ROOT / run_date / "accounting" / "totals.json"
+    if not totals_path.is_file():
+        return
+    totals = json.loads(totals_path.read_text(encoding="utf-8"))
+    totals = apply_bucket_pnl_continuity(run_date, totals)
+    totals_path.write_text(json.dumps(totals, indent=2), encoding="utf-8")
+    patch_totals_nav(run_date, runs_root=RUNS_ROOT)
+
+
+def rebuild_latest_dashboard(run_date: str) -> None:
+    cmd = [
+        sys.executable,
+        str(PROJECT_ROOT / "scripts" / "dashboard_pipeline.py"),
+        "--run-date",
+        run_date,
+        "--write-manifest",
+        "--fail-if-stale",
+    ]
+    subprocess.run(cmd, cwd=PROJECT_ROOT, check=True)
+
+
 def _skip_pnl_history_run_date(run_date: str) -> bool:
     """Saturday Flex snapshots are omitted from pnl_history (use next weekday row)."""
     return datetime.strptime(run_date, "%Y-%m-%d").weekday() == 5
@@ -76,6 +104,11 @@ def main() -> int:
         "--rebuild-dashboard",
         action="store_true",
         help="After restate, rebuild all risk_dashboard/data snapshots from accounting outputs.",
+    )
+    parser.add_argument(
+        "--skip-dashboard",
+        action="store_true",
+        help="Skip rebuilding latest.json after restate (not recommended).",
     )
     parser.add_argument("--dry-run", action="store_true", help="Print run dates without changing outputs.")
     args = parser.parse_args()
@@ -112,9 +145,15 @@ def main() -> int:
     for i, run_date in enumerate(run_dates, start=1):
         print(f"[RESTATE] ({i}/{len(run_dates)}) accounting {run_date}")
         run_accounting(run_date)
+        finalize_accounting_run(run_date)
 
     rebuild_pnl_history(discover_run_dates())
     print(f"[RESTATE] wrote {PNL_HISTORY_CSV}")
+
+    if run_dates and not args.skip_dashboard:
+        latest = run_dates[-1]
+        print(f"[RESTATE] rebuilding dashboard snapshot for {latest}")
+        rebuild_latest_dashboard(latest)
 
     if args.rebuild_dashboard:
         cmd = [

@@ -224,16 +224,16 @@ jobs:
       - name: Pull latest after EOD commit
         run: git pull --no-rebase origin main
 
-      - name: Dashboard tests + build + verify
+      - name: Build + verify snapshot, then dashboard tests
         id: gate
         env:
           RUN_DATE: ${{ needs.calendar.outputs.run_date }}
         run: |
-          python -m pytest risk_dashboard/tests tests/test_dashboard_accounting_parity.py tests/test_dashboard_phase0_4.py -q
           python scripts/dashboard_pipeline.py \
             --run-date "$RUN_DATE" \
             --write-manifest \
             --fail-if-stale
+          python -m pytest risk_dashboard/tests tests/test_dashboard_accounting_parity.py tests/test_dashboard_phase0_4.py -q
           echo "gates_passed=true" >> "$GITHUB_OUTPUT"
 
       - name: Commit dashboard snapshot
