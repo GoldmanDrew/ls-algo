@@ -147,9 +147,18 @@ jobs:
           test -f risk_dashboard/data/latest.json
           python -c "
           import json, sys
-          from scripts.run_data_contract import discover_accounting_dates
-          snap = json.load(open('risk_dashboard/data/latest.json'))
-          latest = discover_accounting_dates()[-1]
+          from pathlib import Path
+          runs = Path('data/runs')
+          dates = sorted(
+              p.parent.parent.name
+              for p in runs.glob('*/accounting/totals.json')
+              if p.is_file()
+          )
+          if not dates:
+              print('Deploy blocked: no accounting runs found', file=sys.stderr)
+              sys.exit(1)
+          snap = json.load(open('risk_dashboard/data/latest.json', encoding='utf-8'))
+          latest = dates[-1]
           rd = snap.get('run_date')
           fresh = (snap.get('freshness') or {}).get('is_latest')
           if rd != latest or fresh is False:
