@@ -1,0 +1,52 @@
+# Bucket 5 insurance backtest presets (used by bucket5_backtest_api + lab).
+# Override any field when calling run_backtest(params=...).
+
+presets:
+  A_baseline_ladder24:
+    label: "A baseline (fixed 2.4% ladder)"
+    hedge_kind: ladder
+    hedge_budget: null
+    rungs:
+      - { otm_pct: 0.10, per_roll_frac: 0.008 }
+      - { otm_pct: 0.20, per_roll_frac: 0.008 }
+      - { otm_pct: 0.30, per_roll_frac: 0.008 }
+
+  B_production:
+    label: "B production ★ (dynamic budget 2.4%)"
+    preset_factory: production_config
+
+  C_deep_skew24:
+    label: "C deep-skew (2.4%)"
+    hedge_kind: ladder
+    hedge_budget: null
+    rungs_from_ladder:
+      strikes: [[0.10, 0.15], [0.25, 0.35], [0.35, 0.50]]
+      total_per_roll: 0.024
+
+  F_dynamic_deep30:
+    label: "F dynamic deep-skew (3.0%)"
+    hedge_kind: ladder
+    hedge_budget:
+      enabled: true
+    rungs_from_ladder:
+      strikes: [[0.10, 0.15], [0.25, 0.35], [0.35, 0.50]]
+      total_per_roll: 0.030
+
+defaults:
+  sleeve_frac: 0.20
+  tbill_rate: 0.043
+  base_days: 14.0
+  cadence_k: 6.0
+  uvix_slip_bps: 5.0
+  fee_bps: 1.0
+  initial_capital: 1000000.0
+  monetize:
+    runner_frac: 0.0
+  redeploy: {}
+
+assumptions_doc:
+  borrow_uvix_annual: 0.0284
+  borrow_svix_annual: 0.0347
+  short_proceeds_annual: 0.0
+  put_pricing_live: "ThetaData EOD mid (bid+ask)/2 when cached"
+  put_pricing_extended: "Black-Scholes + +3 vol pts per 10% OTM skew"

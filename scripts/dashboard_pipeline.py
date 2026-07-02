@@ -30,6 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--runs-root", default="data/runs")
     ap.add_argument("--out-dir", default="risk_dashboard/data")
     ap.add_argument("--skip-b4sim", action="store_true")
+    ap.add_argument("--skip-b5bt", action="store_true")
     ap.add_argument("--fail-if-stale", action="store_true")
     ap.add_argument("--allow-config-nav", action="store_true")
     ap.add_argument("--allow-stale", action="store_true")
@@ -62,6 +63,17 @@ def main(argv: list[str] | None = None) -> int:
                 run_date,
                 "--n-mc",
                 "8000",
+            ]
+        )
+
+    if not args.skip_b5bt:
+        _run(
+            [
+                sys.executable,
+                "scripts/build_bucket5_backtest_panel.py",
+                "--run-date",
+                run_date,
+                "--copy-etf-dashboard",
             ]
         )
 

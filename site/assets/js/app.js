@@ -2585,6 +2585,145 @@
       </tr></thead><tbody>${rows}</tbody></table>`;
   }
 
+  function b5SeriesPath(series, width, height, pad, yTransform) {
+    if (!series || series.length < 2) return "";
+    const xs = series.map((_, i) => pad + (i / (series.length - 1)) * (width - 2 * pad));
+    const ys = series.map((pt) => {
+      const v = yTransform(Number(pt[1]));
+      return v;
+    });
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const span = maxY - minY || 1;
+    const coords = xs.map((x, i) => {
+      const y = height - pad - ((ys[i] - minY) / span) * (height - 2 * pad);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    return coords.join(" ");
+  }
+
+  function b5DualChart(equitySeries, ddSeries, title) {
+    const w = 720;
+    const hEq = 160;
+    const hDd = 90;
+    const pad = 8;
+    const eqPath = b5SeriesPath(equitySeries, w, hEq, pad, (v) => v / 1e6);
+    const ddPath = b5SeriesPath(ddSeries, w, hDd, pad, (v) => v * 100);
+    const ddFill = ddSeries && ddSeries.length >= 2
+      ? `M ${b5SeriesPath(ddSeries, w, hDd, pad, (v) => v * 100).split(" ").map((p, i) => (i === 0 ? p : "L " + p)).join(" ")} L ${w - pad},${hDd - pad} L ${pad},${hDd - pad} Z`
+      : "";
+    return `
+      <div class="b5bt-chart-block">
+        <h4>${title}</h4>
+        <svg viewBox="0 0 ${w} ${hEq + hDd + 12}" width="100%" style="max-width:${w}px">
+          <text x="${pad}" y="14" class="dim" font-size="11">Equity ($M)</text>
+          <polyline fill="none" stroke="#0f766e" stroke-width="2" points="${eqPath}"/>
+          <line x1="${pad}" y1="${hEq + 6}" x2="${w - pad}" y2="${hEq + 6}" stroke="#cbd5e1" stroke-width="0.5"/>
+          <text x="${pad}" y="${hEq + 20}" class="dim" font-size="11">Drawdown (%)</text>
+          ${ddFill ? `<path d="${ddFill}" fill="rgba(185,28,28,0.25)"/>` : ""}
+          <polyline fill="none" stroke="#991b1b" stroke-width="1.2" transform="translate(0,${hEq + 6})" points="${ddPath}"/>
+        </svg>
+      </div>`;
+  }
+
+  function renderBucket5Backtest(panel) {
+    const content = document.getElementById("b5bt-content");
+    const meta = document.getElementById("b5bt-meta");
+    if (!content) return;
+    if (!panel || !panel.variants) {
+      if (meta) meta.innerHTML = statusPill("unknown", "B5 backtest data not available");
+      content.innerHTML =
+        '<div class="callout dim">No Bucket 5 backtest panel. Run <code>python scripts/build_bucket5_backtest_panel.py</code> then rebuild the dashboard.</div>';
+      return;
+    }
+    if (meta) {
+      meta.innerHTML = `<span class="dim">as of ${safeText(panel.run_date)} · generated ${safeText(panel.generated_at_utc)} · interactive lab: <code>${safeText(panel.lab_command)}</code></span>`;
+    }
+    const variantKeys = Object.keys(panel.variants);
+    const defaultKey = variantKeys.includes("F_extended") ? "F_extended" : variantKeys[0];
+    const options = variantKeys
+      .map((k) => {
+        const v = panel.variants[k];
+        return `<option value="${k}">${safeText(v.label || k)} (${safeText(v.era)})</option>`;
+      })
+      .join("");
+
+    content.innerHTML = `
+      <div class="callout dim small">
+        Short UVIX + short SVIX carry (20% sleeve, regime gates) with SPX put hedge, T-bill collateral,
+        liquidate-and-redeploy monetization. Extended history uses synthetic UVIX/SVIX pre-2022 and BS put pricing.
+      </div>
+      <div class="b4sim-controls strip" style="margin:10px 0;gap:14px;flex-wrap:wrap">
+        <label class="b4sim-ctl">Variant
+          <select id="b5bt-variant">${options}</select>
+        </label>
+        <label class="b4sim-ctl">Compare to
+          <select id="b5bt-compare"><option value="">— none —</option>${options}</select>
+        </label>
+      </div>
+      <div id="b5bt-stats" class="strip"></div>
+      <div id="b5bt-charts" class="two-col"></div>
+      <div id="b5bt-crash"></div>
+      <div id="b5bt-assumptions" class="dim small" style="margin-top:12px"></div>`;
+
+    const variantEl = document.getElementById("b5bt-variant");
+    const compareEl = document.getElementById("b5bt-compare");
+    variantEl.value = defaultKey;
+
+    function renderVariant(key, compareKey) {
+      const v = panel.variants[key];
+      if (!v) return;
+      const m = v.metrics || {};
+      const statsEl = document.getElementById("b5bt-stats");
+      const chartsEl = document.getElementById("b5bt-charts");
+      const crashEl = document.getElementById("b5bt-crash");
+      const assumEl = document.getElementById("b5bt-assumptions");
+      const stats = [
+        { label: "CAGR", value: fmtPct(m.combined_CAGR, 1) },
+        { label: "Vol", value: fmtPct(m.combined_Vol, 1) },
+        { label: "Max DD", value: fmtPct(m.combined_MaxDD, 1) },
+        { label: "Sharpe", value: safeText(m.combined_Sharpe) },
+        { label: "Calmar", value: safeText(m.combined_Calmar) },
+        { label: "Realized $", value: fmtUsd(m["realized_$"]) },
+      ];
+      statsEl.innerHTML = stats
+        .map((s) => `<div class="summary-card"><div class="label">${s.label}</div><div class="value">${s.value}</div></div>`)
+        .join("");
+
+      const eq = (v.series || {}).combined_equity || [];
+      const dd = (v.series || {}).drawdown || [];
+      let chartsHtml = b5DualChart(eq, dd, v.label || key);
+      if (compareKey && panel.variants[compareKey]) {
+        const c = panel.variants[compareKey];
+        chartsHtml += b5DualChart(
+          (c.series || {}).combined_equity || [],
+          (c.series || {}).drawdown || [],
+          (c.label || compareKey) + " (compare)"
+        );
+      }
+      chartsEl.innerHTML = chartsHtml;
+
+      const crash = v.crash || {};
+      const crashRows = Object.entries(crash)
+        .map(([k, val]) => `<tr><td>${safeText(k)}</td><td class="num">${fmtPct(val, 1)}</td></tr>`)
+        .join("");
+      crashEl.innerHTML = `<h3>Stylized crash payoffs</h3><table class="tight"><thead><tr><th>Scenario</th><th class="num">Combined P&amp;L</th></tr></thead><tbody>${crashRows}</tbody></table>`;
+
+      const a = v.assumptions || {};
+      assumEl.innerHTML =
+        `Assumptions: UVIX borrow ${fmtPct(a.borrow_uvix_annual, 2)}/yr · SVIX ${fmtPct(a.borrow_svix_annual, 2)}/yr · ` +
+        `slippage ${safeText(a.uvix_slip_bps)} bps · fee ${safeText(a.fee_bps)} bp · T-bills ${fmtPct(a.tbill_rate, 2)}/yr · ` +
+        `sleeve ${fmtPct(a.sleeve_frac, 0)} · ${safeText(v.meta?.pricing_mode || "")} · ${safeText(v.meta?.start)}→${safeText(v.meta?.end)}`;
+    }
+
+    function update() {
+      renderVariant(variantEl.value, compareEl.value || null);
+    }
+    variantEl.addEventListener("change", update);
+    compareEl.addEventListener("change", update);
+    update();
+  }
+
   function renderAll(snap) {
     els.runDateLabel.textContent = `Run: ${snap.run_date}`;
     els.generatedAtLabel.textContent =
@@ -2600,6 +2739,7 @@
       () => renderMovers(snap.movers_panel || {}),
       () => renderSlideRisk(snap.slide_risk_panel || {}),
       () => renderBucket4Sim(snap.bucket4_risk_sim || null),
+      () => renderBucket5Backtest(snap.bucket5_backtest || null),
       () => renderBorrowShock(snap.borrow_shock_panel || {}, snap.nav_usd),
       () => renderConcentration(snap.concentration_panel || {}),
       () => renderFactor(snap.factor_panel || {}),

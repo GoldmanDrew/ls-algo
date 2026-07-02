@@ -37,10 +37,8 @@ from .metrics import build_snapshot
 
 HISTORY_MAX_RUNS = 60
 
-# Default NAV denominator falls back to the strategy capital base in
-# ``config/strategy_config.yml`` (``strategy.capital_usd``) when totals.json /
-# Flex equity are unavailable. This keeps the dashboard %-of-NAV figures aligned
-# with the sizing capital the book is actually run against.
+# NAV denominator is strategy capital from ``config/strategy_config.yml``
+# (``strategy.capital_usd``). Broker Flex equity is not used for %-of-NAV.
 CONFIG_NAV_FALLBACK_USD = 800_000.0
 
 
@@ -63,6 +61,7 @@ def _nav_from_config(config_yml: Path | None = None) -> tuple[float, str]:
 # heavy accounting build) and keyed onto the payload under the same name.
 AUX_PANELS = {
     "bucket4_risk_sim": "bucket4_risk_sim.json",
+    "bucket5_backtest": "bucket5_backtest.json",
 }
 
 
@@ -350,8 +349,8 @@ def main(argv: list[str] | None = None) -> int:
     screener_csv = Path(args.screener_csv).resolve() if args.screener_csv else None
 
     # NAV denominator precedence: explicit --nav-usd > env MAGIS_NAV_USD >
-    # config strategy.capital_usd > hard default. build_snapshot still prefers
-    # totals.json / Flex equity when present.
+    # config strategy.capital_usd > hard default. build_snapshot uses totals.json
+    # when present (also config-derived via patch_totals_nav).
     if args.nav_usd is not None:
         nav_usd, nav_source_hint = float(args.nav_usd), "cli:--nav-usd"
     elif os.getenv("MAGIS_NAV_USD"):

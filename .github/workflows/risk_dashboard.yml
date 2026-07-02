@@ -110,7 +110,7 @@ jobs:
 
       - name: Run dashboard tests
         run: |
-          python -m pytest risk_dashboard/tests tests/test_dashboard_accounting_parity.py tests/test_dashboard_phase0_4.py -q
+          python -m pytest risk_dashboard/tests tests/test_dashboard_accounting_parity.py tests/test_dashboard_phase0_4.py tests/test_bucket5_backtest_api.py -q
 
       - name: Commit snapshot
         run: |
