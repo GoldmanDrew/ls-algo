@@ -55,7 +55,7 @@ Python toolkit for a **systematic long/short** book around leveraged and inverse
 | **`strategy_config.py`** | Shared YAML loader with **path resolution** relative to repo root (used by email script and others). |
 | **`notebooks/`** | Research: Bucket‑4 hedge experiments (`Bucket_4_Backtest.ipynb`, `Buckets1-4*.ipynb`), Diamond Creek / IBKR large-AUM studies, etc. Backtest artifacts under `notebooks/data/backtest/` are git-ignored. |
 | **`data/`** | Working CSVs, caches, **`ledger/`**, **`runs/<date>/`** run artifacts. |
-| **`.github/workflows/eod_pnl_email.yml`** | Scheduled weekday **screener + trade plan** commit and **EOD PnL** pipeline; screener also runs on every push to `main`. |
+| **`.github/workflows/eod_pnl_email.yml`** | **`Daily: Screener + EOD + Dashboard`** — scheduled weekday screener, EOD, snapshot, deploy, and recovery. |
 
 There is **no** in-repo `core/` Python package required for the main pipeline; `daily_screener.py` may optionally import helpers from a `core` package if you install one alongside this repo.
 
@@ -232,18 +232,30 @@ Full operator playbook, edge-case table, and verification checklist live in [`SP
 
 ## Automation (GitHub Actions)
 
-**`.github/workflows/eod_pnl_email.yml`**
+Sidebar workflows (prefixes control sort order):
 
-1. **Weekday schedule (`cron`)** — America/New_York calendar date for `RUN_DATE`.
-2. **Push to `main`** — re-runs the screener + trade plan only (not the EOD email pipeline). Skips commits whose message starts with `screener:`, `eod:`, or `risk_dashboard:` so bot data refreshes do not loop.
-3. **Job `screener`:** `pip install -r requirements.txt` → `daily_screener.py --run-date "$RUN_DATE" --skip-ibkr-check` → `generate_trade_plan.py --run-date "$RUN_DATE"` → commits `data/etf_screened_today.csv`, `data/proposed_trades.csv`, and dated run outputs.
-4. **Job `eod`:** depends on `screener`; runs on schedule / manual dispatch only — `ibkr_flex.py`, `ibkr_accounting.py`, `run_eod_pnl_email.py` with **secrets** for Flex queries and SMTP; may commit under `data/`.
+| Workflow | Role |
+|----------|------|
+| **`Daily: Screener + EOD + Dashboard`** (`eod_pnl_email.yml`) | Weekday screener → EOD PnL email → dashboard snapshot build → GitHub Pages deploy → stale-snapshot recovery (06:00 and 10:00 UTC). |
+| **`Manual: Dashboard Rebuild & Deploy`** (`risk_dashboard.yml`) | On-demand snapshot rebuild and/or deploy without running the full EOD pipeline. |
+| **`Weekly: ETF Universe Discovery`** (`universe_discovery.yml`) | Weekday crawl for new levered ETFs; opens PRs when verified pairs are found. |
 
-Use **workflow_dispatch** to run screener-only, EOD-only, or both.
+**`Daily: Screener + EOD + Dashboard`** details:
 
-**`.github/workflows/risk_dashboard.yml`** — runs after the EOD job and rebuilds the risk dashboard (`risk_dashboard/data/latest.json`), then redeploys the static SPA under `site/` to GitHub Pages (snapshot bundled as `site/data/latest.json`). Optional **login id + password** via `site/data/investors.json` (same pattern as etf-dashboard). See [`risk_dashboard/README.md`](risk_dashboard/README.md) for setup.
+1. **Weekday schedule (`cron` 06:00 UTC)** — America/New_York calendar date for `RUN_DATE`.
+2. **Catch-up schedule (`cron` 10:00 UTC)** — recovery job only if snapshot/manifest is stale.
+3. **Push to `main`** — re-runs the screener + trade plan only (not the EOD email pipeline). Skips commits whose message starts with `screener:`, `eod:`, or `risk_dashboard:` so bot data refreshes do not loop.
+4. **Job `screener`:** `daily_screener.py` → `generate_trade_plan.py` → commits screened CSV + proposed trades.
+5. **Job `eod`:** Flex pull, accounting, EOD email/PDF, data contract gate; may commit under `data/`.
+6. **Job `dashboard`:** reusable build + verify + commit snapshot (`scripts/dashboard_pipeline.py`).
+7. **Job `deploy`:** bundle `risk_dashboard/data/latest.json` into `site/` and publish to GitHub Pages.
+8. **Job `recover`:** idempotent catch-up if manifest or `latest.json` lags accounting.
 
-**`.github/workflows/universe_discovery.yml`** -- weekday/manual discovery for new single-stock leveraged ETFs. It crawls configured issuer and exchange sources in `config/levered_etf_discovery.yml`, verifies issuer + exchange evidence, resolves the underlying/proxy, checks live market data, patches `daily_screener.py` in this repo and sibling `GoldmanDrew/Diamond-Creek-Quant`, then opens PRs only when new verified pairs are found. Every run uploads a discovery report with rejection reasons; manual dispatch supports `allow_issuer_only`, `skip_market_data`, `allow_pending_market_data`, and `allow_future_listings` for operator review runs. Cross-repo PRs require `GH_PAT` with write access to both repositories.
+Use **workflow_dispatch** to run screener-only, EOD-only, both, or recover-only.
+
+**`Manual: Dashboard Rebuild & Deploy`** — manual snapshot rebuild (`scripts/dashboard_pipeline.py`) and deploy. See [`risk_dashboard/README.md`](risk_dashboard/README.md) for setup.
+
+**`Weekly: ETF Universe Discovery`** — weekday/manual discovery for new single-stock leveraged ETFs. It crawls configured issuer and exchange sources in `config/levered_etf_discovery.yml`, verifies issuer + exchange evidence, resolves the underlying/proxy, checks live market data, patches `daily_screener.py` in this repo and sibling `GoldmanDrew/Diamond-Creek-Quant`, then opens PRs only when new verified pairs are found. Every run uploads a discovery report with rejection reasons; manual dispatch supports `allow_issuer_only`, `skip_market_data`, `allow_pending_market_data`, and `allow_future_listings` for operator review runs. Cross-repo PRs require `GH_PAT` with write access to both repositories.
 
 ---
 

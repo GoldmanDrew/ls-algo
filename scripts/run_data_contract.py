@@ -118,6 +118,8 @@ def write_run_manifest(
         "accounting/pnl_bucket_3.csv",
         "accounting/pnl_bucket_4.csv",
         "accounting/pnl_bucket_5.csv",
+        "accounting/pnl_bucket_5_by_pair.csv",
+        "accounting/pnl_bucket_5_by_symbol.csv",
         "ibkr_flex/flex_positions.xml",
         "etf_screened_today.csv",
     ):

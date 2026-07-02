@@ -1,0 +1,104 @@
+name: Dashboard Build (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      run_date:
+        description: Run date YYYY-MM-DD
+        required: true
+        type: string
+      allow_broker_nav:
+        description: Allow broker Flex NAV in verify gates
+        required: false
+        type: boolean
+        default: false
+      commit_snapshot:
+        description: Commit snapshot artifacts to main
+        required: false
+        type: boolean
+        default: true
+      commit_message:
+        description: Git commit message (default risk_dashboard snapshot)
+        required: false
+        type: string
+        default: ""
+      run_tests:
+        description: Run dashboard pytest suite after build
+        required: false
+        type: boolean
+        default: true
+    outputs:
+      gates_passed:
+        description: Whether verify gates passed
+        value: ${{ jobs.build.outputs.gates_passed }}
+      run_date:
+        description: Run date that was built
+        value: ${{ jobs.build.outputs.run_date }}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      gates_passed: ${{ steps.gate.outputs.gates_passed }}
+      run_date: ${{ inputs.run_date }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - uses: actions/checkout@v4
+        with:
+          repository: GoldmanDrew/etf-dashboard
+          ref: main
+          path: etf-dashboard
+
+      - uses: ./.github/actions/python-repo-setup
+        with:
+          python-version: "3.11"
+          install-pytest: "true"
+
+      - name: Build + verify snapshot
+        id: gate
+        env:
+          RUN_DATE: ${{ inputs.run_date }}
+        run: |
+          EXTRA=""
+          if [ "${{ inputs.allow_broker_nav }}" = "true" ]; then
+            EXTRA="--allow-broker-nav"
+          fi
+          python scripts/dashboard_pipeline.py \
+            --run-date "$RUN_DATE" \
+            --write-manifest \
+            --fail-if-stale \
+            $EXTRA
+          echo "gates_passed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Run dashboard tests
+        if: inputs.run_tests == true
+        run: |
+          python -m pytest risk_dashboard/tests tests/test_dashboard_accounting_parity.py tests/test_dashboard_phase0_4.py -q
+
+      - name: Commit snapshot
+        if: inputs.commit_snapshot == true
+        env:
+          RUN_DATE: ${{ inputs.run_date }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add risk_dashboard/data "data/runs/${RUN_DATE}/manifest.json" || true
+          if git diff --cached --quiet; then
+            echo "No snapshot changes"
+          else
+            MSG="${{ inputs.commit_message }}"
+            if [ -z "$MSG" ]; then
+              MSG="risk_dashboard: snapshot ${RUN_DATE}"
+            fi
+            git commit -m "$MSG"
+            git pull --no-rebase -X ours origin main || true
+            git push
+          fi

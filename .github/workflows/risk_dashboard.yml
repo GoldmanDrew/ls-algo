@@ -1,8 +1,7 @@
-name: Risk Dashboard
+name: "Manual: Dashboard Rebuild & Deploy"
 
-# Deploy the static site to GitHub Pages.
-# Snapshot *build* runs as the tail of eod_pnl_email.yml (authoritative path).
-# This workflow: deploy after snapshot commits, manual rebuild, or recovery.
+# Manual rebuild/deploy only. Daily snapshot build + deploy runs in
+# ``Daily: Screener + EOD + Dashboard`` (eod_pnl_email.yml).
 
 on:
   workflow_dispatch:
@@ -22,16 +21,6 @@ on:
         default: "false"
         type: boolean
 
-  push:
-    branches: [main]
-    paths:
-      - "risk_dashboard/**"
-      - "site/**"
-      - "scripts/dashboard_pipeline.py"
-      - "scripts/verify_dashboard_snapshot.py"
-      - "scripts/run_data_contract.py"
-      - ".github/workflows/risk_dashboard.yml"
-
 permissions:
   contents: write
   pages: write
@@ -42,41 +31,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  resolve_date:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.skip_build != 'true')
-      || (github.event_name == 'push'
-        && !startsWith(github.event.head_commit.message, 'risk_dashboard: snapshot')
-        && !startsWith(github.event.head_commit.message, 'risk_dashboard: recovery'))
-
     outputs:
       run_date: ${{ steps.date.outputs.run_date }}
-      gates_passed: ${{ steps.gate.outputs.gates_passed }}
-
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/python-repo-setup
         with:
-          token: ${{ secrets.GH_PAT || github.token }}
-
-      - uses: actions/checkout@v4
-        with:
-          repository: GoldmanDrew/etf-dashboard
-          ref: main
-          path: etf-dashboard
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest
-
+          python-version: "3.11"
       - name: Resolve run date
         id: date
         run: |
@@ -92,47 +55,20 @@ jobs:
           test -n "$RD"
           echo "run_date=$RD" >> "$GITHUB_OUTPUT"
 
-      - name: Build + verify snapshot
-        id: gate
-        env:
-          ALLOW_BROKER: ${{ inputs.allow_broker_nav }}
-        run: |
-          EXTRA=""
-          if [ "$ALLOW_BROKER" = "true" ]; then
-            EXTRA="--allow-broker-nav"
-          fi
-          python scripts/dashboard_pipeline.py \
-            --run-date "${{ steps.date.outputs.run_date }}" \
-            --write-manifest \
-            --fail-if-stale \
-            $EXTRA
-          echo "gates_passed=true" >> "$GITHUB_OUTPUT"
-
-      - name: Run dashboard tests
-        run: |
-          python -m pytest risk_dashboard/tests tests/test_dashboard_accounting_parity.py tests/test_dashboard_phase0_4.py tests/test_bucket5_backtest_api.py -q
-
-      - name: Commit snapshot
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add risk_dashboard/data data/runs/*/manifest.json || true
-          if git diff --cached --quiet; then
-            echo "No snapshot changes"
-          else
-            git commit -m "risk_dashboard: snapshot ${{ steps.date.outputs.run_date }}"
-            git pull --no-rebase -X ours origin main || true
-            git push
-          fi
+  build:
+    needs: resolve_date
+    if: inputs.skip_build != true
+    uses: ./.github/workflows/_dashboard_build.yml
+    with:
+      run_date: ${{ needs.resolve_date.outputs.run_date }}
+      allow_broker_nav: ${{ inputs.allow_broker_nav }}
+      commit_snapshot: true
+      run_tests: true
+      commit_message: "risk_dashboard: manual snapshot ${{ needs.resolve_date.outputs.run_date }}"
 
   deploy:
-    needs: build
-    if: |
-      always() && (
-        (needs.build.result == 'success' && needs.build.outputs.gates_passed == 'true')
-        || (needs.build.result == 'skipped' && github.event_name == 'push')
-        || (github.event_name == 'workflow_dispatch' && inputs.skip_build == 'true')
-      )
+    needs: [resolve_date, build]
+    if: always() && (needs.build.result == 'success' || inputs.skip_build == true)
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -141,6 +77,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Pull latest
+        run: git pull --no-rebase origin main
 
       - name: Verify latest.json before deploy
         run: |

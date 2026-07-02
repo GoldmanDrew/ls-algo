@@ -5,12 +5,14 @@ import pandas as pd
 import pytest
 
 from scripts.bucket4_eod_pair_charts import (
+    B5_SLEEVE,
     _reconcile_actual_endpoints,
     _trim_leading_flat_history,
     load_active_b4_pairs_from_proposed,
     load_actual_trade_markers,
     load_b4_pair_leg_history,
     load_pair_gross_and_realized_h,
+    load_pair_leg_history,
     make_b4_pair_pnl_hedge_chart,
     resolve_b4_model_inputs,
 )
@@ -42,6 +44,43 @@ def _write_run(root, ds, *, pair_pnl, etf_pnl, etf_gross=10_000.0, und_gross=4_5
             {"underlying": "QBTS", "symbol": "QBTS", "leg_type": "underlying", "gross_notional_usd": und_gross},
         ]
     ).to_csv(acct / "net_exposure_bucket_4_detail.csv", index=False)
+
+
+def _write_b5_run(
+    root,
+    ds,
+    *,
+    pair_pnl,
+    etf_pnl,
+    etf_gross=18_000.0,
+    und_gross=22_000.0,
+    delta=-1.99,
+):
+    acct = root / ds / "accounting"
+    acct.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [
+            {"etf": "UVIX", "underlying": "SVIX", "delta": delta, "total_pnl": pair_pnl},
+        ]
+    ).to_csv(acct / "pnl_bucket_5_by_pair.csv", index=False)
+    pd.DataFrame(
+        [
+            {"symbol": "UVIX", "total_pnl": etf_pnl},
+            {"symbol": "SVIX", "total_pnl": pair_pnl - etf_pnl},
+        ]
+    ).to_csv(acct / "pnl_bucket_5_by_symbol.csv", index=False)
+    pd.DataFrame(
+        [
+            {"underlying": "SVIX", "symbol": "UVIX", "leg_type": "etf", "gross_notional_usd": etf_gross},
+            {"underlying": "SVIX", "symbol": "SVIX", "leg_type": "underlying", "gross_notional_usd": und_gross},
+        ]
+    ).to_csv(acct / "net_exposure_bucket_5_detail.csv", index=False)
+    # B4 placeholder row (legacy zero) should be ignored when sleeve is B5.
+    pd.DataFrame(
+        [
+            {"etf": "UVIX", "underlying": "SVIX", "delta": delta, "total_pnl": 0.0},
+        ]
+    ).to_csv(acct / "pnl_bucket_4_by_pair.csv", index=False)
 
 
 def _write_flex_trades(root, ds, trades):
@@ -114,6 +153,64 @@ def test_leg_history_splits_pair_into_etf_and_underlying(tmp_path):
     assert last["pair_pnl_cum"] == pytest.approx(1500.0)
     assert last["etf_leg_pnl_cum"] == pytest.approx(900.0)
     assert last["und_leg_pnl_cum"] == pytest.approx(600.0)
+
+
+def test_b5_leg_history_reads_bucket5_files_not_b4_zeros(tmp_path):
+    _write_proposed(
+        tmp_path,
+        "2026-07-01",
+        [
+            {
+                "ETF": "UVIX",
+                "Underlying": "SVIX",
+                "sleeve": B5_SLEEVE,
+                "gross_target_usd": 1_600_000.0,
+                "Delta": -1.99,
+            },
+        ],
+    )
+    _write_b5_run(tmp_path, "2026-07-01", pair_pnl=290.0, etf_pnl=1622.0)
+    active = load_active_b4_pairs_from_proposed("2026-07-01", runs_root=tmp_path)
+    hist = load_pair_leg_history(tmp_path, active=active)
+    assert len(hist) == 1
+    row = hist.iloc[0]
+    assert row["pair"] == "UVIX|SVIX"
+    assert row["pair_pnl_cum"] == pytest.approx(290.0)
+    assert row["etf_leg_pnl_cum"] == pytest.approx(1622.0)
+    assert row["und_leg_pnl_cum"] == pytest.approx(-1332.0)
+
+
+def test_b5_gross_history_uses_bucket5_detail(tmp_path):
+    _write_b5_run(tmp_path, "2026-07-01", pair_pnl=0.0, etf_pnl=0.0, etf_gross=18_684.0, und_gross=22_139.0)
+    g = load_pair_gross_and_realized_h(tmp_path, "2026-07-01", sleeve=B5_SLEEVE)
+    assert len(g) == 1
+    assert g.iloc[0]["pair"] == "UVIX|SVIX"
+    assert g.iloc[0]["etf_gross_usd"] == pytest.approx(18_684.0)
+
+
+def test_b5_reconcile_endpoints_uses_bucket5_pair_file(tmp_path):
+    _write_proposed(
+        tmp_path,
+        "2026-07-01",
+        [
+            {
+                "ETF": "UVIX",
+                "Underlying": "SVIX",
+                "sleeve": B5_SLEEVE,
+                "gross_target_usd": 100.0,
+                "Delta": -1.99,
+            },
+        ],
+    )
+    _write_b5_run(tmp_path, "2026-07-01", pair_pnl=290.0, etf_pnl=1622.0)
+    active = load_active_b4_pairs_from_proposed("2026-07-01", runs_root=tmp_path)
+    ok = _reconcile_actual_endpoints(
+        {"UVIX|SVIX": 290.0},
+        runs_root=tmp_path,
+        run_date="2026-07-01",
+        active=active,
+    )
+    assert ok == []
 
 
 def test_trim_leading_flat_history_keeps_one_zero_anchor():

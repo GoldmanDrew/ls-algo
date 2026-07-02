@@ -1,4 +1,4 @@
-name: Levered ETF Universe Discovery
+name: "Weekly: ETF Universe Discovery"
 
 on:
   schedule:

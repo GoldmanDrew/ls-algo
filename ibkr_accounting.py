@@ -39,6 +39,7 @@ Outputs (written to: data/runs/<RUN_DATE>/accounting/):
 - pnl_by_underlying_b12.csv (legacy buckets 1+2 only)
 - pnl_bucket_1.csv … pnl_bucket_4.csv
 - pnl_bucket_4_by_pair.csv, pnl_bucket_4_by_symbol.csv
+- pnl_bucket_5_by_pair.csv, pnl_bucket_5_by_symbol.csv
 - pnl_by_pair.csv
 - bucket4_pairs.csv
 - net_exposure_by_underlying.csv (buckets 1+2+4)
@@ -48,6 +49,7 @@ Outputs (written to: data/runs/<RUN_DATE>/accounting/):
 - bucket_exposure_detail.csv, bucket_leg_classification.csv
 - bucket_ratio_reconciliation.csv
 - net_exposure_bucket_4_detail.csv
+- net_exposure_bucket_5_detail.csv
 - totals.json
 
 Run:
@@ -2360,6 +2362,46 @@ def _load_bucket5_vol_etp_symbols(proposed_trades_csv: Path | None) -> tuple[set
         else set()
     )
     return etfs, unds
+
+
+def _load_bucket5_pair_registry(proposed_trades_csv: Path | None) -> pd.DataFrame:
+    """Active volatility ETP pairs from the trade plan (bucket-5 sleeve)."""
+    empty = pd.DataFrame(columns=["etf", "underlying", "delta"])
+    if proposed_trades_csv is None or not Path(proposed_trades_csv).exists():
+        return empty
+    try:
+        plan = pd.read_csv(proposed_trades_csv)
+    except Exception:
+        return empty
+    if plan.empty:
+        return empty
+    cols = {c.lower(): c for c in plan.columns}
+    etf_col = cols.get("etf")
+    und_col = cols.get("underlying")
+    sleeve_col = cols.get("sleeve")
+    delta_col = cols.get("delta")
+    if etf_col is None or und_col is None:
+        return empty
+    sleeve = plan[sleeve_col].astype(str).str.strip().str.lower() if sleeve_col else pd.Series("", index=plan.index)
+    mask = sleeve.eq("volatility_etp_bucket5")
+    if "gross_target_usd" in plan.columns:
+        mask = mask & pd.to_numeric(plan["gross_target_usd"], errors="coerce").fillna(0.0).gt(0.0)
+    rows: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for _, row in plan.loc[mask].iterrows():
+        etf = canonical_symbol(str(row.get(etf_col, "") or ""))
+        under = canonical_symbol(str(row.get(und_col, "") or ""))
+        if not etf or not under or (etf, under) in seen:
+            continue
+        seen.add((etf, under))
+        delta = -1.0
+        if delta_col and pd.notna(row.get(delta_col)):
+            try:
+                delta = float(row[delta_col])
+            except Exception:
+                delta = -1.0
+        rows.append({"etf": etf, "underlying": under, "delta": delta})
+    return pd.DataFrame(rows) if rows else empty
 
 
 def merge_plan_etf_metadata(
@@ -4815,6 +4857,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         set(b4_registry["underlying"].astype(str).tolist()) if not b4_registry.empty else set()
     )
     bucket5_etf_syms, bucket5_underlying_syms = _load_bucket5_vol_etp_symbols(proposed_trades_path)
+    b5_registry = _load_bucket5_pair_registry(proposed_trades_path)
     if bucket5_etf_syms:
         print(
             f"[ACCOUNTING] volatility ETP bucket-5: {len(bucket5_etf_syms)} ETF symbol(s) "
@@ -6926,6 +6969,10 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         df[df["bucket"] == "bucket_4"][["symbol", "underlying", "description"] + base_cols]
         .sort_values("total_pnl", ascending=False)
     )
+    pnl_bucket_5_by_symbol = (
+        df[df["bucket"] == "bucket_5"][["symbol", "underlying", "description"] + base_cols]
+        .sort_values("total_pnl", ascending=False)
+    )
     _pair_rows: list[dict] = []
     if not b4_registry.empty:
         # Multiple inverse ETFs can share one underlying (MSTR ↔ MSDD /
@@ -6937,6 +6984,9 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         )
         for _, pr in b4_registry.iterrows():
             etf = str(pr["etf"])
+            if etf in bucket5_etf_syms:
+                # Vol ETP pairs live in bucket_5; skip zero-PnL B4 placeholder rows.
+                continue
             under = str(pr["underlying"])
             etf_pnl = df[(df["symbol"] == etf) & (df["bucket"] == "bucket_4")]
             und_pnl = df[(df["symbol"] == under) & (df["bucket"] == "bucket_4")]
@@ -6952,10 +7002,33 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         if _pair_rows
         else pd.DataFrame(columns=["underlying", "etf", "delta"] + base_cols)
     )
+    _b5_pair_rows: list[dict] = []
+    if not b5_registry.empty:
+        _b5_under_etf_count = (
+            b5_registry.groupby("underlying")["etf"].nunique().to_dict()
+        )
+        for _, pr in b5_registry.iterrows():
+            etf = str(pr["etf"])
+            under = str(pr["underlying"])
+            etf_pnl = df[(df["symbol"] == etf) & (df["bucket"] == "bucket_5")]
+            und_pnl = df[(df["symbol"] == under) & (df["bucket"] == "bucket_5")]
+            n_etfs = max(int(_b5_under_etf_count.get(under, 1) or 1), 1)
+            row = {"underlying": under, "etf": etf, "delta": float(pr["delta"])}
+            for c in base_cols:
+                row[c] = float(etf_pnl[c].sum()) + (
+                    float(und_pnl[c].sum()) / n_etfs
+                )
+            _b5_pair_rows.append(row)
+    pnl_bucket_5_by_pair = (
+        pd.DataFrame(_b5_pair_rows).sort_values("total_pnl", ascending=False)
+        if _b5_pair_rows
+        else pd.DataFrame(columns=["underlying", "etf", "delta"] + base_cols)
+    )
     pnl_by_pair = (
         pd.concat(
             [
                 pnl_bucket_4_by_pair.assign(bucket="bucket_4"),
+                pnl_bucket_5_by_pair.assign(bucket="bucket_5"),
                 df[df["bucket"].isin(["bucket_1", "bucket_2"])][["underlying", "symbol", "bucket"] + base_cols],
             ],
             ignore_index=True,
@@ -6980,6 +7053,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     pnl_bucket_5.to_csv(outdir / "pnl_bucket_5.csv", index=False)
     pnl_bucket_4_by_symbol.to_csv(outdir / "pnl_bucket_4_by_symbol.csv", index=False)
     pnl_bucket_4_by_pair.to_csv(outdir / "pnl_bucket_4_by_pair.csv", index=False)
+    pnl_bucket_5_by_symbol.to_csv(outdir / "pnl_bucket_5_by_symbol.csv", index=False)
+    pnl_bucket_5_by_pair.to_csv(outdir / "pnl_bucket_5_by_pair.csv", index=False)
     if not pnl_by_pair.empty:
         pnl_by_pair.to_csv(outdir / "pnl_by_pair.csv", index=False)
     pnl_by_bucket.to_csv(outdir / "pnl_by_bucket.csv", index=False)
@@ -7324,6 +7399,25 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             columns=["symbol", "underlying", "overlay_type", "net_notional_usd", "gross_notional_usd", "n_legs"]
         )
 
+    exposure_b5_detail_df = pd.DataFrame(
+        columns=["underlying", "symbol", "leg_type", "net_notional_usd", "gross_notional_usd"]
+    )
+    if not pos_b5.empty:
+        _pb5 = pos_b5.copy()
+        _pb5["leg_type"] = np.where(
+            _pb5["symbol"].astype(str).isin(bucket5_etf_syms),
+            "etf",
+            "underlying",
+        )
+        exposure_b5_detail_df = (
+            _pb5.groupby(["underlying", "symbol", "leg_type"], as_index=False)
+            .agg(
+                net_notional_usd=("mv_base", "sum"),
+                gross_notional_usd=("gross_mv_base", "sum"),
+            )
+            .sort_values("gross_notional_usd", ascending=False)
+        )
+
     exposure_b1_df.to_csv(outdir / "net_exposure_bucket_1.csv", index=False)
     exposure_b2_df.to_csv(outdir / "net_exposure_bucket_2.csv", index=False)
     exposure_b1_full_df.to_csv(outdir / "net_exposure_bucket_1_full.csv", index=False)
@@ -7405,6 +7499,8 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     exposure_b3_df.to_csv(outdir / "net_exposure_bucket_3.csv", index=False)
     exposure_b4_df.to_csv(outdir / "net_exposure_bucket_4.csv", index=False)
     exposure_b5_df.to_csv(outdir / "net_exposure_bucket_5.csv", index=False)
+    if not exposure_b5_detail_df.empty:
+        exposure_b5_detail_df.to_csv(outdir / "net_exposure_bucket_5_detail.csv", index=False)
 
     totals = {
         "run_date": run_date,

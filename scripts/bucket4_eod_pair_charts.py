@@ -43,6 +43,7 @@ VOL_SHAPE_FILENAMES = ("vol_shape_history.json",)
 MODEL_START = "2025-10-07"
 SIGNAL_WINDOW = 45
 ACTIVE_B4_SLEEVES = frozenset({"inverse_decay_bucket4", "volatility_etp_bucket5"})
+B5_SLEEVE = "volatility_etp_bucket5"
 MIN_BACKTEST_PRICE_ROWS = 20
 TRADING_DAYS = 252.0
 # Minimum fraction of actual-history dates that must carry a per-leg PnL value
@@ -439,50 +440,158 @@ def _apply_date_axis(ax: "plt.Axes") -> None:
 # ---------------------------------------------------------------------------
 # Accounting history
 # ---------------------------------------------------------------------------
+def _pair_accounting_files(sleeve: str) -> tuple[str, str, str]:
+    """Return ``(by_pair, by_symbol, exposure_detail)`` CSV names for a sleeve."""
+    if str(sleeve).strip().lower() == B5_SLEEVE:
+        return (
+            "pnl_bucket_5_by_pair.csv",
+            "pnl_bucket_5_by_symbol.csv",
+            "net_exposure_bucket_5_detail.csv",
+        )
+    return (
+        "pnl_bucket_4_by_pair.csv",
+        "pnl_bucket_4_by_symbol.csv",
+        "net_exposure_bucket_4_detail.csv",
+    )
+
+
 def list_run_dates(runs_root: Path) -> list[str]:
     if not runs_root.is_dir():
         return []
     out = []
     for d in sorted(runs_root.iterdir()):
-        if d.is_dir() and (d / "accounting" / "pnl_bucket_4_by_pair.csv").is_file():
+        if not d.is_dir():
+            continue
+        acct = d / "accounting"
+        if (acct / "pnl_bucket_4_by_pair.csv").is_file() or (
+            acct / "pnl_bucket_5_by_pair.csv"
+        ).is_file():
             out.append(d.name)
     return out
 
 
-def load_b4_pair_leg_history(runs_root: Path) -> pd.DataFrame:
+def _sym_pnl_index(by_sym: pd.DataFrame) -> pd.Series:
+    if by_sym.empty or not {"symbol", "total_pnl"}.issubset(by_sym.columns):
+        return pd.Series(dtype=float)
+    return by_sym.assign(symbol=by_sym["symbol"].map(_norm)).set_index("symbol")["total_pnl"].astype(float)
+
+
+def _fallback_b5_leg_from_by_symbol(acct: Path, etf: str, und: str) -> tuple[float, float]:
+    """Reconstruct B5 pair / ETF-leg PnL from ``pnl_by_symbol.csv`` when pair files are absent."""
+    p = acct / "pnl_by_symbol.csv"
+    if not p.is_file():
+        return np.nan, np.nan
+    try:
+        sym = pd.read_csv(p)
+    except Exception:
+        return np.nan, np.nan
+    if sym.empty or "bucket" not in sym.columns:
+        return np.nan, np.nan
+    sym = sym[sym["bucket"].astype(str).str.strip().eq("bucket_5")].copy()
+    if sym.empty:
+        return np.nan, np.nan
+    sym_pnl = _sym_pnl_index(sym)
+    etf_leg = float(sym_pnl.get(_norm(etf), np.nan))
+    und_leg = float(sym_pnl.get(_norm(und), np.nan))
+    if np.isfinite(etf_leg) and np.isfinite(und_leg):
+        return etf_leg + und_leg, etf_leg
+    if np.isfinite(etf_leg):
+        return etf_leg, etf_leg
+    return np.nan, np.nan
+
+
+def _read_pair_row_from_by_pair(by_pair: pd.DataFrame, etf: str, und: str) -> float:
+    if by_pair.empty or not {"etf", "underlying", "total_pnl"}.issubset(by_pair.columns):
+        return np.nan
+    bp = by_pair.copy()
+    bp["etf"] = bp["etf"].map(_norm)
+    bp["underlying"] = bp["underlying"].map(_norm)
+    hit = bp[(bp["etf"] == _norm(etf)) & (bp["underlying"] == _norm(und))]
+    if hit.empty:
+        return np.nan
+    return _scalar_float(hit.iloc[0].get("total_pnl"), np.nan)
+
+
+def load_pair_leg_history(runs_root: Path, active: pd.DataFrame | None = None) -> pd.DataFrame:
     """Long frame per (date, pair): cumulative pair / ETF-leg / underlying-leg PnL."""
     rows: list[dict] = []
+    active_pairs = active.copy() if active is not None and not active.empty else None
+
     for ds in list_run_dates(runs_root):
         acct = runs_root / ds / "accounting"
-        try:
-            by_pair = pd.read_csv(acct / "pnl_bucket_4_by_pair.csv")
-            by_sym = pd.read_csv(acct / "pnl_bucket_4_by_symbol.csv")
-        except Exception:
-            continue
-        if by_pair.empty or not {"etf", "underlying", "total_pnl"}.issubset(by_pair.columns):
-            continue
-        by_pair["etf"] = by_pair["etf"].map(_norm)
-        by_pair["underlying"] = by_pair["underlying"].map(_norm)
-        if not by_sym.empty and {"symbol", "total_pnl"}.issubset(by_sym.columns):
-            sym_pnl = by_sym.assign(symbol=by_sym["symbol"].map(_norm)).set_index("symbol")["total_pnl"].astype(float)
+        if active_pairs is not None:
+            targets = active_pairs
         else:
-            sym_pnl = pd.Series(dtype=float)
-        for _, r in by_pair.iterrows():
-            pair_total = _scalar_float(r.get("total_pnl"), np.nan)
-            etf_leg = float(sym_pnl.get(r["etf"], np.nan))
-            rows.append(
-                {
-                    "date": pd.Timestamp(ds),
-                    "pair": _pair_key(r["etf"], r["underlying"]),
-                    "etf": r["etf"],
-                    "underlying": r["underlying"],
-                    "delta": float(pd.to_numeric(r.get("delta", np.nan), errors="coerce")),
-                    "pair_pnl_cum": pair_total,
-                    "etf_leg_pnl_cum": etf_leg,
-                    "und_leg_pnl_cum": pair_total - etf_leg if np.isfinite(etf_leg) else np.nan,
-                }
-            )
+            # Legacy path: all rows from bucket-4 pair file only.
+            try:
+                by_pair = pd.read_csv(acct / "pnl_bucket_4_by_pair.csv")
+                by_sym = pd.read_csv(acct / "pnl_bucket_4_by_symbol.csv")
+            except Exception:
+                continue
+            if by_pair.empty or not {"etf", "underlying", "total_pnl"}.issubset(by_pair.columns):
+                continue
+            sym_pnl = _sym_pnl_index(by_sym)
+            by_pair["etf"] = by_pair["etf"].map(_norm)
+            by_pair["underlying"] = by_pair["underlying"].map(_norm)
+            for _, r in by_pair.iterrows():
+                pair_total = _scalar_float(r.get("total_pnl"), np.nan)
+                etf_leg = float(sym_pnl.get(r["etf"], np.nan))
+                rows.append(
+                    {
+                        "date": pd.Timestamp(ds),
+                        "pair": _pair_key(r["etf"], r["underlying"]),
+                        "etf": r["etf"],
+                        "underlying": r["underlying"],
+                        "delta": float(pd.to_numeric(r.get("delta", np.nan), errors="coerce")),
+                        "pair_pnl_cum": pair_total,
+                        "etf_leg_pnl_cum": etf_leg,
+                        "und_leg_pnl_cum": pair_total - etf_leg if np.isfinite(etf_leg) else np.nan,
+                    }
+                )
+            continue
+
+        for _, ap in targets.iterrows():
+            etf = str(ap["etf"])
+            und = str(ap["underlying"])
+            pair = str(ap["pair"])
+            sleeve = str(ap.get("sleeve", "")).strip().lower()
+            by_pair_f, by_sym_f, _ = _pair_accounting_files(sleeve)
+            try:
+                by_pair = pd.read_csv(acct / by_pair_f) if (acct / by_pair_f).is_file() else pd.DataFrame()
+                by_sym = pd.read_csv(acct / by_sym_f) if (acct / by_sym_f).is_file() else pd.DataFrame()
+            except Exception:
+                by_pair = pd.DataFrame()
+                by_sym = pd.DataFrame()
+
+            pair_total = _read_pair_row_from_by_pair(by_pair, etf, und)
+            sym_pnl = _sym_pnl_index(by_sym)
+            etf_leg = float(sym_pnl.get(_norm(etf), np.nan))
+
+            if not np.isfinite(pair_total) and sleeve == B5_SLEEVE:
+                pair_total, etf_leg_fb = _fallback_b5_leg_from_by_symbol(acct, etf, und)
+                if np.isfinite(etf_leg_fb):
+                    etf_leg = etf_leg_fb
+
+            delta = float(pd.to_numeric(ap.get("delta", np.nan), errors="coerce"))
+            if np.isfinite(pair_total) or np.isfinite(etf_leg):
+                rows.append(
+                    {
+                        "date": pd.Timestamp(ds),
+                        "pair": pair,
+                        "etf": _norm(etf),
+                        "underlying": _norm(und),
+                        "delta": delta,
+                        "pair_pnl_cum": pair_total,
+                        "etf_leg_pnl_cum": etf_leg,
+                        "und_leg_pnl_cum": pair_total - etf_leg if np.isfinite(etf_leg) and np.isfinite(pair_total) else np.nan,
+                    }
+                )
     return pd.DataFrame(rows)
+
+
+def load_b4_pair_leg_history(runs_root: Path) -> pd.DataFrame:
+    """Backward-compatible alias: all bucket-4 pair rows across run dates."""
+    return load_pair_leg_history(runs_root, active=None)
 
 
 def _reconcile_actual_endpoints(
@@ -490,42 +599,85 @@ def _reconcile_actual_endpoints(
     *,
     runs_root: Path,
     run_date: str,
+    active: pd.DataFrame | None = None,
     tol: float = 1.0,
 ) -> list[str]:
     """Warn when a charted actual-PnL endpoint diverges from the run's accounting.
 
     The chart's last "actual pair total" point must equal the ``total_pnl`` the
-    EOD email reports for the same run date (``pnl_bucket_4_by_pair.csv``). Any
-    divergence means the stitched history and the email disagree — log it so the
-    mismatch is caught instead of silently shipping a wrong-looking graph.
+    EOD email reports for the same run date. Any divergence means the stitched
+    history and the email disagree — log it so the mismatch is caught instead of
+    silently shipping a wrong-looking graph.
     """
     mismatches: list[str] = []
-    p = runs_root / run_date / "accounting" / "pnl_bucket_4_by_pair.csv"
-    if not p.is_file():
-        return mismatches
-    try:
-        ap = pd.read_csv(p)
-    except Exception:
-        return mismatches
-    if ap.empty or not {"etf", "underlying", "total_pnl"}.issubset(ap.columns):
-        return mismatches
-    latest = {
-        _pair_key(e, u): _scalar_float(t, np.nan)
-        for e, u, t in zip(ap["etf"], ap["underlying"], ap["total_pnl"])
-    }
+    acct = runs_root / run_date / "accounting"
+    sleeve_by_pair: dict[str, str] = {}
+    etf_by_pair: dict[str, str] = {}
+    und_by_pair: dict[str, str] = {}
+    if active is not None and not active.empty:
+        for _, r in active.iterrows():
+            pair = str(r["pair"])
+            sleeve_by_pair[pair] = str(r.get("sleeve", "")).strip().lower()
+            etf_by_pair[pair] = str(r["etf"])
+            und_by_pair[pair] = str(r["underlying"])
+
+    latest: dict[str, float] = {}
+    if active is None or active.empty:
+        p = acct / "pnl_bucket_4_by_pair.csv"
+        if p.is_file():
+            try:
+                ap = pd.read_csv(p)
+                if not ap.empty and {"etf", "underlying", "total_pnl"}.issubset(ap.columns):
+                    latest = {
+                        _pair_key(e, u): _scalar_float(t, np.nan)
+                        for e, u, t in zip(ap["etf"], ap["underlying"], ap["total_pnl"])
+                    }
+            except Exception:
+                pass
+    for pair in actual_by_pair:
+        if pair in latest:
+            continue
+        sleeve = sleeve_by_pair.get(pair, "inverse_decay_bucket4")
+        by_pair_f, _, _ = _pair_accounting_files(sleeve)
+        p = acct / by_pair_f
+        if not p.is_file():
+            if sleeve == B5_SLEEVE:
+                fb_total, _ = _fallback_b5_leg_from_by_symbol(
+                    acct, etf_by_pair.get(pair, ""), und_by_pair.get(pair, "")
+                )
+                if np.isfinite(fb_total):
+                    latest[pair] = fb_total
+            continue
+        try:
+            ap = pd.read_csv(p)
+        except Exception:
+            continue
+        val = _read_pair_row_from_by_pair(
+            ap, etf_by_pair.get(pair, ""), und_by_pair.get(pair, "")
+        )
+        if np.isfinite(val):
+            latest[pair] = val
+
     for pair, charted in actual_by_pair.items():
-        acct = latest.get(pair, np.nan)
-        if np.isfinite(acct) and np.isfinite(charted) and abs(acct - charted) > tol:
-            msg = f"{pair}: chart={charted:,.0f} vs accounting={acct:,.0f}"
+        acct_val = latest.get(pair, np.nan)
+        if np.isfinite(acct_val) and np.isfinite(charted) and abs(acct_val - charted) > tol:
+            msg = f"{pair}: chart={charted:,.0f} vs accounting={acct_val:,.0f}"
             mismatches.append(msg)
             print(f"[B4-pair-charts] WARN actual-PnL endpoint mismatch {msg}")
     return mismatches
 
 
-def load_pair_gross_and_realized_h(runs_root: Path, run_date: str) -> pd.DataFrame:
+def load_pair_gross_and_realized_h(
+    runs_root: Path,
+    run_date: str,
+    *,
+    sleeve: str = "inverse_decay_bucket4",
+) -> pd.DataFrame:
     """Per pair on run date: ETF gross and realized hedge ratio from accounting detail."""
-    p = runs_root / run_date / "accounting" / "net_exposure_bucket_4_detail.csv"
-    by_pair_p = runs_root / run_date / "accounting" / "pnl_bucket_4_by_pair.csv"
+    _, _, detail_f = _pair_accounting_files(sleeve)
+    by_pair_f, _, _ = _pair_accounting_files(sleeve)
+    p = runs_root / run_date / "accounting" / detail_f
+    by_pair_p = runs_root / run_date / "accounting" / by_pair_f
     if not (p.is_file() and by_pair_p.is_file()):
         return pd.DataFrame()
     det = pd.read_csv(p)
@@ -567,12 +719,22 @@ def load_pair_gross_and_realized_h(runs_root: Path, run_date: str) -> pd.DataFra
     return pd.DataFrame(rows)
 
 
-def load_book_h_history(runs_root: Path) -> pd.DataFrame:
+def load_book_h_history(runs_root: Path, active: pd.DataFrame | None = None) -> pd.DataFrame:
     rows = []
     for ds in list_run_dates(runs_root):
-        sub = load_pair_gross_and_realized_h(runs_root, ds)
-        if not sub.empty:
-            rows.append(sub)
+        if active is not None and not active.empty:
+            for _, ap in active.iterrows():
+                sub = load_pair_gross_and_realized_h(
+                    runs_root, ds, sleeve=str(ap.get("sleeve", "")).strip().lower()
+                )
+                if not sub.empty:
+                    sub = sub[sub["pair"].eq(str(ap["pair"]))]
+                    if not sub.empty:
+                        rows.append(sub)
+        else:
+            sub = load_pair_gross_and_realized_h(runs_root, ds)
+            if not sub.empty:
+                rows.append(sub)
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
 
@@ -1168,10 +1330,9 @@ def _plot_pair_page(
             span_lo = pd.Timestamp(pair_hist["date"].min())
             span_hi = pd.Timestamp(pair_hist["date"].max())
             ax.plot(pair_hist["date"], pair_hist["pair_pnl_cum"], color="#1f77b4", lw=1.7, label="actual pair total")
-            # The per-leg split comes from pnl_bucket_4_by_symbol.csv, which only
-            # recently began carrying these symbols. Draw the leg lines only when
-            # they cover enough of the window to be meaningful; otherwise they are
-            # misleading sparse fragments that don't visually sum to the pair total.
+            # The per-leg split comes from per-bucket symbol CSVs. Draw the leg lines
+            # only when they cover enough of the window to be meaningful; otherwise they
+            # are misleading sparse fragments that don't visually sum to the pair total.
             etf_cov = float(pd.to_numeric(pair_hist["etf_leg_pnl_cum"], errors="coerce").notna().mean())
             if etf_cov >= LEG_COVERAGE_MIN:
                 ax.plot(pair_hist["date"], pair_hist["etf_leg_pnl_cum"], color="#ff7f0e", lw=1.0, label=f"actual {etf} leg")
@@ -1603,8 +1764,8 @@ def _make_chart_inner(
     if max_n > 0:
         active = active.head(max_n).copy()
 
-    hist = load_b4_pair_leg_history(runs_root)
-    book_h = load_book_h_history(runs_root)
+    hist = load_pair_leg_history(runs_root, active=active)
+    book_h = load_book_h_history(runs_root, active=active)
     trades = load_actual_trade_markers(runs_root, active)
     ratchet_by_pair = load_ratchet_targets(runs_root, run_date)
     shared_unds = load_shared_underlyings(runs_root, run_date, active)
@@ -1640,7 +1801,7 @@ def _make_chart_inner(
     if not hist.empty and "pair" in hist.columns:
         for _p, _g in hist.groupby("pair"):
             actual_by_pair[str(_p)] = _safe_last(_g.sort_values("date")["pair_pnl_cum"])
-    _reconcile_actual_endpoints(actual_by_pair, runs_root=runs_root, run_date=run_date)
+    _reconcile_actual_endpoints(actual_by_pair, runs_root=runs_root, run_date=run_date, active=active)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     pdf_path = out_dir / f"b4_pair_pnl_hedge_{run_date}.pdf"

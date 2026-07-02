@@ -12,13 +12,13 @@ deploy** as `site/data/latest.json` (no GitHub API at runtime).
 
 ```
 EOD pipeline → data/runs/<date>/accounting/
-       ↓ workflow_run
-risk_dashboard.yml (build) → risk_dashboard/data/latest.json → commit
-       ↓
-risk_dashboard.yml (deploy) → copy latest.json + investors.json into site/data/
-       ↓
+       ↓ (Daily workflow: dashboard job)
+scripts/dashboard_pipeline.py → risk_dashboard/data/latest.json → commit
+       ↓ (Daily workflow: deploy job)
 GitHub Pages → SPA + login gate → fetch ./data/latest.json
 ```
+
+Manual rebuild/deploy: Actions → **Manual: Dashboard Rebuild & Deploy**.
 
 ---
 
@@ -56,7 +56,9 @@ site/
 
 ```
 .github/workflows/
-??? risk_dashboard.yml     (build ? commit ? deploy Pages)
+??? eod_pnl_email.yml     (Daily: screener + EOD + snapshot + deploy + recovery)
+??? _dashboard_build.yml  (reusable snapshot build; not shown in sidebar)
+??? risk_dashboard.yml    (Manual: rebuild & deploy only)
 ```
 
 ---
@@ -119,8 +121,8 @@ Flex equity when present. The snapshot records where NAV came from in
 
 ### 3. Trigger the workflow once
 
-* **Manual:** Actions ? "Risk Dashboard" ? *Run workflow* ? leave
-  inputs blank ? Run.
+* **Manual:** Actions → **Manual: Dashboard Rebuild & Deploy** → *Run workflow* → leave
+  inputs blank → Run.
 * This builds `risk_dashboard/data/latest.json` from the most recent
   `data/runs/<date>/`, commits it, and deploys the static site.
 
@@ -156,9 +158,10 @@ close the tab or hit *Sign out*. There is no third-party storage.
 
 | Trigger | What happens |
 |---|---|
-| `workflow_run` after `eod_pnl_email.yml` succeeds | full build + deploy |
-| `workflow_dispatch` (manual)                      | full build + deploy (or deploy-only if `skip_build=true`) |
-| `push` to `main` touching `site/**` or `risk_dashboard/**` | redeploy site shell only (no rebuild) |
+| **Daily** workflow (`eod_pnl_email.yml`) after EOD succeeds | build snapshot → commit → deploy Pages |
+| **Daily** workflow 10:00 UTC recovery cron | rebuild snapshot only if manifest/`latest.json` is stale |
+| `workflow_dispatch` on **Manual: Dashboard Rebuild & Deploy** | full rebuild + deploy (or deploy-only if `skip_build=true`) |
+| `push` to `main` touching `site/**` or `risk_dashboard/**` code | redeploy via manual workflow only (daily path is authoritative) |
 
 The build step:
 

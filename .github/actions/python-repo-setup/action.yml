@@ -1,0 +1,29 @@
+name: Python repo setup
+description: Install Python and pip dependencies for ls-algo
+
+inputs:
+  python-version:
+    description: Python version
+    required: false
+    default: "3.11"
+  install-pytest:
+    description: Also install pytest
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: pip
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        if [ "${{ inputs.install-pytest }}" = "true" ]; then
+          pip install pytest
+        fi
