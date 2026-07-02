@@ -2609,9 +2609,6 @@
     const pad = 8;
     const eqPath = b5SeriesPath(equitySeries, w, hEq, pad, (v) => v / 1e6);
     const ddPath = b5SeriesPath(ddSeries, w, hDd, pad, (v) => v * 100);
-    const ddFill = ddSeries && ddSeries.length >= 2
-      ? `M ${b5SeriesPath(ddSeries, w, hDd, pad, (v) => v * 100).split(" ").map((p, i) => (i === 0 ? p : "L " + p)).join(" ")} L ${w - pad},${hDd - pad} L ${pad},${hDd - pad} Z`
-      : "";
     return `
       <div class="b5bt-chart-block">
         <h4>${title}</h4>
@@ -2620,7 +2617,6 @@
           <polyline fill="none" stroke="#0f766e" stroke-width="2" points="${eqPath}"/>
           <line x1="${pad}" y1="${hEq + 6}" x2="${w - pad}" y2="${hEq + 6}" stroke="#cbd5e1" stroke-width="0.5"/>
           <text x="${pad}" y="${hEq + 20}" class="dim" font-size="11">Drawdown (%)</text>
-          ${ddFill ? `<path d="${ddFill}" fill="rgba(185,28,28,0.25)"/>` : ""}
           <polyline fill="none" stroke="#991b1b" stroke-width="1.2" transform="translate(0,${hEq + 6})" points="${ddPath}"/>
         </svg>
       </div>`;
