@@ -2312,6 +2312,7 @@
         <button id="b4sim-run" class="btn btn-primary" type="button">Run</button>
       </div>
       <div id="b4sim-stats" class="strip"></div>
+      <p id="b4sim-takeaway" class="callout dim small" style="margin:6px 0 10px"></p>
       <h3>1-year max-drawdown distribution</h3>
       <div id="b4sim-chart"></div>
       <div class="two-col" style="margin-top:12px">
@@ -2370,24 +2371,37 @@
       const pLoss = term.reduce((acc, v) => acc + (v < 0 ? 1 : 0), 0) / term.length;
       const ms = (performance.now() - t0).toFixed(0);
 
+      // Rule-based risk coloring: red at severe thresholds, amber at elevated.
+      const ddClass = (v) => (v >= 0.4 ? "stat-neg" : v >= 0.25 ? "stat-warn" : "");
+      const probClass = (v) => (v >= 0.25 ? "stat-neg" : v >= 0.1 ? "stat-warn" : "");
+      const lossClass = (v) => (v <= -0.2 ? "stat-neg" : v <= -0.1 ? "stat-warn" : "");
       const stats = [
-        { label: "Median maxDD", value: fmtPct(p50, 1) },
-        { label: "p95 maxDD", value: fmtPct(p95, 1), cls: "stat-neg" },
-        { label: "p99 maxDD", value: fmtPct(p99, 1), cls: "stat-neg" },
-        { label: "p99.9 maxDD", value: fmtPct(p999, 1), cls: "stat-neg" },
-        { label: "P(dd > 15%)", value: fmtPct(pGt(0.15), 0) },
-        { label: "P(dd > 25%)", value: fmtPct(pGt(0.25), 0) },
-        { label: "P(dd > 40%)", value: fmtPct(pGt(0.4), 0), cls: "stat-neg" },
-        { label: "1y VaR 95%", value: fmtPct(var95, 1), sub: "5th pct annual return" },
-        { label: "1y CVaR 95%", value: fmtPct(cvar, 1), sub: "mean of worst 5%" },
-        { label: "P(annual loss)", value: fmtPct(pLoss, 0) },
+        { label: "Median maxDD", value: fmtPct(p50, 1), tip: "Typical (50th percentile) worst peak-to-trough drop over the horizon." },
+        { label: "p95 maxDD", value: fmtPct(p95, 1), cls: ddClass(p95), tip: "A bad year: 5% of simulated paths draw down at least this much." },
+        { label: "p99 maxDD", value: fmtPct(p99, 1), cls: ddClass(p99), tip: "A very bad year: only 1% of paths are worse than this." },
+        { label: "p99.9 maxDD", value: fmtPct(p999, 1), cls: ddClass(p999), tip: "Tail-of-tail: 1-in-1000 path drawdown." },
+        { label: "P(dd > 15%)", value: fmtPct(pGt(0.15), 0), cls: probClass(pGt(0.15)), tip: "Chance the book draws down more than 15% at some point in the horizon." },
+        { label: "P(dd > 25%)", value: fmtPct(pGt(0.25), 0), cls: probClass(pGt(0.25)), tip: "Chance of a >25% drawdown over the horizon." },
+        { label: "P(dd > 40%)", value: fmtPct(pGt(0.4), 0), cls: probClass(pGt(0.4)), tip: "Chance of a severe >40% drawdown over the horizon." },
+        { label: "1y VaR 95%", value: fmtPct(var95, 1), sub: "5th pct annual return", cls: lossClass(var95), tip: "Value at Risk: the 5th-percentile 12-month return. 95% of years beat this." },
+        { label: "1y CVaR 95%", value: fmtPct(cvar, 1), sub: "mean of worst 5%", cls: lossClass(cvar), tip: "Expected return in the worst 5% of years (average of the left tail)." },
+        { label: "P(annual loss)", value: fmtPct(pLoss, 0), cls: probClass(pLoss), tip: "Chance the 12-month return is negative." },
       ];
       statsEl.innerHTML = stats
-        .map(
-          (it) =>
-            `<div class="stat ${it.cls || ""}"><div class="label">${it.label}</div><div class="value ${it.cls ? "neg" : ""}">${it.value}</div>${it.sub ? `<div class="sub">${it.sub}</div>` : ""}</div>`
-        )
+        .map((it) => {
+          const valCls = it.cls === "stat-neg" ? "neg" : it.cls === "stat-warn" ? "warn" : "";
+          return `<div class="stat ${it.cls || ""}" title="${it.tip || ""}"><div class="label">${it.label}</div><div class="value ${valCls}">${it.value}</div>${it.sub ? `<div class="sub">${it.sub}</div>` : ""}</div>`;
+        })
         .join("");
+      // Plain-language takeaway under the stat strip.
+      const takeawayEl = document.getElementById("b4sim-takeaway");
+      if (takeawayEl) {
+        takeawayEl.innerHTML =
+          `<strong>In plain English:</strong> in a typical year this book draws down about ` +
+          `<strong>${fmtPct(p50, 0)}</strong>; a bad year (p95) is around <strong>${fmtPct(p95, 0)}</strong>, ` +
+          `and there is a <strong>${fmtPct(pLoss, 0)}</strong> chance of losing money over 12 months. ` +
+          `Size the sleeve so a p95 drawdown is survivable.`;
+      }
       chartEl.innerHTML =
         b4Histogram(dds, p95, p99) +
         `<p class="dim small">${o.nSims.toLocaleString()} sims · ${distEl.options[distEl.selectedIndex].text} · horizon ${o.horizon}d · vol &times;${o.volMult.toFixed(1)} · ${ms} ms. x-axis = max drawdown over the horizon.</p>`;
@@ -2658,6 +2672,7 @@
         </label>
       </div>
       <div id="b5bt-stats" class="strip"></div>
+      <p id="b5bt-takeaway" class="callout dim small" style="margin:6px 0 10px"></p>
       <div id="b5bt-charts" class="two-col"></div>
       <div id="b5bt-crash"></div>
       <div id="b5bt-assumptions" class="dim small" style="margin-top:12px"></div>`;
@@ -2674,17 +2689,32 @@
       const chartsEl = document.getElementById("b5bt-charts");
       const crashEl = document.getElementById("b5bt-crash");
       const assumEl = document.getElementById("b5bt-assumptions");
+      const ddCls = (v) => (v <= -0.4 ? "stat-neg" : v <= -0.25 ? "stat-warn" : "");
       const stats = [
-        { label: "CAGR", value: fmtPct(m.combined_CAGR, 1) },
-        { label: "Vol", value: fmtPct(m.combined_Vol, 1) },
-        { label: "Max DD", value: fmtPct(m.combined_MaxDD, 1) },
-        { label: "Sharpe", value: safeText(m.combined_Sharpe) },
-        { label: "Calmar", value: safeText(m.combined_Calmar) },
-        { label: "Realized $", value: fmtUsd(m["realized_$"]) },
+        { label: "CAGR", value: fmtPct(m.combined_CAGR, 1), tip: "Compound annual growth rate of combined equity." },
+        { label: "Vol", value: fmtPct(m.combined_Vol, 1), tip: "Annualized volatility of daily returns." },
+        { label: "Max DD", value: fmtPct(m.combined_MaxDD, 1), cls: ddCls(m.combined_MaxDD), tip: "Worst peak-to-trough drawdown over the backtest." },
+        { label: "Sharpe", value: safeText(m.combined_Sharpe), tip: "Return per unit of volatility (higher is better)." },
+        { label: "Calmar", value: safeText(m.combined_Calmar), tip: "CAGR divided by max drawdown (return per unit of pain)." },
+        { label: "Realized $", value: fmtUsd(m["realized_$"]), tip: "Cash harvested by monetizing the put hedge during vol spikes." },
       ];
       statsEl.innerHTML = stats
-        .map((s) => `<div class="summary-card"><div class="label">${s.label}</div><div class="value">${s.value}</div></div>`)
+        .map((s) => {
+          const valCls = s.cls === "stat-neg" ? "neg" : s.cls === "stat-warn" ? "warn" : "";
+          return `<div class="summary-card ${s.cls || ""}" title="${s.tip || ""}"><div class="label">${s.label}</div><div class="value ${valCls}">${s.value}</div></div>`;
+        })
         .join("");
+      const takeawayEl = document.getElementById("b5bt-takeaway");
+      if (takeawayEl) {
+        const cg = (m.combined_CAGR != null ? m.combined_CAGR * 100 : null);
+        const dd = (m.combined_MaxDD != null ? m.combined_MaxDD * 100 : null);
+        takeawayEl.innerHTML =
+          `<strong>In plain English:</strong> ${safeText(v.label || key)} compounded at ` +
+          `<strong>${cg == null ? "—" : cg.toFixed(1) + "%/yr"}</strong> with a worst drawdown of ` +
+          `<strong>${dd == null ? "—" : dd.toFixed(1) + "%"}</strong>, harvesting ` +
+          `<strong>${fmtUsd(m["realized_$"])}</strong> from the put hedge. ` +
+          `The crash payoffs below show what it makes when the market gaps down.`;
+      }
 
       const eq = (v.series || {}).combined_equity || [];
       const dd = (v.series || {}).drawdown || [];

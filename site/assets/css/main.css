@@ -215,6 +215,15 @@ main {
 .strip .stat.stat-pos {
   background: var(--ok-bg); border-color: var(--pos);
 }
+.strip .stat.stat-warn,
+.strip .summary-card.stat-warn {
+  background: var(--warn-bg); border-color: var(--warn, #d08b1f);
+}
+.strip .summary-card.stat-neg {
+  background: var(--hard-bg); border-color: var(--neg);
+}
+.value.warn { color: var(--warn, #d08b1f); }
+.help-tip { cursor: help; border-bottom: 1px dotted var(--text-muted); }
 .strip .stat .label {
   font-size: 10.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em;
 }
