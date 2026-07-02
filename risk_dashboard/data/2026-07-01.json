@@ -1,6 +1,6 @@
 {
   "run_date": "2026-07-01",
-  "generated_at_utc": "2026-07-02T02:05:16.609048+00:00",
+  "generated_at_utc": "2026-07-02T02:13:07.124068+00:00",
   "nav_usd": 3509499.9999999995,
   "nav_source": "flex_positions:percentOfNAV_median",
   "book": {
@@ -19863,8 +19863,8 @@
     "lineage": {
       "manifest_present": true,
       "nav_source": "flex_positions:percentOfNAV_median",
-      "git_sha": "b4dd1dbca4cab9a749d0dba93c8495923f58c8e4",
-      "workflow_run_id": "28560253487",
+      "git_sha": "51f47e74d011725dea0751fcd62c000e61d93d46",
+      "workflow_run_id": "28560525691",
       "checksum_count": 9
     }
   },
@@ -37724,7 +37724,7 @@
   },
   "bucket4_risk_sim": {
     "schema": "bucket4_risk_sim.v1",
-    "generated_at_utc": "2026-07-02T02:05:15.617581+00:00",
+    "generated_at_utc": "2026-07-02T02:13:05.854029+00:00",
     "run_date": "2026-07-01",
     "window_start": "2024-01-01",
     "cadence": {
@@ -39394,9 +39394,9 @@
   },
   "manifest": {
     "run_date": "2026-07-01",
-    "generated_at_utc": "2026-07-02T02:05:11.662794+00:00",
-    "git_sha": "b4dd1dbca4cab9a749d0dba93c8495923f58c8e4",
-    "workflow_run_id": "28560253487",
+    "generated_at_utc": "2026-07-02T02:13:01.682923+00:00",
+    "git_sha": "51f47e74d011725dea0751fcd62c000e61d93d46",
+    "workflow_run_id": "28560525691",
     "nav_usd": 3509499.9999999995,
     "nav_source": "flex_positions:percentOfNAV_median",
     "screener_csv": "data/runs/2026-07-01/etf_screened_today.csv",
