@@ -1,0 +1,179 @@
+{
+  "schema": "bucket5_sensitivity.v1",
+  "generated_at_utc": "2026-07-02T20:33:02.375605+00:00",
+  "preset_base": "F_dynamic_deep30",
+  "era": "extended",
+  "axes": {
+    "sleeve_frac": [
+      0.15,
+      0.2,
+      0.25
+    ],
+    "total_premium": [
+      0.024,
+      0.03
+    ],
+    "borrow_stress_mult": [
+      1.0,
+      2.0
+    ]
+  },
+  "points": [
+    {
+      "sleeve_frac": 0.15,
+      "total_premium": 0.024,
+      "borrow_stress_mult": 1.0,
+      "CAGR": 0.137487,
+      "Vol": 0.142599,
+      "MaxDD": -0.269711,
+      "Sharpe": 0.971358,
+      "Calmar": 0.509756,
+      "realized_usd": 9139055.469825,
+      "crash_mild": 0.4954154468591792,
+      "crash_severe": 1.4949909929651153
+    },
+    {
+      "sleeve_frac": 0.15,
+      "total_premium": 0.024,
+      "borrow_stress_mult": 2.0,
+      "CAGR": 0.133576,
+      "Vol": 0.143159,
+      "MaxDD": -0.274384,
+      "Sharpe": 0.944009,
+      "Calmar": 0.486822,
+      "realized_usd": 8907746.462505,
+      "crash_mild": 0.4954154468591792,
+      "crash_severe": 1.4949909929651153
+    },
+    {
+      "sleeve_frac": 0.15,
+      "total_premium": 0.03,
+      "borrow_stress_mult": 1.0,
+      "CAGR": 0.147673,
+      "Vol": 0.152682,
+      "MaxDD": -0.268862,
+      "Sharpe": 0.973646,
+      "Calmar": 0.549252,
+      "realized_usd": 11082609.91164,
+      "crash_mild": 0.6391305441606634,
+      "crash_severe": 1.9139269335775366
+    },
+    {
+      "sleeve_frac": 0.15,
+      "total_premium": 0.03,
+      "borrow_stress_mult": 2.0,
+      "CAGR": 0.143513,
+      "Vol": 0.152775,
+      "MaxDD": -0.269893,
+      "Sharpe": 0.949361,
+      "Calmar": 0.531742,
+      "realized_usd": 10752139.282422,
+      "crash_mild": 0.6391305441606634,
+      "crash_severe": 1.9139269335775366
+    },
+    {
+      "sleeve_frac": 0.2,
+      "total_premium": 0.024,
+      "borrow_stress_mult": 1.0,
+      "CAGR": 0.140134,
+      "Vol": 0.166468,
+      "MaxDD": -0.366756,
+      "Sharpe": 0.869725,
+      "Calmar": 0.382091,
+      "realized_usd": 9656057.854434,
+      "crash_mild": 0.4689337994102601,
+      "crash_severe": 1.4347400698035915
+    },
+    {
+      "sleeve_frac": 0.2,
+      "total_premium": 0.024,
+      "borrow_stress_mult": 2.0,
+      "CAGR": 0.134782,
+      "Vol": 0.166977,
+      "MaxDD": -0.373655,
+      "Sharpe": 0.839397,
+      "Calmar": 0.360712,
+      "realized_usd": 9291458.921371,
+      "crash_mild": 0.4689337994102601,
+      "crash_severe": 1.4347400698035915
+    },
+    {
+      "sleeve_frac": 0.2,
+      "total_premium": 0.03,
+      "borrow_stress_mult": 1.0,
+      "CAGR": 0.150142,
+      "Vol": 0.171514,
+      "MaxDD": -0.362588,
+      "Sharpe": 0.898848,
+      "Calmar": 0.414085,
+      "realized_usd": 11693294.496093,
+      "crash_mild": 0.6126488967117442,
+      "crash_severe": 1.8536760104160128
+    },
+    {
+      "sleeve_frac": 0.2,
+      "total_premium": 0.03,
+      "borrow_stress_mult": 2.0,
+      "CAGR": 0.14455,
+      "Vol": 0.171905,
+      "MaxDD": -0.368813,
+      "Sharpe": 0.868809,
+      "Calmar": 0.391932,
+      "realized_usd": 11206515.310703,
+      "crash_mild": 0.6126488967117442,
+      "crash_severe": 1.8536760104160128
+    },
+    {
+      "sleeve_frac": 0.25,
+      "total_premium": 0.024,
+      "borrow_stress_mult": 1.0,
+      "CAGR": 0.140113,
+      "Vol": 0.198194,
+      "MaxDD": -0.462038,
+      "Sharpe": 0.761114,
+      "Calmar": 0.30325,
+      "realized_usd": 9990603.7026,
+      "crash_mild": 0.442452151961341,
+      "crash_severe": 1.374489146642068
+    },
+    {
+      "sleeve_frac": 0.25,
+      "total_premium": 0.024,
+      "borrow_stress_mult": 2.0,
+      "CAGR": 0.13341,
+      "Vol": 0.198851,
+      "MaxDD": -0.468646,
+      "Sharpe": 0.729611,
+      "Calmar": 0.284671,
+      "realized_usd": 9523816.745054,
+      "crash_mild": 0.442452151961341,
+      "crash_severe": 1.374489146642068
+    },
+    {
+      "sleeve_frac": 0.25,
+      "total_premium": 0.03,
+      "borrow_stress_mult": 1.0,
+      "CAGR": 0.150441,
+      "Vol": 0.198662,
+      "MaxDD": -0.455595,
+      "Sharpe": 0.80426,
+      "Calmar": 0.330207,
+      "realized_usd": 12152897.942825,
+      "crash_mild": 0.5861672492628252,
+      "crash_severe": 1.793425087254489
+    },
+    {
+      "sleeve_frac": 0.25,
+      "total_premium": 0.03,
+      "borrow_stress_mult": 2.0,
+      "CAGR": 0.143606,
+      "Vol": 0.199493,
+      "MaxDD": -0.462125,
+      "Sharpe": 0.771854,
+      "Calmar": 0.310751,
+      "realized_usd": 11555529.71209,
+      "crash_mild": 0.5861672492628252,
+      "crash_severe": 1.793425087254489
+    }
+  ]
+}

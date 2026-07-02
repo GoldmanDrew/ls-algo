@@ -2161,7 +2161,13 @@
     const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((p / 100) * (sorted.length - 1))));
     return sorted[idx];
   }
-  // Monte-Carlo: max-drawdown + terminal-return distribution over `horizon`.
+  function b4RefDd(sim, dist) {
+    const ref = sim.reference_mc || {};
+    const key = dist === "boot" ? "block_bootstrap" : dist === "t" ? "student_t" : "laplace";
+    const r = ref[key] || {};
+    return { p95: r.dd_p95, p99: r.dd_p99 };
+  }
+  // Monte-Carlo: max-drawdown + terminal-return (+ optional equity fan percentiles).
   function b4RunSim(sim, o) {
     const rng = b4Mulberry32(o.seed >>> 0);
     const H = o.horizon | 0;
@@ -2174,14 +2180,16 @@
     const data = sim.port_daily_returns || [];
     const m = data.length;
     const mean = sim.mean_daily || 0;
-    const L = (sim.reference_mc && sim.reference_mc.block_len) || 10;
+    const L = o.blockLen || (sim.reference_mc && sim.reference_mc.block_len) || 10;
     const tdf = sim.fit_student_t.df;
     const tloc = sim.fit_student_t.loc;
     const tscale = sim.fit_student_t.scale * k;
     const lloc = sim.fit_laplace.loc;
     const lscale = sim.fit_laplace.scale * k;
+    const fanBands = o.fanBands ? Array.from({ length: H + 1 }, () => []) : null;
     for (let i = 0; i < N; i++) {
       let eq = 1, peak = 1, mdd = 0;
+      if (fanBands) fanBands[0].push(1);
       if (dist === "boot") {
         let filled = 0;
         while (filled < H) {
@@ -2194,6 +2202,7 @@
             if (eq > peak) peak = eq;
             const dd = eq / peak - 1;
             if (dd < mdd) mdd = dd;
+            if (fanBands) fanBands[filled + 1].push(eq);
           }
         }
       } else {
@@ -2211,14 +2220,22 @@
           if (eq > peak) peak = eq;
           const dd = eq / peak - 1;
           if (dd < mdd) mdd = dd;
+          if (fanBands) fanBands[s + 1].push(eq);
         }
       }
       dds[i] = -mdd;
       term[i] = eq - 1;
     }
-    return { dds, term };
+    let fan = null;
+    if (fanBands) {
+      fan = fanBands.map((arr) => {
+        const s = Array.from(arr).sort((a, b) => a - b);
+        return { p5: b4Pctl(s, 5), p50: b4Pctl(s, 50), p95: b4Pctl(s, 95) };
+      });
+    }
+    return { dds, term, fan };
   }
-  function b4Histogram(dds, p95, p99) {
+  function b4Histogram(dds, p95, p99, refP95, refP99) {
     const W = 1000, Hh = 220, pad = 24;
     const nbins = 40, maxX = 1.0;
     const bins = new Array(nbins).fill(0);
@@ -2237,10 +2254,12 @@
       const y = Hh - pad - h;
       bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(bw - 1).toFixed(1)}" height="${h.toFixed(1)}" fill="var(--accent)" opacity="0.75"></rect>`;
     }
-    const mk = (val, color, label) => {
+    const mk = (val, color, label, dash) => {
+      if (val == null || !isFinite(val)) return "";
       const x = pad + (Math.min(val, maxX) / maxX) * (W - 2 * pad);
-      return `<line x1="${x.toFixed(1)}" y1="${pad - 6}" x2="${x.toFixed(1)}" y2="${Hh - pad}" stroke="${color}" stroke-width="2" stroke-dasharray="4 3"></line>` +
-        `<text x="${x.toFixed(1)}" y="${pad - 9}" fill="${color}" font-size="13" text-anchor="middle">${label}</text>`;
+      const dashAttr = dash ? ' stroke-dasharray="6 4"' : "";
+      return `<line x1="${x.toFixed(1)}" y1="${pad - 6}" x2="${x.toFixed(1)}" y2="${Hh - pad}" stroke="${color}" stroke-width="2"${dashAttr}></line>` +
+        (label ? `<text x="${x.toFixed(1)}" y="${pad - 9}" fill="${color}" font-size="13" text-anchor="middle">${label}</text>` : "");
     };
     let axis = "";
     for (let g = 0; g <= 5; g++) {
@@ -2251,11 +2270,48 @@
     return `<svg viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none" style="width:100%;height:220px;display:block">` +
       `<line x1="${pad}" y1="${Hh - pad}" x2="${W - pad}" y2="${Hh - pad}" stroke="var(--border-strong)" stroke-width="1"></line>` +
       bars +
-      mk(p95, "var(--warn-bg)", "") +
-      mk(p95, "#d08b1f", "p95") +
-      mk(p99, "var(--neg)", "p99") +
+      mk(refP95, "#64748b", "ref p95", true) +
+      mk(refP99, "#94a3b8", "ref p99", true) +
+      mk(p95, "#d08b1f", "live p95", false) +
+      mk(p99, "var(--neg)", "live p99", false) +
       axis +
       `</svg>`;
+  }
+  function b4FanChart(fan, horizon) {
+    if (!fan || !fan.length) return "";
+    const W = 720, Hh = 180, pad = 28;
+    const n = fan.length - 1;
+    const xAt = (i) => pad + (i / n) * (W - 2 * pad);
+    const yAt = (v) => Hh - pad - Math.max(0, Math.min(1, (v - 0.5) / 1.5)) * (Hh - 2 * pad);
+    let area = "";
+    for (let i = 0; i < n; i++) {
+      const x0 = xAt(i), x1 = xAt(i + 1);
+      area += `<polygon points="${x0},${yAt(fan[i].p95)} ${x1},${yAt(fan[i + 1].p95)} ${x1},${yAt(fan[i + 1].p5)} ${x0},${yAt(fan[i].p5)}" fill="#0f766e" opacity="0.15"/>`;
+    }
+    let med = "";
+    for (let i = 0; i < n; i++) {
+      med += `${xAt(i)},${yAt(fan[i].p50)} `;
+    }
+    med += `${xAt(n)},${yAt(fan[n].p50)}`;
+    return `<svg viewBox="0 0 ${W} ${Hh}" width="100%" style="max-width:${W}px;display:block;margin-top:8px">` +
+      `<text x="${pad}" y="14" fill="var(--text-muted)" font-size="11">Equity fan (p5–p95 shaded, p50 line) · ${horizon}d horizon</text>` +
+      area +
+      `<polyline fill="none" stroke="#0f766e" stroke-width="2" points="${med}"/>` +
+      `</svg>`;
+  }
+  function b4ParseHash() {
+    const h = (location.hash || "").replace(/^#/, "");
+    if (!h.startsWith("b4sim=")) return null;
+    try {
+      return JSON.parse(decodeURIComponent(h.slice(6)));
+    } catch (_e) {
+      return null;
+    }
+  }
+  function b4WriteHash(o) {
+    try {
+      location.hash = "b4sim=" + encodeURIComponent(JSON.stringify(o));
+    } catch (_e) { /* ignore */ }
   }
   function renderBucket4Sim(sim) {
     const content = document.getElementById("b4sim-content");
@@ -2309,12 +2365,25 @@
         <label class="b4sim-ctl">Vol shock &times;<span id="b4sim-volval">1.0</span>
           <input id="b4sim-vol" type="range" min="0.5" max="3" step="0.1" value="1.0">
         </label>
+        <label class="b4sim-ctl">Block length
+          <input id="b4sim-block" type="number" min="3" max="30" step="1" value="10">
+        </label>
+        <label class="b4sim-ctl">Seed
+          <input id="b4sim-seed" type="number" min="1" max="99999999" step="1" value="1234567">
+        </label>
         <button id="b4sim-run" class="btn btn-primary" type="button">Run</button>
       </div>
       <div id="b4sim-stats" class="strip"></div>
       <p id="b4sim-takeaway" class="callout dim small" style="margin:6px 0 10px"></p>
+      <div class="b4sim-controls strip" style="margin:0 0 10px;gap:14px;flex-wrap:wrap;align-items:flex-end">
+        <label class="b4sim-ctl">Max tolerable drawdown (%)
+          <input id="b4sim-tol" type="number" min="5" max="80" step="1" value="25" title="Your pain threshold for a bad year">
+        </label>
+        <div id="b4sim-size" class="callout dim small" style="flex:1;min-width:220px;margin:0;padding:8px 10px"></div>
+      </div>
       <h3>1-year max-drawdown distribution</h3>
       <div id="b4sim-chart"></div>
+      <div id="b4sim-fan"></div>
       <div class="two-col" style="margin-top:12px">
         <div>
           <h3>Book under test (live B4 proposed)</h3>
@@ -2340,21 +2409,48 @@
     const nsimsEl = document.getElementById("b4sim-nsims");
     const volEl = document.getElementById("b4sim-vol");
     const volValEl = document.getElementById("b4sim-volval");
+    const blockEl = document.getElementById("b4sim-block");
+    const seedEl = document.getElementById("b4sim-seed");
+    const tolEl = document.getElementById("b4sim-tol");
+    const sizeEl = document.getElementById("b4sim-size");
     const runEl = document.getElementById("b4sim-run");
     const statsEl = document.getElementById("b4sim-stats");
     const chartEl = document.getElementById("b4sim-chart");
+    const fanEl = document.getElementById("b4sim-fan");
 
-    function update() {
-      const o = {
+    const hashInit = b4ParseHash();
+    if (hashInit) {
+      if (hashInit.dist) distEl.value = hashInit.dist;
+      if (hashInit.horizon) horizonEl.value = hashInit.horizon;
+      if (hashInit.nSims) nsimsEl.value = String(hashInit.nSims);
+      if (hashInit.volMult != null) volEl.value = hashInit.volMult;
+      if (hashInit.blockLen) blockEl.value = hashInit.blockLen;
+      if (hashInit.seed) seedEl.value = hashInit.seed;
+      if (hashInit.tolPct) tolEl.value = hashInit.tolPct;
+    } else {
+      blockEl.value = (sim.reference_mc && sim.reference_mc.block_len) || 10;
+    }
+
+    function readOpts() {
+      return {
         dist: distEl.value,
         horizon: Math.max(20, Math.min(756, parseInt(horizonEl.value, 10) || 252)),
         nSims: parseInt(nsimsEl.value, 10) || 4000,
         volMult: parseFloat(volEl.value) || 1.0,
-        seed: 1234567,
+        blockLen: Math.max(3, Math.min(30, parseInt(blockEl.value, 10) || 10)),
+        seed: parseInt(seedEl.value, 10) || 1234567,
+        fanBands: true,
+        tolPct: parseFloat(tolEl.value) || 25,
       };
+    }
+
+    function update() {
+      const o = readOpts();
       volValEl.textContent = o.volMult.toFixed(1);
+      b4WriteHash(o);
       const t0 = performance.now();
-      const { dds, term } = b4RunSim(sim, o);
+      const ref = b4RefDd(sim, o.dist);
+      const { dds, term, fan } = b4RunSim(sim, o);
       const ddSorted = Array.from(dds).sort((a, b) => a - b);
       const termSorted = Array.from(term).sort((a, b) => a - b);
       const p50 = b4Pctl(ddSorted, 50);
@@ -2403,13 +2499,24 @@
           `Size the sleeve so a p95 drawdown is survivable.`;
       }
       chartEl.innerHTML =
-        b4Histogram(dds, p95, p99) +
-        `<p class="dim small">${o.nSims.toLocaleString()} sims · ${distEl.options[distEl.selectedIndex].text} · horizon ${o.horizon}d · vol &times;${o.volMult.toFixed(1)} · ${ms} ms. x-axis = max drawdown over the horizon.</p>`;
+        b4Histogram(dds, p95, p99, ref.p95, ref.p99) +
+        `<p class="dim small">${o.nSims.toLocaleString()} sims · ${distEl.options[distEl.selectedIndex].text} · horizon ${o.horizon}d · block ${o.blockLen} · vol &times;${o.volMult.toFixed(1)} · seed ${o.seed} · ${ms} ms. Dashed = precomputed reference tail; solid = this run.</p>`;
+      if (fanEl) fanEl.innerHTML = b4FanChart(fan, o.horizon);
+      if (sizeEl && p95 > 0) {
+        const scale = Math.min(1, (o.tolPct / 100) / p95);
+        sizeEl.innerHTML =
+          `<strong>Size accordingly:</strong> if your max tolerable 1y drawdown is <strong>${o.tolPct}%</strong>, ` +
+          `the live p95 (${fmtPct(p95, 0)}) implies scaling B4 gross to about <strong>${fmtPct(scale, 0)}</strong> of the proposed book ` +
+          `(simple linear scaling; tails are nonlinear).`;
+      }
     }
 
     distEl.addEventListener("change", update);
     horizonEl.addEventListener("change", update);
     nsimsEl.addEventListener("change", update);
+    blockEl.addEventListener("change", update);
+    seedEl.addEventListener("change", update);
+    tolEl.addEventListener("change", update);
     volEl.addEventListener("input", () => {
       volValEl.textContent = (parseFloat(volEl.value) || 1).toFixed(1);
     });
@@ -2636,6 +2743,23 @@
       </div>`;
   }
 
+  function b5NearestGridPoint(grid, sleeve, premium, stress) {
+    if (!grid || !grid.points || !grid.points.length) return null;
+    let best = grid.points[0];
+    let bestD = Infinity;
+    for (const p of grid.points) {
+      const d =
+        Math.abs(p.sleeve_frac - sleeve) +
+        Math.abs(p.total_premium - premium) * 10 +
+        Math.abs(p.borrow_stress_mult - stress) * 0.05;
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    return best;
+  }
+
   function renderBucket5Backtest(panel) {
     const content = document.getElementById("b5bt-content");
     const meta = document.getElementById("b5bt-meta");
@@ -2643,11 +2767,15 @@
     if (!panel || !panel.variants) {
       if (meta) meta.innerHTML = statusPill("unknown", "B5 backtest data not available");
       content.innerHTML =
-        '<div class="callout dim">No Bucket 5 backtest panel. Run <code>python scripts/build_bucket5_backtest_panel.py</code> then rebuild the dashboard.</div>';
+        '<div class="callout dim">No Bucket 5 backtest panel. Run <code>python scripts/build_bucket5_backtest_panel.py --with-sensitivity</code> then rebuild the dashboard.</div>';
       return;
     }
+    const grid = panel.sensitivity_grid || null;
+    const labCmd = safeText(panel.lab_command, "streamlit run scripts/bucket5_lab.py");
     if (meta) {
-      meta.innerHTML = `<span class="dim">as of ${safeText(panel.run_date)} · generated ${safeText(panel.generated_at_utc)} · interactive lab: <code>${safeText(panel.lab_command)}</code></span>`;
+      meta.innerHTML =
+        `<span class="dim">as of ${safeText(panel.run_date)} · generated ${safeText(panel.generated_at_utc)} · ` +
+        `full parameter lab: <code>${labCmd}</code></span>`;
     }
     const variantKeys = Object.keys(panel.variants);
     const defaultKey = variantKeys.includes("F_extended") ? "F_extended" : variantKeys[0];
@@ -2657,11 +2785,21 @@
         return `<option value="${k}">${safeText(v.label || k)} (${safeText(v.era)})</option>`;
       })
       .join("");
+    const axes = (grid && grid.axes) || {};
+    const sleeveOpts = (axes.sleeve_frac || [0.15, 0.20, 0.25])
+      .map((v) => `<option value="${v}">${Math.round(v * 100)}%</option>`)
+      .join("");
+    const premOpts = (axes.total_premium || [0.024, 0.03])
+      .map((v) => `<option value="${v}">${(v * 100).toFixed(1)}%</option>`)
+      .join("");
+    const stressOpts = (axes.borrow_stress_mult || [1.0, 1.5, 2.0])
+      .map((v) => `<option value="${v}">${v.toFixed(1)}×</option>`)
+      .join("");
 
     content.innerHTML = `
       <div class="callout dim small">
-        Short UVIX + short SVIX carry (20% sleeve, regime gates) with SPX put hedge, T-bill collateral,
-        liquidate-and-redeploy monetization. Extended history uses synthetic UVIX/SVIX pre-2022 and BS put pricing.
+        Short UVIX + short SVIX carry with SPX put hedge, T-bill collateral, and liquidate-and-redeploy monetization.
+        <strong>Interactive lab:</strong> run <code>${labCmd}</code> locally for full sweeps, tornado charts, and preset save/load.
       </div>
       <div class="b4sim-controls strip" style="margin:10px 0;gap:14px;flex-wrap:wrap">
         <label class="b4sim-ctl">Variant
@@ -2671,6 +2809,25 @@
           <select id="b5bt-compare"><option value="">— none —</option>${options}</select>
         </label>
       </div>
+      ${grid ? `
+      <div class="callout warn small" style="margin:8px 0">
+        <strong>Precomputed sensitivity</strong> (F dynamic deep-skew, ${safeText(grid.era || "extended")}):
+        snap sliders to nearest grid point. For continuous exploration use the Streamlit lab.
+      </div>
+      <div class="b4sim-controls strip" style="margin:0 0 10px;gap:14px;flex-wrap:wrap">
+        <label class="b4sim-ctl">Sleeve gross
+          <select id="b5bt-sleeve">${sleeveOpts}</select>
+        </label>
+        <label class="b4sim-ctl">Premium / roll
+          <select id="b5bt-prem">${premOpts}</select>
+        </label>
+        <label class="b4sim-ctl">Borrow stress
+          <select id="b5bt-stress">${stressOpts}</select>
+        </label>
+      </div>
+      <div id="b5bt-grid-stats" class="strip"></div>
+      <p id="b5bt-grid-takeaway" class="callout dim small" style="margin:6px 0 10px"></p>
+      ` : `<p class="dim small">Rebuild with <code>--with-sensitivity</code> to enable grid sliders here.</p>`}
       <div id="b5bt-stats" class="strip"></div>
       <p id="b5bt-takeaway" class="callout dim small" style="margin:6px 0 10px"></p>
       <div id="b5bt-charts" class="two-col"></div>
@@ -2742,11 +2899,51 @@
         `sleeve ${fmtPct(a.sleeve_frac, 0)} · ${safeText(v.meta?.pricing_mode || "")} · ${safeText(v.meta?.start)}→${safeText(v.meta?.end)}`;
     }
 
+    function renderGridPoint() {
+      if (!grid) return;
+      const sleeveEl = document.getElementById("b5bt-sleeve");
+      const premEl = document.getElementById("b5bt-prem");
+      const stressEl = document.getElementById("b5bt-stress");
+      const gStats = document.getElementById("b5bt-grid-stats");
+      const gTake = document.getElementById("b5bt-grid-takeaway");
+      if (!sleeveEl || !gStats) return;
+      const pt = b5NearestGridPoint(
+        grid,
+        parseFloat(sleeveEl.value),
+        parseFloat(premEl.value),
+        parseFloat(stressEl.value)
+      );
+      if (!pt) return;
+      const ddCls = (v) => (v <= -0.4 ? "stat-neg" : v <= -0.25 ? "stat-warn" : "");
+      gStats.innerHTML = [
+        { label: "Grid CAGR", value: fmtPct(pt.CAGR, 1) },
+        { label: "Grid Max DD", value: fmtPct(pt.MaxDD, 1), cls: ddCls(pt.MaxDD) },
+        { label: "Grid Sharpe", value: safeText(pt.Sharpe) },
+        { label: "Grid Calmar", value: safeText(pt.Calmar) },
+        { label: "Realized $", value: fmtUsd(pt.realized_usd) },
+        { label: "Crash -30%", value: fmtPct(pt.crash_severe, 1) },
+      ]
+        .map((s) => `<div class="summary-card ${s.cls || ""}"><div class="label">${s.label}</div><div class="value">${s.value}</div></div>`)
+        .join("");
+      if (gTake) {
+        gTake.innerHTML =
+          `<strong>Grid point:</strong> sleeve ${fmtPct(pt.sleeve_frac, 0)}, premium ${fmtPct(pt.total_premium, 1)}/roll, ` +
+          `borrow stress ${pt.borrow_stress_mult.toFixed(1)}×. Charts below still show the selected preset variant.`;
+      }
+    }
+
     function update() {
       renderVariant(variantEl.value, compareEl.value || null);
+      renderGridPoint();
     }
     variantEl.addEventListener("change", update);
     compareEl.addEventListener("change", update);
+    if (grid) {
+      ["b5bt-sleeve", "b5bt-prem", "b5bt-stress"].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener("change", renderGridPoint);
+      });
+    }
     update();
   }
 
