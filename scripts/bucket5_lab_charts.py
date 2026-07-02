@@ -11,7 +11,18 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from scripts.bucket5_lab_helpers import backwardation_mask, harvest_event_dates, series_to_frame
+from scripts.bucket5_lab_helpers import backwardation_mask, harvest_event_dates, monetize_event_dates, series_to_frame
+
+
+def _annotate_harvests(ax, series: dict, monetize_events: list[dict] | None = None) -> None:
+    labeled = monetize_event_dates(monetize_events, min_usd=1000.0)
+    if labeled:
+        for d, label in labeled:
+            ax.axvline(pd.Timestamp(d), color="#16a34a", lw=0.8, alpha=0.55)
+            ax.text(pd.Timestamp(d), ax.get_ylim()[1], label, rotation=90, va="top", ha="right", fontsize=6, color="#16a34a", alpha=0.85)
+        return
+    for d in harvest_event_dates(series):
+        ax.axvline(pd.Timestamp(d), color="#16a34a", lw=0.8, alpha=0.55)
 
 
 def _shade_spans(ax, spans: list[tuple[str, str]], *, alpha: float = 0.12, color: str = "#991b1b") -> None:
@@ -19,7 +30,7 @@ def _shade_spans(ax, spans: list[tuple[str, str]], *, alpha: float = 0.12, color
         ax.axvspan(pd.Timestamp(s), pd.Timestamp(e), color=color, alpha=alpha, lw=0)
 
 
-def fig_attribution(series: dict, *, r_lo: float = 0.88) -> plt.Figure:
+def fig_attribution(series: dict, *, r_lo: float = 0.88, monetize_events: list[dict] | None = None) -> plt.Figure:
     """Decompose combined equity into carry, bills, puts, harvest, redeploy."""
     idx = None
     parts: dict[str, pd.Series] = {}
@@ -55,8 +66,7 @@ def fig_attribution(series: dict, *, r_lo: float = 0.88) -> plt.Figure:
     ax0.plot((base + puts + realized + redeploy).index, (base + puts + realized + redeploy) / 1e6,
              color="#16a34a", lw=0.9, alpha=0.7, ls="--", label="+ Harvest + redeploy (components)")
 
-    for d in harvest_event_dates(series):
-        ax0.axvline(pd.Timestamp(d), color="#16a34a", lw=0.8, alpha=0.55)
+    _annotate_harvests(ax0, series, monetize_events)
 
     ax0.set_ylabel("Equity ($M)")
     ax0.set_title("Component attribution (red shading = backwardation / stress)")
@@ -82,7 +92,7 @@ def fig_attribution(series: dict, *, r_lo: float = 0.88) -> plt.Figure:
     return fig
 
 
-def fig_equity_drawdown(series: dict, *, r_lo: float = 0.88) -> plt.Figure:
+def fig_equity_drawdown(series: dict, *, r_lo: float = 0.88, monetize_events: list[dict] | None = None) -> plt.Figure:
     eq = series_to_frame(series, "combined_equity")
     dd = series_to_frame(series, "drawdown")
     fig, axes = plt.subplots(2, 1, figsize=(11, 5), sharex=True, gridspec_kw={"height_ratios": [2, 1]})
@@ -90,8 +100,7 @@ def fig_equity_drawdown(series: dict, *, r_lo: float = 0.88) -> plt.Figure:
     if eq is not None:
         _shade_spans(axes[0], spans)
         axes[0].plot(eq.index, eq["combined_equity"] / 1e6, color="#0f766e", lw=1.8)
-        for d in harvest_event_dates(series):
-            axes[0].axvline(pd.Timestamp(d), color="#16a34a", lw=0.8, alpha=0.6)
+        _annotate_harvests(axes[0], series, monetize_events)
         axes[0].set_ylabel("Equity ($M)")
         axes[0].set_title("Combined equity (green ticks = monetization harvests)")
         axes[0].grid(alpha=0.25)

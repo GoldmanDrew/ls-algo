@@ -40,6 +40,9 @@ def test_run_backtest_live_smoke():
     assert "combined_equity" in r.get("series", {})
     assert r["meta"]["era"] == "live"
     assert len(r["series"]["combined_equity"]) <= 55
+    if r.get("monetize_events"):
+        assert isinstance(r["monetize_events"][0], dict)
+        assert "kind" in r["monetize_events"][0]
 
 
 def test_dashboard_payload_schema():

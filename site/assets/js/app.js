@@ -2167,6 +2167,22 @@
     const r = ref[key] || {};
     return { p95: r.dd_p95, p99: r.dd_p99 };
   }
+  function b4BuildPortReturns(sim, excludedEtfs) {
+    const pairs = sim.pair_returns;
+    if (!pairs || !pairs.length) return sim.port_daily_returns || [];
+    const ex = new Set(excludedEtfs || []);
+    let active = pairs.filter((p) => !ex.has(p.etf));
+    if (!active.length) active = pairs.slice();
+    let wsum = active.reduce((s, p) => s + (p.weight || 0), 0);
+    if (wsum <= 0) return sim.port_daily_returns || [];
+    const n = active[0].returns.length;
+    const out = new Float64Array(n);
+    for (const p of active) {
+      const w = (p.weight || 0) / wsum;
+      for (let i = 0; i < n; i++) out[i] += w * (p.returns[i] || 0);
+    }
+    return Array.from(out);
+  }
   // Monte-Carlo: max-drawdown + terminal-return (+ optional equity fan percentiles).
   function b4RunSim(sim, o) {
     const rng = b4Mulberry32(o.seed >>> 0);
@@ -2177,7 +2193,7 @@
     const floor = -0.95;
     const dds = new Float64Array(N);
     const term = new Float64Array(N);
-    const data = sim.port_daily_returns || [];
+    const data = o.portReturns || sim.port_daily_returns || [];
     const m = data.length;
     const mean = sim.mean_daily || 0;
     const L = o.blockLen || (sim.reference_mc && sim.reference_mc.block_len) || 10;
@@ -2336,6 +2352,15 @@
           `<tr><td>${p.etf}</td><td>${p.und}</td><td class="num">${fmtPct(p.weight, 1)}</td><td class="num">${p.n_days}</td><td class="num">${fmtPct(p.borrow, 1)}</td></tr>`
       )
       .join("");
+    const pairToggleRows = (sim.pairs || [])
+      .map(
+        (p) =>
+          `<label class="b4sim-ctl" style="display:inline-flex;align-items:center;gap:6px;margin:4px 8px 4px 0">
+            <input type="checkbox" class="b4sim-pair" data-etf="${safeText(p.etf)}" checked>
+            ${safeText(p.etf)}/${safeText(p.und)} (${fmtPct(p.weight, 0)})
+          </label>`
+      )
+      .join("");
 
     content.innerHTML = `
       <div class="callout dim small">
@@ -2373,6 +2398,11 @@
         </label>
         <button id="b4sim-run" class="btn btn-primary" type="button">Run</button>
       </div>
+      ${sim.pair_returns && sim.pair_returns.length ? `
+      <div class="callout dim small" style="margin:0 0 10px">
+        <strong>Pair-level stress:</strong> uncheck names to recompute the portfolio return series (weights renormalized).
+        ${pairToggleRows}
+      </div>` : ""}
       <div id="b4sim-stats" class="strip"></div>
       <p id="b4sim-takeaway" class="callout dim small" style="margin:6px 0 10px"></p>
       <div class="b4sim-controls strip" style="margin:0 0 10px;gap:14px;flex-wrap:wrap;align-items:flex-end">
@@ -2432,6 +2462,10 @@
     }
 
     function readOpts() {
+      const excluded = [];
+      document.querySelectorAll(".b4sim-pair").forEach((el) => {
+        if (!el.checked) excluded.push(el.getAttribute("data-etf"));
+      });
       return {
         dist: distEl.value,
         horizon: Math.max(20, Math.min(756, parseInt(horizonEl.value, 10) || 252)),
@@ -2441,6 +2475,7 @@
         seed: parseInt(seedEl.value, 10) || 1234567,
         fanBands: true,
         tolPct: parseFloat(tolEl.value) || 25,
+        portReturns: b4BuildPortReturns(sim, excluded),
       };
     }
 
@@ -2522,6 +2557,7 @@
     });
     volEl.addEventListener("change", update);
     if (runEl) runEl.addEventListener("click", update);
+    document.querySelectorAll(".b4sim-pair").forEach((el) => el.addEventListener("change", update));
     update();
   }
 
@@ -2826,6 +2862,7 @@
         </label>
       </div>
       <div id="b5bt-grid-stats" class="strip"></div>
+      <div id="b5bt-grid-charts" class="two-col"></div>
       <p id="b5bt-grid-takeaway" class="callout dim small" style="margin:6px 0 10px"></p>
       ` : `<p class="dim small">Rebuild with <code>--with-sensitivity</code> to enable grid sliders here.</p>`}
       <div id="b5bt-stats" class="strip"></div>
@@ -2905,6 +2942,7 @@
       const premEl = document.getElementById("b5bt-prem");
       const stressEl = document.getElementById("b5bt-stress");
       const gStats = document.getElementById("b5bt-grid-stats");
+      const gCharts = document.getElementById("b5bt-grid-charts");
       const gTake = document.getElementById("b5bt-grid-takeaway");
       if (!sleeveEl || !gStats) return;
       const pt = b5NearestGridPoint(
@@ -2925,10 +2963,23 @@
       ]
         .map((s) => `<div class="summary-card ${s.cls || ""}"><div class="label">${s.label}</div><div class="value">${s.value}</div></div>`)
         .join("");
+      if (gCharts) {
+        const ser = pt.series || {};
+        if (ser.combined_equity && ser.combined_equity.length) {
+          gCharts.innerHTML = b5DualChart(
+            ser.combined_equity,
+            ser.drawdown || [],
+            `Grid point equity (sleeve ${fmtPct(pt.sleeve_frac, 0)}, prem ${fmtPct(pt.total_premium, 1)}, stress ${pt.borrow_stress_mult.toFixed(1)}×)`
+          );
+        } else {
+          gCharts.innerHTML = `<p class="dim small">Rebuild sensitivity grid to include equity curves per grid point.</p>`;
+        }
+      }
       if (gTake) {
         gTake.innerHTML =
           `<strong>Grid point:</strong> sleeve ${fmtPct(pt.sleeve_frac, 0)}, premium ${fmtPct(pt.total_premium, 1)}/roll, ` +
-          `borrow stress ${pt.borrow_stress_mult.toFixed(1)}×. Charts below still show the selected preset variant.`;
+          `borrow stress ${pt.borrow_stress_mult.toFixed(1)}×. ` +
+          (pt.series && pt.series.combined_equity ? `Equity curve above is from the precomputed grid.` : `Preset variant charts below.`);
       }
     }
 

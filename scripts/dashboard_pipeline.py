@@ -73,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
                 "scripts/build_bucket5_backtest_panel.py",
                 "--run-date",
                 run_date,
+                "--sensitivity-quick",
                 "--copy-etf-dashboard",
             ]
         )

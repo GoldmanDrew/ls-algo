@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from scripts.bucket5_lab_helpers import (
+    apply_lab_preset_widget_state,
     apply_override,
     backwardation_mask,
     current_value,
     get_path,
     harvest_event_dates,
     metric_value,
+    monetize_event_dates,
     pack_lab_preset,
     set_path,
 )
@@ -85,3 +87,35 @@ def test_pack_lab_preset_schema():
     blob = pack_lab_preset(era="extended", preset="F_dynamic_deep30", params={"sleeve_frac": 0.2}, methodology={}, label="test")
     assert blob["schema"] == "bucket5_lab_preset.v1"
     assert blob["era"] == "extended"
+
+
+def test_apply_lab_preset_widget_state():
+    blob = pack_lab_preset(
+        era="live",
+        preset="B_production",
+        params={
+            "sleeve_frac": 0.22,
+            "rungs": [
+                {"otm_pct": 0.10, "per_roll_frac": 0.010},
+                {"otm_pct": 0.25, "per_roll_frac": 0.010},
+                {"otm_pct": 0.35, "per_roll_frac": 0.010},
+            ],
+            "monetize": {"profit_tiers": [[3.0, 0.34]], "vix_tiers": [[45.0, 0.5]]},
+        },
+        methodology={"borrow_stress_mult": 1.8, "borrow_uvix": 0.03, "borrow_svix": 0.04},
+        label="test",
+    )
+    state = apply_lab_preset_widget_state(blob)
+    assert state["lab_era"] == "live"
+    assert state["sleeve_frac"] == 0.22
+    assert state["borrow_stress"] == 1.8
+    assert abs(state["total_budget"] - 3.0) < 0.01
+
+
+def test_monetize_event_dates():
+    events = [
+        {"date": "2024-03-01", "kind": "profit_3x", "usd": 15000},
+        {"date": "2024-03-02", "kind": "giveback", "usd": 500},
+    ]
+    labeled = monetize_event_dates(events, min_usd=1000.0)
+    assert labeled == [("2024-03-01", "profit 3x")]

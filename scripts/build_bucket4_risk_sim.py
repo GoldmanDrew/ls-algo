@@ -84,7 +84,7 @@ def build_portfolio(uni, panel, start, min_days):
     wnorm = (gross_w / gross_w.sum()).round(4)
     for p in pairs:
         p["weight"] = float(wnorm[p["etf"]])
-    return pr, pairs, blk
+    return pr, pairs, blk, ret_df
 
 
 def main(argv=None) -> int:
@@ -105,9 +105,22 @@ def main(argv=None) -> int:
     if built is None:
         print("[risk-sim] no eligible B4 pairs", file=sys.stderr)
         return 1
-    pr, pairs, blk = built
+    pr, pairs, blk, ret_df = built
     prv = pr.dropna()
     arr = prv.to_numpy(dtype=float)
+    sim_dates = [d.strftime("%Y-%m-%d") for d in prv.index]
+    pair_returns = []
+    for p in pairs:
+        etf = p["etf"]
+        if etf not in ret_df.columns:
+            continue
+        ser = ret_df[etf].reindex(prv.index).fillna(0.0)
+        pair_returns.append({
+            "etf": etf,
+            "und": p["und"],
+            "weight": p["weight"],
+            "returns": [round(float(x), 6) for x in ser.to_numpy(dtype=float)],
+        })
 
     perf = perf_from_returns(prv)
     t_df, t_loc, t_scale = stats.t.fit(arr)
@@ -137,7 +150,9 @@ def main(argv=None) -> int:
         "n_obs": int(len(arr)),
         "mean_daily": float(np.mean(arr)),
         # full daily return series -> client-side block bootstrap
+        "sim_dates": sim_dates,
         "port_daily_returns": [round(float(x), 6) for x in arr],
+        "pair_returns": pair_returns,
         "fit_student_t": {"df": round(t_df, 3), "loc": round(float(t_loc), 6),
                           "scale": round(float(t_scale), 6)},
         "fit_laplace": {"loc": round(float(l_loc), 6), "scale": round(float(l_scale), 6)},

@@ -366,6 +366,10 @@ def run_backtest(
         "cached": False,
     }
 
+    events = res["ladder"].attrs.get("monetize_events", [])
+    if events:
+        result["monetize_events"] = events
+
     if include_series:
         result["series"] = {c: _downsample_series(ser_df[c], max_series_points) for c in ser_df.columns}
 

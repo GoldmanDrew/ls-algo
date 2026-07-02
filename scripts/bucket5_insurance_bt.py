@@ -369,6 +369,7 @@ def run_monetizing_put(
     rolls = 0
     realized_total = 0.0
     days_since_roll = 10_000
+    monetize_events: list[dict] = []
 
     def _budget_at(dt: pd.Timestamp, eq_i: float) -> float:
         raw = rung.per_roll_frac * eq_i
@@ -439,14 +440,18 @@ def run_monetizing_put(
             mult = px / cost_px
             sell_frac = 0.0
             giveback = False
+            profit_hit: str | None = None
+            vix_hit: str | None = None
             for j, (lvl, frac) in enumerate(mon.profit_tiers):
                 if j not in tiers_fired and mult >= lvl:
                     tiers_fired.add(j)
                     sell_frac = max(sell_frac, frac)
+                    profit_hit = f"profit_{lvl:g}x"
             for j, (lvl, frac) in enumerate(mon.vix_tiers):
                 if j not in vix_fired and np.isfinite(vix_now) and vix_now >= lvl:
                     vix_fired.add(j)
                     sell_frac = max(sell_frac, frac)
+                    vix_hit = f"vix_{lvl:g}"
             if (mult >= mon.giveback_min_mult and peak_px > 0
                     and px <= peak_px * (1.0 - mon.giveback_frac)):
                 sell_frac = max(sell_frac, 1.0)
@@ -473,6 +478,25 @@ def run_monetizing_put(
                 if n_sell > 0:
                     proceeds = px * pcfg.contract_multiplier * n_sell
                     contracts -= n_sell
+                    if giveback:
+                        kind = "giveback"
+                    elif vix_hit:
+                        kind = vix_hit
+                    elif profit_hit:
+                        kind = profit_hit
+                    elif sell_frac >= 0.999:
+                        kind = "full_exit"
+                    else:
+                        kind = "partial_trim"
+                    monetize_events.append({
+                        "date": pd.Timestamp(dt).strftime("%Y-%m-%d"),
+                        "kind": kind,
+                        "usd": round(float(proceeds), 2),
+                        "otm_pct": round(float(rung.otm_pct), 4),
+                        "mult": round(float(mult), 3),
+                        "vix": round(float(vix_now), 2) if np.isfinite(vix_now) else None,
+                        "contracts_sold": int(n_sell),
+                    })
                     if contracts == 0:
                         # full exit -> bank a share, re-arm the rest into fresh puts
                         bank = proceeds * mon.bank_frac
@@ -484,6 +508,15 @@ def run_monetizing_put(
                         strike = np.nan
                         if mon.rearm and rearm_budget > 100 and s > 0:
                             _open(dt, s, atm, rearm_budget)  # spends rearm_budget from cash
+                            monetize_events.append({
+                                "date": pd.Timestamp(dt).strftime("%Y-%m-%d"),
+                                "kind": "rearm",
+                                "usd": round(float(rearm_budget), 2),
+                                "otm_pct": round(float(rung.otm_pct), 4),
+                                "mult": round(float(mult), 3),
+                                "vix": round(float(vix_now), 2) if np.isfinite(vix_now) else None,
+                                "contracts_sold": 0,
+                            })
                             dte = _trading_dte(expiry, dt) if expiry is not None else 0
                             if contracts > 0 and np.isfinite(strike):
                                 t_rem = max(dte / 252.0, 1 / 365)
@@ -498,7 +531,17 @@ def run_monetizing_put(
         if need_roll and s > 0 and eq_i > 0:
             t_rem = max(dte / 252.0, 1 / 365)
             px_sell = _theta_px(dt, strike, theta_exp, s, atm, t_rem, pcfg)
-            cash += px_sell * pcfg.contract_multiplier * contracts
+            roll_proceeds = px_sell * pcfg.contract_multiplier * contracts
+            monetize_events.append({
+                "date": pd.Timestamp(dt).strftime("%Y-%m-%d"),
+                "kind": "scheduled_roll",
+                "usd": round(float(roll_proceeds), 2),
+                "otm_pct": round(float(rung.otm_pct), 4),
+                "mult": round(float(px_sell / cost_px), 3) if np.isfinite(cost_px) and cost_px > 0 else None,
+                "vix": round(float(vix_now), 2) if np.isfinite(vix_now) else None,
+                "contracts_sold": int(contracts),
+            })
+            cash += roll_proceeds
             contracts = 0
             expiry = None
             theta_exp = None
@@ -526,6 +569,7 @@ def run_monetizing_put(
     out = pd.DataFrame(rows).set_index("date")
     out.attrs["roll_count"] = rolls
     out.attrs["realized_total"] = realized_total
+    out.attrs["monetize_events"] = monetize_events
     return out
 
 
@@ -552,6 +596,7 @@ def run_monetizing_ladder(
     realized_total = 0.0
     rolls = 0
     per_rung = {}
+    monetize_events: list[dict] = []
     for rg in rungs:
         sub = run_monetizing_put(
             idx, equity, spot, iv, vix, rg, mon,
@@ -563,6 +608,7 @@ def run_monetizing_ladder(
         realized = realized.add(sub["realized"], fill_value=0.0)
         realized_total += sub.attrs.get("realized_total", 0.0)
         rolls = max(rolls, sub.attrs.get("roll_count", 0))
+        monetize_events.extend(sub.attrs.get("monetize_events", []))
         eqv = equity.reindex(idx).ffill().replace(0, np.nan)
         per_rung[rg.otm_pct] = float((sub["put_mtm"] / eqv).replace([np.inf, -np.inf], np.nan).dropna().tail(252).mean() or 0.0)
 
@@ -571,6 +617,7 @@ def run_monetizing_ladder(
     out.attrs["realized_total"] = realized_total
     out.attrs["per_rung_notional_frac"] = per_rung
     out.attrs["hedge_kind"] = "ladder"
+    out.attrs["monetize_events"] = sorted(monetize_events, key=lambda e: (e["date"], e.get("kind", "")))
     return out
 
 
@@ -622,6 +669,10 @@ def run_hedge_layer(
         }, index=idx)
         out.attrs["hedge_kind"] = "hybrid"
         out.attrs["realized_total"] = float(sum(p.attrs.get("realized_total", 0.0) for p in parts))
+        events: list[dict] = []
+        for p in parts:
+            events.extend(p.attrs.get("monetize_events", []))
+        out.attrs["monetize_events"] = sorted(events, key=lambda e: (e["date"], e.get("kind", "")))
         return out
 
     if mon is not None:

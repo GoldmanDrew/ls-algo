@@ -61,10 +61,12 @@ def build_grid(
                     params=params,
                     era=era,
                     methodology=meth,
-                    include_series=False,
+                    include_series=True,
+                    max_series_points=180,
                     use_cache=True,
                 )
                 m = r.get("metrics") or {}
+                ser = r.get("series") or {}
                 points.append({
                     "sleeve_frac": sleeve,
                     "total_premium": prem,
@@ -77,6 +79,10 @@ def build_grid(
                     "realized_usd": m.get("realized_$"),
                     "crash_mild": (r.get("crash") or {}).get("crash_mild_-20%"),
                     "crash_severe": (r.get("crash") or {}).get("crash_severe_-30%"),
+                    "series": {
+                        "combined_equity": ser.get("combined_equity"),
+                        "drawdown": ser.get("drawdown"),
+                    },
                 })
                 print(f"[b5-sens] {n}/{total} sleeve={sleeve:.0%} prem={prem:.1%} stress={stress:.1f}x")
     return {
