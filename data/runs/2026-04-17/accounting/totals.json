@@ -130,5 +130,7 @@
     "bucket_3": 4432.275438437969,
     "bucket_4": 286.10893533,
     "bucket_1": -3784.357957922724
-  }
+  },
+  "nav_usd": 1050000.0,
+  "nav_source": "config:capital_usd"
 }

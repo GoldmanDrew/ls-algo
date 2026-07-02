@@ -11,6 +11,7 @@ from risk_dashboard.flex_parser import parse_flex_nav
 from scripts.run_data_contract import (
     daily_pnl_from_history,
     is_broker_nav_source,
+    is_config_nav_source,
     patch_totals_nav,
     write_run_manifest,
 )
@@ -39,6 +40,11 @@ def test_parse_flex_nav_from_percent_of_nav():
     assert nav is not None
     assert float(nav["nav_usd"]) > 1_000_000
     assert "percentOfNAV" in str(nav.get("source", ""))
+
+
+def test_is_config_nav_source():
+    assert is_config_nav_source("config:capital_usd") is True
+    assert is_config_nav_source("flex_positions:percentOfNAV_median") is False
 
 
 def test_is_broker_nav_source():
@@ -85,7 +91,8 @@ def test_write_run_manifest_and_verify_latest(tmp_path):
         encoding="utf-8",
     )
     manifest = write_run_manifest(run_date, runs_root=tmp_path / "runs")
-    assert manifest["nav_usd"] == pytest.approx(1_000_000.0)
+    assert manifest["nav_usd"] == pytest.approx(1_050_000.0)
+    assert manifest["nav_source"] == "config:capital_usd"
 
     out = tmp_path / "risk_dashboard" / "data"
     out.mkdir(parents=True)

@@ -4090,11 +4090,12 @@ def resolve_nav_usd(
     flex_dir: Path | None = None,
     cli_source: str = "MAGIS_NAV_USD",
 ) -> tuple[float, str]:
-    """Pick NAV denominator: persisted totals → Flex equity tags → CLI/config fallback.
+    """Pick NAV denominator: persisted totals → CLI/config fallback (strategy capital).
 
-    ``cli_source`` labels where the fallback came from (e.g. ``config:capital_usd``)
-    so the dashboard can show the provenance of the NAV denominator.
+    Flex broker equity is not used so %-of-NAV matches ``strategy.capital_usd``.
+    ``cli_source`` labels the fallback (e.g. ``config:capital_usd``).
     """
+    _ = flex_dir  # kept for call-site compatibility; broker NAV is not used
     nav = totals.get("nav_usd")
     if nav is not None:
         try:
@@ -4103,10 +4104,6 @@ def resolve_nav_usd(
                 return nav_f, str(totals.get("nav_source") or "totals.json")
         except (TypeError, ValueError):
             pass
-    if flex_dir is not None:
-        flex_nav = parse_flex_nav(flex_dir)
-        if flex_nav and float(flex_nav.get("nav_usd") or 0) > 0:
-            return float(flex_nav["nav_usd"]), str(flex_nav.get("source") or "flex")
     return float(cli_fallback), cli_source
 
 

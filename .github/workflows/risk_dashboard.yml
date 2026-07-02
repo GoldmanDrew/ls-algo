@@ -16,8 +16,8 @@ on:
         required: false
         default: "false"
         type: boolean
-      allow_config_nav:
-        description: "Allow config NAV fallback in verify gates (dev/backfill)"
+      allow_broker_nav:
+        description: "Allow broker Flex NAV in verify gates (legacy/dev only)"
         required: false
         default: "false"
         type: boolean
@@ -95,11 +95,11 @@ jobs:
       - name: Build + verify snapshot
         id: gate
         env:
-          ALLOW_CONFIG: ${{ inputs.allow_config_nav }}
+          ALLOW_BROKER: ${{ inputs.allow_broker_nav }}
         run: |
           EXTRA=""
-          if [ "$ALLOW_CONFIG" = "true" ]; then
-            EXTRA="--allow-config-nav"
+          if [ "$ALLOW_BROKER" = "true" ]; then
+            EXTRA="--allow-broker-nav"
           fi
           python scripts/dashboard_pipeline.py \
             --run-date "${{ steps.date.outputs.run_date }}" \

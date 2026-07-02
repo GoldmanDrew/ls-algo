@@ -1,0 +1,31 @@
+{
+  "run_date": "2026-04-16",
+  "generated_at_utc": "2026-07-02T03:01:45.591662+00:00",
+  "git_sha": null,
+  "workflow_run_id": null,
+  "nav_usd": 1050000.0,
+  "nav_source": "config:capital_usd",
+  "screener_csv": "data\\runs\\2026-04-16\\etf_screened_today.csv",
+  "checksums": {
+    "accounting/totals.json": "81d4f50e2b5b7f8c42ca90aa42b232ea86d01f6588eb45948be6a3ca3b2a09a6",
+    "accounting/pnl_by_bucket.csv": "79abd5fb87ddceca4889e645b397a22db3c1325c78f4f579500d6bc728017391",
+    "accounting/pnl_bucket_1.csv": "468434f1d6ff87fceb3fe90c40e801a9544547505d2b6495a52a8ffdf92d4169",
+    "accounting/pnl_bucket_2.csv": "5be56c0b658c189d26f88e5d2c83adc50bbdb527a55da83494c1ab21d295d138",
+    "accounting/pnl_bucket_3.csv": "bb429d330ab15aba628d4c88535b03c39fb8bd59aea8818d9dcaeda8b6e53675",
+    "accounting/pnl_bucket_4.csv": "8517db628b463578d12118e94e831abaca5574f7f72156049663a383aced9c8c",
+    "accounting/pnl_bucket_5.csv": "934cb48a5d767026864776784bc080b4a6dd8548ee439330fcb80bfb6f047d13",
+    "ibkr_flex/flex_positions.xml": "a38dbf732049c07b3291a87f4ea19a0c2952bfb810150a1c0f6051d25c84c2a6",
+    "etf_screened_today.csv": "3ebe3263ca9a2ec22a2a4b896886b4d63dc96b52bff78ed8e0dc8257dfbffaf7"
+  },
+  "accounting_files": [
+    "accounting/pnl_bucket_1.csv",
+    "accounting/pnl_bucket_2.csv",
+    "accounting/pnl_bucket_3.csv",
+    "accounting/pnl_bucket_4.csv",
+    "accounting/pnl_bucket_5.csv",
+    "accounting/pnl_by_bucket.csv",
+    "accounting/totals.json",
+    "etf_screened_today.csv",
+    "ibkr_flex/flex_positions.xml"
+  ]
+}

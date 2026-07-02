@@ -25,7 +25,7 @@ from risk_dashboard.metrics import (  # noqa: E402
 )
 from scripts.run_data_contract import (  # noqa: E402
     discover_accounting_dates,
-    is_broker_nav_source,
+    is_config_nav_source,
     load_manifest,
 )
 
@@ -44,7 +44,7 @@ def verify_snapshot(
     runs_root: Path | None = None,
     snapshot_dir: Path | None = None,
     require_manifest: bool = True,
-    require_broker_nav: bool = True,
+    require_config_nav: bool = True,
     require_fresh: bool = True,
 ) -> list[str]:
     runs_root = runs_root or RUNS
@@ -87,8 +87,19 @@ def verify_snapshot(
         _fail("snapshot freshness.is_latest is false", errors)
 
     nav_source = snap.get("nav_source") or totals.get("nav_source")
-    if require_broker_nav and not is_broker_nav_source(nav_source):
-        _fail(f"NAV source is not broker-derived: {nav_source!r}", errors)
+    if require_config_nav and not is_config_nav_source(nav_source):
+        _fail(f"NAV source is not config-derived: {nav_source!r}", errors)
+    snap_nav = snap.get("nav_usd")
+    totals_nav = totals.get("nav_usd")
+    if snap_nav is not None and totals_nav is not None:
+        try:
+            if abs(float(snap_nav) - float(totals_nav)) > 0.01:
+                _fail(
+                    f"snapshot nav_usd {float(snap_nav):,.2f} != totals {float(totals_nav):,.2f}",
+                    errors,
+                )
+        except (TypeError, ValueError):
+            pass
 
     recon = evaluate_exposure_reconciliation(totals)
     if not recon.get("reconciles"):
@@ -161,7 +172,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--run-date", required=True)
     ap.add_argument("--runs-root", default="data/runs")
     ap.add_argument("--snapshot-dir", default="risk_dashboard/data")
-    ap.add_argument("--allow-config-nav", action="store_true")
+    ap.add_argument(
+        "--allow-broker-nav",
+        action="store_true",
+        help="Skip requiring config:capital_usd NAV (legacy/dev only)",
+    )
     ap.add_argument("--allow-stale", action="store_true")
     ap.add_argument("--no-manifest", action="store_true")
     args = ap.parse_args(argv)
@@ -171,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         runs_root=Path(args.runs_root).resolve(),
         snapshot_dir=Path(args.snapshot_dir).resolve(),
         require_manifest=not args.no_manifest,
-        require_broker_nav=not args.allow_config_nav,
+        require_config_nav=not args.allow_broker_nav,
         require_fresh=not args.allow_stale,
     )
     if errors:

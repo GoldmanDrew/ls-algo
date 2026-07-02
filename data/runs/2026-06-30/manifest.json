@@ -1,21 +1,21 @@
 {
   "run_date": "2026-06-30",
-  "generated_at_utc": "2026-07-01T00:31:54.074277+00:00",
+  "generated_at_utc": "2026-07-02T03:01:48.573864+00:00",
   "git_sha": null,
   "workflow_run_id": null,
-  "nav_usd": 3487649.9999999995,
-  "nav_source": "flex_positions:percentOfNAV_median",
+  "nav_usd": 1050000.0,
+  "nav_source": "config:capital_usd",
   "screener_csv": "data\\runs\\2026-06-30\\etf_screened_today.csv",
   "checksums": {
-    "accounting/totals.json": "3d10d1019d57ef3dd94c0da8023b0becc45579965ef14bbc4ec73e473f498f1a",
-    "accounting/pnl_by_bucket.csv": "79ae90e90276fe87a8b53866e6db04256fd08a7d809a9f779e1f8e5ee73541d4",
-    "accounting/pnl_bucket_1.csv": "a4adfdc83c3816e7a9beee0ab4be22e5207c7cd99ef8c907b6306c22f5c36156",
-    "accounting/pnl_bucket_2.csv": "f411fa45162c82801012f3f3e67e8062690b4c43306c4f318c9f1bff4c6a9ca3",
+    "accounting/totals.json": "2332845d2fcb6c7455acafe3154fcdfa3f5d389af8fd2eb8a07025575105eedf",
+    "accounting/pnl_by_bucket.csv": "2afc8fbd10f12925e6248a7a1a3fc433bb573acfad28785eafd262045f549ce8",
+    "accounting/pnl_bucket_1.csv": "6bb2b3d15ca28955d53d1d9f58f61352dbac1de1ec06a54ce6a9bea26c2043a2",
+    "accounting/pnl_bucket_2.csv": "c8c31725739e52c4d68a93f7f51a49c3e127e195b11d84cb6e13fa304d47935e",
     "accounting/pnl_bucket_3.csv": "2f0d886959e3eb177d230035656a993f3d379a8e23e006ff15cf2413c0b2d110",
-    "accounting/pnl_bucket_4.csv": "c9e69d6c84ae0ce058697bd0ea1017e9e40e3ac7f1e1173f0ac9adc84efb2f11",
+    "accounting/pnl_bucket_4.csv": "458cbb9e33785b36589037cf2febc661dfccbb61874989c8310fdc5b0ca7ce4a",
     "accounting/pnl_bucket_5.csv": "0283f356b39eb236b2b687cb570295a67eae868ea15ae1964eb8af1f39921cff",
     "ibkr_flex/flex_positions.xml": "7af5cc2427500926381f29660834815398a1e994364bda10079ec4c880f9c977",
-    "etf_screened_today.csv": "f415f1a677bbe753035751a21ec2f6458af463e9e79c6c0850c6f79f5808a955"
+    "etf_screened_today.csv": "3ebe3263ca9a2ec22a2a4b896886b4d63dc96b52bff78ed8e0dc8257dfbffaf7"
   },
   "accounting_files": [
     "accounting/pnl_bucket_1.csv",

@@ -55,36 +55,24 @@ def resolve_broker_nav(flex_dir: Path) -> dict[str, Any] | None:
 
 
 def patch_totals_nav(run_date: str, *, runs_root: Path | None = None) -> dict[str, Any]:
-    """Ensure ``totals.json`` carries ``nav_usd`` + ``nav_source`` (broker preferred)."""
+    """Ensure ``totals.json`` carries strategy NAV (``config:capital_usd`` by default).
+
+    Broker Flex equity is intentionally *not* used: %-of-NAV metrics align with the
+    sizing capital in ``strategy_config.yml``, not inferred full-account equity.
+    """
     runs_root = runs_root or RUNS
     totals_path = runs_root / run_date / "accounting" / "totals.json"
     if not totals_path.is_file():
         raise FileNotFoundError(totals_path)
     totals = json.loads(totals_path.read_text(encoding="utf-8"))
-    existing = totals.get("nav_usd")
-    existing_src = str(totals.get("nav_source") or "")
-    config_like = existing_src in CONFIG_NAV_SOURCES or existing_src.startswith("config")
-    if existing is not None and existing_src and not config_like:
-        try:
-            if float(existing) > 0:
-                return totals
-        except (TypeError, ValueError):
-            pass
-
-    flex_dir = runs_root / run_date / "ibkr_flex"
-    broker = resolve_broker_nav(flex_dir) if flex_dir.is_dir() else None
-    if broker and float(broker.get("nav_usd") or 0) > 0:
-        totals["nav_usd"] = float(broker["nav_usd"])
-        totals["nav_source"] = str(broker.get("source") or "flex")
+    nav_raw = os.getenv("MAGIS_NAV_USD", "").strip()
+    if nav_raw:
+        totals["nav_usd"] = float(nav_raw)
+        totals["nav_source"] = "MAGIS_NAV_USD"
     else:
-        nav_raw = os.getenv("MAGIS_NAV_USD", "").strip()
-        if nav_raw:
-            totals["nav_usd"] = float(nav_raw)
-            totals["nav_source"] = "MAGIS_NAV_USD"
-        else:
-            nav, src = _nav_from_config()
-            totals["nav_usd"] = nav
-            totals["nav_source"] = src
+        nav, src = _nav_from_config()
+        totals["nav_usd"] = nav
+        totals["nav_source"] = src
 
     totals_path.write_text(json.dumps(totals, indent=2), encoding="utf-8")
     return totals
@@ -207,6 +195,13 @@ def is_broker_nav_source(source: str | None) -> bool:
     if not s or s in CONFIG_NAV_SOURCES:
         return False
     return s.startswith("flex") or s.startswith("totals.json")
+
+
+def is_config_nav_source(source: str | None) -> bool:
+    s = str(source or "")
+    if not s:
+        return False
+    return s in CONFIG_NAV_SOURCES or s.startswith("config")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -32,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skip-b4sim", action="store_true")
     ap.add_argument("--skip-b5bt", action="store_true")
     ap.add_argument("--fail-if-stale", action="store_true")
-    ap.add_argument("--allow-config-nav", action="store_true")
+    ap.add_argument("--allow-broker-nav", action="store_true")
     ap.add_argument("--allow-stale", action="store_true")
     ap.add_argument("--skip-verify", action="store_true")
     ap.add_argument("--write-manifest", action="store_true")
@@ -109,8 +109,8 @@ def main(argv: list[str] | None = None) -> int:
             "--snapshot-dir",
             str(out_dir),
         ]
-        if args.allow_config_nav:
-            verify_cmd.append("--allow-config-nav")
+        if args.allow_broker_nav:
+            verify_cmd.append("--allow-broker-nav")
         if args.allow_stale:
             verify_cmd.append("--allow-stale")
         _run(verify_cmd)

@@ -172,6 +172,6 @@
     "bucket_3": 4407.4741439872205,
     "bucket_5": 289.7468590120443
   },
-  "nav_usd": 3509499.9999999995,
-  "nav_source": "flex_positions:percentOfNAV_median"
+  "nav_usd": 1050000.0,
+  "nav_source": "config:capital_usd"
 }
