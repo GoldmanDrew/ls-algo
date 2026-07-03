@@ -140,6 +140,7 @@ def _extract_history_point(payload: dict) -> dict:
         "net_pct_nav": book.get("net_exposure_pct_nav"),
         "pnl_pct_nav": book.get("pnl_today_pct_nav"),
         "pnl_cum_usd": book.get("pnl_today_usd"),
+        "pnl_daily_usd": book.get("pnl_daily_usd"),
         "worst_shock_pct_nav": worst.get("pnl_pct_nav"),
         "worst_shock_label": worst.get("label"),
         "net_beta_to_spy": factor.get("net_beta_to_spy"),
@@ -165,6 +166,27 @@ def _load_history(out_dir: Path, current_date: str) -> list[dict]:
         snapshots.append(_extract_history_point(data))
     snapshots.sort(key=lambda r: r.get("run_date") or "")
     return snapshots[-HISTORY_MAX_RUNS:]
+
+
+def _enrich_history_daily_pnl(points: list[dict]) -> list[dict]:
+    """Backfill daily P&L on history points from consecutive cumulative values."""
+    out: list[dict] = []
+    prev_cum: float | None = None
+    for pt in points:
+        row = dict(pt)
+        cum = row.get("pnl_cum_usd")
+        if row.get("pnl_daily_usd") is None and prev_cum is not None and cum is not None:
+            try:
+                row["pnl_daily_usd"] = float(cum) - prev_cum
+            except (TypeError, ValueError):
+                row["pnl_daily_usd"] = None
+        if cum is not None:
+            try:
+                prev_cum = float(cum)
+            except (TypeError, ValueError):
+                pass
+        out.append(row)
+    return out
 
 
 def _compute_deltas(current: dict, prior: dict | None) -> dict:
@@ -311,11 +333,15 @@ def build_run_snapshot(
     # copy under the run folder, else the shared dashboard data dir.
     _merge_aux_panels(payload, runs_root / run_date, out_dir, Path("risk_dashboard/data"))
 
-    history = _load_history(out_dir, current_date=run_date)
+    history = _enrich_history_daily_pnl(_load_history(out_dir, current_date=run_date))
+    _attach_daily_pnl(payload, {}, run_date)
     current_point = _extract_history_point(payload)
     payload["history"] = history + [current_point]
     payload["deltas"] = _compute_deltas(current_point, history[-1] if history else None)
-    _attach_daily_pnl(payload, payload["deltas"], run_date)
+    if payload.get("book", {}).get("pnl_daily_usd") is None:
+        _attach_daily_pnl(payload, payload["deltas"], run_date)
+        current_point = _extract_history_point(payload)
+        payload["history"][-1] = current_point
     _attach_freshness(payload, runs_root, run_date)
     _attach_lineage(payload, run_date, runs_root)
 

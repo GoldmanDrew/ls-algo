@@ -112,6 +112,7 @@ def test_write_run_manifest_and_verify_latest(tmp_path):
         "exposure_reconciliation": {"reconciles": True},
         "borrow_shock_panel": {},
         "drawdown_panel": {},
+        "pnl_panel": {},
         "movers_panel": {},
         "display_sleeve_groups": [],
     }

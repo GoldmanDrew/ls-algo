@@ -4458,6 +4458,190 @@ def compute_drawdown_panel(
 
 
 # ---------------------------------------------------------------------------
+# P&L attribution (daily / weekly deltas from pnl_history.csv)
+
+
+PNL_PANEL_BUCKET_KEYS: list[tuple[str, str]] = [
+    ("bucket_1", "pnl_bucket_1"),
+    ("bucket_2", "pnl_bucket_2"),
+    ("bucket_3", "pnl_bucket_3"),
+    ("bucket_4", "pnl_bucket_4"),
+    ("bucket_5", "pnl_bucket_5"),
+    ("stock_sleeves", "pnl_stock_sleeves"),
+]
+
+PNL_PANEL_DAILY_LOOKBACK = 60
+PNL_PANEL_WEEKLY_LOOKBACK = 16
+
+
+def _pnl_panel_bucket_labels() -> dict[str, str]:
+    labels = {k: BUCKET_LABELS.get(k, k) for k, _ in PNL_PANEL_BUCKET_KEYS}
+    labels["stock_sleeves"] = "Stock sleeves (unbucketed)"
+    return labels
+
+
+def compute_pnl_panel(
+    pnl_history_csv: Path,
+    *,
+    nav_usd: float,
+    run_date: str | None = None,
+    daily_lookback: int = PNL_PANEL_DAILY_LOOKBACK,
+    weekly_lookback: int = PNL_PANEL_WEEKLY_LOOKBACK,
+) -> dict[str, Any]:
+    """Day-over-day and week-over-week P&L from ``pnl_history.csv``.
+
+    ``total_pnl`` and per-bucket columns are cumulative (YTD); daily moves are
+    consecutive-row diffs. Rows are filtered to ``date <= run_date``.
+    """
+    if not pnl_history_csv.is_file():
+        return {"available": False, "reason": f"missing {pnl_history_csv.name}"}
+
+    usecols = ["date", "total_pnl"] + [col for _, col in PNL_PANEL_BUCKET_KEYS]
+    try:
+        df = pd.read_csv(pnl_history_csv, usecols=usecols)
+    except Exception as exc:  # pragma: no cover - defensive
+        return {"available": False, "reason": f"unreadable pnl_history.csv: {exc}"}
+    if df.empty:
+        return {"available": False, "reason": "pnl_history.csv is empty"}
+
+    df["date"] = df["date"].astype(str)
+    if run_date:
+        df = df[df["date"] <= str(run_date)]
+    df = df.sort_values("date").reset_index(drop=True)
+    if df.empty:
+        return {"available": False, "reason": "no pnl_history rows on/before run_date"}
+
+    nav = float(nav_usd) if nav_usd and nav_usd > 0 else 0.0
+
+    daily_rows: list[dict[str, Any]] = []
+    for i, row in df.iterrows():
+        if i == 0:
+            continue
+        prior = df.iloc[i - 1]
+        daily_usd = float(row["total_pnl"] or 0.0) - float(prior["total_pnl"] or 0.0)
+        buckets: dict[str, float] = {}
+        for key, col in PNL_PANEL_BUCKET_KEYS:
+            cur_b = float(row.get(col) or 0.0)
+            pri_b = float(prior.get(col) or 0.0)
+            buckets[key] = cur_b - pri_b
+        daily_rows.append(
+            {
+                "date": str(row["date"]),
+                "prior_date": str(prior["date"]),
+                "daily_usd": daily_usd,
+                "daily_pct_nav": (daily_usd / nav) if nav > 0 else None,
+                "cum_usd": float(row["total_pnl"] or 0.0),
+                "buckets": buckets,
+            }
+        )
+
+    if not daily_rows:
+        return {"available": False, "reason": "need at least two pnl_history rows"}
+
+    last_daily = daily_rows[-1]
+    last_row = df.iloc[-1]
+    ytd_usd = float(last_row["total_pnl"] or 0.0)
+
+    from datetime import datetime as _dt
+
+    def _parse(d: str) -> _dt:
+        return _dt.strptime(d, "%Y-%m-%d")
+
+    run_dt = _parse(str(run_date or last_daily["date"]))
+    week_start = run_dt.date().fromordinal(run_dt.toordinal() - run_dt.weekday())
+    month_start = run_dt.replace(day=1).date()
+
+    wtd_usd = sum(
+        r["daily_usd"]
+        for r in daily_rows
+        if _parse(r["date"]).date() >= week_start
+    )
+    mtd_usd = sum(
+        r["daily_usd"]
+        for r in daily_rows
+        if _parse(r["date"]).date() >= month_start
+    )
+
+    prior_week_ref = (run_dt.date().fromordinal(run_dt.toordinal() - 7)).isocalendar()
+    prior_week_usd = sum(
+        r["daily_usd"]
+        for r in daily_rows
+        if _parse(r["date"]).isocalendar()[:2] == prior_week_ref[:2]
+    )
+
+    prior_month = (run_dt.replace(day=1) - pd.Timedelta(days=1)).strftime("%Y-%m")
+    prior_mtd_usd = sum(
+        r["daily_usd"]
+        for r in daily_rows
+        if r["date"].startswith(prior_month)
+    )
+
+    weekly_map: dict[tuple[int, int], dict[str, Any]] = {}
+    for r in daily_rows:
+        iso = _parse(r["date"]).isocalendar()
+        wk_key = (iso[0], iso[1])
+        slot = weekly_map.setdefault(
+            wk_key,
+            {
+                "week_label": f"{iso[0]}-W{iso[1]:02d}",
+                "week_end": r["date"],
+                "week_start": r["date"],
+                "daily_usd": 0.0,
+                "n_days": 0,
+                "buckets": {k: 0.0 for k, _ in PNL_PANEL_BUCKET_KEYS},
+            },
+        )
+        slot["daily_usd"] += r["daily_usd"]
+        slot["n_days"] += 1
+        slot["week_end"] = r["date"]
+        if r["date"] < slot["week_start"]:
+            slot["week_start"] = r["date"]
+        for bk, val in (r.get("buckets") or {}).items():
+            slot["buckets"][bk] = slot["buckets"].get(bk, 0.0) + float(val or 0.0)
+
+    weekly_rows = []
+    for wk_key in sorted(weekly_map.keys()):
+        slot = weekly_map[wk_key]
+        weekly_rows.append(
+            {
+                "week_label": slot["week_label"],
+                "week_start": slot["week_start"],
+                "week_end": slot["week_end"],
+                "daily_usd": slot["daily_usd"],
+                "daily_pct_nav": (slot["daily_usd"] / nav) if nav > 0 else None,
+                "n_days": slot["n_days"],
+                "buckets": slot["buckets"],
+            }
+        )
+
+    return {
+        "available": True,
+        "source": "pnl_history.csv",
+        "run_date": str(run_date or last_daily["date"]),
+        "bucket_labels": _pnl_panel_bucket_labels(),
+        "summary": {
+            "daily_usd": last_daily["daily_usd"],
+            "daily_pct_nav": last_daily["daily_pct_nav"],
+            "prior_date": last_daily["prior_date"],
+            "wtd_usd": wtd_usd,
+            "wtd_pct_nav": (wtd_usd / nav) if nav > 0 else None,
+            "mtd_usd": mtd_usd,
+            "mtd_pct_nav": (mtd_usd / nav) if nav > 0 else None,
+            "ytd_usd": ytd_usd,
+            "ytd_pct_nav": (ytd_usd / nav) if nav > 0 else None,
+            "prior_week_usd": prior_week_usd,
+            "prior_week_pct_nav": (prior_week_usd / nav) if nav > 0 else None,
+            "prior_month_usd": prior_mtd_usd,
+            "prior_month_pct_nav": (prior_mtd_usd / nav) if nav > 0 else None,
+        },
+        "daily": daily_rows[-daily_lookback:],
+        "weekly": weekly_rows[-weekly_lookback:],
+        "n_daily_rows": len(daily_rows),
+        "n_weekly_rows": len(weekly_rows),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Shared-underlying map (names that appear in more than one accounting bucket)
 
 
@@ -4578,6 +4762,7 @@ class RiskSnapshot:
     exposure_reconciliation: dict[str, Any] = field(default_factory=dict)
     borrow_shock_panel: dict[str, Any] = field(default_factory=dict)
     drawdown_panel: dict[str, Any] = field(default_factory=dict)
+    pnl_panel: dict[str, Any] = field(default_factory=dict)
     shared_underlying_panel: dict[str, Any] = field(default_factory=dict)
     movers_panel: dict[str, Any] = field(default_factory=dict)
     display_sleeve_groups: list[dict[str, Any]] = field(default_factory=list)
@@ -4633,6 +4818,7 @@ class RiskSnapshot:
             "exposure_reconciliation": self.exposure_reconciliation,
             "borrow_shock_panel": self.borrow_shock_panel,
             "drawdown_panel": self.drawdown_panel,
+            "pnl_panel": self.pnl_panel,
             "shared_underlying_panel": self.shared_underlying_panel,
             "movers_panel": self.movers_panel,
             "display_sleeve_groups": self.display_sleeve_groups,
@@ -4860,6 +5046,11 @@ def build_snapshot(
         nav_usd=nav_usd,
         run_date=run_date,
     )
+    pnl_panel = compute_pnl_panel(
+        repo_root / "data" / "ledger" / "pnl_history.csv",
+        nav_usd=nav_usd,
+        run_date=run_date,
+    )
     shared_underlying_panel = compute_shared_underlying_panel(
         accounting, blocked_exposure_keys=blocked_exposure_keys
     )
@@ -4908,6 +5099,7 @@ def build_snapshot(
         exposure_reconciliation=exposure_reconciliation,
         borrow_shock_panel=borrow_shock_panel,
         drawdown_panel=drawdown_panel,
+        pnl_panel=pnl_panel,
         shared_underlying_panel=shared_underlying_panel,
         movers_panel=movers_panel,
         display_sleeve_groups=display_sleeve_groups,

@@ -162,6 +162,7 @@ def verify_snapshot(
         "freshness",
         "borrow_shock_panel",
         "drawdown_panel",
+        "pnl_panel",
         "movers_panel",
         "display_sleeve_groups",
     ):

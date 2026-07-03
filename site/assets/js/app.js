@@ -27,6 +27,14 @@
     cockpitStrip: document.getElementById("cockpit-strip"),
     pnlStrip: document.getElementById("pnl-strip"),
     drawdownMeta: document.getElementById("drawdown-meta"),
+    pnlMeta: document.getElementById("pnl-meta"),
+    pnlSummary: document.getElementById("pnl-summary"),
+    pnlControls: document.getElementById("pnl-controls"),
+    pnlDailyChart: document.getElementById("pnl-daily-chart"),
+    pnlDailyTable: document.getElementById("pnl-daily-table"),
+    pnlWeeklyTable: document.getElementById("pnl-weekly-table"),
+    pnlBucketChart: document.getElementById("pnl-bucket-chart"),
+    pnlTableTitle: document.getElementById("pnl-table-title"),
     moversWinners: document.getElementById("movers-winners"),
     moversLosers: document.getElementById("movers-losers"),
     borrowShockContent: document.getElementById("borrow-shock-content"),
@@ -451,6 +459,71 @@
     )}" cy="${lastY.toFixed(1)}" r="1.6" fill="${opts?.stroke || "#16537e"}"/></svg>`;
   }
 
+  function pnlBarChartSvg(rows, opts) {
+    const data = (rows || []).filter((r) => r && r.daily_usd != null);
+    if (!data.length) return `<p class="dim">No P&amp;L history to chart.</p>`;
+    const width = opts?.width || 720;
+    const height = opts?.height || 180;
+    const padL = 48;
+    const padR = 12;
+    const padT = 12;
+    const padB = 28;
+    const innerW = width - padL - padR;
+    const innerH = height - padT - padB;
+    const vals = data.map((r) => Number(r.daily_usd));
+    const maxAbs = Math.max(...vals.map((v) => Math.abs(v)), 1);
+    const barW = Math.max(2, innerW / data.length - 2);
+    const zeroY = padT + innerH / 2;
+    const bars = data
+      .map((r, i) => {
+        const v = Number(r.daily_usd);
+        const x = padL + i * (innerW / data.length) + 1;
+        const h = (Math.abs(v) / maxAbs) * (innerH / 2 - 2);
+        const y = v >= 0 ? zeroY - h : zeroY;
+        const fill = v >= 0 ? "#1a7f4b" : "#c0392b";
+        const tip = `${r.date}: ${fmtUsdSigned(v)}`;
+        return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(
+          1
+        )}" height="${h.toFixed(1)}" fill="${fill}" opacity="0.85"><title>${safeText(tip)}</title></rect>`;
+      })
+      .join("");
+    const labels = data
+      .filter((_, i) => i % Math.max(1, Math.floor(data.length / 8)) === 0 || i === data.length - 1)
+      .map((r) => {
+        const i = data.indexOf(r);
+        const x = padL + i * (innerW / data.length) + barW / 2;
+        return `<text x="${x.toFixed(1)}" y="${height - 6}" text-anchor="middle" class="pnl-axis-label">${safeText(
+          r.date.slice(5)
+        )}</text>`;
+      })
+      .join("");
+    return `<svg viewBox="0 0 ${width} ${height}" width="100%" class="pnl-bar-chart" preserveAspectRatio="xMidYMid meet">
+      <line x1="${padL}" y1="${zeroY}" x2="${width - padR}" y2="${zeroY}" stroke="#ccc" stroke-width="1"/>
+      ${bars}${labels}
+    </svg>`;
+  }
+
+  function pnlBucketBarsHtml(buckets, labels, opts) {
+    const entries = Object.entries(buckets || {}).filter(([, v]) => v != null && Math.abs(v) > 0.5);
+    if (!entries.length) return `<p class="dim">No bucket moves in this period.</p>`;
+    const maxAbs = Math.max(...entries.map(([, v]) => Math.abs(Number(v))), 1);
+    const rows = entries
+      .sort((a, b) => Math.abs(Number(b[1])) - Math.abs(Number(a[1])))
+      .map(([k, v]) => {
+        const pct = (Math.abs(Number(v)) / maxAbs) * 100;
+        const cls = Number(v) >= 0 ? "pos" : "neg";
+        const lbl = (labels && labels[k]) || k;
+        return `<div class="pnl-bucket-row">
+          <div class="pnl-bucket-label">${safeText(lbl)}</div>
+          <div class="pnl-bucket-track"><div class="pnl-bucket-fill ${cls}" style="width:${pct.toFixed(1)}%"></div></div>
+          <div class="pnl-bucket-val num ${cls}">${fmtUsdSigned(v)}</div>
+        </div>`;
+      })
+      .join("");
+    return `<div class="pnl-bucket-bars">${rows}</div>
+      <p class="dim small">${safeText(opts?.caption || "")}</p>`;
+  }
+
   function deltaBadge(value, opts) {
     if (value == null || Number.isNaN(value)) return "";
     const isPct = !!opts?.isPct;
@@ -478,6 +551,8 @@
     const deltas = snap.deltas || {};
 
     const series = (key) => history.map((h) => h?.[key]);
+    const dailyPnlSeries = series("pnl_daily_usd");
+    const hasDailyPnl = dailyPnlSeries.some((v) => v != null && !Number.isNaN(v));
 
     const items = [
       {
@@ -498,7 +573,7 @@
                 "prior"
               )}`,
         cls: signedClass(book.pnl_daily_usd),
-        spark: sparklineSvg(series("pnl_cum_usd")),
+        spark: sparklineSvg(hasDailyPnl ? dailyPnlSeries : series("pnl_cum_usd")),
       },
       {
         label: "P&L YTD",
@@ -2172,13 +2247,14 @@
     if (!pairs || !pairs.length) return sim.port_daily_returns || [];
     const ex = new Set(excludedEtfs || []);
     let active = pairs.filter((p) => !ex.has(p.etf));
-    if (!active.length) active = pairs.slice();
-    let wsum = active.reduce((s, p) => s + (p.weight || 0), 0);
+    if (!active.length) active = pairs.filter((p) => p.in_book) || pairs.slice();
+    const grossOf = (p) => Number(p.gross_usd ?? p.weight ?? 0);
+    let wsum = active.reduce((s, p) => s + grossOf(p), 0);
     if (wsum <= 0) return sim.port_daily_returns || [];
     const n = active[0].returns.length;
     const out = new Float64Array(n);
     for (const p of active) {
-      const w = (p.weight || 0) / wsum;
+      const w = grossOf(p) / wsum;
       for (let i = 0; i < n; i++) out[i] += w * (p.returns[i] || 0);
     }
     return Array.from(out);
@@ -2361,6 +2437,48 @@
       location.hash = "b4sim=" + encodeURIComponent(JSON.stringify(o));
     } catch (_e) { /* ignore */ }
   }
+  function b4FormatWeightSource(src) {
+    const s = String(src || "proposed");
+    if (s === "proposed") return "";
+    if (s === "screener_proxy") return "proxy";
+    if (s === "optimal") return "optimal";
+    return s.replace(/_/, " ");
+  }
+  function b4PairPickerHtml(sim) {
+    const pairs = Array.isArray(sim.pairs) ? [...sim.pairs] : [];
+    if (!pairs.length) return "";
+    pairs.sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0));
+    const chips = pairs
+      .map((p) => {
+        const src = b4FormatWeightSource(p.weight_source);
+        const srcHtml = src ? `<span class="b4sim-pair-src">${safeText(src)}</span>` : "";
+        const stressHtml = p.in_book ? "" : `<span class="b4sim-pair-tag">stress</span>`;
+        const blkHtml = p.blacklisted ? `<span class="b4sim-pair-tag b4sim-pair-tag-blk">blk</span>` : "";
+        return `<label class="b4sim-pair-chip${p.in_book ? "" : " b4sim-pair-chip-stress"}" data-in-book="${p.in_book ? "1" : "0"}">
+            <input type="checkbox" class="b4sim-pair" data-etf="${safeText(p.etf)}"${p.in_book ? " checked" : ""}>
+            <span class="b4sim-pair-main">${safeText(p.etf)}/${safeText(p.und)}</span>
+            <span class="b4sim-pair-meta">
+              <span class="b4sim-pair-wt">${fmtPct(p.weight, 0)}</span>${srcHtml}${stressHtml}${blkHtml}
+            </span>
+          </label>`;
+      })
+      .join("");
+    return `<div class="b4sim-pairs-panel">
+      <div class="b4sim-pairs-head">
+        <div>
+          <strong>Pair-level stress</strong>
+          <div class="dim small">Uncheck names to exclude them; remaining weights renormalize.</div>
+        </div>
+        <div class="b4sim-pairs-actions">
+          <span id="b4sim-pairs-count" class="b4sim-pairs-count dim small"></span>
+          <button type="button" class="btn btn-ghost" data-b4sim-pairs="all">All</button>
+          <button type="button" class="btn btn-ghost" data-b4sim-pairs="book">In book</button>
+          <button type="button" class="btn btn-ghost" data-b4sim-pairs="none">None</button>
+        </div>
+      </div>
+      <div class="b4sim-pairs-grid">${chips}</div>
+    </div>`;
+  }
   function renderBucket4Sim(sim) {
     const content = document.getElementById("b4sim-content");
     const meta = document.getElementById("b4sim-meta");
@@ -2373,37 +2491,33 @@
     }
     const cad = sim.cadence || {};
     if (meta) {
+      const nBook = sim.n_pairs_in_book != null ? sim.n_pairs_in_book : (sim.pairs || []).filter((p) => p.in_book).length;
+      const nStress = sim.n_pairs_stress != null ? sim.n_pairs_stress : (sim.pairs || []).length - nBook;
       meta.innerHTML =
-        `<span class="dim">cadence tr=${safeText(cad.cadence_signal_col)} · base_days=${safeText(cad.base_days)} · k_tr=${safeText(cad.k_tr)} · m_vcr=${safeText(cad.m_vcr)} · ` +
-        `${sim.n_pairs} pairs · ${sim.n_obs} obs since ${safeText(sim.window_start)}</span>`;
+        `<span class="dim">run ${safeText(sim.run_date)} · cadence tr=${safeText(cad.cadence_signal_col)} · base_days=${safeText(cad.base_days)} · ` +
+        `proposed book ${nBook} pairs · ${nStress} optional stress · ${sim.n_obs} obs since ${safeText(sim.window_start)}</span>`;
     }
-    const rz = sim.realized || {};
-    const pairRows = (sim.pairs || [])
-      .map(
-        (p) =>
-          `<tr><td>${p.etf}${p.blacklisted ? " <span class='dim'>(blk)</span>" : ""}</td><td>${p.und}</td>` +
-          `<td class="num">${fmtPct(p.weight, 1)}</td><td class="num">${safeText(p.weight_source || "proposed")}</td>` +
-          `<td class="num">${p.in_book ? "yes" : "stress"}</td><td class="num">${p.n_days}</td><td class="num">${fmtPct(p.borrow, 1)}</td></tr>`
-      )
-      .join("");
-    const pairToggleRows = (sim.pairs || [])
-      .map(
-        (p) => {
-          const tag = p.in_book ? "" : " <span class='dim'>(stress)</span>";
-          const src = p.weight_source && p.weight_source !== "proposed" ? ` · ${p.weight_source}` : "";
-          return `<label class="b4sim-ctl" style="display:inline-flex;align-items:center;gap:6px;margin:4px 8px 4px 0">
-            <input type="checkbox" class="b4sim-pair" data-etf="${safeText(p.etf)}" checked>
-            ${safeText(p.etf)}/${safeText(p.und)} (${fmtPct(p.weight, 0)}${src})${tag}
-          </label>`;
-        }
-      )
-      .join("");
+    const allPairs = sim.pairs || [];
+    const bookPairs = allPairs.filter((p) => p.in_book);
+    const stressPairs = allPairs.filter((p) => !p.in_book);
+    const pairRowHtml = (p, stress = false) => {
+      const dollars = stress ? p.gross_usd : (p.proposed_gross_usd ?? p.gross_usd);
+      return `<tr><td>${p.etf}${p.blacklisted ? " <span class='dim'>(blk)</span>" : ""}</td><td>${p.und}</td>` +
+        `<td class="num">${fmtPct(p.weight, 1)}</td><td class="num">${fmtUsd(dollars)}</td>` +
+        `<td class="num">${safeText(p.weight_source || "proposed")}</td>` +
+        `<td class="num">${p.n_days}</td><td class="num">${fmtPct(p.borrow, 1)}</td></tr>`;
+    };
+    const bookRows = bookPairs.map((p) => pairRowHtml(p, false)).join("");
+    const stressRows = stressPairs.map((p) => pairRowHtml(p, true)).join("");
+    const pairTogglePanel =
+      sim.pair_returns && sim.pair_returns.length ? b4PairPickerHtml(sim) : "";
 
+    const rz = sim.realized || {};
     content.innerHTML = `
       <div class="callout dim small">
-        Resamples the live B4 proposed book's gross-weighted daily returns (under the current production cadence) to
-        estimate the 1-year max-drawdown distribution. Block bootstrap preserves volatility clustering; Student-t and
-        Laplace are fat-tailed parametric fits. <strong>Tune the controls to stress the book.</strong>
+        Resamples the <strong>proposed B4 book</strong> from <code>proposed_trades.csv</code> for run
+        <strong>${safeText(sim.run_date)}</strong> (rows with gross &gt; 0). Optional screener stress names can be
+        toggled above to see how adding them would change the tail. <strong>Tune the controls to stress the book.</strong>
       </div>
       <div class="b4sim-controls strip" style="margin:10px 0;gap:14px;flex-wrap:wrap">
         <label class="b4sim-ctl">Distribution
@@ -2435,11 +2549,7 @@
         </label>
         <button id="b4sim-run" class="btn btn-primary" type="button">Run</button>
       </div>
-      ${sim.pair_returns && sim.pair_returns.length ? `
-      <div class="callout dim small" style="margin:0 0 10px">
-        <strong>Pair-level stress:</strong> uncheck names to recompute the portfolio return series (weights renormalized).
-        ${pairToggleRows}
-      </div>` : ""}
+      ${pairTogglePanel}
       <div id="b4sim-stats" class="strip"></div>
       <p id="b4sim-takeaway" class="callout dim small" style="margin:6px 0 10px"></p>
       <div class="b4sim-controls strip" style="margin:0 0 10px;gap:14px;flex-wrap:wrap;align-items:flex-end">
@@ -2453,9 +2563,14 @@
       <div id="b4sim-fan"></div>
       <div class="two-col" style="margin-top:12px">
         <div>
-          <h3>Book under test (live B4 proposed)</h3>
-          <table class="tight"><thead><tr><th>ETF</th><th>Und</th><th class="num">Weight</th><th class="num">Source</th><th class="num">In book</th><th class="num">Days</th><th class="num">Borrow</th></tr></thead>
-          <tbody>${pairRows}</tbody></table>
+          <h3>Proposed book (${bookPairs.length} pairs)</h3>
+          <p class="dim small">From <code>data/runs/${safeText(sim.run_date)}/proposed_trades.csv</code> · gross ${fmtUsd(sim.proposed_book_gross_usd)}</p>
+          <table class="tight"><thead><tr><th>ETF</th><th>Und</th><th class="num">Weight</th><th class="num">Gross $</th><th class="num">Source</th><th class="num">Days</th><th class="num">Borrow</th></tr></thead>
+          <tbody>${bookRows || "<tr><td colspan='7' class='dim'>No proposed B4 rows with gross &gt; 0</td></tr>"}</tbody></table>
+          ${stressPairs.length ? `<h3 style="margin-top:14px">Stress universe (${stressPairs.length} optional)</h3>
+          <p class="dim small">Not in today's proposed book; proxy gross for what-if toggles above.</p>
+          <table class="tight"><thead><tr><th>ETF</th><th>Und</th><th class="num">Proxy wt</th><th class="num">Proxy $</th><th class="num">Source</th><th class="num">Days</th><th class="num">Borrow</th></tr></thead>
+          <tbody>${stressRows}</tbody></table>` : ""}
           <p class="dim small">Realized (sample): CAGR ${fmtPct(rz.cagr, 1)} · ann vol ${fmtPct(rz.ann_vol, 1)} · Sharpe ${safeText(rz.sharpe)} · maxDD ${fmtPct(rz.hist_maxdd, 1)}.</p>
           ${sim.weight_policy ? `<details class="callout dim small" style="margin-top:8px"><summary><strong>How weights are chosen</strong></summary>
             <p>${safeText(sim.weight_policy.description)}</p>
@@ -2520,7 +2635,16 @@
       };
     }
 
+    function updatePairCount() {
+      const countEl = document.getElementById("b4sim-pairs-count");
+      if (!countEl) return;
+      const boxes = document.querySelectorAll(".b4sim-pair");
+      const sel = document.querySelectorAll(".b4sim-pair:checked").length;
+      countEl.textContent = `${sel} / ${boxes.length} included`;
+    }
+
     function update() {
+      updatePairCount();
       const o = readOpts();
       volValEl.textContent = o.volMult.toFixed(1);
       b4WriteHash(o);
@@ -2599,6 +2723,18 @@
     volEl.addEventListener("change", update);
     if (runEl) runEl.addEventListener("click", update);
     document.querySelectorAll(".b4sim-pair").forEach((el) => el.addEventListener("change", update));
+    content.querySelectorAll("[data-b4sim-pairs]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const mode = btn.getAttribute("data-b4sim-pairs");
+        document.querySelectorAll(".b4sim-pair").forEach((el) => {
+          const chip = el.closest(".b4sim-pair-chip");
+          if (mode === "all") el.checked = true;
+          else if (mode === "none") el.checked = false;
+          else if (mode === "book") el.checked = chip?.dataset.inBook === "1";
+        });
+        update();
+      });
+    });
     update();
   }
 
@@ -2628,25 +2764,9 @@
   }
 
   function renderPerformance(snap) {
-    const book = snap.book || {};
     const dd = snap.drawdown_panel || {};
     if (els.pnlStrip) {
       const items = [
-        {
-          label: "P&L today",
-          value: fmtUsdSigned(book.pnl_daily_usd),
-          sub:
-            book.pnl_daily_usd == null
-              ? "no prior run"
-              : `${fmtPct(book.pnl_daily_pct_nav, 2)} of NAV`,
-          cls: signedClass(book.pnl_daily_usd),
-        },
-        {
-          label: "P&L YTD (cumulative)",
-          value: fmtUsdSigned(book.pnl_ytd_usd ?? book.pnl_today_usd),
-          sub: `${fmtPct(book.pnl_ytd_pct_nav ?? book.pnl_today_pct_nav, 2)} of NAV`,
-          cls: signedClass(book.pnl_ytd_usd ?? book.pnl_today_usd),
-        },
         {
           label: "Current drawdown",
           value: dd.available ? fmtUsd(dd.current_drawdown_usd) : "-",
@@ -2666,6 +2786,12 @@
           value: dd.available ? fmtUsd(dd.peak_equity_usd) : "-",
           sub: dd.available ? `base NAV ${fmtUsd(dd.base_nav_usd)}` : "",
         },
+        {
+          label: "Current equity",
+          value: dd.available ? fmtUsd(dd.current_equity_usd) : "-",
+          sub: dd.available ? `cum P&amp;L ${fmtUsdSigned(dd.current_cum_pnl_usd)}` : "",
+          cls: signedClass(dd.current_cum_pnl_usd),
+        },
       ];
       els.pnlStrip.innerHTML = items
         .map(
@@ -2680,9 +2806,226 @@
     }
     if (els.drawdownMeta) {
       els.drawdownMeta.innerHTML = dd.available
-        ? `<span class="dim small">Equity = NAV + cumulative PnL over ${dd.n_points} runs.</span>`
+        ? `<span class="dim small">Equity = NAV + cumulative PnL over ${dd.n_points} runs. Day-to-day P&amp;L is on the <a href="#pnl-section">P&amp;L tab</a>.</span>`
         : `<span class="dim small">${safeText(dd.reason, "drawdown unavailable")}</span>`;
     }
+  }
+
+  let _pnlPanelState = { view: "daily", lookback: 40, bucketPeriod: "today" };
+
+  function renderPnlPanel(snap) {
+    const panel = snap.pnl_panel || {};
+    if (!panel.available) {
+      if (els.pnlMeta) {
+        els.pnlMeta.innerHTML = `<span class="dim small">${safeText(
+          panel.reason,
+          "P&amp;L history unavailable"
+        )}</span>`;
+      }
+      ["pnlSummary", "pnlControls", "pnlDailyChart", "pnlDailyTable", "pnlWeeklyTable", "pnlBucketChart"].forEach(
+        (k) => {
+          if (els[k]) els[k].innerHTML = "";
+        }
+      );
+      return;
+    }
+
+    const summary = panel.summary || {};
+    const bucketLabels = panel.bucket_labels || {};
+
+    if (els.pnlMeta) {
+      els.pnlMeta.innerHTML = `<span class="dim small">Source: ${safeText(
+        panel.source
+      )} · ${panel.n_daily_rows || 0} trading days · vs prior ${safeText(summary.prior_date, "")}</span>`;
+    }
+
+    if (els.pnlSummary) {
+      const cmpWeek =
+        summary.prior_week_usd != null
+          ? ` vs prior wk ${fmtUsdSigned(summary.prior_week_usd)}`
+          : "";
+      const cmpMonth =
+        summary.prior_month_usd != null
+          ? ` vs prior mo ${fmtUsdSigned(summary.prior_month_usd)}`
+          : "";
+      els.pnlSummary.innerHTML = [
+        {
+          label: "Today",
+          value: fmtUsdSigned(summary.daily_usd),
+          sub: `${fmtPct(summary.daily_pct_nav, 2)} of NAV`,
+          cls: signedClass(summary.daily_usd),
+        },
+        {
+          label: "Week to date",
+          value: fmtUsdSigned(summary.wtd_usd),
+          sub: `${fmtPct(summary.wtd_pct_nav, 2)} of NAV${cmpWeek}`,
+          cls: signedClass(summary.wtd_usd),
+        },
+        {
+          label: "Month to date",
+          value: fmtUsdSigned(summary.mtd_usd),
+          sub: `${fmtPct(summary.mtd_pct_nav, 2)} of NAV${cmpMonth}`,
+          cls: signedClass(summary.mtd_usd),
+        },
+        {
+          label: "YTD (cumulative)",
+          value: fmtUsdSigned(summary.ytd_usd),
+          sub: `${fmtPct(summary.ytd_pct_nav, 2)} of NAV`,
+          cls: signedClass(summary.ytd_usd),
+        },
+      ]
+        .map(
+          (it) => `<div class="stat">
+          <div class="label">${it.label}</div>
+          <div class="value ${it.cls || ""}">${it.value}</div>
+          ${it.sub ? `<div class="sub">${it.sub}</div>` : ""}
+        </div>`
+        )
+        .join("");
+    }
+
+    function bucketRowsForPeriod(period) {
+      if (period === "wtd") {
+        const agg = {};
+        (panel.daily || []).forEach((r) => {
+          const d = new Date(r.date + "T12:00:00");
+          const run = new Date((panel.run_date || r.date) + "T12:00:00");
+          const weekStart = new Date(run);
+          weekStart.setDate(run.getDate() - ((run.getDay() + 6) % 7));
+          if (d < weekStart) return;
+          Object.entries(r.buckets || {}).forEach(([k, v]) => {
+            agg[k] = (agg[k] || 0) + Number(v || 0);
+          });
+        });
+        return { buckets: agg, caption: "Week to date bucket moves" };
+      }
+      if (period === "last_week") {
+        const wk = (panel.weekly || []);
+        const last = wk.length >= 2 ? wk[wk.length - 2] : null;
+        return {
+          buckets: (last && last.buckets) || {},
+          caption: last
+            ? `Prior week ${safeText(last.week_label)} (${safeText(last.week_start)} – ${safeText(last.week_end)})`
+            : "No prior week",
+        };
+      }
+      const today = (panel.daily || [])[panel.daily.length - 1];
+      return {
+        buckets: (today && today.buckets) || {},
+        caption: today ? `Today (${safeText(today.date)}) bucket moves` : "Today",
+      };
+    }
+
+    function paint() {
+      const dailyAll = panel.daily || [];
+      const weeklyAll = panel.weekly || [];
+      const lb = _pnlPanelState.lookback;
+      const dailySlice =
+        lb === "ytd" ? dailyAll : dailyAll.slice(-Math.min(lb, dailyAll.length));
+
+      if (els.pnlControls) {
+        els.pnlControls.innerHTML = `
+          <label class="pnl-ctl">View
+            <select id="pnl-view">
+              <option value="daily" ${_pnlPanelState.view === "daily" ? "selected" : ""}>Daily bars</option>
+              <option value="weekly" ${_pnlPanelState.view === "weekly" ? "selected" : ""}>Weekly bars</option>
+            </select>
+          </label>
+          <label class="pnl-ctl">Lookback
+            <select id="pnl-lookback">
+              <option value="20" ${_pnlPanelState.lookback === 20 ? "selected" : ""}>20 sessions</option>
+              <option value="40" ${_pnlPanelState.lookback === 40 ? "selected" : ""}>40 sessions</option>
+              <option value="ytd" ${_pnlPanelState.lookback === "ytd" ? "selected" : ""}>All in panel</option>
+            </select>
+          </label>
+          <label class="pnl-ctl">Bucket period
+            <select id="pnl-bucket-period">
+              <option value="today" ${_pnlPanelState.bucketPeriod === "today" ? "selected" : ""}>Today</option>
+              <option value="wtd" ${_pnlPanelState.bucketPeriod === "wtd" ? "selected" : ""}>Week to date</option>
+              <option value="last_week" ${_pnlPanelState.bucketPeriod === "last_week" ? "selected" : ""}>Prior week</option>
+            </select>
+          </label>`;
+        const viewEl = document.getElementById("pnl-view");
+        const lbEl = document.getElementById("pnl-lookback");
+        const bpEl = document.getElementById("pnl-bucket-period");
+        if (viewEl) viewEl.addEventListener("change", () => { _pnlPanelState.view = viewEl.value; paint(); });
+        if (lbEl) lbEl.addEventListener("change", () => {
+          _pnlPanelState.lookback = lbEl.value === "ytd" ? "ytd" : Number(lbEl.value);
+          paint();
+        });
+        if (bpEl) bpEl.addEventListener("change", () => { _pnlPanelState.bucketPeriod = bpEl.value; paint(); });
+      }
+
+      const chartRows =
+        _pnlPanelState.view === "weekly"
+          ? weeklyAll.slice(-16).map((w) => ({
+              date: w.week_end || w.week_label,
+              daily_usd: w.daily_usd,
+            }))
+          : dailySlice;
+
+      if (els.pnlDailyChart) {
+        els.pnlDailyChart.innerHTML = pnlBarChartSvg(chartRows, { width: 720, height: 200 });
+      }
+      if (els.pnlTableTitle) {
+        els.pnlTableTitle.textContent =
+          _pnlPanelState.view === "weekly" ? "Daily detail (reference)" : "Daily P&L";
+      }
+
+      const bucketKeys = Object.keys(bucketLabels);
+      const dailyHead =
+        `<table class="tight"><thead><tr><th>Date</th><th class="num">Daily</th><th class="num">% NAV</th>` +
+        bucketKeys.map((k) => `<th class="num">${safeText(bucketLabels[k] || k)}</th>`).join("") +
+        `</tr></thead><tbody>`;
+      const dailyBody = [...dailySlice]
+        .reverse()
+        .map((r) => {
+          const bks = r.buckets || {};
+          return `<tr>
+            <td>${safeText(r.date)}</td>
+            <td class="num ${signedClass(r.daily_usd)}">${fmtUsdSigned(r.daily_usd)}</td>
+            <td class="num">${fmtPct(r.daily_pct_nav, 2)}</td>
+            ${bucketKeys
+              .map((k) => `<td class="num ${signedClass(bks[k])}">${fmtUsdSigned(bks[k])}</td>`)
+              .join("")}
+          </tr>`;
+        })
+        .join("");
+      if (els.pnlDailyTable) {
+        els.pnlDailyTable.innerHTML =
+          dailyBody.length
+            ? dailyHead + dailyBody + `</tbody></table>`
+            : `<p class="dim">No daily rows.</p>`;
+      }
+
+      if (els.pnlWeeklyTable) {
+        const wkHead = `<table class="tight"><thead><tr><th>Week</th><th>End</th><th class="num">Days</th><th class="num">P&amp;L</th><th class="num">% NAV</th></tr></thead><tbody>`;
+        const wkBody = [...weeklyAll]
+          .reverse()
+          .map(
+            (w) => `<tr>
+            <td>${safeText(w.week_label)}</td>
+            <td>${safeText(w.week_end)}</td>
+            <td class="num">${w.n_days ?? "-"}</td>
+            <td class="num ${signedClass(w.daily_usd)}">${fmtUsdSigned(w.daily_usd)}</td>
+            <td class="num">${fmtPct(w.daily_pct_nav, 2)}</td>
+          </tr>`
+          )
+          .join("");
+        els.pnlWeeklyTable.innerHTML = wkBody
+          ? wkHead + wkBody + `</tbody></table>`
+          : `<p class="dim">No weekly rows.</p>`;
+      }
+
+      const bp = bucketRowsForPeriod(_pnlPanelState.bucketPeriod);
+      if (els.pnlBucketChart) {
+        els.pnlBucketChart.innerHTML = pnlBucketBarsHtml(bp.buckets, bucketLabels, {
+          caption: bp.caption,
+        });
+      }
+    }
+
+    paint();
   }
 
   function renderMovers(panel) {
@@ -3126,6 +3469,7 @@
       () => renderAlerts(snap.alert_rows || []),
       () => renderActionQueue(snap.action_queue || []),
       () => renderPerformance(snap),
+      () => renderPnlPanel(snap),
       () => renderMovers(snap.movers_panel || {}),
       () => renderSlideRisk(snap.slide_risk_panel || {}),
       () => renderBucket4Sim(snap.bucket4_risk_sim || null),

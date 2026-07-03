@@ -19,6 +19,7 @@ from risk_dashboard.metrics import (
     compute_borrow_shock_panel,
     compute_drawdown_panel,
     compute_movers_panel,
+    compute_pnl_panel,
     compute_shared_underlying_panel,
     resolve_nav_usd,
 )
@@ -124,6 +125,30 @@ def test_drawdown_panel_filters_future_dates(tmp_path):
     assert panel["current_cum_pnl_usd"] == pytest.approx(5000)
 
 
+# ── P&L panel ──────────────────────────────────────────────────────────────
+
+
+def test_pnl_panel_daily_and_weekly_deltas(tmp_path):
+    csv = tmp_path / "pnl_history.csv"
+    csv.write_text(
+        "date,total_pnl,pnl_bucket_1,pnl_bucket_2,pnl_bucket_3,pnl_bucket_4,pnl_bucket_5,pnl_stock_sleeves\n"
+        "2026-06-02,0,0,0,0,0,0,0\n"
+        "2026-06-03,1000,600,200,0,100,0,100\n"
+        "2026-06-04,1500,800,300,0,200,0,200\n"
+        "2026-06-09,500,-200,400,0,-500,0,800\n",
+        encoding="utf-8",
+    )
+    panel = compute_pnl_panel(csv, nav_usd=1_000_000, run_date="2026-06-09")
+    assert panel["available"] is True
+    assert panel["summary"]["daily_usd"] == pytest.approx(-1000)
+    assert panel["summary"]["prior_date"] == "2026-06-04"
+    assert panel["summary"]["ytd_usd"] == pytest.approx(500)
+    last = panel["daily"][-1]
+    assert last["buckets"]["bucket_1"] == pytest.approx(-1000)
+    assert last["buckets"]["stock_sleeves"] == pytest.approx(600)
+    assert panel["weekly"][-1]["daily_usd"] == pytest.approx(-1000)
+
+
 # ── Shared underlying + movers ─────────────────────────────────────────────
 
 
@@ -171,6 +196,7 @@ def test_snapshot_exposes_phase0_4_fields():
         "freshness",
         "borrow_shock_panel",
         "drawdown_panel",
+        "pnl_panel",
         "shared_underlying_panel",
         "movers_panel",
         "display_sleeve_groups",

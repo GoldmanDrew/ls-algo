@@ -103,11 +103,25 @@ def build_portfolio(uni, panel, start, min_days, *, min_days_short: int = 60):
         sorted(set().union(*[set(s.index) for s in ret_cols.values()]))
     )
     gross_w = pd.Series(weights)
-    pr = port_returns(ret_df, gross_w)
-    wnorm = (gross_w / gross_w.sum()).round(4)
+    book_etfs = {
+        p["etf"] for p in pairs if p.get("in_book")
+    }
+    book_w = gross_w[gross_w.index.isin(book_etfs)]
+    if book_w.sum() <= 0:
+        book_w = gross_w[gross_w.gt(0)]
+        book_etfs = set(book_w.index)
+    pr = port_returns(ret_df[list(book_etfs)], book_w)
+    book_total = float(book_w.sum()) if len(book_w) else 0.0
+    stress_total = float(gross_w.sum()) if len(gross_w) else 0.0
     for p in pairs:
-        p["weight"] = float(wnorm[p["etf"]])
-    return pr, pairs, blk, ret_df
+        g = float(weights.get(p["etf"], 0.0))
+        if p.get("in_book") and book_total > 0:
+            p["weight"] = round(g / book_total, 4)
+        elif stress_total > 0:
+            p["weight"] = round(g / stress_total, 4)
+        else:
+            p["weight"] = 0.0
+    return pr, pairs, blk, ret_df, book_total
 
 
 def main(argv=None) -> int:
@@ -116,7 +130,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--run-date", default="2026-06-25")
     ap.add_argument("--start", default="2024-01-01")
-    ap.add_argument("--min-days", type=int, default=120)
+    ap.add_argument("--min-days", type=int, default=60)
     ap.add_argument("--min-days-short", type=int, default=60, help="Min history for force-included / low-N names")
     ap.add_argument("--n-mc", type=int, default=10000)
     ap.add_argument("--block-len", type=int, default=10)
@@ -129,7 +143,9 @@ def main(argv=None) -> int:
     if built is None:
         print("[risk-sim] no eligible B4 pairs", file=sys.stderr)
         return 1
-    pr, pairs, blk, ret_df = built
+    pr, pairs, blk, ret_df, book_gross = built
+    n_book = sum(1 for p in pairs if p.get("in_book"))
+    n_stress = len(pairs) - n_book
     prv = pr.dropna()
     arr = prv.to_numpy(dtype=float)
     sim_dates = [d.strftime("%Y-%m-%d") for d in prv.index]
@@ -143,6 +159,9 @@ def main(argv=None) -> int:
             "etf": etf,
             "und": p["und"],
             "weight": p["weight"],
+            "gross_usd": p["gross_usd"],
+            "in_book": bool(p.get("in_book")),
+            "weight_source": p.get("weight_source"),
             "returns": [round(float(x), 6) for x in ser.to_numpy(dtype=float)],
         })
 
@@ -170,6 +189,9 @@ def main(argv=None) -> int:
             "max_interval": blk.get("max_interval"),
         },
         "n_pairs": len(pairs),
+        "n_pairs_in_book": n_book,
+        "n_pairs_stress": n_stress,
+        "proposed_book_gross_usd": round(book_gross, 2),
         "pairs": pairs,
         "n_obs": int(len(arr)),
         "mean_daily": float(np.mean(arr)),
@@ -177,9 +199,10 @@ def main(argv=None) -> int:
         "port_daily_returns": [round(float(x), 6) for x in arr],
         "pair_returns": pair_returns,
         "weight_policy": {
-            "description": "Uses proposed gross when >0; else optimal gross when short locate available; "
-            "else structural/screener proxy for eligible stress names (incl. SMZ/CBRZ/APLZ).",
+            "description": "Default portfolio uses proposed_trades.csv rows with gross_target_usd > 0 only. "
+            "Eligible screener names are optional stress toggles (proxy gross when not in the proposed book).",
             "force_include_etfs": sorted(FORCE_INCLUDE_ETFS),
+            "default_scope": "proposed_book",
         },
         "fit_student_t": {"df": round(t_df, 3), "loc": round(float(t_loc), 6),
                           "scale": round(float(t_scale), 6)},

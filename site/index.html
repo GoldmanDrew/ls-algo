@@ -29,6 +29,7 @@
   <a href="#cockpit-section">Cockpit</a>
   <a href="#actions-section">Actions</a>
   <a href="#performance-section">Performance</a>
+  <a href="#pnl-section">P&amp;L</a>
   <a href="#slide-risk-section">Slide risk</a>
   <a href="#b4sim-section">B4 risk sim</a>
   <a href="#b5bt-section">B5 insurance BT</a>
@@ -107,6 +108,29 @@
           <div id="movers-losers"></div>
         </div>
       </div>
+    </section>
+
+    <!-- P&L attribution: daily / weekly deltas and bucket breakdown -->
+    <section id="pnl-section" class="panel">
+      <div class="panel-head">
+        <h2>P&amp;L attribution</h2>
+        <div id="pnl-meta" class="quality-line"></div>
+      </div>
+      <div id="pnl-summary" class="strip"></div>
+      <div id="pnl-controls" class="pnl-controls strip"></div>
+      <div id="pnl-daily-chart"></div>
+      <div class="two-col">
+        <div>
+          <h3 id="pnl-table-title">Daily P&amp;L</h3>
+          <div id="pnl-daily-table"></div>
+        </div>
+        <div>
+          <h3>Weekly summary</h3>
+          <div id="pnl-weekly-table"></div>
+        </div>
+      </div>
+      <h3>Bucket attribution</h3>
+      <div id="pnl-bucket-chart"></div>
     </section>
 
     <!-- Slide risk strips: SPX / NDX / RUT -->
