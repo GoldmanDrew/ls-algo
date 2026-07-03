@@ -149,6 +149,11 @@ def _gtp_eligible_mask(
     return b4m & ~blk & edge_ok & not_flow & not_excl
 
 
+def _finite_float(val, default: float = 0.0) -> float:
+    v = float(pd.to_numeric(val, errors="coerce"))
+    return default if not np.isfinite(v) else v
+
+
 def resolve_sim_gross(
     row: pd.Series,
     *,
@@ -157,8 +162,8 @@ def resolve_sim_gross(
     gtp_eligible: bool = False,
 ) -> tuple[float, str]:
     """Return (sim_gross_usd, weight_source) for risk-sim weighting."""
-    gross = float(pd.to_numeric(row.get("gross_target_usd"), errors="coerce") or 0.0)
-    optimal = float(pd.to_numeric(row.get("optimal_gross_target_usd"), errors="coerce") or 0.0)
+    gross = _finite_float(row.get("gross_target_usd"), 0.0)
+    optimal = _finite_float(row.get("optimal_gross_target_usd"), 0.0)
     loc_ok = locate_available(row)
 
     if gross > 0:
@@ -301,7 +306,7 @@ def load_risk_sim_universe(run_date: str, *, runs_root: Path | None = None) -> p
         sources.append(src)
     df["sim_gross_usd"] = sim_gross
     df["weight_source"] = sources
-    df["in_book"] = prop_gross.gt(0)
+    df["in_book"] = pd.to_numeric(df.get("gross_target_usd"), errors="coerce").fillna(0.0).gt(0)
     df["locate_ok"] = df.apply(locate_available, axis=1)
     df["blacklisted"] = _bool_series(df.get("strategy_blacklisted", pd.Series(False, index=df.index)))
 
