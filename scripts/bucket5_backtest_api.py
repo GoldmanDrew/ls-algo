@@ -47,6 +47,11 @@ from scripts.bucket5_insurance_bt import (  # noqa: E402
     run_insurance,
     summarize,
 )
+from scripts.bucket5_dashboard_helpers import (  # noqa: E402
+    build_assumption_sections,
+    load_live_b5_book,
+    regime_from_series,
+)
 from scripts.bucket5_put_overlay import load_spx_spot  # noqa: E402
 
 Era = Literal["live", "extended"]
@@ -420,21 +425,37 @@ def build_dashboard_payload(
         ]
 
     out_variants: dict[str, Any] = {}
+    primary_regime = {}
     for key, preset, era in variants:
         r = run_backtest(preset=preset, era=era, max_series_points=600)
+        ser = r.get("series") or {}
+        cfg = r.get("config") or {}
+        assum = r.get("assumptions") or {}
+        meta = r.get("meta") or {}
+        events = r.get("monetize_events") or []
         out_variants[key] = {
             "preset": preset,
             "era": era,
             "label": list_presets().get(preset, preset),
             "metrics": r["metrics"],
             "crash": r["crash"],
-            "meta": r["meta"],
-            "assumptions": r["assumptions"],
+            "meta": meta,
+            "assumptions": assum,
+            "config": cfg,
+            "assumption_sections": build_assumption_sections(cfg, meta, assum),
+            "monetize_summary": {
+                "event_count": len(events),
+                "kinds": list({e.get("kind") for e in events if e.get("kind")})[:12],
+                "total_usd": round(sum(float(e.get("usd") or 0) for e in events), 0),
+            },
             "series": {
-                "combined_equity": r.get("series", {}).get("combined_equity", []),
-                "drawdown": r.get("series", {}).get("drawdown", []),
+                "combined_equity": ser.get("combined_equity", []),
+                "drawdown": ser.get("drawdown", []),
+                "ratio": ser.get("ratio", []),
             },
         }
+        if key == "F_extended" or not primary_regime:
+            primary_regime = regime_from_series(ser.get("ratio"))
 
     return {
         "schema": "bucket5_backtest_panel.v1",
@@ -443,6 +464,8 @@ def build_dashboard_payload(
         "variants": out_variants,
         "presets": list_presets(),
         "lab_command": "streamlit run scripts/bucket5_lab.py",
+        "live_book": load_live_b5_book(run_date),
+        "regime": primary_regime,
         "repo": "ls-algo",
     }
 

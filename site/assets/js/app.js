@@ -2293,26 +2293,58 @@
       axis +
       `</svg>`;
   }
+  function dashNiceTicks(minV, maxV, n) {
+    if (!isFinite(minV) || !isFinite(maxV) || minV === maxV) return [minV];
+    const span = maxV - minV;
+    const raw = span / Math.max(2, n - 1);
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = Math.ceil(raw / mag) * mag;
+    const start = Math.floor(minV / step) * step;
+    const out = [];
+    for (let v = start; v <= maxV + step * 0.01; v += step) out.push(v);
+    return out;
+  }
+  function dashSvgYAxis(pad, Hh, ticks, yMap, fmt) {
+    return ticks.map((v) => {
+      const y = yMap(v);
+      return `<line x1="${pad - 4}" y1="${y}" x2="${pad}" y2="${y}" stroke="#94a3b8" stroke-width="1"/>` +
+        `<text x="${pad - 6}" y="${y + 4}" fill="#64748b" font-size="10" text-anchor="end">${fmt(v)}</text>`;
+    }).join("");
+  }
   function b4FanChart(fan, horizon) {
     if (!fan || !fan.length) return "";
-    const W = 720, Hh = 180, pad = 28;
+    const W = 720, Hh = 220, padL = 44, padR = 12, padT = 22, padB = 28;
     const n = fan.length - 1;
-    const xAt = (i) => pad + (i / n) * (W - 2 * pad);
-    const yAt = (v) => Hh - pad - Math.max(0, Math.min(1, (v - 0.5) / 1.5)) * (Hh - 2 * pad);
+    let yMin = Infinity, yMax = -Infinity;
+    for (const pt of fan) {
+      yMin = Math.min(yMin, pt.p5, pt.p50, pt.p95);
+      yMax = Math.max(yMax, pt.p5, pt.p50, pt.p95);
+    }
+    yMin = Math.min(yMin, 0.85);
+    yMax = Math.max(yMax, 1.15);
+    const yPad = (yMax - yMin) * 0.08 || 0.05;
+    yMin -= yPad;
+    yMax += yPad;
+    const xAt = (i) => padL + (i / n) * (W - padL - padR);
+    const yAt = (v) => Hh - padB - ((v - yMin) / (yMax - yMin)) * (Hh - padT - padB);
     let area = "";
     for (let i = 0; i < n; i++) {
       const x0 = xAt(i), x1 = xAt(i + 1);
       area += `<polygon points="${x0},${yAt(fan[i].p95)} ${x1},${yAt(fan[i + 1].p95)} ${x1},${yAt(fan[i + 1].p5)} ${x0},${yAt(fan[i].p5)}" fill="#0f766e" opacity="0.15"/>`;
     }
     let med = "";
-    for (let i = 0; i < n; i++) {
-      med += `${xAt(i)},${yAt(fan[i].p50)} `;
-    }
+    for (let i = 0; i < n; i++) med += `${xAt(i)},${yAt(fan[i].p50)} `;
     med += `${xAt(n)},${yAt(fan[n].p50)}`;
+    const yTicks = dashNiceTicks(yMin, yMax, 5);
+    const xMarks = [0, Math.round(horizon / 4), Math.round(horizon / 2), Math.round(3 * horizon / 4), horizon];
+    const end = fan[fan.length - 1];
     return `<svg viewBox="0 0 ${W} ${Hh}" width="100%" style="max-width:${W}px;display:block;margin-top:8px">` +
-      `<text x="${pad}" y="14" fill="var(--text-muted)" font-size="11">Equity fan (p5–p95 shaded, p50 line) · ${horizon}d horizon</text>` +
+      `<text x="${padL}" y="14" fill="var(--text-muted)" font-size="11">Equity fan (p5–p95 shaded, p50 line) · ${horizon}d · y = equity multiple (start=1.0)</text>` +
+      dashSvgYAxis(padL, Hh, yTicks, yAt, (v) => v.toFixed(2)) +
       area +
       `<polyline fill="none" stroke="#0f766e" stroke-width="2" points="${med}"/>` +
+      xMarks.map((d) => `<text x="${xAt(d)}" y="${Hh - 6}" fill="#64748b" font-size="10" text-anchor="middle">${d}d</text>`).join("") +
+      `<text x="${W - padR}" y="${padT + 8}" fill="#0f766e" font-size="10" text-anchor="end">end p50=${end.p50.toFixed(2)} · p95=${end.p95.toFixed(2)}</text>` +
       `</svg>`;
   }
   function b4ParseHash() {
@@ -2349,16 +2381,21 @@
     const pairRows = (sim.pairs || [])
       .map(
         (p) =>
-          `<tr><td>${p.etf}</td><td>${p.und}</td><td class="num">${fmtPct(p.weight, 1)}</td><td class="num">${p.n_days}</td><td class="num">${fmtPct(p.borrow, 1)}</td></tr>`
+          `<tr><td>${p.etf}${p.blacklisted ? " <span class='dim'>(blk)</span>" : ""}</td><td>${p.und}</td>` +
+          `<td class="num">${fmtPct(p.weight, 1)}</td><td class="num">${safeText(p.weight_source || "proposed")}</td>` +
+          `<td class="num">${p.in_book ? "yes" : "stress"}</td><td class="num">${p.n_days}</td><td class="num">${fmtPct(p.borrow, 1)}</td></tr>`
       )
       .join("");
     const pairToggleRows = (sim.pairs || [])
       .map(
-        (p) =>
-          `<label class="b4sim-ctl" style="display:inline-flex;align-items:center;gap:6px;margin:4px 8px 4px 0">
+        (p) => {
+          const tag = p.in_book ? "" : " <span class='dim'>(stress)</span>";
+          const src = p.weight_source && p.weight_source !== "proposed" ? ` · ${p.weight_source}` : "";
+          return `<label class="b4sim-ctl" style="display:inline-flex;align-items:center;gap:6px;margin:4px 8px 4px 0">
             <input type="checkbox" class="b4sim-pair" data-etf="${safeText(p.etf)}" checked>
-            ${safeText(p.etf)}/${safeText(p.und)} (${fmtPct(p.weight, 0)})
-          </label>`
+            ${safeText(p.etf)}/${safeText(p.und)} (${fmtPct(p.weight, 0)}${src})${tag}
+          </label>`;
+        }
       )
       .join("");
 
@@ -2417,9 +2454,13 @@
       <div class="two-col" style="margin-top:12px">
         <div>
           <h3>Book under test (live B4 proposed)</h3>
-          <table class="tight"><thead><tr><th>ETF</th><th>Und</th><th class="num">Weight</th><th class="num">Days</th><th class="num">Borrow</th></tr></thead>
+          <table class="tight"><thead><tr><th>ETF</th><th>Und</th><th class="num">Weight</th><th class="num">Source</th><th class="num">In book</th><th class="num">Days</th><th class="num">Borrow</th></tr></thead>
           <tbody>${pairRows}</tbody></table>
           <p class="dim small">Realized (sample): CAGR ${fmtPct(rz.cagr, 1)} · ann vol ${fmtPct(rz.ann_vol, 1)} · Sharpe ${safeText(rz.sharpe)} · maxDD ${fmtPct(rz.hist_maxdd, 1)}.</p>
+          ${sim.weight_policy ? `<details class="callout dim small" style="margin-top:8px"><summary><strong>How weights are chosen</strong></summary>
+            <p>${safeText(sim.weight_policy.description)}</p>
+            <p class="dim">Force-included stress names: ${(sim.weight_policy.force_include_etfs || []).join(", ") || "—"}.
+            Proposed gross used when &gt;0; otherwise optimal when locate exists; else screener/structural proxy.</p></details>` : ""}
         </div>
         <div>
           <h3>Reference tail (precomputed, ${(sim.reference_mc || {}).n_sims || "?"} sims)</h3>
@@ -2761,22 +2802,58 @@
 
   function b5DualChart(equitySeries, ddSeries, title) {
     const w = 720;
-    const hEq = 160;
-    const hDd = 90;
-    const pad = 8;
-    const eqPath = b5SeriesPath(equitySeries, w, hEq, pad, (v) => v / 1e6);
-    const ddPath = b5SeriesPath(ddSeries, w, hDd, pad, (v) => v * 100);
+    const hEq = 170;
+    const hDd = 100;
+    const padL = 42;
+    const padR = 8;
+    const padT = 18;
+    const padB = 22;
+    const eqVals = (equitySeries || []).map((p) => Number(p[1]) / 1e6);
+    const ddVals = (ddSeries || []).map((p) => Number(p[1]) * 100);
+    const eqMin = Math.min(...eqVals, 0);
+    const eqMax = Math.max(...eqVals, 1);
+    const ddMin = Math.min(...ddVals, -5);
+    const ddMax = Math.max(...ddVals, 0);
+    const yEq = (v) => hEq - padB - ((v - eqMin) / (eqMax - eqMin || 1)) * (hEq - padT - padB);
+    const yDd = (v) => hDd - padB - ((v - ddMin) / (ddMax - ddMin || 1)) * (hDd - padT - padB);
+    const xAt = (i, n, h) => padL + (i / Math.max(1, n - 1)) * (w - padL - padR);
+    const eqPath = eqVals.length >= 2
+      ? eqVals.map((v, i) => `${xAt(i, eqVals.length, hEq).toFixed(1)},${yEq(v).toFixed(1)}`).join(" ")
+      : "";
+    const ddPath = ddVals.length >= 2
+      ? ddVals.map((v, i) => `${xAt(i, ddVals.length, hDd).toFixed(1)},${yDd(v).toFixed(1)}`).join(" ")
+      : "";
+    const eqTicks = dashNiceTicks(eqMin, eqMax, 4);
+    const ddTicks = dashNiceTicks(ddMin, ddMax, 4);
+    const dates = (equitySeries || []).map((p) => p[0]);
+    const xLabels = dates.length >= 2
+      ? [0, Math.floor(dates.length / 2), dates.length - 1].map((i) =>
+          `<text x="${xAt(i, dates.length, hEq).toFixed(1)}" y="${hEq + hDd + 8}" fill="#64748b" font-size="9" text-anchor="middle">${safeText(String(dates[i]).slice(0, 10))}</text>`
+        ).join("")
+      : "";
     return `
       <div class="b5bt-chart-block">
         <h4>${title}</h4>
-        <svg viewBox="0 0 ${w} ${hEq + hDd + 12}" width="100%" style="max-width:${w}px">
-          <text x="${pad}" y="14" class="dim" font-size="11">Equity ($M)</text>
+        <svg viewBox="0 0 ${w} ${hEq + hDd + 14}" width="100%" style="max-width:${w}px">
+          <text x="${padL}" y="12" class="dim" font-size="11">Equity ($M)</text>
+          ${dashSvgYAxis(padL, hEq, eqTicks, yEq, (v) => v.toFixed(1))}
           <polyline fill="none" stroke="#0f766e" stroke-width="2" points="${eqPath}"/>
-          <line x1="${pad}" y1="${hEq + 6}" x2="${w - pad}" y2="${hEq + 6}" stroke="#cbd5e1" stroke-width="0.5"/>
-          <text x="${pad}" y="${hEq + 20}" class="dim" font-size="11">Drawdown (%)</text>
+          <line x1="${padL}" y1="${hEq + 4}" x2="${w - padR}" y2="${hEq + 4}" stroke="#cbd5e1" stroke-width="0.5"/>
+          <text x="${padL}" y="${hEq + 18}" class="dim" font-size="11">Drawdown (%)</text>
+          ${dashSvgYAxis(padL, hDd, ddTicks, (v) => hEq + 6 + yDd(v), (v) => v.toFixed(0))}
           <polyline fill="none" stroke="#991b1b" stroke-width="1.2" transform="translate(0,${hEq + 6})" points="${ddPath}"/>
+          ${xLabels}
         </svg>
       </div>`;
+  }
+
+  function renderAssumptionSections(sections) {
+    if (!sections || !sections.length) return "";
+    return sections.map((sec) => {
+      const rows = (sec.rows || []).map(([k, v]) => `<tr><td>${safeText(k)}</td><td>${safeText(v)}</td></tr>`).join("");
+      return `<details class="callout dim small" style="margin:6px 0"><summary><strong>${safeText(sec.title)}</strong></summary>` +
+        `<table class="tight" style="margin-top:6px"><tbody>${rows}</tbody></table></details>`;
+    }).join("");
   }
 
   function b5NearestGridPoint(grid, sleeve, premium, stress) {
@@ -2867,9 +2944,12 @@
       ` : `<p class="dim small">Rebuild with <code>--with-sensitivity</code> to enable grid sliders here.</p>`}
       <div id="b5bt-stats" class="strip"></div>
       <p id="b5bt-takeaway" class="callout dim small" style="margin:6px 0 10px"></p>
+      <div id="b5bt-livebook"></div>
+      <div id="b5bt-regime"></div>
       <div id="b5bt-charts" class="two-col"></div>
       <div id="b5bt-crash"></div>
-      <div id="b5bt-assumptions" class="dim small" style="margin-top:12px"></div>`;
+      <div id="b5bt-assumptions"></div>
+      <div id="b5bt-combined"></div>`;
 
     const variantEl = document.getElementById("b5bt-variant");
     const compareEl = document.getElementById("b5bt-compare");
@@ -2883,6 +2963,9 @@
       const chartsEl = document.getElementById("b5bt-charts");
       const crashEl = document.getElementById("b5bt-crash");
       const assumEl = document.getElementById("b5bt-assumptions");
+      const liveEl = document.getElementById("b5bt-livebook");
+      const regimeEl = document.getElementById("b5bt-regime");
+      const combinedEl = document.getElementById("b5bt-combined");
       const ddCls = (v) => (v <= -0.4 ? "stat-neg" : v <= -0.25 ? "stat-warn" : "");
       const stats = [
         { label: "CAGR", value: fmtPct(m.combined_CAGR, 1), tip: "Compound annual growth rate of combined equity." },
@@ -2931,9 +3014,42 @@
 
       const a = v.assumptions || {};
       assumEl.innerHTML =
-        `Assumptions: UVIX borrow ${fmtPct(a.borrow_uvix_annual, 2)}/yr · SVIX ${fmtPct(a.borrow_svix_annual, 2)}/yr · ` +
-        `slippage ${safeText(a.uvix_slip_bps)} bps · fee ${safeText(a.fee_bps)} bp · T-bills ${fmtPct(a.tbill_rate, 2)}/yr · ` +
-        `sleeve ${fmtPct(a.sleeve_frac, 0)} · ${safeText(v.meta?.pricing_mode || "")} · ${safeText(v.meta?.start)}→${safeText(v.meta?.end)}`;
+        `<details open class="callout dim small" style="margin-top:12px"><summary><strong>How this backtest works (all assumptions)</strong></summary>` +
+        renderAssumptionSections(v.assumption_sections) +
+        `<p class="dim" style="margin-top:8px">Quick summary: UVIX borrow ${fmtPct(a.borrow_uvix_annual, 2)}/yr · SVIX ${fmtPct(a.borrow_svix_annual, 2)}/yr · ` +
+        `slippage ${safeText(a.uvix_slip_bps)} bps · T-bills ${fmtPct(a.tbill_rate, 2)}/yr · sleeve ${fmtPct(a.sleeve_frac, 0)} · ` +
+        `${safeText(v.meta?.pricing_mode || "")} · ${safeText(v.meta?.start)}→${safeText(v.meta?.end)}` +
+        (v.monetize_summary ? ` · ${v.monetize_summary.event_count} monetize events (${fmtUsd(v.monetize_summary.total_usd)} harvested in sim)` : "") +
+        `</p></details>`;
+
+      if (liveEl && panel.live_book && panel.live_book.rows && panel.live_book.rows.length) {
+        const lb = panel.live_book.rows.map((r) =>
+          `<tr><td>${safeText(r.etf)}</td><td>${safeText(r.underlying)}</td>` +
+          `<td class="num">${fmtUsd(r.proposed_gross_usd)}</td><td class="num">${fmtUsd(r.optimal_gross_usd)}</td>` +
+          `<td class="num">${fmtPct(r.borrow_annual, 1)}</td><td>${r.locate_ok ? "yes" : "no"}</td></tr>`
+        ).join("");
+        liveEl.innerHTML = `<h3>Live B5 book (proposed trades ${safeText(panel.live_book.run_date)})</h3>` +
+          `<table class="tight"><thead><tr><th>ETF</th><th>Und</th><th class="num">Proposed $</th><th class="num">Optimal $</th><th class="num">Borrow</th><th>Locate</th></tr></thead><tbody>${lb}</tbody></table>`;
+      } else if (liveEl) liveEl.innerHTML = "";
+
+      if (regimeEl && panel.regime && panel.regime.label) {
+        regimeEl.innerHTML = `<p class="callout dim small"><strong>VIX regime (latest in backtest):</strong> ${safeText(panel.regime.label)} · ratio ${safeText(panel.regime.ratio)} as of ${safeText(panel.regime.date)}</p>`;
+      } else if (regimeEl) regimeEl.innerHTML = "";
+
+      if (combinedEl) {
+        const b4 = (window.__dashboardSnap && window.__dashboardSnap.bucket4_risk_sim) || null;
+        const crash30 = crash["crash_severe_-30%"];
+        let html = `<details class="callout dim small"><summary><strong>B4 + B5 combined lens</strong></summary>`;
+        if (b4 && b4.reference_mc && b4.reference_mc.block_bootstrap) {
+          const p95 = b4.reference_mc.block_bootstrap.dd_p95;
+          html += `<p>B4 structural tail (ref bootstrap p95 maxDD ~${fmtPct(p95, 0)}) vs B5 crash -30% payoff ${fmtPct(crash30, 0)} on this variant. ` +
+            `Insurance sleeve harvests when vol spikes; size B4 for survivable drawdown and B5 for convex crash payoffs.</p>`;
+        } else {
+          html += `<p>Rebuild B4 risk sim to compare tail drawdown with B5 crash payoffs side by side.</p>`;
+        }
+        html += `<p class="dim">Full exploration: <code>${labCmd}</code></p></details>`;
+        combinedEl.innerHTML = html;
+      }
     }
 
     function renderGridPoint() {

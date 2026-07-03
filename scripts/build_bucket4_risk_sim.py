@@ -36,10 +36,10 @@ from scripts.bucket4_cadence_risk_opt import (  # noqa: E402
     port_returns,
     tail_stats,
 )
+from scripts.bucket4_risk_sim_universe import FORCE_INCLUDE_ETFS, load_risk_sim_universe  # noqa: E402
 from scripts.sizing_tilt_cadence_bt import (  # noqa: E402
     knobs_from_yaml,
     load_price_panel,
-    load_universe,
     make_knobs,
 )
 from scripts.bucket4_vol_shape_signals import get_pair_signal  # noqa: E402
@@ -47,7 +47,7 @@ from scripts.bucket4_vol_shape_signals import get_pair_signal  # noqa: E402
 OUT = REPO / "risk_dashboard/data/bucket4_risk_sim.json"
 
 
-def build_portfolio(uni, panel, start, min_days):
+def build_portfolio(uni, panel, start, min_days, *, min_days_short: int = 60):
     """Per-pair returns under the CURRENT production cadence; gross-weighted."""
     blk = knobs_from_yaml()
     knobs = make_knobs(blk)  # production knobs straight from YAML
@@ -59,21 +59,41 @@ def build_portfolio(uni, panel, start, min_days):
         etf, und = row["ETF"], row["Underlying"]
         px = panel[etf]
         cal = pd.DatetimeIndex([d for d in px.index if d >= pd.Timestamp(start)])
-        if len(cal) < min_days:
+        etf_u = str(etf).upper()
+        need_days = min_days_short if (etf_u in FORCE_INCLUDE_ETFS or bool(row.get("low_n_included"))) else min_days
+        if len(cal) < need_days:
             continue
         sig = get_pair_signal(etf, und, cal, history={}, underlying_prices=px["b_px"],
                               window=60, lookahead_shift=1)
         h_daily = build_h_series(sig, cal, knobs=knobs)
         rb, _ = build_rebal_dates(sig, cal, knobs=knobs, warmup_bdays=60)
         borrow = float(pd.to_numeric(row.get("borrow_current"), errors="coerce") or 0.0)
+        beta = float(pd.to_numeric(row.get("Delta"), errors="coerce") or -2.0)
         bt = run_bucket4_backtest_dynamic_h(
             px.reindex(cal), h_daily, rb, initial_capital=1.0, gross_multiplier=1.0,
-            beta_a=-abs(float(row["Delta"])), beta_b=1.0, borrow_a_annual=borrow, slippage_bps=20.0,
+            beta_a=-abs(beta), beta_b=1.0, borrow_a_annual=borrow, slippage_bps=20.0,
         )
         ret_cols[etf] = bt["ret"]
-        weights[etf] = float(pd.to_numeric(row["gross_target_usd"], errors="coerce") or 0.0)
-        pairs.append({"etf": etf, "und": und, "n_days": int(len(cal)),
-                      "gross_usd": weights[etf], "borrow": round(borrow, 4)})
+        w = float(pd.to_numeric(row.get("sim_gross_usd"), errors="coerce") or 0.0)
+        weights[etf] = w
+        pairs.append({
+            "etf": etf,
+            "und": und,
+            "n_days": int(len(cal)),
+            "gross_usd": round(w, 2),
+            "borrow": round(borrow, 4),
+            "weight_source": str(row.get("weight_source", "proposed")),
+            "in_book": bool(row.get("in_book", False)),
+            "locate_ok": bool(row.get("locate_ok", False)),
+            "blacklisted": bool(row.get("blacklisted", False)),
+            "proposed_gross_usd": round(float(pd.to_numeric(row.get("gross_target_usd"), errors="coerce") or 0.0), 2),
+            "optimal_gross_usd": (
+                round(float(v), 2)
+                if np.isfinite(v := float(pd.to_numeric(row.get("optimal_gross_target_usd"), errors="coerce") or 0.0))
+                and v > 0
+                else None
+            ),
+        })
     if not ret_cols:
         return None
     ret_df = pd.DataFrame(ret_cols).reindex(
@@ -93,15 +113,16 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--run-date", default="2026-06-25")
     ap.add_argument("--start", default="2024-01-01")
-    ap.add_argument("--min-days", type=int, default=150)
+    ap.add_argument("--min-days", type=int, default=120)
+    ap.add_argument("--min-days-short", type=int, default=60, help="Min history for force-included / low-N names")
     ap.add_argument("--n-mc", type=int, default=10000)
     ap.add_argument("--block-len", type=int, default=10)
     ap.add_argument("--seed", type=int, default=7)
     args = ap.parse_args(argv)
 
-    uni = load_universe(args.run_date)
+    uni = load_risk_sim_universe(args.run_date)
     panel = load_price_panel(args.run_date)
-    built = build_portfolio(uni, panel, args.start, args.min_days)
+    built = build_portfolio(uni, panel, args.start, args.min_days, min_days_short=args.min_days_short)
     if built is None:
         print("[risk-sim] no eligible B4 pairs", file=sys.stderr)
         return 1
@@ -149,10 +170,14 @@ def main(argv=None) -> int:
         "pairs": pairs,
         "n_obs": int(len(arr)),
         "mean_daily": float(np.mean(arr)),
-        # full daily return series -> client-side block bootstrap
         "sim_dates": sim_dates,
         "port_daily_returns": [round(float(x), 6) for x in arr],
         "pair_returns": pair_returns,
+        "weight_policy": {
+            "description": "Uses proposed gross when >0; else optimal gross when short locate available; "
+            "else structural/screener proxy for eligible stress names (incl. SMZ/CBRZ/APLZ).",
+            "force_include_etfs": sorted(FORCE_INCLUDE_ETFS),
+        },
         "fit_student_t": {"df": round(t_df, 3), "loc": round(float(t_loc), 6),
                           "scale": round(float(t_scale), 6)},
         "fit_laplace": {"loc": round(float(l_loc), 6), "scale": round(float(l_scale), 6)},
