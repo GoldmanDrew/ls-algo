@@ -1,6 +1,6 @@
 {
   "schema": "bucket5_backtest_panel.v1",
-  "generated_at_utc": "2026-07-03T02:17:15.568654+00:00",
+  "generated_at_utc": "2026-07-03T02:49:07.403998+00:00",
   "run_date": "2026-07-02",
   "variants": {
     "B_live": {
@@ -285,13 +285,13 @@
       "monetize_summary": {
         "event_count": 102,
         "kinds": [
+          "profit_5x",
+          "scheduled_roll",
           "profit_3x",
           "vix_45",
-          "profit_5x",
-          "giveback",
-          "profit_8x",
           "rearm",
-          "scheduled_roll"
+          "profit_8x",
+          "giveback"
         ],
         "total_usd": 1684658.0
       },
@@ -13402,13 +13402,13 @@
       "monetize_summary": {
         "event_count": 94,
         "kinds": [
+          "profit_5x",
+          "scheduled_roll",
           "profit_3x",
           "vix_45",
-          "profit_5x",
-          "giveback",
-          "profit_8x",
           "rearm",
-          "scheduled_roll"
+          "profit_8x",
+          "giveback"
         ],
         "total_usd": 2647231.0
       },
@@ -26519,14 +26519,14 @@
       "monetize_summary": {
         "event_count": 990,
         "kinds": [
-          "profit_3x",
-          "vix_65",
-          "vix_45",
           "profit_5x",
-          "giveback",
-          "profit_8x",
+          "scheduled_roll",
+          "profit_3x",
+          "vix_45",
           "rearm",
-          "scheduled_roll"
+          "profit_8x",
+          "giveback",
+          "vix_65"
         ],
         "total_usd": 17694958.0
       },
@@ -34789,14 +34789,14 @@
       "monetize_summary": {
         "event_count": 1005,
         "kinds": [
-          "profit_3x",
-          "vix_65",
-          "vix_45",
           "profit_5x",
-          "giveback",
-          "profit_8x",
+          "scheduled_roll",
+          "profit_3x",
+          "vix_45",
           "rearm",
-          "scheduled_roll"
+          "profit_8x",
+          "giveback",
+          "vix_65"
         ],
         "total_usd": 26406760.0
       },
@@ -42807,7 +42807,7 @@
   "repo": "ls-algo",
   "sensitivity_grid": {
     "schema": "bucket5_sensitivity.v1",
-    "generated_at_utc": "2026-07-03T02:17:55.534817+00:00",
+    "generated_at_utc": "2026-07-03T02:49:53.069896+00:00",
     "preset_base": "F_dynamic_deep30",
     "era": "extended",
     "axes": {
