@@ -290,7 +290,6 @@ def apply_pair_overrides_to_sized(
     *,
     h_min: float,
     h_max: float,
-    partial_hedge_ratio: float,
     delta_floor: float,
 ) -> pd.DataFrame:
     """Apply operator B4/B5 pair tilts to a sized frame (executable or optimal).
@@ -303,9 +302,7 @@ def apply_pair_overrides_to_sized(
                               proportionally, so the hedge ratio is preserved).
       * ``hedge_ratio_add`` : h' = clip(h + add, h_min, h_max); the two opt2
                               short legs are re-solved from h' using the engine
-                              identity inv = gross/(1+h'·β), und = (gross-inv)·phr.
-                              Requires the ``b4_opt2_*`` columns (opt2-sized rows);
-                              ignored with a warning otherwise.
+                              identity inv = gross/(1+h'·β), und = gross - inv.
 
     Audit columns written for every overridden row:
       pair_override_gross_mult, pair_override_hedge_add, pair_override_note,
@@ -325,7 +322,6 @@ def apply_pair_overrides_to_sized(
     b4m = frame["sleeve"].isin(["inverse_decay_bucket4", VOL_ETP_BUCKET5_SLEEVE])
     opt2_cols = ("b4_opt2_inverse_etf_short_usd", "b4_opt2_underlying_short_usd", "b4_opt2_hedge_ratio")
     has_opt2 = all(c in frame.columns for c in opt2_cols)
-    phr = float(partial_hedge_ratio)
 
     for idx in frame.index[b4m]:
         etf = _norm_sym(frame.at[idx, "ETF"]) if "ETF" in frame.columns else ""
@@ -371,7 +367,7 @@ def apply_pair_overrides_to_sized(
                 beta = max(float(beta), float(delta_floor)) if np.isfinite(beta) else 1.0
                 denom = 1.0 + h1 * beta
                 inv = gross / denom if denom > 1e-12 else 0.5 * gross
-                und_usd = max(0.0, gross - inv) * phr
+                und_usd = max(0.0, gross - inv)
                 frame.at[idx, "b4_opt2_hedge_ratio_pre_override"] = h0
                 frame.at[idx, "b4_opt2_inverse_etf_short_usd"] = inv
                 frame.at[idx, "b4_opt2_underlying_short_usd"] = und_usd
@@ -2196,7 +2192,6 @@ def main() -> None:
         yb_min_edge = float(_yb_edge_yaml or 0.0)
     b4_rules = b4.get("rules", {}) or {}
     b4_min_edge = float(b4_rules.get("min_net_edge_annual", 0.0))
-    b4_partial_hedge_ratio = _clamp01(b4_rules.get("partial_hedge_ratio", 1.0))
     b4_max_shares_outstanding_frac = _clamp01(b4_rules.get("max_shares_outstanding_frac", 0.20))
     # Operator pair overrides (B4/B5 only). Hedge-add is clipped to the opt2
     # hedge guardrails so it cannot escape h_min/h_max.
@@ -2456,14 +2451,15 @@ def main() -> None:
     purgatory_net_edge = _bool_component("purgatory_net_edge")
     purgatory_vol_ratio = _bool_component("purgatory_vol_ratio")
     purgatory_any = screened.get("purgatory", pd.Series(False, index=screened.index)).fillna(False).astype(bool)
-    # Rows that are blocked *only* by no-locate should stay out of executable
-    # targets, but remain eligible for structural optimal analysis.
-    purgatory_structural = purgatory_any & ~(
-        purgatory_no_locate
-        & ~purgatory_borrow_band
+    # Execution-only purgatory (no locate, borrow keep band): excluded from executable
+    # sizing but included in structural optimal. Fundamental blocks (low edge, vol)
+    # stay out of both executable and structural optimal.
+    purgatory_execution_block = (
+        (purgatory_no_locate | purgatory_borrow_band)
         & ~purgatory_net_edge
         & ~purgatory_vol_ratio
     )
+    purgatory_structural = purgatory_any & ~purgatory_execution_block
 
     eligible = screened.loc[(~purgatory_any) & _ne_ok].copy()
     # Low-N vol fallback: brand-new underlyings may lack vol_underlying_annual but have
@@ -2905,7 +2901,6 @@ def main() -> None:
                         float(b4_core_cash),
                         fee_bps=float(b4_opt2.get("fee_bps", 1.0)),
                         slippage_bps=float(b4_opt2.get("slippage_bps", 20.0)),
-                        partial_hedge_ratio=b4_partial_hedge_ratio,
                         delta_floor=delta_floor,
                         current_leg_notional_by_pair=_cur_legs,
                         ratchet_enabled=_ratchet_on,
@@ -3068,10 +3063,10 @@ def main() -> None:
         sized_pre_caps = sized.copy()
         optimal_pre_caps = sized_pre_caps.copy()
 
-        # For structural optimal analysis, no-locate-only rows should be allowed
-        # into the stock sleeve weights: they represent desired exposure that
-        # cannot be opened today. Other purgatory reasons (borrow keep band,
-        # low edge, vol/data-quality) remain excluded from optimal.
+        # For structural optimal analysis, execution-blocked purgatory rows (no locate,
+        # borrow keep band) should be allowed into sleeve weights: desired exposure
+        # that cannot be opened or added today. Other purgatory reasons (low edge,
+        # vol/data-quality) remain excluded from optimal.
         structural_eligible = screened.loc[(~purgatory_structural) & _ne_ok].copy()
         if not structural_eligible.empty:
             try:
@@ -3083,6 +3078,9 @@ def main() -> None:
                 s_b = structural_eligible["borrow_annual"]
                 s_core_borrow_ok = (~np.isfinite(s_b)) | (s_b <= b1_entry_borrow_cap)
                 s_yb_borrow_ok = (~np.isfinite(s_b)) | (s_b <= b2_entry_borrow_cap)
+                s_exec_block = purgatory_execution_block.reindex(structural_eligible.index).fillna(False)
+                s_core_borrow_ok = s_core_borrow_ok | s_exec_block
+                s_yb_borrow_ok = s_yb_borrow_ok | s_exec_block
                 s_pos_beta = structural_eligible["Delta"].gt(0)
                 s_ne_p50 = pd.to_numeric(structural_eligible.get("net_edge_p50_annual"), errors="coerce")
                 s_yb_edge_ok = (
@@ -3157,7 +3155,7 @@ def main() -> None:
                     if added:
                         added_syms = ", ".join(sorted(optimal_pre_caps.loc[added, "ETF"].astype(str).map(_norm_sym).tolist()))
                         print(
-                            "[INFO] optimal-target analysis includes no-locate-only row(s) "
+                            "[INFO] optimal-target analysis includes execution-blocked purgatory row(s) "
                             f"excluded from executable sizing: {added_syms}"
                         )
             except Exception as ex:
@@ -3432,7 +3430,7 @@ def main() -> None:
             b4dm = b4m & ~o2m
             frame.loc[b4dm, "short_usd"] = -frame.loc[b4dm, "gross_target_usd"]
             frame.loc[b4dm, "long_usd"] = -(
-                b4_partial_hedge_ratio * frame.loc[b4dm, "beta_used_abs"] * frame.loc[b4dm, "gross_target_usd"]
+                frame.loc[b4dm, "beta_used_abs"] * frame.loc[b4dm, "gross_target_usd"]
             )
             if bool(o2m.any()):
                 opt2_gross = (
@@ -3473,7 +3471,6 @@ def main() -> None:
                 pair_overrides,
                 h_min=b4_override_h_min,
                 h_max=b4_override_h_max,
-                partial_hedge_ratio=b4_partial_hedge_ratio,
                 delta_floor=delta_floor,
             )
             optimal_sized = apply_pair_overrides_to_sized(
@@ -3481,7 +3478,6 @@ def main() -> None:
                 pair_overrides,
                 h_min=b4_override_h_min,
                 h_max=b4_override_h_max,
-                partial_hedge_ratio=b4_partial_hedge_ratio,
                 delta_floor=delta_floor,
             )
 
