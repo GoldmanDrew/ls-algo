@@ -47,6 +47,12 @@ from scripts.bucket4_vol_shape_signals import get_pair_signal  # noqa: E402
 OUT = REPO / "risk_dashboard/data/bucket4_risk_sim.json"
 
 
+def _finite_float(val, default: float = 0.0) -> float:
+    """Coerce to float; NaN/inf become *default* (``x or 0`` fails for NaN)."""
+    v = float(pd.to_numeric(val, errors="coerce"))
+    return default if not np.isfinite(v) else v
+
+
 def build_portfolio(uni, panel, start, min_days, *, min_days_short: int = 60):
     """Per-pair returns under the CURRENT production cadence; gross-weighted."""
     blk = knobs_from_yaml()
@@ -67,15 +73,17 @@ def build_portfolio(uni, panel, start, min_days, *, min_days_short: int = 60):
                               window=60, lookahead_shift=1)
         h_daily = build_h_series(sig, cal, knobs=knobs)
         rb, _ = build_rebal_dates(sig, cal, knobs=knobs, warmup_bdays=60)
-        borrow = float(pd.to_numeric(row.get("borrow_current"), errors="coerce") or 0.0)
-        beta = float(pd.to_numeric(row.get("Delta"), errors="coerce") or -2.0)
+        borrow = _finite_float(row.get("borrow_current"), 0.0)
+        beta = _finite_float(row.get("Delta"), -2.0)
         bt = run_bucket4_backtest_dynamic_h(
             px.reindex(cal), h_daily, rb, initial_capital=1.0, gross_multiplier=1.0,
             beta_a=-abs(beta), beta_b=1.0, borrow_a_annual=borrow, slippage_bps=20.0,
         )
         ret_cols[etf] = bt["ret"]
-        w = float(pd.to_numeric(row.get("sim_gross_usd"), errors="coerce") or 0.0)
+        w = _finite_float(row.get("sim_gross_usd"), 0.0)
         weights[etf] = w
+        proposed = _finite_float(row.get("gross_target_usd"), 0.0)
+        optimal = _finite_float(row.get("optimal_gross_target_usd"), 0.0)
         pairs.append({
             "etf": etf,
             "und": und,
@@ -86,13 +94,8 @@ def build_portfolio(uni, panel, start, min_days, *, min_days_short: int = 60):
             "in_book": bool(row.get("in_book", False)),
             "locate_ok": bool(row.get("locate_ok", False)),
             "blacklisted": bool(row.get("blacklisted", False)),
-            "proposed_gross_usd": round(float(pd.to_numeric(row.get("gross_target_usd"), errors="coerce") or 0.0), 2),
-            "optimal_gross_usd": (
-                round(float(v), 2)
-                if np.isfinite(v := float(pd.to_numeric(row.get("optimal_gross_target_usd"), errors="coerce") or 0.0))
-                and v > 0
-                else None
-            ),
+            "proposed_gross_usd": round(proposed, 2),
+            "optimal_gross_usd": round(optimal, 2) if optimal > 0 else None,
         })
     if not ret_cols:
         return None
@@ -193,7 +196,7 @@ def main(argv=None) -> int:
         },
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(payload, indent=2))
+    OUT.write_text(json.dumps(payload, indent=2, allow_nan=False))
     print(f"[risk-sim] wrote {OUT}")
     print(f"[risk-sim] pairs={len(pairs)} obs={len(arr)} cadence base_days={blk.get('base_days')} "
           f"k_tr={blk.get('k_tr')}  realized CAGR={perf['cagr']:.1%} maxDD={perf['maxdd']:.1%}")

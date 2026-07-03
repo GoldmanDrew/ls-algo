@@ -12,6 +12,8 @@ from risk_dashboard.build_site import (
     _discover_accounting_run_dates,
     _extract_history_point,
     _load_history,
+    _sanitize_for_json,
+    _write_json,
 )
 
 
@@ -82,3 +84,23 @@ def test_compute_deltas_handles_missing_prior():
     assert deltas["prior_run_date"] == "2026-05-15"
     assert deltas["delta_gross_pct_nav"] == pytest.approx(0.3)
     assert deltas["delta_n_alerts_hard"] == pytest.approx(1.0)
+
+
+def test_sanitize_for_json_replaces_nan_with_null():
+    import math
+
+    assert _sanitize_for_json({"x": float("nan"), "y": 1.0}) == {"x": None, "y": 1.0}
+    assert _sanitize_for_json([float("inf")]) == [None]
+    assert _sanitize_for_json(math.nan) is None
+
+
+def test_write_json_is_browser_parseable(tmp_path: Path):
+    import math
+
+    out = tmp_path / "snap.json"
+    _write_json(out, {"proposed_gross_usd": float("nan"), "ok": 1})
+    raw = out.read_text(encoding="utf-8")
+    assert "NaN" not in raw
+    parsed = json.loads(raw)
+    assert parsed["proposed_gross_usd"] is None
+    assert parsed["ok"] == 1

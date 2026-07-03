@@ -143,8 +143,16 @@ def verify_snapshot(
         _fail("snapshot exposure_reconciliation.reconciles is false", errors)
 
     if latest_path.is_file():
-        latest = json.loads(latest_path.read_text(encoding="utf-8"))
-        if latest.get("run_date") != run_date:
+        latest = None
+        try:
+            latest_raw = latest_path.read_text(encoding="utf-8")
+            latest = json.loads(latest_raw)
+            json.dumps(latest, allow_nan=False)
+        except json.JSONDecodeError as exc:
+            _fail(f"latest.json is not valid JSON: {exc}", errors)
+        except (TypeError, ValueError) as exc:
+            _fail(f"latest.json contains non-JSON floats (NaN/inf): {exc}", errors)
+        if latest is not None and latest.get("run_date") != run_date:
             _fail(
                 f"latest.json run_date {latest.get('run_date')} != built {run_date}",
                 errors,
@@ -163,6 +171,11 @@ def verify_snapshot(
     book = snap.get("book") or {}
     if book.get("pnl_ytd_usd") is None and book.get("pnl_today_usd") is None:
         _fail("book missing pnl_ytd_usd", errors)
+
+    try:
+        json.dumps(snap, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        _fail(f"snapshot contains non-JSON floats (NaN/inf): {exc}", errors)
 
     return errors
 

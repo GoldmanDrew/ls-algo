@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from datetime import datetime, timezone
@@ -78,7 +79,9 @@ def _merge_aux_panels(payload: dict, *search_dirs: Path) -> None:
             if not fpath.is_file():
                 continue
             try:
-                payload[key] = json.loads(fpath.read_text(encoding="utf-8"))
+                payload[key] = _sanitize_for_json(
+                    json.loads(fpath.read_text(encoding="utf-8"))
+                )
             except Exception:
                 pass
             break
@@ -104,9 +107,24 @@ def _discover_accounting_run_dates(runs_root: Path) -> list[str]:
     return sorted(dates)
 
 
+def _sanitize_for_json(obj):
+    """Replace NaN/inf floats with null so browser JSON.parse succeeds."""
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_for_json(v) for v in obj]
+    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+        return None
+    return obj
+
+
 def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    clean = _sanitize_for_json(payload)
+    path.write_text(
+        json.dumps(clean, indent=2, default=str, allow_nan=False),
+        encoding="utf-8",
+    )
 
 
 def _extract_history_point(payload: dict) -> dict:
