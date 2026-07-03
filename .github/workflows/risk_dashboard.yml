@@ -28,7 +28,7 @@ permissions:
 
 concurrency:
   group: risk-dashboard-pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   resolve_date:
@@ -107,7 +107,7 @@ jobs:
           print(f'Deploy ok: run_date={rd}')
           "
 
-      - uses: actions/configure-pages@v4
+      - uses: actions/configure-pages@v5
 
       - name: Bundle snapshot for Pages
         run: |
@@ -130,5 +130,5 @@ jobs:
         with:
           path: site
 
-      - uses: actions/deploy-pages@v4
+      - uses: ./.github/actions/deploy-pages
         id: deployment

@@ -1,0 +1,38 @@
+name: Deploy risk dashboard to GitHub Pages
+description: Wait for Pages idle, deploy artifact, retry once on transient failure
+inputs:
+  artifact-name:
+    description: Pages artifact name (default github-pages)
+    required: false
+    default: github-pages
+runs:
+  using: composite
+  steps:
+    - name: Wait for Pages deploy slot
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        MAX_WAIT_SEC: "1200"
+      run: bash scripts/wait_for_pages_deploy_idle.sh
+
+    - name: Deploy to GitHub Pages
+      id: deploy_pages
+      uses: actions/deploy-pages@v4
+      with:
+        timeout: 1200000
+        artifact_name: ${{ inputs.artifact-name }}
+
+    - name: Wait and retry Pages deploy
+      if: steps.deploy_pages.outcome == 'failure'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        MAX_WAIT_SEC: "600"
+      run: bash scripts/wait_for_pages_deploy_idle.sh
+
+    - name: Deploy to GitHub Pages (retry)
+      if: steps.deploy_pages.outcome == 'failure'
+      uses: actions/deploy-pages@v4
+      with:
+        timeout: 1200000
+        artifact_name: ${{ inputs.artifact-name }}
