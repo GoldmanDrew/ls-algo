@@ -1,7 +1,7 @@
 {
   "schema": "bucket5_backtest_panel.v1",
-  "generated_at_utc": "2026-07-03T02:49:07.403998+00:00",
-  "run_date": "2026-07-02",
+  "generated_at_utc": "2026-07-04T02:20:15.699583+00:00",
+  "run_date": "2026-07-03",
   "variants": {
     "B_live": {
       "preset": "B_production",
@@ -286,12 +286,12 @@
         "event_count": 102,
         "kinds": [
           "profit_5x",
-          "scheduled_roll",
           "profit_3x",
-          "vix_45",
+          "giveback",
           "rearm",
+          "scheduled_roll",
           "profit_8x",
-          "giveback"
+          "vix_45"
         ],
         "total_usd": 1684658.0
       },
@@ -13403,12 +13403,12 @@
         "event_count": 94,
         "kinds": [
           "profit_5x",
-          "scheduled_roll",
           "profit_3x",
-          "vix_45",
+          "giveback",
           "rearm",
           "profit_8x",
-          "giveback"
+          "scheduled_roll",
+          "vix_45"
         ],
         "total_usd": 2647231.0
       },
@@ -26520,13 +26520,13 @@
         "event_count": 990,
         "kinds": [
           "profit_5x",
-          "scheduled_roll",
-          "profit_3x",
-          "vix_45",
           "rearm",
-          "profit_8x",
+          "profit_3x",
           "giveback",
-          "vix_65"
+          "scheduled_roll",
+          "vix_65",
+          "vix_45",
+          "profit_8x"
         ],
         "total_usd": 17694958.0
       },
@@ -34790,12 +34790,12 @@
         "event_count": 1005,
         "kinds": [
           "profit_5x",
-          "scheduled_roll",
-          "profit_3x",
-          "vix_45",
           "rearm",
-          "profit_8x",
+          "profit_3x",
           "giveback",
+          "scheduled_roll",
+          "profit_8x",
+          "vix_45",
           "vix_65"
         ],
         "total_usd": 26406760.0
@@ -42786,15 +42786,15 @@
   },
   "lab_command": "streamlit run scripts/bucket5_lab.py",
   "live_book": {
-    "run_date": "2026-07-02",
+    "run_date": "2026-07-03",
     "rows": [
       {
         "etf": "UVIX",
         "underlying": "SVIX",
         "proposed_gross_usd": 10500.0,
         "optimal_gross_usd": 10500.0,
-        "borrow_annual": 0.0153109999999999,
-        "shares_available": 1700000.0,
+        "borrow_annual": 0.021973,
+        "shares_available": 1800000.0,
         "locate_ok": true
       }
     ]
@@ -42807,7 +42807,7 @@
   "repo": "ls-algo",
   "sensitivity_grid": {
     "schema": "bucket5_sensitivity.v1",
-    "generated_at_utc": "2026-07-03T02:49:53.069896+00:00",
+    "generated_at_utc": "2026-07-04T02:20:53.733480+00:00",
     "preset_base": "F_dynamic_deep30",
     "era": "extended",
     "axes": {
