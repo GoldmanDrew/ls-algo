@@ -30,6 +30,7 @@ from scripts.bucket4_dynamic_bt import run_bucket4_backtest_dynamic_h  # noqa: E
 from scripts.bucket4_hedge_cadence import build_h_series, build_rebal_dates  # noqa: E402
 from scripts.bucket4_cadence_risk_opt import (  # noqa: E402
     HORIZON,
+    RET_FLOOR,
     mc_block_bootstrap,
     mc_parametric,
     perf_from_returns,
@@ -154,7 +155,7 @@ def main(argv=None) -> int:
         etf = p["etf"]
         if etf not in ret_df.columns:
             continue
-        ser = ret_df[etf].reindex(prv.index).fillna(0.0)
+        ser = ret_df[etf].reindex(prv.index).fillna(0.0).clip(lower=RET_FLOOR, upper=0.95)
         pair_returns.append({
             "etf": etf,
             "und": p["und"],

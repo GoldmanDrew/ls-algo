@@ -2242,12 +2242,28 @@
     const r = ref[key] || {};
     return { p95: r.dd_p95, p99: r.dd_p99 };
   }
+  const B4_RET_FLOOR = -0.95;
+  const B4_RET_CAP = 0.95;
+  function b4ClipDailyReturn(r) {
+    const x = Number(r) || 0;
+    return Math.max(B4_RET_FLOOR, Math.min(B4_RET_CAP, x));
+  }
   function b4BuildPortReturns(sim, excludedEtfs) {
     const pairs = sim.pair_returns;
     if (!pairs || !pairs.length) return sim.port_daily_returns || [];
     const ex = new Set(excludedEtfs || []);
     let active = pairs.filter((p) => !ex.has(p.etf));
     if (!active.length) active = pairs.filter((p) => p.in_book) || pairs.slice();
+    // Default proposed book: use precomputed series (already per-pair clipped in Python).
+    if (
+      !ex.size &&
+      active.length &&
+      active.every((p) => p.in_book) &&
+      active.length === (sim.n_pairs_in_book ?? active.length) &&
+      sim.port_daily_returns?.length
+    ) {
+      return sim.port_daily_returns;
+    }
     const grossOf = (p) => Number(p.gross_usd ?? p.weight ?? 0);
     let wsum = active.reduce((s, p) => s + grossOf(p), 0);
     if (wsum <= 0) return sim.port_daily_returns || [];
@@ -2255,7 +2271,7 @@
     const out = new Float64Array(n);
     for (const p of active) {
       const w = grossOf(p) / wsum;
-      for (let i = 0; i < n; i++) out[i] += w * (p.returns[i] || 0);
+      for (let i = 0; i < n; i++) out[i] += w * b4ClipDailyReturn(p.returns[i]);
     }
     return Array.from(out);
   }
@@ -2266,7 +2282,7 @@
     const N = o.nSims | 0;
     const k = o.volMult;
     const dist = o.dist;
-    const floor = -0.95;
+    const floor = B4_RET_FLOOR;
     const dds = new Float64Array(N);
     const term = new Float64Array(N);
     const data = o.portReturns || sim.port_daily_returns || [];
@@ -2322,7 +2338,13 @@
     if (fanBands) {
       fan = fanBands.map((arr) => {
         const s = Array.from(arr).sort((a, b) => a - b);
-        return { p5: b4Pctl(s, 5), p50: b4Pctl(s, 50), p95: b4Pctl(s, 95) };
+        return {
+          p5: b4Pctl(s, 5),
+          p25: b4Pctl(s, 25),
+          p50: b4Pctl(s, 50),
+          p75: b4Pctl(s, 75),
+          p95: b4Pctl(s, 95),
+        };
       });
     }
     return { dds, term, fan };
@@ -2331,13 +2353,16 @@
     const W = 1000, Hh = 220, pad = 24;
     const nbins = 40, maxX = 1.0;
     const bins = new Array(nbins).fill(0);
+    let tail90 = 0;
     for (let i = 0; i < dds.length; i++) {
+      if (dds[i] >= 0.9) tail90++;
       let b = Math.floor((dds[i] / maxX) * nbins);
       if (b < 0) b = 0;
       if (b >= nbins) b = nbins - 1;
       bins[b]++;
     }
     const peak = Math.max(1, ...bins);
+    const tailPct = dds.length ? (100 * tail90) / dds.length : 0;
     const bw = (W - 2 * pad) / nbins;
     let bars = "";
     for (let b = 0; b < nbins; b++) {
@@ -2359,9 +2384,14 @@
       const x = pad + frac * (W - 2 * pad);
       axis += `<text x="${x.toFixed(1)}" y="${Hh - pad + 16}" fill="var(--text-muted)" font-size="12" text-anchor="middle">${Math.round(frac * 100)}%</text>`;
     }
+    const tailNote =
+      tail90 > 0
+        ? `<text x="${W - pad}" y="${pad + 12}" fill="var(--neg)" font-size="11" text-anchor="end">${tail90} sims (${tailPct.toFixed(1)}%) ≥90% DD</text>`
+        : "";
     return `<svg viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none" style="width:100%;height:220px;display:block">` +
       `<line x1="${pad}" y1="${Hh - pad}" x2="${W - pad}" y2="${Hh - pad}" stroke="var(--border-strong)" stroke-width="1"></line>` +
       bars +
+      tailNote +
       mk(refP95, "#64748b", "ref p95", true) +
       mk(refP99, "#94a3b8", "ref p99", true) +
       mk(p95, "#d08b1f", "live p95", false) +
@@ -2389,24 +2419,32 @@
   }
   function b4FanChart(fan, horizon) {
     if (!fan || !fan.length) return "";
-    const W = 720, Hh = 220, padL = 44, padR = 12, padT = 22, padB = 28;
+    const W = 720, Hh = 240, padL = 44, padR = 12, padT = 34, padB = 28;
     const n = fan.length - 1;
+    // Zoom y-axis to the central bulk (p25–p95) so a few wipeout paths don't flatten the chart.
     let yMin = Infinity, yMax = -Infinity;
+    let p5Min = Infinity;
     for (const pt of fan) {
-      yMin = Math.min(yMin, pt.p5, pt.p50, pt.p95);
-      yMax = Math.max(yMax, pt.p5, pt.p50, pt.p95);
+      yMin = Math.min(yMin, pt.p25, pt.p50);
+      yMax = Math.max(yMax, pt.p75, pt.p95);
+      p5Min = Math.min(p5Min, pt.p5);
     }
-    yMin = Math.min(yMin, 0.85);
-    yMax = Math.max(yMax, 1.15);
-    const yPad = (yMax - yMin) * 0.08 || 0.05;
+    yMin = Math.min(yMin, 0.88);
+    yMax = Math.max(yMax, 1.12);
+    const yPad = (yMax - yMin) * 0.1 || 0.05;
     yMin -= yPad;
     yMax += yPad;
     const xAt = (i) => padL + (i / n) * (W - padL - padR);
     const yAt = (v) => Hh - padB - ((v - yMin) / (yMax - yMin)) * (Hh - padT - padB);
-    let area = "";
+    const yClip = (v) => Math.max(padT, Math.min(Hh - padB, yAt(v)));
+    let outer = "";
+    let inner = "";
     for (let i = 0; i < n; i++) {
       const x0 = xAt(i), x1 = xAt(i + 1);
-      area += `<polygon points="${x0},${yAt(fan[i].p95)} ${x1},${yAt(fan[i + 1].p95)} ${x1},${yAt(fan[i + 1].p5)} ${x0},${yAt(fan[i].p5)}" fill="#0f766e" opacity="0.15"/>`;
+      outer +=
+        `<polygon points="${x0},${yClip(fan[i].p95)} ${x1},${yClip(fan[i + 1].p95)} ${x1},${yClip(fan[i + 1].p5)} ${x0},${yClip(fan[i].p5)}" fill="#0f766e" opacity="0.08"/>`;
+      inner +=
+        `<polygon points="${x0},${yAt(fan[i].p75)} ${x1},${yAt(fan[i + 1].p75)} ${x1},${yAt(fan[i + 1].p25)} ${x0},${yAt(fan[i].p25)}" fill="#0f766e" opacity="0.22"/>`;
     }
     let med = "";
     for (let i = 0; i < n; i++) med += `${xAt(i)},${yAt(fan[i].p50)} `;
@@ -2414,13 +2452,19 @@
     const yTicks = dashNiceTicks(yMin, yMax, 5);
     const xMarks = [0, Math.round(horizon / 4), Math.round(horizon / 2), Math.round(3 * horizon / 4), horizon];
     const end = fan[fan.length - 1];
+    const floorNote =
+      p5Min < yMin + 0.02
+        ? ` · p5 paths floor at ${p5Min.toFixed(2)} (below zoom)`
+        : "";
     return `<svg viewBox="0 0 ${W} ${Hh}" width="100%" style="max-width:${W}px;display:block;margin-top:8px">` +
-      `<text x="${padL}" y="14" fill="var(--text-muted)" font-size="11">Equity fan (p5–p95 shaded, p50 line) · ${horizon}d · y = equity multiple (start=1.0)</text>` +
+      `<text x="${padL}" y="14" fill="var(--text-muted)" font-size="11">Equity fan · ${horizon}d · dark band = p25–p75, faint = p5–p95, line = p50</text>` +
+      `<text x="${padL}" y="28" fill="var(--text-muted)" font-size="10">Y-axis zoomed to central outcomes${floorNote}</text>` +
       dashSvgYAxis(padL, Hh, yTicks, yAt, (v) => v.toFixed(2)) +
-      area +
-      `<polyline fill="none" stroke="#0f766e" stroke-width="2" points="${med}"/>` +
+      outer +
+      inner +
+      `<polyline fill="none" stroke="#0f766e" stroke-width="2.25" points="${med}"/>` +
       xMarks.map((d) => `<text x="${xAt(d)}" y="${Hh - 6}" fill="#64748b" font-size="10" text-anchor="middle">${d}d</text>`).join("") +
-      `<text x="${W - padR}" y="${padT + 8}" fill="#0f766e" font-size="10" text-anchor="end">end p50=${end.p50.toFixed(2)} · p95=${end.p95.toFixed(2)}</text>` +
+      `<text x="${W - padR}" y="${padT + 10}" fill="#0f766e" font-size="10" text-anchor="end">end p50=${end.p50.toFixed(2)} · p75=${end.p75.toFixed(2)} · p95=${end.p95.toFixed(2)}</text>` +
       `</svg>`;
   }
   function b4ParseHash() {
