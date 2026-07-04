@@ -60,6 +60,10 @@ def build_portfolio(uni, panel, start, min_days, *, min_days_short: int = 60):
     knobs = make_knobs(blk)  # production knobs straight from YAML
     df = uni[uni["sleeve"].isin(["inverse_decay_bucket4", "volatility_etp_bucket5"])].copy()
     df = df[df["ETF"].isin(panel.keys())].reset_index(drop=True)
+    # Dashboard sim uses the proposed book only (no screener-proxy stress universe).
+    df = df[pd.to_numeric(df.get("gross_target_usd"), errors="coerce").fillna(0.0).gt(0)].copy()
+    if df.empty:
+        return None
 
     ret_cols, weights, pairs = {}, {}, []
     for _, row in df.iterrows():
@@ -113,15 +117,9 @@ def build_portfolio(uni, panel, start, min_days, *, min_days_short: int = 60):
         book_etfs = set(book_w.index)
     pr = port_returns(ret_df[list(book_etfs)], book_w)
     book_total = float(book_w.sum()) if len(book_w) else 0.0
-    stress_total = float(gross_w.sum()) if len(gross_w) else 0.0
     for p in pairs:
         g = float(weights.get(p["etf"], 0.0))
-        if p.get("in_book") and book_total > 0:
-            p["weight"] = round(g / book_total, 4)
-        elif stress_total > 0:
-            p["weight"] = round(g / stress_total, 4)
-        else:
-            p["weight"] = 0.0
+        p["weight"] = round(g / book_total, 4) if book_total > 0 else 0.0
     return pr, pairs, blk, ret_df, book_total
 
 
@@ -145,8 +143,8 @@ def main(argv=None) -> int:
         print("[risk-sim] no eligible B4 pairs", file=sys.stderr)
         return 1
     pr, pairs, blk, ret_df, book_gross = built
-    n_book = sum(1 for p in pairs if p.get("in_book"))
-    n_stress = len(pairs) - n_book
+    n_book = len(pairs)
+    n_stress = 0
     prv = pr.dropna()
     arr = prv.to_numpy(dtype=float)
     sim_dates = [d.strftime("%Y-%m-%d") for d in prv.index]
@@ -200,9 +198,7 @@ def main(argv=None) -> int:
         "port_daily_returns": [round(float(x), 6) for x in arr],
         "pair_returns": pair_returns,
         "weight_policy": {
-            "description": "Default portfolio uses proposed_trades.csv rows with gross_target_usd > 0 only. "
-            "Eligible screener names are optional stress toggles (proxy gross when not in the proposed book).",
-            "force_include_etfs": sorted(FORCE_INCLUDE_ETFS),
+            "description": "Portfolio uses proposed_trades.csv rows with gross_target_usd > 0 only.",
             "default_scope": "proposed_book",
         },
         "fit_student_t": {"df": round(t_df, 3), "loc": round(float(t_loc), 6),

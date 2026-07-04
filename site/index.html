@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="referrer" content="no-referrer">
 <title>ls-algo Risk Dashboard</title>
-<link rel="stylesheet" href="./assets/css/main.css?v=2026-06-30-phase0-4">
+<link rel="stylesheet" href="./assets/css/main.css?v=2026-07-04-tabs">
 </head>
 <body>
 
@@ -24,23 +24,6 @@
     <button id="logout-btn" class="btn btn-ghost" hidden>Sign out</button>
   </div>
 </header>
-
-<nav id="subnav" class="subnav" hidden>
-  <a href="#cockpit-section">Cockpit</a>
-  <a href="#actions-section">Actions</a>
-  <a href="#performance-section">Performance</a>
-  <a href="#pnl-section">P&amp;L</a>
-  <a href="#slide-risk-section">Slide risk</a>
-  <a href="#b4sim-section">B4 risk sim</a>
-  <a href="#b5bt-section">B5 insurance BT</a>
-  <a href="#borrow-shock-section">Borrow shocks</a>
-  <a href="#concentration-section">Concentration</a>
-  <a href="#factor-section">Factor</a>
-  <a href="#sleeve-section">Sleeves</a>
-  <a href="#buckets-section">Buckets</a>
-  <a href="#shared-section">Shared names</a>
-  <a href="#borrow-section">Borrow</a>
-</nav>
 
 <main>
 
@@ -74,180 +57,192 @@
   <!-- ============================================================== -->
   <section id="dashboard" class="dashboard" hidden>
 
-    <!-- Risk cockpit -->
-    <section id="cockpit-section" class="panel panel-hero">
-      <div class="panel-head">
-        <h2>Risk cockpit</h2>
-        <div id="data-quality" class="quality-line"></div>
-      </div>
-      <div id="cockpit-strip" class="strip cockpit-strip"></div>
-      <div id="alert-rows" class="alert-rows"></div>
-      <div id="dq-drilldown" class="dq-drilldown" hidden></div>
-    </section>
+    <nav id="dashboard-tabs" class="tabs dashboard-tabs" aria-label="Dashboard sections">
+      <button type="button" class="tab active" data-dash-tab="overview">Overview</button>
+      <button type="button" class="tab" data-dash-tab="pnl">P&amp;L</button>
+      <button type="button" class="tab" data-dash-tab="risk">Risk models</button>
+      <button type="button" class="tab" data-dash-tab="book">Book</button>
+      <button type="button" class="tab" data-dash-tab="data">Data</button>
+    </nav>
 
-    <!-- Action queue -->
-    <section id="actions-section" class="panel">
-      <h2>Action queue</h2>
-      <div id="action-queue"></div>
-    </section>
-
-    <!-- Performance: daily/YTD P&L, book drawdown, top movers -->
-    <section id="performance-section" class="panel">
-      <div class="panel-head">
-        <h2>Performance &amp; drawdown</h2>
-        <div id="drawdown-meta" class="quality-line"></div>
-      </div>
-      <div id="pnl-strip" class="strip"></div>
-      <div class="two-col">
-        <div>
-          <h3>Top cumulative winners</h3>
-          <div id="movers-winners"></div>
+    <!-- Overview -->
+    <div id="dash-tab-overview" class="dash-tab-panel" data-dash-tab="overview">
+      <section id="cockpit-section" class="panel panel-hero">
+        <div class="panel-head">
+          <h2>Risk cockpit</h2>
+          <div id="data-quality" class="quality-line"></div>
         </div>
-        <div>
-          <h3>Top cumulative losers</h3>
-          <div id="movers-losers"></div>
+        <div id="cockpit-strip" class="strip cockpit-strip"></div>
+        <div id="alert-rows" class="alert-rows"></div>
+        <div id="dq-drilldown" class="dq-drilldown" hidden></div>
+      </section>
+      <section id="actions-section" class="panel">
+        <h2>Action queue</h2>
+        <div id="action-queue"></div>
+      </section>
+    </div>
+
+    <!-- P&L -->
+    <div id="dash-tab-pnl" class="dash-tab-panel" data-dash-tab="pnl" hidden>
+      <section id="performance-section" class="panel">
+        <div class="panel-head">
+          <h2>Performance &amp; drawdown</h2>
+          <div id="drawdown-meta" class="quality-line"></div>
         </div>
-      </div>
-    </section>
-
-    <!-- P&L attribution: daily / weekly deltas and bucket breakdown -->
-    <section id="pnl-section" class="panel">
-      <div class="panel-head">
-        <h2>P&amp;L attribution</h2>
-        <div id="pnl-meta" class="quality-line"></div>
-      </div>
-      <div id="pnl-summary" class="strip"></div>
-      <div id="pnl-controls" class="pnl-controls strip"></div>
-      <div id="pnl-daily-chart"></div>
-      <div class="two-col">
-        <div>
-          <h3 id="pnl-table-title">Daily P&amp;L</h3>
-          <div id="pnl-daily-table"></div>
+        <div id="pnl-strip" class="strip"></div>
+        <div class="two-col">
+          <div>
+            <h3>Top cumulative winners</h3>
+            <div id="movers-winners"></div>
+          </div>
+          <div>
+            <h3>Top cumulative losers</h3>
+            <div id="movers-losers"></div>
+          </div>
         </div>
-        <div>
-          <h3>Weekly summary</h3>
-          <div id="pnl-weekly-table"></div>
+      </section>
+      <section id="pnl-section" class="panel">
+        <div class="panel-head">
+          <h2>P&amp;L attribution</h2>
+          <div id="pnl-meta" class="quality-line"></div>
         </div>
-      </div>
-      <h3>Bucket attribution</h3>
-      <div id="pnl-bucket-chart"></div>
-    </section>
-
-    <!-- Slide risk strips: SPX / NDX / RUT -->
-    <section id="slide-risk-section" class="panel">
-      <div class="panel-head">
-        <h2>Slide risk &mdash; SPX &amp; VIX shocks</h2>
-        <div id="slide-risk-meta" class="quality-line"></div>
-      </div>
-      <div id="slide-risk-content"></div>
-    </section>
-
-    <!-- Bucket 4 risk simulator -->
-    <section id="b4sim-section" class="panel">
-      <div class="panel-head">
-        <h2>Bucket 4 risk simulator &mdash; fat-tailed drawdown Monte Carlo</h2>
-        <div id="b4sim-meta" class="quality-line"></div>
-      </div>
-      <div id="b4sim-content"></div>
-    </section>
-
-    <!-- Bucket 5 insurance backtest -->
-    <section id="b5bt-section" class="panel">
-      <div class="panel-head">
-        <h2>Bucket 5 insurance backtest &mdash; UVIX/SVIX carry + SPX puts</h2>
-        <div id="b5bt-meta" class="quality-line"></div>
-      </div>
-      <div id="b5bt-content"></div>
-    </section>
-
-    <!-- Borrow rate shock sensitivity -->
-    <section id="borrow-shock-section" class="panel">
-      <div class="panel-head">
-        <h2>Borrow shock sensitivity (short ETFs held)</h2>
-        <div id="borrow-shock-meta" class="quality-line"></div>
-      </div>
-      <div id="borrow-shock-content"></div>
-    </section>
-
-    <!-- Concentration -->
-    <section id="concentration-section" class="panel">
-      <h2>Concentration</h2>
-      <div id="concentration-summary" class="strip"></div>
-      <div class="two-col">
-        <div>
-          <h3>Top names by gross / NAV</h3>
-          <div id="concentration-names"></div>
+        <div id="pnl-summary" class="strip"></div>
+        <div id="pnl-controls" class="pnl-controls strip"></div>
+        <div id="pnl-daily-chart"></div>
+        <div class="two-col">
+          <div>
+            <h3 id="pnl-table-title">Daily P&amp;L</h3>
+            <div id="pnl-daily-table"></div>
+          </div>
+          <div>
+            <h3>Weekly summary</h3>
+            <div id="pnl-weekly-table"></div>
+          </div>
         </div>
-        <div>
-          <h3>Sectors by gross / NAV</h3>
-          <div id="concentration-sectors"></div>
-        </div>
-      </div>
-    </section>
+        <h3>Bucket attribution</h3>
+        <div id="pnl-bucket-chart"></div>
+      </section>
+    </div>
 
-    <!-- Factor exposure -->
-    <section id="factor-section" class="panel">
-      <h2>Factor exposure (beta to SPY / QQQ / IWM / BTC)</h2>
-      <div id="factor-summary" class="strip"></div>
-      <h3>Net beta by accounting bucket</h3>
-      <p class="dim small">Equity β-wtd net from underlying betas × share notional. Bucket 3 overlay uses delta-normalized exposure in the sleeve table above — not comparable to these β figures row-for-row.</p>
-      <div id="factor-by-bucket"></div>
-      <div class="two-col">
-        <div>
-          <h3>Top long beta</h3>
-          <div id="factor-long"></div>
-        </div>
-        <div>
-          <h3>Top short beta</h3>
-          <div id="factor-short"></div>
-        </div>
-      </div>
-      <h3>By sector</h3>
-      <div id="factor-sectors"></div>
-    </section>
-
-    <!-- Sleeve allocation -->
-    <section id="sleeve-section" class="panel">
-      <h2>Sleeve allocation</h2>
-      <div id="sleeve-banner" class="callout" hidden></div>
-      <div id="bucket-sleeve-panel"></div>
-    </section>
-
-    <!-- Bucket detail tabs -->
-    <section id="buckets-section" class="panel">
-      <h2>Bucket detail</h2>
-      <nav class="tabs" id="bucket-tabs">
-        <button class="tab active" data-bucket="bucket_1">B1 (core)</button>
-        <button class="tab" data-bucket="bucket_2">B2 (yield)</button>
-        <button class="tab" data-bucket="bucket_3">B3 (flow overlay)</button>
-        <button class="tab" data-bucket="bucket_4">B4 (inverse)</button>
-        <button class="tab" data-bucket="bucket_5">B5 (vol ETP)</button>
+    <!-- Risk models -->
+    <div id="dash-tab-risk" class="dash-tab-panel" data-dash-tab="risk" hidden>
+      <nav id="risk-subnav" class="dash-subnav" aria-label="Risk model sections">
+        <a href="#slide-risk-section">Slide risk</a>
+        <a href="#b4sim-section">B4 sim</a>
+        <a href="#b5bt-section">B5 insurance</a>
+        <a href="#borrow-shock-section">Borrow shocks</a>
       </nav>
-      <div id="bucket-content"></div>
-    </section>
+      <section id="slide-risk-section" class="panel">
+        <div class="panel-head">
+          <h2>Slide risk &mdash; SPX &amp; VIX shocks</h2>
+          <div id="slide-risk-meta" class="quality-line"></div>
+        </div>
+        <div id="slide-risk-content"></div>
+      </section>
+      <section id="b4sim-section" class="panel">
+        <div class="panel-head">
+          <h2>Bucket 4 risk simulator &mdash; fat-tailed drawdown Monte Carlo</h2>
+          <div id="b4sim-meta" class="quality-line"></div>
+        </div>
+        <div id="b4sim-content"></div>
+      </section>
+      <section id="b5bt-section" class="panel">
+        <div class="panel-head">
+          <h2>Bucket 5 insurance backtest &mdash; UVIX/SVIX carry + SPX puts</h2>
+          <div id="b5bt-meta" class="quality-line"></div>
+        </div>
+        <div id="b5bt-content"></div>
+      </section>
+      <section id="borrow-shock-section" class="panel">
+        <div class="panel-head">
+          <h2>Borrow shock sensitivity (short ETFs held)</h2>
+          <div id="borrow-shock-meta" class="quality-line"></div>
+        </div>
+        <div id="borrow-shock-content"></div>
+      </section>
+    </div>
 
-    <!-- Shared underlyings across buckets -->
-    <section id="shared-section" class="panel">
-      <h2>Shared underlyings (exposure spanning multiple buckets)</h2>
-      <div id="shared-underlying-content"></div>
-    </section>
+    <!-- Book -->
+    <div id="dash-tab-book" class="dash-tab-panel" data-dash-tab="book" hidden>
+      <nav id="book-subnav" class="dash-subnav" aria-label="Book sections">
+        <a href="#concentration-section">Concentration</a>
+        <a href="#factor-section">Factor</a>
+        <a href="#sleeve-section">Sleeves</a>
+        <a href="#buckets-section">Buckets</a>
+        <a href="#shared-section">Shared names</a>
+        <a href="#borrow-section">Borrow</a>
+      </nav>
+      <section id="concentration-section" class="panel">
+        <h2>Concentration</h2>
+        <div id="concentration-summary" class="strip"></div>
+        <div class="two-col">
+          <div>
+            <h3>Top names by gross / NAV</h3>
+            <div id="concentration-names"></div>
+          </div>
+          <div>
+            <h3>Sectors by gross / NAV</h3>
+            <div id="concentration-sectors"></div>
+          </div>
+        </div>
+      </section>
+      <section id="factor-section" class="panel">
+        <h2>Factor exposure (beta to SPY / QQQ / IWM / BTC)</h2>
+        <div id="factor-summary" class="strip"></div>
+        <h3>Net beta by accounting bucket</h3>
+        <p class="dim small">Equity β-wtd net from underlying betas × share notional. Bucket 3 overlay uses delta-normalized exposure in the sleeve table — not comparable to these β figures row-for-row.</p>
+        <div id="factor-by-bucket"></div>
+        <div class="two-col">
+          <div>
+            <h3>Top long beta</h3>
+            <div id="factor-long"></div>
+          </div>
+          <div>
+            <h3>Top short beta</h3>
+            <div id="factor-short"></div>
+          </div>
+        </div>
+        <h3>By sector</h3>
+        <div id="factor-sectors"></div>
+      </section>
+      <section id="sleeve-section" class="panel">
+        <h2>Sleeve allocation</h2>
+        <div id="sleeve-banner" class="callout" hidden></div>
+        <div id="bucket-sleeve-panel"></div>
+      </section>
+      <section id="buckets-section" class="panel">
+        <h2>Bucket detail</h2>
+        <nav class="tabs" id="bucket-tabs">
+          <button type="button" class="tab active" data-bucket="bucket_1">B1 (core)</button>
+          <button type="button" class="tab" data-bucket="bucket_2">B2 (yield)</button>
+          <button type="button" class="tab" data-bucket="bucket_3">B3 (flow overlay)</button>
+          <button type="button" class="tab" data-bucket="bucket_4">B4 (inverse)</button>
+          <button type="button" class="tab" data-bucket="bucket_5">B5 (vol ETP)</button>
+        </nav>
+        <div id="bucket-content"></div>
+      </section>
+      <section id="shared-section" class="panel">
+        <h2>Shared underlyings (exposure spanning multiple buckets)</h2>
+        <div id="shared-underlying-content"></div>
+      </section>
+      <section id="borrow-section" class="panel">
+        <h2>Borrow &amp; microstructure</h2>
+        <div id="borrow-content"></div>
+        <h3>Squeeze risk (short ETFs held)</h3>
+        <div id="squeeze-content"></div>
+      </section>
+    </div>
 
-    <!-- Borrow + microstructure -->
-    <section id="borrow-section" class="panel">
-      <h2>Borrow &amp; microstructure</h2>
-      <div id="borrow-content"></div>
-      <h3>Squeeze risk (short ETFs held)</h3>
-      <div id="squeeze-content"></div>
-    </section>
-
-    <!-- Raw totals -->
-    <section class="panel">
-      <h2>Raw accounting totals</h2>
-      <details>
-        <summary>Show <code>totals.json</code></summary>
-        <pre id="raw-totals" class="raw"></pre>
-      </details>
-    </section>
+    <!-- Data -->
+    <div id="dash-tab-data" class="dash-tab-panel" data-dash-tab="data" hidden>
+      <section id="raw-data-section" class="panel">
+        <h2>Raw accounting totals</h2>
+        <details>
+          <summary>Show <code>totals.json</code></summary>
+          <pre id="raw-totals" class="raw"></pre>
+        </details>
+      </section>
+    </div>
 
   </section>
 
@@ -262,8 +257,8 @@
   <span id="deploy-meta" class="dim small"></span>
 </footer>
 
-<script src="./assets/js/config.js?v=2026-05-19-login-fix"></script>
+<script src="./assets/js/config.js?v=2026-07-04-tabs"></script>
 <script src="./assets/js/auth.js?v=2026-05-19-login-fix"></script>
-<script src="./assets/js/app.js?v=2026-06-30-phase0-4"></script>
+<script src="./assets/js/app.js?v=2026-07-04-tabs"></script>
 </body>
 </html>

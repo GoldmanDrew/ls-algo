@@ -6,5 +6,5 @@ window.LS_ALGO_CONFIG = {
   manifestUrl: "./data/index.json",
   investorsUrl: "./data/investors.json",
   /** Bumped when redeploying so browsers pick up fixed app.js */
-  buildId: "2026-07-03-b4-sim-clip",
+  buildId: "2026-07-04-tabs",
 };

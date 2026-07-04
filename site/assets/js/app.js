@@ -66,7 +66,12 @@
     bucketContent: document.getElementById("bucket-content"),
     borrowContent: document.getElementById("borrow-content"),
     rawTotals: document.getElementById("raw-totals"),
+    dashboardTabs: document.getElementById("dashboard-tabs"),
   };
+
+  const DASH_TAB_IDS = ["overview", "pnl", "risk", "book", "data"];
+  let _lastSnap = null;
+  const _tabRendered = new Set();
 
   /* ----------------------- Formatters ------------------------- */
   const fmtUsd = (n) =>
@@ -2061,6 +2066,122 @@
     `;
   }
 
+  /* ----------------------- Dashboard tabs ----------------------- */
+  function dashParseHash() {
+    const raw = (location.hash || "").replace(/^#/, "");
+    if (!raw) return { tab: "overview" };
+    if (raw.startsWith("b4sim=")) return { tab: "risk" };
+    try {
+      const params = new URLSearchParams(raw);
+      const tab = params.get("tab");
+      if (tab && DASH_TAB_IDS.includes(tab)) return { tab };
+      if (params.has("b4sim")) return { tab: "risk" };
+    } catch (_e) { /* ignore */ }
+    return { tab: "overview" };
+  }
+
+  function dashWriteHash(tabId, { keepB4 = true } = {}) {
+    try {
+      const params = new URLSearchParams();
+      if (tabId && tabId !== "overview") params.set("tab", tabId);
+      if (tabId === "risk" && keepB4) {
+        const existing = b4ParseHash();
+        if (existing) params.set("b4sim", JSON.stringify(existing));
+      }
+      const next = params.toString();
+      location.hash = next || "";
+    } catch (_e) { /* ignore */ }
+  }
+
+  function renderTabPanel(tabId, snap) {
+    if (!snap || _tabRendered.has(tabId)) return;
+    _tabRendered.add(tabId);
+    const steps = {
+      pnl: [
+        () => renderPerformance(snap),
+        () => renderPnlPanel(snap),
+        () => renderMovers(snap.movers_panel || {}),
+      ],
+      risk: [
+        () => renderSlideRisk(snap.slide_risk_panel || {}),
+        () => renderBucket4Sim(snap.bucket4_risk_sim || null),
+        () => renderBucket5Backtest(snap.bucket5_backtest || null),
+        () => renderBorrowShock(snap.borrow_shock_panel || {}, snap.nav_usd),
+      ],
+      book: [
+        () => renderConcentration(snap.concentration_panel || {}),
+        () => renderFactor(snap.factor_panel || {}),
+        () =>
+          renderBucketSleevePanel(
+            snap.bucket_sleeve_panel || {},
+            snap.book || {},
+            snap.display_sleeve_groups || [],
+            snap.nav_usd
+          ),
+        () => bindTabs(snap),
+        () => renderSharedUnderlying(snap.shared_underlying_panel || {}),
+        () => renderBorrow(snap.borrow_panel || {}),
+        () => renderSqueeze((snap.borrow_panel || {}).squeeze_rows || []),
+      ],
+      data: [
+        () => {
+          if (els.rawTotals) {
+            els.rawTotals.textContent = JSON.stringify(snap.raw_totals || {}, null, 2);
+          }
+        },
+      ],
+    };
+    for (const step of steps[tabId] || []) {
+      try {
+        step();
+      } catch (e) {
+        console.error(`render tab ${tabId} failed:`, e);
+        throw new Error(`Dashboard render failed (${tabId}): ${e.message || e}`);
+      }
+    }
+    enableSortableTables();
+  }
+
+  function switchDashboardTab(tabId, { updateHash = true, snap = null } = {}) {
+    const tab = DASH_TAB_IDS.includes(tabId) ? tabId : "overview";
+    document.querySelectorAll(".dash-tab-panel").forEach((panel) => {
+      const active = panel.dataset.dashTab === tab;
+      panel.hidden = !active;
+    });
+    if (els.dashboardTabs) {
+      els.dashboardTabs.querySelectorAll("button.tab").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.dashTab === tab);
+      });
+    }
+    const s = snap || _lastSnap;
+    if (s) renderTabPanel(tab, s);
+    if (updateHash) dashWriteHash(tab);
+  }
+
+  function bindDashboardTabs() {
+    if (!els.dashboardTabs) return;
+    els.dashboardTabs.querySelectorAll("button.tab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        switchDashboardTab(btn.dataset.dashTab || "overview");
+      });
+    });
+    document.querySelectorAll(".dash-subnav a").forEach((link) => {
+      link.addEventListener("click", (ev) => {
+        const href = link.getAttribute("href") || "";
+        if (!href.startsWith("#")) return;
+        const target = document.querySelector(href);
+        if (!target) return;
+        ev.preventDefault();
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+    window.addEventListener("hashchange", () => {
+      if (!_lastSnap) return;
+      const { tab } = dashParseHash();
+      switchDashboardTab(tab, { updateHash: false, snap: _lastSnap });
+    });
+  }
+
   /* ----------------------- Tabs ------------------------------- */
   function bindTabs(snapshot) {
     if (!els.bucketTabs) return;
@@ -2077,7 +2198,6 @@
   }
 
   /* ----------------------- Auth wiring ------------------------ */
-  const subnav = document.getElementById("subnav");
   let authEnabled = false;
   let investorUsers = [];
   let investorsReady = false;
@@ -2108,7 +2228,6 @@
       els.logoutBtn.hidden = true;
       if (els.authUserLabel) els.authUserLabel.hidden = true;
     }
-    if (subnav) subnav.hidden = false;
     enableSortableTables();
   }
   function showLogin() {
@@ -2116,7 +2235,6 @@
     els.dashboard.hidden = true;
     els.logoutBtn.hidden = true;
     if (els.authUserLabel) els.authUserLabel.hidden = true;
-    if (subnav) subnav.hidden = true;
     els.runDateLabel.textContent = "No data loaded";
     els.generatedAtLabel.textContent = "";
   }
@@ -2249,7 +2367,7 @@
     return Math.max(B4_RET_FLOOR, Math.min(B4_RET_CAP, x));
   }
   function b4BuildPortReturns(sim, excludedEtfs) {
-    const pairs = sim.pair_returns;
+    const pairs = (sim.pair_returns || []).filter((p) => p.in_book);
     if (!pairs || !pairs.length) return sim.port_daily_returns || [];
     const ex = new Set(excludedEtfs || []);
     let active = pairs.filter((p) => !ex.has(p.etf));
@@ -2468,41 +2586,51 @@
       `</svg>`;
   }
   function b4ParseHash() {
-    const h = (location.hash || "").replace(/^#/, "");
-    if (!h.startsWith("b4sim=")) return null;
-    try {
-      return JSON.parse(decodeURIComponent(h.slice(6)));
-    } catch (_e) {
-      return null;
+    const raw = (location.hash || "").replace(/^#/, "");
+    if (!raw) return null;
+    const parts = raw.split("&");
+    for (const part of parts) {
+      if (!part.startsWith("b4sim=")) continue;
+      try {
+        return JSON.parse(decodeURIComponent(part.slice(6)));
+      } catch (_e) {
+        return null;
+      }
     }
+    if (raw.startsWith("b4sim=")) {
+      try {
+        return JSON.parse(decodeURIComponent(raw.slice(6)));
+      } catch (_e) {
+        return null;
+      }
+    }
+    try {
+      const params = new URLSearchParams(raw);
+      const b4 = params.get("b4sim");
+      if (b4) return JSON.parse(b4);
+    } catch (_e) { /* ignore */ }
+    return null;
   }
   function b4WriteHash(o) {
     try {
-      location.hash = "b4sim=" + encodeURIComponent(JSON.stringify(o));
+      const params = new URLSearchParams();
+      params.set("tab", "risk");
+      params.set("b4sim", JSON.stringify(o));
+      location.hash = params.toString();
     } catch (_e) { /* ignore */ }
   }
-  function b4FormatWeightSource(src) {
-    const s = String(src || "proposed");
-    if (s === "proposed") return "";
-    if (s === "screener_proxy") return "proxy";
-    if (s === "optimal") return "optimal";
-    return s.replace(/_/, " ");
-  }
   function b4PairPickerHtml(sim) {
-    const pairs = Array.isArray(sim.pairs) ? [...sim.pairs] : [];
+    const pairs = (Array.isArray(sim.pairs) ? sim.pairs : []).filter((p) => p.in_book);
     if (!pairs.length) return "";
     pairs.sort((a, b) => (Number(b.weight) || 0) - (Number(a.weight) || 0));
     const chips = pairs
       .map((p) => {
-        const src = b4FormatWeightSource(p.weight_source);
-        const srcHtml = src ? `<span class="b4sim-pair-src">${safeText(src)}</span>` : "";
-        const stressHtml = p.in_book ? "" : `<span class="b4sim-pair-tag">stress</span>`;
         const blkHtml = p.blacklisted ? `<span class="b4sim-pair-tag b4sim-pair-tag-blk">blk</span>` : "";
-        return `<label class="b4sim-pair-chip${p.in_book ? "" : " b4sim-pair-chip-stress"}" data-in-book="${p.in_book ? "1" : "0"}">
-            <input type="checkbox" class="b4sim-pair" data-etf="${safeText(p.etf)}"${p.in_book ? " checked" : ""}>
+        return `<label class="b4sim-pair-chip" data-in-book="1">
+            <input type="checkbox" class="b4sim-pair" data-etf="${safeText(p.etf)}" checked>
             <span class="b4sim-pair-main">${safeText(p.etf)}/${safeText(p.und)}</span>
             <span class="b4sim-pair-meta">
-              <span class="b4sim-pair-wt">${fmtPct(p.weight, 0)}</span>${srcHtml}${stressHtml}${blkHtml}
+              <span class="b4sim-pair-wt">${fmtPct(p.weight, 0)}</span>${blkHtml}
             </span>
           </label>`;
       })
@@ -2510,13 +2638,12 @@
     return `<div class="b4sim-pairs-panel">
       <div class="b4sim-pairs-head">
         <div>
-          <strong>Pair-level stress</strong>
-          <div class="dim small">Uncheck names to exclude them; remaining weights renormalize.</div>
+          <strong>Book pairs</strong>
+          <div class="dim small">Uncheck a name to exclude it; remaining weights renormalize.</div>
         </div>
         <div class="b4sim-pairs-actions">
           <span id="b4sim-pairs-count" class="b4sim-pairs-count dim small"></span>
           <button type="button" class="btn btn-ghost" data-b4sim-pairs="all">All</button>
-          <button type="button" class="btn btn-ghost" data-b4sim-pairs="book">In book</button>
           <button type="button" class="btn btn-ghost" data-b4sim-pairs="none">None</button>
         </div>
       </div>
@@ -2536,23 +2663,16 @@
     const cad = sim.cadence || {};
     if (meta) {
       const nBook = sim.n_pairs_in_book != null ? sim.n_pairs_in_book : (sim.pairs || []).filter((p) => p.in_book).length;
-      const nStress = sim.n_pairs_stress != null ? sim.n_pairs_stress : (sim.pairs || []).length - nBook;
       meta.innerHTML =
         `<span class="dim">run ${safeText(sim.run_date)} · cadence tr=${safeText(cad.cadence_signal_col)} · base_days=${safeText(cad.base_days)} · ` +
-        `proposed book ${nBook} pairs · ${nStress} optional stress · ${sim.n_obs} obs since ${safeText(sim.window_start)}</span>`;
+        `proposed book ${nBook} pairs · ${sim.n_obs} obs since ${safeText(sim.window_start)}</span>`;
     }
-    const allPairs = sim.pairs || [];
-    const bookPairs = allPairs.filter((p) => p.in_book);
-    const stressPairs = allPairs.filter((p) => !p.in_book);
-    const pairRowHtml = (p, stress = false) => {
-      const dollars = stress ? p.gross_usd : (p.proposed_gross_usd ?? p.gross_usd);
-      return `<tr><td>${p.etf}${p.blacklisted ? " <span class='dim'>(blk)</span>" : ""}</td><td>${p.und}</td>` +
-        `<td class="num">${fmtPct(p.weight, 1)}</td><td class="num">${fmtUsd(dollars)}</td>` +
-        `<td class="num">${safeText(p.weight_source || "proposed")}</td>` +
-        `<td class="num">${p.n_days}</td><td class="num">${fmtPct(p.borrow, 1)}</td></tr>`;
-    };
-    const bookRows = bookPairs.map((p) => pairRowHtml(p, false)).join("");
-    const stressRows = stressPairs.map((p) => pairRowHtml(p, true)).join("");
+    const bookPairs = (sim.pairs || []).filter((p) => p.in_book);
+    const pairRowHtml = (p) =>
+      `<tr><td>${p.etf}${p.blacklisted ? " <span class='dim'>(blk)</span>" : ""}</td><td>${p.und}</td>` +
+      `<td class="num">${fmtPct(p.weight, 1)}</td><td class="num">${fmtUsd(p.proposed_gross_usd ?? p.gross_usd)}</td>` +
+      `<td class="num">${p.n_days}</td><td class="num">${fmtPct(p.borrow, 1)}</td></tr>`;
+    const bookRows = bookPairs.map(pairRowHtml).join("");
     const pairTogglePanel =
       sim.pair_returns && sim.pair_returns.length ? b4PairPickerHtml(sim) : "";
 
@@ -2560,8 +2680,8 @@
     content.innerHTML = `
       <div class="callout dim small">
         Resamples the <strong>proposed B4 book</strong> from <code>proposed_trades.csv</code> for run
-        <strong>${safeText(sim.run_date)}</strong> (rows with gross &gt; 0). Optional screener stress names can be
-        toggled above to see how adding them would change the tail. <strong>Tune the controls to stress the book.</strong>
+        <strong>${safeText(sim.run_date)}</strong> (rows with gross &gt; 0). Uncheck pairs above to see
+        concentration effects. <strong>Tune the controls to stress the book.</strong>
       </div>
       <div class="b4sim-controls strip" style="margin:10px 0;gap:14px;flex-wrap:wrap">
         <label class="b4sim-ctl">Distribution
@@ -2609,17 +2729,9 @@
         <div>
           <h3>Proposed book (${bookPairs.length} pairs)</h3>
           <p class="dim small">From <code>data/runs/${safeText(sim.run_date)}/proposed_trades.csv</code> · gross ${fmtUsd(sim.proposed_book_gross_usd)}</p>
-          <table class="tight"><thead><tr><th>ETF</th><th>Und</th><th class="num">Weight</th><th class="num">Gross $</th><th class="num">Source</th><th class="num">Days</th><th class="num">Borrow</th></tr></thead>
-          <tbody>${bookRows || "<tr><td colspan='7' class='dim'>No proposed B4 rows with gross &gt; 0</td></tr>"}</tbody></table>
-          ${stressPairs.length ? `<h3 style="margin-top:14px">Stress universe (${stressPairs.length} optional)</h3>
-          <p class="dim small">Not in today's proposed book; proxy gross for what-if toggles above.</p>
-          <table class="tight"><thead><tr><th>ETF</th><th>Und</th><th class="num">Proxy wt</th><th class="num">Proxy $</th><th class="num">Source</th><th class="num">Days</th><th class="num">Borrow</th></tr></thead>
-          <tbody>${stressRows}</tbody></table>` : ""}
+          <table class="tight"><thead><tr><th>ETF</th><th>Und</th><th class="num">Weight</th><th class="num">Gross $</th><th class="num">Days</th><th class="num">Borrow</th></tr></thead>
+          <tbody>${bookRows || "<tr><td colspan='6' class='dim'>No proposed B4 rows with gross &gt; 0</td></tr>"}</tbody></table>
           <p class="dim small">Realized (sample): CAGR ${fmtPct(rz.cagr, 1)} · ann vol ${fmtPct(rz.ann_vol, 1)} · Sharpe ${safeText(rz.sharpe)} · maxDD ${fmtPct(rz.hist_maxdd, 1)}.</p>
-          ${sim.weight_policy ? `<details class="callout dim small" style="margin-top:8px"><summary><strong>How weights are chosen</strong></summary>
-            <p>${safeText(sim.weight_policy.description)}</p>
-            <p class="dim">Force-included stress names: ${(sim.weight_policy.force_include_etfs || []).join(", ") || "—"}.
-            Proposed gross used when &gt;0; otherwise optimal when locate exists; else screener/structural proxy.</p></details>` : ""}
         </div>
         <div>
           <h3>Reference tail (precomputed, ${(sim.reference_mc || {}).n_sims || "?"} sims)</h3>
@@ -2771,10 +2883,8 @@
       btn.addEventListener("click", () => {
         const mode = btn.getAttribute("data-b4sim-pairs");
         document.querySelectorAll(".b4sim-pair").forEach((el) => {
-          const chip = el.closest(".b4sim-pair-chip");
           if (mode === "all") el.checked = true;
           else if (mode === "none") el.checked = false;
-          else if (mode === "book") el.checked = chip?.dataset.inBook === "1";
         });
         update();
       });
@@ -3502,38 +3612,20 @@
   }
 
   function renderAll(snap) {
+    _lastSnap = snap;
+    _tabRendered.clear();
     els.runDateLabel.textContent = `Run: ${snap.run_date}`;
     els.generatedAtLabel.textContent =
       "Generated " + new Date(snap.generated_at_utc).toLocaleString();
 
-    const steps = [
+    const coreSteps = [
       () => renderFreshness(snap),
       () => renderDataQuality(snap.data_quality || {}),
       () => renderCockpit(snap),
       () => renderAlerts(snap.alert_rows || []),
       () => renderActionQueue(snap.action_queue || []),
-      () => renderPerformance(snap),
-      () => renderPnlPanel(snap),
-      () => renderMovers(snap.movers_panel || {}),
-      () => renderSlideRisk(snap.slide_risk_panel || {}),
-      () => renderBucket4Sim(snap.bucket4_risk_sim || null),
-      () => renderBucket5Backtest(snap.bucket5_backtest || null),
-      () => renderBorrowShock(snap.borrow_shock_panel || {}, snap.nav_usd),
-      () => renderConcentration(snap.concentration_panel || {}),
-      () => renderFactor(snap.factor_panel || {}),
-      () =>
-        renderBucketSleevePanel(
-          snap.bucket_sleeve_panel || {},
-          snap.book || {},
-          snap.display_sleeve_groups || [],
-          snap.nav_usd
-        ),
-      () => bindTabs(snap),
-      () => renderSharedUnderlying(snap.shared_underlying_panel || {}),
-      () => renderBorrow(snap.borrow_panel || {}),
-      () => renderSqueeze((snap.borrow_panel || {}).squeeze_rows || []),
     ];
-    for (const step of steps) {
+    for (const step of coreSteps) {
       try {
         step();
       } catch (e) {
@@ -3541,9 +3633,12 @@
         throw new Error(`Dashboard render failed: ${e.message || e}`);
       }
     }
-    if (els.rawTotals) {
-      els.rawTotals.textContent = JSON.stringify(snap.raw_totals || {}, null, 2);
-    }
+    _tabRendered.add("overview");
+    renderTabPanel("overview", snap);
+
+    const { tab } = dashParseHash();
+    switchDashboardTab(tab, { updateHash: false, snap });
+
     fetch("./build_meta.json")
       .then((r) => (r.ok ? r.json() : null))
       .then((meta) => {
@@ -3628,6 +3723,7 @@
 
   async function boot() {
     bindLogin();
+    bindDashboardTabs();
     try {
       const { users, authEnabled: enabled } = await window.LSAuth.loadInvestors();
       investorUsers = users;

@@ -213,3 +213,44 @@ def test_snapshot_nav_source_is_labelled():
     snap = _load_snapshot()
     assert snap.get("nav_source")
     assert snap.get("nav_usd", 0) > 0
+
+
+# ── Site shell: tab layout + B4 book-only ──────────────────────────────────
+
+
+SITE_ROOT = PROJECT_ROOT / "site"
+
+
+def test_site_has_dashboard_tab_shell():
+    html = (SITE_ROOT / "index.html").read_text(encoding="utf-8")
+    for needle in (
+        'id="dashboard-tabs"',
+        'data-dash-tab="overview"',
+        'data-dash-tab="pnl"',
+        'data-dash-tab="risk"',
+        'data-dash-tab="book"',
+        'id="dash-tab-risk"',
+        'id="risk-subnav"',
+        'id="book-subnav"',
+    ):
+        assert needle in html, f"index.html missing {needle}"
+    assert 'id="subnav"' not in html
+
+
+def test_app_js_has_lazy_tab_rendering():
+    js = (SITE_ROOT / "assets" / "js" / "app.js").read_text(encoding="utf-8")
+    for needle in (
+        "function switchDashboardTab",
+        "function renderTabPanel",
+        "function dashParseHash",
+        "bindDashboardTabs",
+        "filter((p) => p.in_book)",
+    ):
+        assert needle in js, f"app.js missing {needle}"
+
+
+def test_b4_risk_sim_build_script_is_book_only():
+    src = (PROJECT_ROOT / "scripts" / "build_bucket4_risk_sim.py").read_text(encoding="utf-8")
+    assert "proposed book only" in src.lower() or "proposed book only" in src
+    assert "gross_target_usd" in src
+

@@ -117,6 +117,37 @@ pre.raw {
 }
 .subnav a:hover { background: var(--accent); color: #fff; text-decoration: none; }
 
+/* Top-level dashboard tabs (replaces long subnav scroll) */
+.dashboard-tabs {
+  position: sticky; top: 0; z-index: 12;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px 0;
+  margin-bottom: 12px;
+  box-shadow: var(--shadow);
+}
+.dashboard-tabs .tab {
+  font-size: 13px;
+  padding: 8px 16px;
+  margin-bottom: -1px;
+}
+.dash-tab-panel[hidden] { display: none !important; }
+.dash-tab-panel .panel:last-child { margin-bottom: 0; }
+
+/* Within-tab jump links (Risk / Book) */
+.dash-subnav {
+  display: flex; gap: 6px; flex-wrap: wrap;
+  margin-bottom: 10px; padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.dash-subnav a {
+  font-size: 12px; padding: 4px 10px; border-radius: 12px;
+  color: var(--accent-soft); border: 1px solid var(--border);
+  background: var(--bg-soft);
+}
+.dash-subnav a:hover { background: var(--accent); color: #fff; text-decoration: none; }
+
 /* ============================================================ */
 /* Buttons                                                        */
 /* ============================================================ */
