@@ -104,11 +104,20 @@ def leg_sigma_for_vix_scenario(
     mode: ScenarioMode | None = None,
     corr_lift_override: float | None = None,
     borrow_lift: float = 1.0,
+    vix_path: tuple[float, ...] | None = None,
+    peak_days: int | None = None,
+    borrow_stress_cfg: dict[str, Any] | None = None,
 ) -> tuple[float | None, float | None]:
     """Return (sigma_effective, borrow_annual_stressed) for a leg."""
+    from .borrow_stress import (
+        borrow_tier_for_leg,
+        effective_annual_borrow_from_vix_path,
+        load_borrow_stress_config,
+    )
     from .scenario_engine import resolve_sigma_annual
 
     cfg = vol_vix_pack.get("config") or DEFAULT_CONFIG
+    stress_cfg = borrow_stress_cfg or load_borrow_stress_config()
     sigma_base, _ = resolve_sigma_annual(leg, underlying_sigma=underlying_sigma)
     if sigma_base is None:
         return None, None
@@ -145,16 +154,30 @@ def leg_sigma_for_vix_scenario(
         )
 
     borrow_base = float(leg.get("borrow_fee_annual") or 0.0)
-    htb_thresh = float(cfg.get("htb_borrow_rate_threshold_pct", 5.0))
-    is_htb = borrow_base * 100.0 >= htb_thresh if borrow_base > 0 else False
-    borrow_stressed = borrow_rate_vix_stress(
-        borrow_base,
-        vix_pts=vix_new_pts,
-        gamma_broad=float(cfg.get("borrow_vix_gamma_broad", 0.05)),
-        gamma_htb=float(cfg.get("borrow_vix_gamma_htb", 0.30)),
-        is_htb=is_htb,
-        borrow_lift=borrow_lift,
+    if borrow_base <= 0:
+        return sigma, 0.0
+    tier = borrow_tier_for_leg(
+        leg,
+        htb_threshold=float(stress_cfg.get("htb_threshold_annual", 0.05)),
     )
+    if vix_path and len(vix_path) >= 2 and scenario_mode == "spike_revert":
+        borrow_stressed = effective_annual_borrow_from_vix_path(
+            borrow_base,
+            vix_path,
+            tier=tier,
+            borrow_lift=borrow_lift,
+            peak_days=peak_days,
+            stress_cfg=stress_cfg,
+        )
+    else:
+        borrow_stressed = borrow_rate_vix_stress(
+            borrow_base,
+            vix_pts=vix_new_pts,
+            gamma_broad=float(cfg.get("borrow_vix_gamma_broad", 0.05)),
+            gamma_htb=float(cfg.get("borrow_vix_gamma_htb", 0.30)),
+            is_htb=tier == "htb",
+            borrow_lift=borrow_lift,
+        )
     return sigma, borrow_stressed
 
 

@@ -12,14 +12,17 @@ HorizonShockMode = Literal["terminal", "rms", "drift"]
 DEFAULT_SPX_SHOCK_CONFIG: dict[str, Any] = {
     "horizon_shock_mode": "rms",
     "show_terminal_12m_row": True,
+    "path_steps": 252,
     "stress_beta": {
         "enabled": True,
         "down_delta": 0.15,
         "down_threshold_pct": -0.05,
         "use_variance_decomp_cap": True,
+        "use_cumulative_drawdown": True,
         "decomp_cap_factor": 1.0,
     },
     "path_scenarios_enabled": True,
+    "path_borrow_stress_enabled": True,
 }
 
 
@@ -46,6 +49,10 @@ def load_spx_shock_config(repo_root: Path | None = None) -> dict[str, Any]:
                 cfg["show_terminal_12m_row"] = bool(block["show_terminal_12m_row"])
             if block.get("path_scenarios_enabled") is not None:
                 cfg["path_scenarios_enabled"] = bool(block["path_scenarios_enabled"])
+            if block.get("path_steps") is not None:
+                cfg["path_steps"] = int(block["path_steps"])
+            if block.get("path_borrow_stress_enabled") is not None:
+                cfg["path_borrow_stress_enabled"] = bool(block["path_borrow_stress_enabled"])
             stress = block.get("stress_beta")
             if isinstance(stress, dict):
                 cfg["stress_beta"].update(

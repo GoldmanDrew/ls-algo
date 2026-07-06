@@ -34,7 +34,7 @@ def test_scale_spx_shock_t0_unscaled():
     assert scale_spx_shock_for_horizon(-0.10, "T+0", mode="rms") == pytest.approx(-0.10)
 
 
-def test_stress_beta_widens_on_large_down_move():
+def test_stress_beta_widens_on_cumulative_drawdown():
     base = 1.5
     calm = stress_beta_to_spy(base, -0.02, stress_cfg=DEFAULT_SPX_SHOCK_CONFIG["stress_beta"])
     stressed = stress_beta_to_spy(base, -0.20, stress_cfg=DEFAULT_SPX_SHOCK_CONFIG["stress_beta"])
@@ -61,11 +61,13 @@ def test_historical_spx_path_endpoints():
         spx_end=0.15,
         peak_days=21,
         horizon_days=252,
-        n_steps=12,
+        n_steps=252,
     )
     assert path[0] == pytest.approx(0.0)
     assert min(path) <= -0.30
     assert path[-1] == pytest.approx(0.15, abs=0.02)
+    deltas = [path[i] - path[i - 1] for i in range(1, len(path))]
+    assert min(deltas) > -0.05
 
 
 def test_slide_horizon_rms_reduces_1m_beta_vs_terminal(tmp_path: Path):

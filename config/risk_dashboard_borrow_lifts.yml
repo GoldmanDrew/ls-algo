@@ -1,0 +1,23 @@
+# Calibrated borrow_lift multipliers for VIX historical analog scenarios.
+# Regenerate: python scripts/calibrate_borrow_lifts.py --write
+borrow_stress:
+  path_steps_per_year: 252
+  event_lift_peak_window_days: 45
+  htb_cap_multiple: 2.0
+  gc_cap_multiple: 1.5
+  calibrated_lifts:
+    aug_2015_china:
+      borrow_lift: 1.2
+      source: catalog_default
+    feb_2018_xiv:
+      borrow_lift: 1.3
+      source: catalog_default
+    mar_2020_covid:
+      borrow_lift: 2.0
+      source: catalog_default
+    sep_2022_inflation:
+      borrow_lift: 1.1
+      source: catalog_default
+    aug_2024_yen_carry:
+      borrow_lift: 1.5
+      source: catalog_default

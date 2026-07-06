@@ -1209,6 +1209,23 @@
       : "";
     const indices = panel.indices || [];
     const spxIdx = indices.find((idx) => idx.index === "SPX");
+    const carryVal = panel.carry_validation || null;
+    const carryValBanner =
+      carryVal && carryVal.available && carryVal.warnings && carryVal.warnings.length
+        ? `<div class="callout warn" role="status"><strong>Carry model validation:</strong> ${carryVal.warnings
+            .map((w) => safeText(w))
+            .join(" ")}${
+            carryVal.realized_annualized_pct_nav != null
+              ? ` Realized (63d ann.): ${fmtPct(carryVal.realized_annualized_pct_nav, 1)}.`
+              : ""
+          }</div>`
+        : "";
+    const vixIdx = indices.find((idx) => idx.index === "VIX");
+    const vixMatrix = vixIdx?.vix_decay_matrix || null;
+    const tailUntrusted =
+      vixMatrix && vixMatrix.tail_scenarios_trusted === false
+        ? `<div class="callout-soft" role="status"><strong>Tail scenarios:</strong> historical VIX analogs flagged — model carry diverges from recent realized P&amp;L. Use for ordering, not sizing.</div>`
+        : "";
     const decayRef = spxIdx?.decay_reference || null;
     const decayBanner = decayRef
       ? `<div class="callout-soft" role="status"><strong>Expected 0&sigma; book carry (forecast vol 1.0&times;):</strong> ${formatDecayReference(
@@ -1406,18 +1423,20 @@
               <h4>Historical SPX path scenarios (12M)</h4>
               <p class="dim small">${safeText(idx.description, "")}</p>
               <table class="tight"><thead><tr>
-                <th>Scenario</th><th>SPX peak</th><th>12M total</th><th>Decay</th><th>Borrow</th>
+                <th>Scenario</th><th>SPX peak</th><th>12M total</th><th>Beta</th><th>Decay</th><th>Borrow</th>
               </tr></thead><tbody>${histSpx
                 .map(
                   (h) => `<tr>
                     <td><strong>${safeText(h.label)}</strong></td>
                     <td class="num">${h.spx_peak_pct != null ? fmtPct(h.spx_peak_pct, 1) : "-"}</td>
                     <td class="num ${signedClass(h.total_pnl_pct_nav)}">${fmtPct(h.total_pnl_pct_nav, 1)}</td>
+                    <td class="num ${signedClass(h.beta_pnl_pct_nav)}">${h.beta_pnl_pct_nav != null ? fmtPct(h.beta_pnl_pct_nav, 1) : "-"}</td>
                     <td class="num ${signedClass(h.decay_pnl_pct_nav)}">${fmtPct(h.decay_pnl_pct_nav, 1)}</td>
                     <td class="num ${signedClass(h.borrow_pnl_pct_nav)}">${fmtPct(h.borrow_pnl_pct_nav, 1)}</td>
                   </tr>`
                 )
                 .join("")}</tbody></table>
+              <p class="dim small">Daily paths (${histSpx[0]?.path_steps ?? 252} steps), path-realized vol, VIX-linked borrow. Total is compounded; Beta+Decay+Borrow are linear attribution.</p>
             </div>`
           : "";
         return `<div class="slide-strip">
@@ -1438,7 +1457,7 @@
         </div>`;
       })
       .join("");
-    els.slideRiskContent.innerHTML = `${worstBanner}${decayBanner}${stripsHtml || `<p class="dim">No index strips available.</p>`}`;
+    els.slideRiskContent.innerHTML = `${worstBanner}${decayBanner}${carryValBanner}${tailUntrusted}${stripsHtml || `<p class="dim">No index strips available.</p>`}`;
   }
 
   /* ---------------- Vol shock strip (Phase 4) ---------------- */

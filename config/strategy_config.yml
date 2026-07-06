@@ -361,7 +361,6 @@ portfolio:
       # MINUS ``rules.excluded_etfs`` (per-name overrides like KOLD)
       # MINUS ``flow_program.universe.shorts`` (those are sized in the weekly flow sleeve).
       rules:
-        partial_hedge_ratio: 1.0      # 1.0 = fully hedge inverse beta exposure
         # ------------------------------------------------------------------
         # Bucket 4 dynamic hedge + cadence engine (scripts/bucket4_hedge_cadence.py)
         # Disabled by default -> sizing falls back to decay_score weighting and the
@@ -379,7 +378,19 @@ portfolio:
           pf_min_pairs: 5
           # Flat sizing haircut on volatility-ETP pairs (VIX complex). Final weight
           # *= (1 - penalty), renormalized. Rationale: docs/b4_engine_notes.md.
-          vol_etp_weight_penalty: 0.333
+          # ZEROED 2026-06-30: vol ETPs now sized in their own volatility_etp_bucket5
+          # sleeve with a dedicated budget, so the in-B4 haircut is redundant.
+          vol_etp_weight_penalty: 0.0
+          # Borrow estimate feeding the sizing borrow-aversion term + high-borrow
+          # exclusion. "posterior" = half-life-weighted borrow_posterior_annual
+          # (same measure that nets net_edge_p50_annual). Quadratic level penalty
+          # is off (net edge already nets expected borrow); a small linear margin
+          # plus uncertainty penalty on borrow_posterior_var_annual downweights
+          # pairs with unstable / spike-prone borrow history.
+          borrow_aversion_source: posterior
+          decay_borrow_quad: 0
+          borrow_linear_aversion: 1.5
+          borrow_uncertainty_penalty: 3.0
           # Hedge ratio (h) + rebalance cadence (days) engine. Every output is
           # reverse-engineerable from the printed inputs (TR, VCR, VCR_med).
           # Backtest rationale for every knob below: docs/b4_engine_notes.md.
@@ -416,10 +427,54 @@ portfolio:
         # Disabled B4 subsystems (ratchet / drawdown_governor / pair_lifecycle /
         # concentration). Kept OFF; full behaviour + status in docs/b4_engine_notes.md.
         # NOTE: drawdown_governor is a config stub only — no Python reads it yet.
+        # Grow-only inverse-ETF ratchet (LIVE 2026-06-29). The inverse-ETF short
+        # leg is never proposed smaller than what we already hold: the solved
+        # delta-neutral inverse target is floored at max(solved, committed_held,
+        # persisted_floor) and the underlying short is re-solved against the
+        # floored inverse leg, so all delta reduction flows through the
+        # bidirectional underlying leg (we never buy back hard-to-relocate inverse
+        # inventory). The held floor is sourced from the COMMITTED accounting
+        # snapshot (net_exposure_bucket_4_detail.csv) via b4_reconstruct_state, so
+        # it is machine-independent. Exits are unaffected: a pair dropped from the
+        # trade plan carries no floor and is closed normally by Phase-1 cleanup.
         ratchet:
-          enabled: false
+          enabled: true
           state_json: data/b4_inverse_ratchet_state.json
           reconcile_tolerance_usd: 250.0
+          # CONTINUOUS GROSS REDUCTION (preferred; supersedes the binary
+          # release_below_edge below). Each rebalance, trim a lambda-fraction of the
+          # gap between the pinned inverse leg (max of held / persisted floor) and
+          # the freshly solved inverse target, then re-solve the underlying so the
+          # hedge ratio h is preserved (paired reduction). lambda is driven by the
+          # gross CREEP (pinned/solved) and modulated by forward edge & borrow:
+          #   gap_term    = clip((creep_ratio - 1) / creep_full, 0, 1)
+          #   edge_mult   = clip(1 - k_edge*(fwd_edge - edge_ref), edge_floor, 1.5)
+          #   borrow_mult = clip(1 + k_borrow*(borrow - borrow_ref), 0, 2)
+          #   lambda      = clip(trim_max * gap_term * edge_mult * borrow_mult, 0, trim_max)
+          # So the trim engages once a pair is oversized and scales with how far it
+          # has crept; a strong forward edge SLOWS the unwind (down to edge_floor,
+          # never fully stopping it) while a decayed edge speeds it. When trim is
+          # active (lambda>0) the plan marks the pair ratchet_released so
+          # phase2b_resize permits the gradual inverse cover. lambda=0 => pure
+          # grow-only pin. Backtest: scripts/b4_gross_reduction_opt.py.
+          trim:
+            enabled: true
+            trim_max: 0.5        # max fraction of the (pinned-solved) gap closed per rebalance
+            creep_full: 1.0      # creep_ratio-1 at which gap_term saturates (1.0 => 2x solved = full)
+            k_edge: 0.3          # how much a strong forward edge slows the trim
+            edge_floor: 0.25     # min edge multiplier: even high-edge names unwind creep at >=25% rate
+            k_borrow: 0.0        # >0 trims high-borrow faster; <0 protects HTB inventory
+            edge_ref: 0.30       # forward-edge "fair" anchor (matches min_net_edge_annual)
+            borrow_ref: 0.30     # borrow neutral anchor
+          # Edge-gated release (LEGACY binary fallback, used only when trim.enabled
+          # is false): lift the grow-only floor for a pair once its
+          # forward edge (net_edge_p50_annual) decays below this annual threshold,
+          # so a decaying pair can de-risk/cover instead of staying pinned at peak
+          # gross (bounds gross creep; still protects high-edge inventory). null =
+          # absolute grow-only (no release). Enabling live ALSO requires the plan
+          # to carry the per-pair ``ratchet_released`` flag into the resize plan so
+          # phase2b_resize permits the cover. Validate via the backtest first.
+          release_below_edge: null
         drawdown_governor:
           enabled: false
           dd_freeze: 0.12                  # trailing DD that freezes new inverse adds
@@ -553,10 +608,13 @@ spx_shock:
   horizon_shock_mode: rms          # terminal | rms | drift
   show_terminal_12m_row: true
   path_scenarios_enabled: true
+  path_steps: 252
+  path_borrow_stress_enabled: true
   stress_beta:
     enabled: true
     down_delta: 0.15
     down_threshold_pct: -0.05
     use_variance_decomp_cap: true
+    use_cumulative_drawdown: true
     decomp_cap_factor: 1.0
 

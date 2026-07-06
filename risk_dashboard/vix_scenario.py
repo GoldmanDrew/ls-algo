@@ -89,6 +89,9 @@ def effective_sigma_from_path_integral(integral: float, horizon_years: float) ->
     return max(MIN_SIGMA, math.sqrt(max(0.0, float(integral)) / t))
 
 
+from .borrow_stress import borrow_rate_vix_stress as _borrow_rate_vix_stress_legacy
+
+
 def borrow_rate_vix_stress(
     borrow_base: float,
     *,
@@ -98,11 +101,18 @@ def borrow_rate_vix_stress(
     is_htb: bool = False,
     borrow_lift: float = 1.0,
 ) -> float:
-    """Widen borrow cost in elevated VIX."""
-    base = max(0.0, float(borrow_base))
-    gamma = gamma_htb if is_htb else gamma_broad
-    bump = 1.0 + gamma * max(0.0, float(vix_pts) - 20.0) / 10.0
-    return base * bump * float(borrow_lift)
+    """Widen borrow cost in elevated VIX (legacy signature; delegates to borrow_stress)."""
+    tier = "htb" if is_htb else "gc"
+    return _borrow_rate_vix_stress_legacy(
+        borrow_base,
+        vix_pts=vix_pts,
+        tier=tier,
+        borrow_lift=borrow_lift,
+        stress_cfg={
+            "gamma_broad": gamma_broad,
+            "gamma_htb": gamma_htb,
+        },
+    )
 
 
 def select_regime_beta(
@@ -206,6 +216,7 @@ class VixScenarioSpec:
     borrow_lift: float = 1.0
     vix_peak_pts: float | None = None
     vix_end_pts: float | None = None
+    vix_start_pts: float | None = None
     peak_days: int | None = None
 
 
@@ -236,6 +247,7 @@ def historical_scenario_specs() -> list[VixScenarioSpec]:
                 borrow_lift=float(h["borrow_lift"]),
                 vix_peak_pts=float(h["vix_peak"]),
                 vix_end_pts=float(h["vix_end"]),
+                vix_start_pts=float(h["vix_start"]),
                 peak_days=int(h["peak_days"]),
             )
         )

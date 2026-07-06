@@ -19,7 +19,6 @@ def leg_beta_to_spy(
     if delta is not None and math.isfinite(float(delta)):
         product_class = str(leg.get("product_class") or "").lower()
         if product_class in ("letf_long", "letf_inverse"):
-            # β_SPY ≈ Delta × β_under,S PY; row β is underlying→SPY; LETF model applies L separately.
             return b
     return b
 
@@ -37,6 +36,8 @@ def stress_beta_to_spy(
         return float(beta_base)
     b = float(beta_base)
     shock = float(spx_shock_pct)
+    if cfg.get("use_cumulative_drawdown", True):
+        shock = min(0.0, shock)
     threshold = float(cfg.get("down_threshold_pct", -0.05))
     delta = float(cfg.get("down_delta", 0.15))
     if shock < threshold:
@@ -58,15 +59,36 @@ def underlying_return_for_leg(
     *,
     stress_cfg: Mapping[str, Any] | None = None,
     beta_spy_decomp: float | None = None,
+    spx_cumulative_pct: float | None = None,
 ) -> float:
     """Map terminal + horizon-scaled SPX shocks to underlying return for one leg."""
     beta = leg_beta_to_spy(row, leg)
     if beta is None:
         return 0.0
+    stress_input = (
+        float(spx_cumulative_pct)
+        if spx_cumulative_pct is not None
+        else float(spx_shock_terminal_pct)
+    )
     beta_eff = stress_beta_to_spy(
         beta,
-        spx_shock_terminal_pct,
+        stress_input,
         stress_cfg=stress_cfg,
         beta_spy_decomp=beta_spy_decomp,
     )
     return beta_eff * float(spx_shock_effective_pct)
+
+
+def leg_instant_price_return(
+    leg: Mapping[str, Any],
+    underlying_return: float,
+) -> float:
+    """First-order T+0 price return for a leg (no decay/borrow)."""
+    product = str(leg.get("product_class") or "").lower()
+    u = float(underlying_return)
+    if product in ("letf_long", "letf_inverse"):
+        k = float(leg.get("leverage_k") or leg.get("beta_to_underlying") or 1.0)
+        return k * u
+    if product in ("income_yieldboost", "income_put_spread", "scraped_income"):
+        return u
+    return u

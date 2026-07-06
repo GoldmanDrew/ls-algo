@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
+from .borrow_stress import (
+    build_vix_cumulative_path,
+    resolve_borrow_lift,
+)
 from .scenario_engine import (
     ScenarioLegResult,
     horizon_to_years,
     model_leg_return,
-    scale_spx_shock_for_horizon,
 )
-from .spx_shock_config import HorizonShockMode
+from .vix_scenario import HISTORICAL_VIX_SCENARIOS
 
 HISTORICAL_SPX_SCENARIOS: tuple[dict[str, Any], ...] = (
     {
@@ -23,6 +26,7 @@ HISTORICAL_SPX_SCENARIOS: tuple[dict[str, Any], ...] = (
         "spx_end": -0.06,
         "peak_days": 30,
         "horizon_days": 252,
+        "vix_template_key": "aug_2015_china",
     },
     {
         "key": "q4_2018",
@@ -32,6 +36,7 @@ HISTORICAL_SPX_SCENARIOS: tuple[dict[str, Any], ...] = (
         "spx_end": -0.14,
         "peak_days": 63,
         "horizon_days": 252,
+        "vix_template_key": "feb_2018_xiv",
     },
     {
         "key": "mar_2020",
@@ -41,6 +46,7 @@ HISTORICAL_SPX_SCENARIOS: tuple[dict[str, Any], ...] = (
         "spx_end": 0.15,
         "peak_days": 21,
         "horizon_days": 252,
+        "vix_template_key": "mar_2020_covid",
     },
     {
         "key": "bear_2022",
@@ -50,6 +56,7 @@ HISTORICAL_SPX_SCENARIOS: tuple[dict[str, Any], ...] = (
         "spx_end": -0.18,
         "peak_days": 180,
         "horizon_days": 252,
+        "vix_template_key": "sep_2022_inflation",
     },
     {
         "key": "recovery_2023",
@@ -59,10 +66,12 @@ HISTORICAL_SPX_SCENARIOS: tuple[dict[str, Any], ...] = (
         "spx_end": 0.20,
         "peak_days": 200,
         "horizon_days": 252,
+        "vix_template_key": None,
     },
 )
 
-PATH_STEPS_DEFAULT = 12
+PATH_STEPS_DEFAULT = 252
+REALIZED_VOL_WINDOW = 21
 
 
 def build_spx_cumulative_path(
@@ -74,7 +83,7 @@ def build_spx_cumulative_path(
     horizon_days: int,
     n_steps: int = PATH_STEPS_DEFAULT,
 ) -> tuple[float, ...]:
-    """Piecewise-linear cumulative SPX return path (0 → peak → end)."""
+    """Piecewise-linear cumulative SPX return path (0 → peak → end), daily by default."""
     n = max(int(n_steps), 2)
     h = max(int(horizon_days), 1)
     peak_d = max(min(int(peak_days), h), 1)
@@ -91,6 +100,57 @@ def build_spx_cumulative_path(
     return tuple(out)
 
 
+def rolling_realized_vol_from_spx_path(
+    spx_cumulative: tuple[float, ...],
+    step_index: int,
+    *,
+    base_sigma: float,
+    window: int = REALIZED_VOL_WINDOW,
+) -> float:
+    """Annualized realized vol from trailing SPX path step returns."""
+    if step_index < 1:
+        return max(base_sigma, 0.05)
+    start = max(1, step_index - window + 1)
+    rets: list[float] = []
+    for j in range(start, step_index + 1):
+        prev = float(spx_cumulative[j - 1])
+        cur = float(spx_cumulative[j])
+        denom = 1.0 + prev
+        if abs(denom) < 1e-9:
+            continue
+        rets.append((cur - prev) / denom)
+    if len(rets) < 2:
+        return max(base_sigma, 0.05)
+    mean = sum(rets) / len(rets)
+    var = sum((r - mean) ** 2 for r in rets) / max(len(rets) - 1, 1)
+    realized = math.sqrt(max(var, 0.0)) * math.sqrt(252.0)
+    blend = 0.35 * realized + 0.65 * max(base_sigma, 0.05)
+    return max(blend, 0.05)
+
+
+def vix_template_for_spx_key(template_key: str | None) -> dict[str, Any] | None:
+    if not template_key:
+        return None
+    for h in HISTORICAL_VIX_SCENARIOS:
+        if h["key"] == template_key:
+            return dict(h)
+    return None
+
+
+def build_vix_path_for_spx_scenario(spec: dict[str, Any], n_steps: int) -> tuple[float, ...] | None:
+    tmpl = vix_template_for_spx_key(spec.get("vix_template_key"))
+    if tmpl is None:
+        return None
+    return build_vix_cumulative_path(
+        vix_start=float(tmpl["vix_start"]),
+        vix_peak=float(tmpl["vix_peak"]),
+        vix_end=float(tmpl["vix_end"]),
+        peak_days=int(tmpl["peak_days"]),
+        horizon_days=int(spec.get("horizon_days", 252)),
+        n_steps=n_steps,
+    )
+
+
 @dataclass
 class SpxScenarioSpec:
     key: str
@@ -100,12 +160,16 @@ class SpxScenarioSpec:
     peak_days: int | None = None
     spx_peak_pct: float | None = None
     spx_end_pct: float | None = None
+    vix_path: tuple[float, ...] | None = None
+    vix_template_key: str | None = None
+    borrow_lift: float = 1.0
 
 
 def historical_scenario_specs(
     horizon_key: str = "12M",
     *,
     n_steps: int = PATH_STEPS_DEFAULT,
+    borrow_stress_cfg: dict[str, Any] | None = None,
 ) -> list[SpxScenarioSpec]:
     specs: list[SpxScenarioSpec] = []
     for h in HISTORICAL_SPX_SCENARIOS:
@@ -117,6 +181,18 @@ def historical_scenario_specs(
             horizon_days=int(h["horizon_days"]),
             n_steps=n_steps,
         )
+        vix_path = build_vix_path_for_spx_scenario(h, n_steps)
+        tmpl_key = h.get("vix_template_key")
+        default_lift = 1.0
+        if tmpl_key:
+            tmpl = vix_template_for_spx_key(str(tmpl_key))
+            if tmpl:
+                default_lift = float(tmpl.get("borrow_lift", 1.0))
+        lift = resolve_borrow_lift(
+            str(tmpl_key or h["key"]),
+            default_lift,
+            borrow_stress_cfg,
+        )
         specs.append(
             SpxScenarioSpec(
                 key=str(h["key"]),
@@ -126,6 +202,9 @@ def historical_scenario_specs(
                 peak_days=int(h["peak_days"]),
                 spx_peak_pct=float(h["spx_peak"]),
                 spx_end_pct=float(h["spx_end"]),
+                vix_path=vix_path,
+                vix_template_key=str(tmpl_key) if tmpl_key else None,
+                borrow_lift=lift,
             )
         )
     return specs
@@ -139,8 +218,14 @@ def integrate_leg_along_spx_path(
     underlying_return_per_step: list[float],
     underlying_sigma: float | None = None,
     zero_borrow: bool = False,
+    vix_path: tuple[float, ...] | None = None,
+    borrow_lift: float = 1.0,
+    peak_days: int | None = None,
+    borrow_stress_cfg: dict[str, Any] | None = None,
 ) -> ScenarioLegResult:
-    """Compound leg P&L along discrete SPX path steps (Phase 5)."""
+    """Daily compound leg P&L along SPX path with path vol and optional VIX borrow."""
+    from .borrow_stress import borrow_tier_for_leg
+
     n = len(spx_cumulative)
     if n < 2:
         return ScenarioLegResult(
@@ -154,23 +239,48 @@ def integrate_leg_along_spx_path(
             error="path_too_short",
         )
     t_step = float(horizon_years) / (n - 1)
+    base_sigma = float(underlying_sigma or 0.25)
     wealth = 1.0
     price_acc = 0.0
     decay_acc = 0.0
     borrow_acc = 0.0
     dist_acc = 0.0
     model = "path"
+    borrow_base = float(leg.get("borrow_fee_annual") or 0.0)
+    tier = borrow_tier_for_leg(leg, htb_threshold=float((borrow_stress_cfg or {}).get("htb_threshold_annual", 0.05)))
+    cfg = borrow_stress_cfg or {}
+    h_days = max(int(cfg.get("path_steps_per_year", 252)), 1)
+    window = int(cfg.get("event_lift_peak_window_days", 45))
+    peak_d = int(peak_days) if peak_days is not None else h_days // 4
+
     for i in range(1, n):
         u_ret = float(underlying_return_per_step[i - 1])
-        leg_use = leg
+        sigma_step = rolling_realized_vol_from_spx_path(
+            spx_cumulative, i, base_sigma=base_sigma
+        )
+        leg_use = dict(leg)
         if zero_borrow:
-            leg_use = {**leg, "borrow_fee_annual": 0.0}
+            leg_use["borrow_fee_annual"] = 0.0
+        elif vix_path and len(vix_path) == n and borrow_base > 0:
+            from .borrow_stress import borrow_rate_vix_stress, event_borrow_lift_at_day
+
+            day = h_days * i / (n - 1)
+            lift = event_borrow_lift_at_day(
+                day, borrow_lift=borrow_lift, peak_days=peak_d, window_days=window
+            )
+            leg_use["borrow_fee_annual"] = borrow_rate_vix_stress(
+                borrow_base,
+                vix_pts=float(vix_path[i]),
+                tier=tier,
+                borrow_lift=lift,
+                stress_cfg=cfg,
+            )
         res = model_leg_return(
             leg=leg_use,
             underlying_return=u_ret,
             horizon_key="1M",
             vol_multiplier=1.0,
-            underlying_sigma=underlying_sigma,
+            underlying_sigma=sigma_step,
             horizon_years_override=t_step,
         )
         if not res.ok:
@@ -202,6 +312,10 @@ def aggregate_path_scenario_pnl(
     stress_cfg: dict[str, Any] | None,
     beta_spy_decomp: float | None,
     zero_borrow: bool = False,
+    vix_path: tuple[float, ...] | None = None,
+    borrow_lift: float = 1.0,
+    peak_days: int | None = None,
+    borrow_stress_cfg: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Sum path-integrated leg P&L for one factor row."""
     from .spx_stress_beta import underlying_return_for_leg
@@ -226,6 +340,7 @@ def aggregate_path_scenario_pnl(
         per_step_u_leg: list[float] = []
         for i in range(1, n):
             delta_spx = float(spx_cumulative[i] - spx_cumulative[i - 1])
+            cum_spx = float(spx_cumulative[i])
             per_step_u_leg.append(
                 underlying_return_for_leg(
                     row,
@@ -234,6 +349,7 @@ def aggregate_path_scenario_pnl(
                     delta_spx,
                     stress_cfg=stress_cfg,
                     beta_spy_decomp=beta_spy_decomp,
+                    spx_cumulative_pct=cum_spx,
                 )
             )
         res = integrate_leg_along_spx_path(
@@ -243,6 +359,10 @@ def aggregate_path_scenario_pnl(
             underlying_return_per_step=per_step_u_leg,
             underlying_sigma=row.get("sigma"),
             zero_borrow=zero_borrow,
+            vix_path=vix_path,
+            borrow_lift=borrow_lift,
+            peak_days=peak_days,
+            borrow_stress_cfg=borrow_stress_cfg,
         )
         if res.model == "beta_fallback":
             totals["n_legs_fallback"] += 1

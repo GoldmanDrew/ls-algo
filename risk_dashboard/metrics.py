@@ -36,13 +36,16 @@ from .scenario_engine import (
     resolve_sigma_annual,
     scale_spx_shock_for_horizon,
 )
+from .borrow_stress import build_vix_cumulative_path, load_borrow_stress_config, resolve_borrow_lift
+from .carry_validation import compute_carry_validation
 from .spx_scenario import (
     HISTORICAL_SPX_SCENARIOS,
+    PATH_STEPS_DEFAULT,
     aggregate_path_scenario_pnl,
     historical_scenario_specs as historical_spx_scenario_specs,
 )
 from .spx_shock_config import load_spx_shock_config
-from .spx_stress_beta import underlying_return_for_leg
+from .spx_stress_beta import leg_instant_price_return, underlying_return_for_leg
 from .vol_vix_model import (
     beta_summary_dict,
     compute_vol_vix_pack,
@@ -2953,6 +2956,9 @@ def _vix_shock_leg_overrides(
     mode: ScenarioMode | None = None,
     corr_lift_override: float | None = None,
     borrow_lift_override: float | None = None,
+    vix_path: tuple[float, ...] | None = None,
+    peak_days: int | None = None,
+    borrow_stress_cfg: dict[str, Any] | None = None,
 ) -> tuple[dict[str, float], dict[str, float]]:
     sigma_out: dict[str, float] = {}
     borrow_out: dict[str, float] = {}
@@ -2973,6 +2979,9 @@ def _vix_shock_leg_overrides(
             mode=mode,
             corr_lift_override=corr_lift_override,
             borrow_lift=borrow_lift,
+            vix_path=vix_path,
+            peak_days=peak_days,
+            borrow_stress_cfg=borrow_stress_cfg,
         )
         if sigma is not None:
             sigma_out[sym] = float(sigma)
@@ -3054,6 +3063,9 @@ def _slide_horizon_scenario_totals(
     shock_scale_override: float | None = None,
     variance_decomp: dict[str, Any] | None = None,
     per_leg_beta: bool = True,
+    vix_path: tuple[float, ...] | None = None,
+    vix_peak_days: int | None = None,
+    borrow_stress_cfg: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     totals = {
         "beta_pnl_usd": 0.0,
@@ -3093,6 +3105,9 @@ def _slide_horizon_scenario_totals(
                 mode=vix_scenario_mode,
                 corr_lift_override=corr_lift_override,
                 borrow_lift_override=borrow_lift_override,
+                vix_path=vix_path,
+                peak_days=vix_peak_days,
+                borrow_stress_cfg=borrow_stress_cfg,
             )
             if not sigma_overrides:
                 sigma_overrides = None
@@ -3153,6 +3168,68 @@ def _slide_horizon_scenario_totals(
     return totals
 
 
+def _compute_t0_per_leg_pnl(
+    enriched: list[dict[str, Any]],
+    *,
+    shock_pct: float,
+    etf_meta: dict[str, Any],
+    spx_shock_cfg: dict[str, Any],
+    variance_decomp: dict[str, Any] | None,
+) -> tuple[float, list[dict[str, Any]]]:
+    """Per-leg instantaneous beta P&L (no decay/borrow)."""
+    stress_cfg = spx_shock_cfg.get("stress_beta") or {}
+    per_name: list[dict[str, Any]] = []
+    total = 0.0
+    for e in enriched:
+        if e.get("beta_to_spy") is None:
+            continue
+        beta_decomp = _beta_spy_decomp_for_underlying(
+            str(e.get("underlying") or ""),
+            variance_decomp=variance_decomp,
+        )
+        legs = _slide_scenario_legs_for_row(e, etf_meta=etf_meta)
+        row_pnl = 0.0
+        for leg in legs:
+            notional = float(leg.get("net_notional_usd") or 0.0)
+            if abs(notional) < 1e-9:
+                continue
+            cum = float(shock_pct) if float(shock_pct) < 0 else 0.0
+            u_ret = underlying_return_for_leg(
+                e,
+                leg,
+                float(shock_pct),
+                float(shock_pct),
+                stress_cfg=stress_cfg,
+                beta_spy_decomp=beta_decomp,
+                spx_cumulative_pct=cum,
+            )
+            price_ret = leg_instant_price_return(leg, u_ret)
+            product = str(leg.get("product_class") or "").lower()
+            if notional < 0 and product in (
+                "income_yieldboost",
+                "income_put_spread",
+                "scraped_income",
+            ):
+                scale = abs(notional)
+            else:
+                scale = notional
+            row_pnl += scale * price_ret
+        total += row_pnl
+        per_name.append(
+            {
+                "underlying": e["underlying"],
+                "symbols": e["symbols"],
+                "net_notional_usd": e["net_notional_usd"],
+                "beta": e.get("beta_to_spy"),
+                "expected_return": row_pnl / e["net_notional_usd"]
+                if abs(e["net_notional_usd"]) > 1e-9
+                else 0.0,
+                "pnl_t0_usd": row_pnl,
+            }
+        )
+    return total, per_name
+
+
 def _build_historical_spx_scenarios(
     enriched: list[dict[str, Any]],
     *,
@@ -3162,13 +3239,21 @@ def _build_historical_spx_scenarios(
     variance_decomp: dict[str, Any] | None,
     horizon_key: str = "12M",
     zero_borrow: bool = False,
+    borrow_stress_cfg: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Phase 5: path-integrated historical SPX analogs."""
+    """Phase 5: daily path-integrated historical SPX analogs with VIX borrow stress."""
     if not spx_shock_cfg.get("path_scenarios_enabled", True):
         return []
     stress_cfg = spx_shock_cfg.get("stress_beta") or {}
+    n_steps = int(spx_shock_cfg.get("path_steps") or PATH_STEPS_DEFAULT)
+    path_borrow = bool(spx_shock_cfg.get("path_borrow_stress_enabled", True))
+    bcfg = borrow_stress_cfg or load_borrow_stress_config()
     out: list[dict[str, Any]] = []
-    for spec in historical_spx_scenario_specs(horizon_key=horizon_key):
+    for spec in historical_spx_scenario_specs(
+        horizon_key=horizon_key,
+        n_steps=n_steps,
+        borrow_stress_cfg=bcfg,
+    ):
         totals = {
             "beta_pnl_usd": 0.0,
             "decay_pnl_usd": 0.0,
@@ -3191,7 +3276,11 @@ def _build_historical_spx_scenarios(
                 row=e,
                 stress_cfg=stress_cfg,
                 beta_spy_decomp=beta_decomp,
-                zero_borrow=zero_borrow,
+                zero_borrow=zero_borrow or not path_borrow,
+                vix_path=spec.vix_path if path_borrow else None,
+                borrow_lift=spec.borrow_lift,
+                peak_days=spec.peak_days,
+                borrow_stress_cfg=bcfg,
             )
             for k in totals:
                 totals[k] += float(agg.get(k) or 0.0)
@@ -3204,11 +3293,14 @@ def _build_historical_spx_scenarios(
                 "spx_peak_pct": spec.spx_peak_pct,
                 "spx_end_pct": spec.spx_end_pct,
                 "peak_days": spec.peak_days,
+                "path_steps": n_steps,
+                "vix_template_key": spec.vix_template_key,
                 "beta_pnl_pct_nav": totals["beta_pnl_usd"] / nav_usd if nav_usd > 0 else None,
                 "decay_pnl_pct_nav": totals["decay_pnl_usd"] / nav_usd if nav_usd > 0 else None,
                 "borrow_pnl_pct_nav": totals["borrow_pnl_usd"] / nav_usd if nav_usd > 0 else None,
                 "total_pnl_pct_nav": totals["total_pnl_usd"] / nav_usd if nav_usd > 0 else None,
                 "total_pnl_usd": totals["total_pnl_usd"],
+                "beta_pnl_usd": totals["beta_pnl_usd"],
                 "decay_pnl_usd": totals["decay_pnl_usd"],
                 "borrow_pnl_usd": totals["borrow_pnl_usd"],
             }
@@ -3237,6 +3329,9 @@ def _run_vix_scenario_cell(
     corr_lift_override: float | None = None,
     borrow_lift_override: float | None = None,
     scenario_key: str = "",
+    vix_path: tuple[float, ...] | None = None,
+    vix_peak_days: int | None = None,
+    borrow_stress_cfg: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     totals = _slide_horizon_scenario_totals(
         enriched,
@@ -3251,6 +3346,9 @@ def _run_vix_scenario_cell(
         corr_lift_override=corr_lift_override,
         borrow_lift_override=borrow_lift_override,
         zero_borrow=False,
+        vix_path=vix_path,
+        vix_peak_days=vix_peak_days,
+        borrow_stress_cfg=borrow_stress_cfg,
     )
     return {
         "scenario_key": scenario_key,
@@ -3278,10 +3376,12 @@ def _build_vix_decay_matrix(
     vol_vix_pack: dict[str, Any],
     vix_shocks: tuple[int, ...],
     horizon_key: str = VIX_DECAY_HORIZON,
+    borrow_stress_cfg: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """12M expected book carry at SPX 0% under VIX-shocked forecast vol."""
     vix_pts = float(vol_vix_pack.get("vix_current_pts") or 20.0)
     cfg = vol_vix_pack.get("config") or {}
+    bcfg = borrow_stress_cfg or load_borrow_stress_config()
     sustained_mode: ScenarioMode = "sustained"
     spike_mode: ScenarioMode = "spike_revert"
 
@@ -3355,6 +3455,17 @@ def _build_vix_decay_matrix(
     historical: list[dict[str, Any]] = []
     for spec in historical_scenario_specs():
         peak = float(spec.vix_peak_pts or spec.vix_new_pts)
+        lift = resolve_borrow_lift(spec.key, float(spec.borrow_lift), bcfg)
+        vix_path: tuple[float, ...] | None = None
+        if spec.vix_start_pts is not None and spec.vix_end_pts is not None and spec.peak_days:
+            vix_path = build_vix_cumulative_path(
+                vix_start=float(spec.vix_start_pts),
+                vix_peak=peak,
+                vix_end=float(spec.vix_end_pts),
+                peak_days=int(spec.peak_days),
+                horizon_days=252,
+                n_steps=int(bcfg.get("path_steps_per_year", 252)),
+            )
         cell = _run_vix_scenario_cell(
             enriched,
             etf_meta=etf_meta,
@@ -3365,14 +3476,17 @@ def _build_vix_decay_matrix(
             vix_new_pts=peak,
             mode=spike_mode,
             corr_lift_override=spec.corr_lift,
-            borrow_lift_override=spec.borrow_lift,
+            borrow_lift_override=lift,
             scenario_key=spec.key,
+            vix_path=vix_path,
+            vix_peak_days=spec.peak_days,
+            borrow_stress_cfg=bcfg,
         )
         cell["vix_peak_pts"] = peak
         cell["vix_end_pts"] = spec.vix_end_pts
         cell["peak_days"] = spec.peak_days
         cell["corr_lift"] = spec.corr_lift
-        cell["borrow_lift"] = spec.borrow_lift
+        cell["borrow_lift"] = lift
         if cells_sustained and nav_usd > 0:
             cell["delta_vs_current_pct_nav"] = (
                 float(cell["total_pnl_usd"]) - float(cells_sustained[0]["total_pnl_usd"])
@@ -3647,6 +3761,7 @@ def compute_slide_risk_panel(
             }
 
     spx_shock_cfg = load_spx_shock_config(repo_root)
+    borrow_stress_cfg = load_borrow_stress_config(repo_root)
     horizon_shock_mode = str(spx_shock_cfg.get("horizon_shock_mode") or "rms")
     variance_decomp = (vol_vix_pack or {}).get("variance_decomp")
     factor_totals = (factor_panel or {}).get("totals") or {}
@@ -3662,24 +3777,13 @@ def compute_slide_risk_panel(
     total_gross = sum(abs(e["net_notional_usd"]) for e in enriched)
     spx_shock_rows: list[dict[str, Any]] = []
     for shock_pct in shocks:
-        per_name_pnl_t0: list[dict[str, Any]] = []
-        for e in enriched:
-            beta = e.get("beta_to_spy")
-            if beta is None:
-                continue
-            expected_return = beta * shock_pct
-            pnl_t0 = e["net_notional_usd"] * expected_return
-            per_name_pnl_t0.append(
-                {
-                    "underlying": e["underlying"],
-                    "symbols": e["symbols"],
-                    "net_notional_usd": e["net_notional_usd"],
-                    "beta": beta,
-                    "expected_return": expected_return,
-                    "pnl_t0_usd": pnl_t0,
-                }
-            )
-        total_pnl_t0 = sum(p["pnl_t0_usd"] for p in per_name_pnl_t0)
+        total_pnl_t0, per_name_pnl_t0 = _compute_t0_per_leg_pnl(
+            enriched,
+            shock_pct=float(shock_pct),
+            etf_meta=etf_meta,
+            spx_shock_cfg=spx_shock_cfg,
+            variance_decomp=variance_decomp,
+        )
         pnl_pct_t0 = total_pnl_t0 / nav_usd if nav_usd > 0 else None
 
         horizon_rows: list[dict[str, Any]] = [
@@ -3845,6 +3949,7 @@ def compute_slide_risk_panel(
         variance_decomp=variance_decomp,
         horizon_key="12M",
         zero_borrow=False,
+        borrow_stress_cfg=borrow_stress_cfg,
     )
     indices_out.append(
         {
@@ -3865,10 +3970,10 @@ def compute_slide_risk_panel(
             "historical_spx_scenarios": historical_spx,
             "historical_spx_catalog": list(HISTORICAL_SPX_SCENARIOS),
             "description": (
-                "T+0: instantaneous portfolio β×ΔSPX. "
+                "T+0: per-leg instantaneous β×ΔSPX (linear, no decay/borrow). "
                 f"1M–12M: horizon-scaled equity shock ({horizon_shock_mode}) + LETF decay/borrow. "
                 "12M-terminal row uses full labeled ΔSPX. "
-                "Historical rows integrate piecewise SPX paths."
+                "Historical rows: daily SPX paths, path-realized vol, VIX-linked borrow stress."
             ),
         }
     )
@@ -3880,7 +3985,21 @@ def compute_slide_risk_panel(
         nav_usd=nav_usd,
         vol_vix_pack=vol_vix_pack,
         vix_shocks=vix_shocks,
+        borrow_stress_cfg=borrow_stress_cfg,
     )
+    baseline_carry = None
+    if vix_decay_matrix.get("headline"):
+        baseline_carry = vix_decay_matrix["headline"].get("carry_12m_pct_nav")
+    carry_validation = compute_carry_validation(
+        predicted_carry_pct_nav=baseline_carry,
+        repo_root=repo_root,
+    )
+    if not carry_validation.get("tail_scenarios_trusted", True):
+        vix_decay_matrix["tail_scenarios_trusted"] = False
+        vix_decay_matrix["carry_validation"] = carry_validation
+    else:
+        vix_decay_matrix["tail_scenarios_trusted"] = True
+        vix_decay_matrix["carry_validation"] = carry_validation
 
     indices_out.append(
         {
@@ -3906,8 +4025,10 @@ def compute_slide_risk_panel(
         "n_letf_names": n_letf,
         "n_names_with_vol": has_vol,
         "n_names_total": len(enriched),
-        "model": "etf_dashboard_scenarios_v3_spx",
+        "model": "etf_dashboard_scenarios_v4_daily_paths",
         "spx_shock_config": spx_shock_cfg,
+        "borrow_stress_config": borrow_stress_cfg,
+        "carry_validation": carry_validation,
         "horizon_shock_mode": horizon_shock_mode,
     }
 
