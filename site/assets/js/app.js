@@ -2346,28 +2346,6 @@
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }
-  function b4Gauss(rng) {
-    let u = 0;
-    while (u <= 1e-12) u = rng();
-    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng());
-  }
-  // Marsaglia-Tsang gamma sampler (shape > 0) -> chi-square via Gamma(df/2, 2).
-  function b4Gamma(rng, shape) {
-    if (shape < 1) return b4Gamma(rng, shape + 1) * Math.pow(rng(), 1 / shape);
-    const d = shape - 1 / 3;
-    const c = 1 / Math.sqrt(9 * d);
-    while (true) {
-      let x, v;
-      do {
-        x = b4Gauss(rng);
-        v = 1 + c * x;
-      } while (v <= 0);
-      v = v * v * v;
-      const u = rng();
-      if (u < 1 - 0.0331 * x * x * x * x) return d * v;
-      if (Math.log(u) < 0.5 * x * x + d * (1 - v + Math.log(v))) return d * v;
-    }
-  }
   function b4Pctl(sorted, p) {
     if (!sorted.length) return NaN;
     const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((p / 100) * (sorted.length - 1))));
@@ -2375,7 +2353,7 @@
   }
   function b4RefDd(sim, dist) {
     const ref = sim.reference_mc || {};
-    const key = dist === "boot" ? "block_bootstrap" : dist === "t" ? "student_t" : "laplace";
+    const key = dist === "laplace" ? "laplace" : "block_bootstrap";
     const r = ref[key] || {};
     return { p95: r.dd_p95, p99: r.dd_p99 };
   }
@@ -2426,9 +2404,6 @@
     const m = data.length;
     const mean = sim.mean_daily || 0;
     const L = o.blockLen || (sim.reference_mc && sim.reference_mc.block_len) || 10;
-    const tdf = sim.fit_student_t.df;
-    const tloc = sim.fit_student_t.loc;
-    const tscale = sim.fit_student_t.scale * k;
     const lloc = sim.fit_laplace.loc;
     const lscale = sim.fit_laplace.scale * k;
     const fanBands = o.fanBands ? Array.from({ length: H + 1 }, () => []) : null;
@@ -2453,13 +2428,8 @@
       } else {
         for (let s = 0; s < H; s++) {
           let r;
-          if (dist === "t") {
-            const chi2 = b4Gamma(rng, tdf / 2) * 2;
-            r = tloc + tscale * (b4Gauss(rng) / Math.sqrt(chi2 / tdf));
-          } else {
-            const u = rng() - 0.5;
-            r = lloc - lscale * Math.sign(u) * Math.log(1 - 2 * Math.abs(u));
-          }
+          const u = rng() - 0.5;
+          r = lloc - lscale * Math.sign(u) * Math.log(1 - 2 * Math.abs(u));
           if (r < floor) r = floor;
           eq *= 1 + r;
           if (eq > peak) peak = eq;
@@ -2706,7 +2676,6 @@
         <label class="b4sim-ctl">Distribution
           <select id="b4sim-dist">
             <option value="boot">Block bootstrap (empirical)</option>
-            <option value="t">Student-t (fat tail)</option>
             <option value="laplace">Laplace (fat tail)</option>
           </select>
         </label>
@@ -2755,13 +2724,13 @@
         <div>
           <h3>Reference tail (precomputed, ${(sim.reference_mc || {}).n_sims || "?"} sims)</h3>
           <table class="tight"><thead><tr><th>Method</th><th class="num">p95</th><th class="num">p99</th><th class="num">p99.9</th><th class="num">P(dd&gt;40%)</th></tr></thead>
-          <tbody>${["block_bootstrap", "student_t", "laplace"]
+          <tbody>${["block_bootstrap", "laplace"]
             .map((mname) => {
               const r = (sim.reference_mc || {})[mname] || {};
               return `<tr><td>${mname.replace("_", " ")}</td><td class="num">${fmtPct(r.dd_p95, 1)}</td><td class="num">${fmtPct(r.dd_p99, 1)}</td><td class="num">${fmtPct(r.dd_p999, 1)}</td><td class="num">${fmtPct(r["P(dd>40)"], 1)}</td></tr>`;
             })
             .join("")}</tbody></table>
-          <p class="dim small">Bootstrap is the headline (most pessimistic / preserves clustering). Even the base case carries a large tail &mdash; B4's drawdown is structural; size accordingly.</p>
+          <p class="dim small">Bootstrap is the headline (preserves vol clustering). Laplace is an i.i.d. parametric cross-check. Even the base case carries a large tail &mdash; B4's drawdown is structural; size accordingly.</p>
         </div>
       </div>`;
 
@@ -2781,7 +2750,7 @@
 
     const hashInit = b4ParseHash();
     if (hashInit) {
-      if (hashInit.dist) distEl.value = hashInit.dist;
+      if (hashInit.dist && hashInit.dist !== "t") distEl.value = hashInit.dist;
       if (hashInit.horizon) horizonEl.value = hashInit.horizon;
       if (hashInit.nSims) nsimsEl.value = String(hashInit.nSims);
       if (hashInit.volMult != null) volEl.value = hashInit.volMult;
@@ -2798,7 +2767,7 @@
         if (!el.checked) excluded.push(el.getAttribute("data-etf"));
       });
       return {
-        dist: distEl.value,
+        dist: distEl.value === "t" ? "boot" : distEl.value,
         horizon: Math.max(20, Math.min(756, parseInt(horizonEl.value, 10) || 252)),
         nSims: parseInt(nsimsEl.value, 10) || 4000,
         volMult: parseFloat(volEl.value) || 1.0,
@@ -3278,24 +3247,52 @@
       return;
     }
     const bucketShort = (b) => b.replace("bucket_", "B");
+    const fmtBucketNet = (v) =>
+      v == null || Number.isNaN(Number(v)) ? '<span class="dim">—</span>' : fmtUsd(v);
+    const tol = Number(panel.recon_tol_usd) || 1000;
     const rows = panel.rows
       .map((r) => {
         const buckets = (r.buckets || []).map(bucketShort).join(", ");
+        const diff = r.recon_diff_usd;
+        const diffCls =
+          diff == null
+            ? ""
+            : Math.abs(diff) <= tol
+            ? "ok"
+            : Math.abs(diff) <= tol * 5
+            ? "warn"
+            : "hard";
+        const diffCell =
+          diff == null
+            ? '<td class="num dim">—</td>'
+            : `<td class="num ${diffCls === "hard" ? "row-hard" : diffCls === "warn" ? "row-warn" : ""}" title="Sleeve sum − book net">${fmtUsd(diff)}</td>`;
         return `<tr>
           <td><strong>${safeText(r.underlying)}</strong></td>
           <td>${buckets}</td>
-          <td class="num ${signedClass(r.net_usd)}">${fmtUsd(r.net_usd)}</td>
+          <td class="num ${signedClass(r.net_b1_usd)}">${fmtBucketNet(r.net_b1_usd)}</td>
+          <td class="num ${signedClass(r.net_b2_usd)}">${fmtBucketNet(r.net_b2_usd)}</td>
+          <td class="num ${signedClass(r.net_b4_usd)}">${fmtBucketNet(r.net_b4_usd)}</td>
+          <td class="num ${signedClass(r.book_net_usd)}">${fmtBucketNet(r.book_net_usd)}</td>
+          ${diffCell}
+          <td class="num ${signedClass(r.net_usd)}" title="B1 + B2 + B4 (+ B3/B5 if present)">${fmtUsd(r.net_usd)}</td>
           <td class="num">${fmtUsd(r.gross_usd)}</td>
         </tr>`;
       })
       .join("");
+    const failNote =
+      panel.n_recon_fail > 0
+        ? ` <span class="row-warn">${panel.n_recon_fail} name(s) with |Δ| &gt; ${fmtUsd(tol)}.</span>`
+        : "";
     els.sharedUnderlyingContent.innerHTML = `
-      <p class="dim small">${panel.n_shared} of ${panel.n_underlyings} underlyings span more than one bucket. ${safeText(
+      <p class="dim small">${panel.n_shared} of ${panel.n_underlyings} underlyings span more than one bucket.${failNote} ${safeText(
         panel.note,
         ""
       )}</p>
       <table class="tight sortable"><thead><tr>
-        <th>Underlying</th><th>Buckets</th><th>Net $ (summed)</th><th>Gross $ (summed)</th>
+        <th>Underlying</th><th>Buckets</th>
+        <th>B1 net $</th><th>B2 net $</th><th>B4 net $</th>
+        <th>Book net $</th><th>Δ</th>
+        <th>Sleeve sum</th><th>Gross sum</th>
       </tr></thead><tbody>${rows}</tbody></table>`;
   }
 

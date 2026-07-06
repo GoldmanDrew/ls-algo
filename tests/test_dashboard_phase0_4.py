@@ -163,11 +163,22 @@ def test_shared_underlying_flags_cross_bucket_names(tmp_path):
         "SHARED,SHRT,1,-400,400\n",
         encoding="utf-8",
     )
+    (tmp_path / "net_exposure_by_underlying.csv").write_text(
+        "underlying,symbols,n_legs,net_notional_usd,gross_notional_usd\n"
+        "SHARED,SHARED,2,600,1400\n",
+        encoding="utf-8",
+    )
     panel = compute_shared_underlying_panel(tmp_path)
     assert panel["available"] is True
     assert panel["n_shared"] == 1
-    assert panel["rows"][0]["underlying"] == "SHARED"
-    assert set(panel["rows"][0]["buckets"]) == {"bucket_1", "bucket_4"}
+    row = panel["rows"][0]
+    assert row["underlying"] == "SHARED"
+    assert set(row["buckets"]) == {"bucket_1", "bucket_4"}
+    assert row["net_b1_usd"] == pytest.approx(1000.0)
+    assert row["net_b4_usd"] == pytest.approx(-400.0)
+    assert row["book_net_usd"] == pytest.approx(600.0)
+    assert row["recon_diff_usd"] == pytest.approx(0.0)
+    assert row["recon_ok"] is True
 
 
 def test_movers_panel_splits_winners_and_losers(tmp_path):

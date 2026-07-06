@@ -165,13 +165,10 @@ def main(argv=None) -> int:
         })
 
     perf = perf_from_returns(prv)
-    t_df, t_loc, t_scale = stats.t.fit(arr)
-    t_df = float(max(2.05, min(t_df, 50.0)))
     l_loc, l_scale = stats.laplace.fit(arr)
 
     rng = np.random.default_rng(args.seed)
     boot = mc_block_bootstrap(arr, args.n_mc, HORIZON, args.block_len, rng)
-    tdd = mc_parametric(arr, args.n_mc, HORIZON, rng, "t")
     ldd = mc_parametric(arr, args.n_mc, HORIZON, rng, "laplace")
 
     payload = {
@@ -201,8 +198,6 @@ def main(argv=None) -> int:
             "description": "Portfolio uses proposed_trades.csv rows with gross_target_usd > 0 only.",
             "default_scope": "proposed_book",
         },
-        "fit_student_t": {"df": round(t_df, 3), "loc": round(float(t_loc), 6),
-                          "scale": round(float(t_scale), 6)},
         "fit_laplace": {"loc": round(float(l_loc), 6), "scale": round(float(l_scale), 6)},
         "realized": {"cagr": round(perf["cagr"], 4), "ann_vol": round(perf["vol"], 4),
                      "sharpe": round(perf["sharpe"], 3), "hist_maxdd": round(perf["maxdd"], 4),
@@ -211,7 +206,6 @@ def main(argv=None) -> int:
         "reference_mc": {
             "horizon_days": HORIZON, "n_sims": args.n_mc, "block_len": args.block_len,
             "block_bootstrap": {k.replace("boot_", ""): round(v, 4) for k, v in tail_stats(boot, "boot").items()},
-            "student_t": {k.replace("t_", ""): round(v, 4) for k, v in tail_stats(tdd, "t").items()},
             "laplace": {k.replace("lap_", ""): round(v, 4) for k, v in tail_stats(ldd, "lap").items()},
         },
     }

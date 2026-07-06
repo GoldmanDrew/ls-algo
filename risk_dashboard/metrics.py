@@ -4398,12 +4398,21 @@ def compute_bucket_sleeve_rows(
         else:
             net_cap = gross_cap = margin = None
 
+        gross_usd = sleeve.get("gross_usd")
+        net_usd = sleeve.get("net_usd")
+        if bucket == "bucket_4" and sleeve.get("attribution_available", True):
+            pair_gross = float(totals.get("gross_exposure_bucket_4_pair", 0.0) or 0.0)
+            pair_net = float(totals.get("net_exposure_bucket_4_pair", 0.0) or 0.0)
+            if abs(pair_gross) > 1e-6 or abs(pair_net) > 1e-6:
+                gross_usd = pair_gross
+                net_usd = pair_net
+
         rows.append(
             {
                 "bucket": bucket,
                 "bucket_label": sleeve.get("bucket_label") or BUCKET_LABELS.get(bucket, bucket),
-                "exposure_gross_usd": sleeve.get("gross_usd"),
-                "exposure_net_usd": sleeve.get("net_usd"),
+                "exposure_gross_usd": gross_usd,
+                "exposure_net_usd": net_usd,
                 "target_gross_usd": sleeve.get("target_gross_usd"),
                 "actual_weight": sleeve.get("actual_weight"),
                 "target_weight": sleeve.get("target_weight"),
@@ -4426,7 +4435,8 @@ def compute_bucket_sleeve_rows(
     exposure_note = (
         "Exposure gross/net = delta-normalized (β × notional). "
         "Deployed capital = signed MV on etf_screened_today (screener universe). "
-        "B3 is a flow overlay; B4 gross is ratio-split (pair-view in bucket detail)."
+        "B3 is a flow overlay. B4 uses pair-view gross/net (short underlying + inverse ETF legs); "
+        "ratio-split net reconciles to the book total."
     )
     return {
         "rows": rows,
@@ -4798,26 +4808,60 @@ def compute_shared_underlying_panel(
             slot["net_usd"] += net
             slot["gross_usd"] += gross
 
-    shared = [
-        {
-            "underlying": v["underlying"],
-            "buckets": sorted(v["buckets"].keys()),
-            "bucket_detail": v["buckets"],
-            "net_usd": v["net_usd"],
-            "gross_usd": v["gross_usd"],
-        }
-        for v in by_underlying.values()
-        if len(v["buckets"]) > 1
-    ]
+    book_net_by_u: dict[str, float] = {}
+    book_df = _read_csv_or_empty(accounting_dir / "net_exposure_by_underlying.csv")
+    if not book_df.empty:
+        for _, raw in book_df.iterrows():
+            u = _clean_str(_first_nonblank(raw.get("underlying"), raw.get("symbol")))
+            if not u:
+                continue
+            book_net_by_u[u] = float(raw.get("net_notional_usd", 0.0) or 0.0)
+
+    recon_tol_usd = 1000.0
+
+    def _bucket_net(buckets: dict[str, dict[str, float]], bucket: str) -> float | None:
+        if bucket not in buckets:
+            return None
+        return float(buckets[bucket].get("net_usd", 0.0) or 0.0)
+
+    shared: list[dict[str, Any]] = []
+    for v in by_underlying.values():
+        if len(v["buckets"]) <= 1:
+            continue
+        buckets = v["buckets"]
+        book_net = book_net_by_u.get(v["underlying"])
+        sleeve_sum = float(v["net_usd"])
+        recon_diff = (sleeve_sum - book_net) if book_net is not None else None
+        shared.append(
+            {
+                "underlying": v["underlying"],
+                "buckets": sorted(buckets.keys()),
+                "bucket_detail": buckets,
+                "net_b1_usd": _bucket_net(buckets, "bucket_1"),
+                "net_b2_usd": _bucket_net(buckets, "bucket_2"),
+                "net_b4_usd": _bucket_net(buckets, "bucket_4"),
+                "net_usd": sleeve_sum,
+                "gross_usd": v["gross_usd"],
+                "book_net_usd": book_net,
+                "recon_diff_usd": recon_diff,
+                "recon_ok": (
+                    recon_diff is not None and abs(recon_diff) <= recon_tol_usd
+                ),
+            }
+        )
     shared.sort(key=lambda r: abs(r["gross_usd"]), reverse=True)
+    n_recon_fail = sum(1 for r in shared if r.get("book_net_usd") is not None and not r.get("recon_ok"))
     return {
         "available": True,
         "n_underlyings": len(by_underlying),
         "n_shared": len(shared),
+        "n_recon_fail": n_recon_fail,
+        "recon_tol_usd": recon_tol_usd,
         "rows": shared[:40],
         "note": (
-            "Underlyings appearing in more than one accounting bucket share a single "
-            "broker spot line that nets across sleeves; B4 attribution slices it."
+            "Shared broker spot lines are split across sleeves. "
+            "B1 + B2 + B4 net (per bucket CSV) should match book net on the same underlying; "
+            "Δ flags attribution drift vs net_exposure_by_underlying.csv."
         ),
     }
 
