@@ -1,0 +1,2 @@
+underlying,etf,delta,realized_pnl,unrealized_pnl,dividends,withholding_tax,pil_dividends,borrow_fees,short_credit_interest,other_fees,bond_interest,total_pnl
+SVIX,UVIX,-1.992588,0.0,321.733064,0.0,0.0,0.0,-156.49,103.0182219856808,0.0,0.0,268.26128598568084
