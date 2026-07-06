@@ -6,6 +6,8 @@ import pytest
 
 from scripts.bucket4_eod_pair_charts import (
     B5_SLEEVE,
+    _build_prices_flexible,
+    _pick_etf_px_from_row,
     _reconcile_actual_endpoints,
     _trim_leading_flat_history,
     load_active_b4_pairs_from_proposed,
@@ -396,3 +398,80 @@ def test_chart_builder_writes_pdf_and_summary_for_active_proposed_pairs(tmp_path
     assert "cagr" in summary.columns
     assert "metrics_source" in summary.columns
     assert "vol_shape_source" in summary.columns
+
+
+def test_pick_etf_px_prefers_nav_when_close_price_is_vix_index_spike():
+    row = pd.Series(
+        {
+            "close_price": 70.0,
+            "nav": 3.5,
+            "etf_adj_close": 3.24,
+        }
+    )
+    px = _pick_etf_px_from_row(row, prev_a_px=3.5, b_px=22.5, prev_b_px=22.5)
+    assert px == pytest.approx(3.5)
+
+
+def test_pick_etf_px_holds_last_good_on_unanimous_corrupt_jump():
+    row = pd.Series(
+        {
+            "close_price": 62.48,
+            "nav": 62.48,
+            "etf_adj_close": 62.48,
+        }
+    )
+    px = _pick_etf_px_from_row(row, prev_a_px=3.09, b_px=23.61, prev_b_px=23.30)
+    assert px == pytest.approx(3.09)
+
+
+def test_build_prices_flexible_sanitizes_uvix_style_metrics_corruption():
+    metrics = pd.DataFrame(
+        [
+            {
+                "date": "2026-06-29",
+                "ticker": "UVIX",
+                "close_price": 70.0,
+                "nav": 3.5,
+                "etf_adj_close": 3.24,
+                "underlying_adj_close": 22.5,
+            },
+            {
+                "date": "2026-06-30",
+                "ticker": "UVIX",
+                "close_price": 64.8,
+                "nav": 3.5,
+                "etf_adj_close": 3.09,
+                "underlying_adj_close": 23.30,
+            },
+            {
+                "date": "2026-07-01",
+                "ticker": "UVIX",
+                "close_price": 62.48,
+                "nav": 62.48,
+                "etf_adj_close": 62.48,
+                "underlying_adj_close": 23.61,
+            },
+        ]
+        + [
+            {
+                "date": f"2026-01-{d:02d}",
+                "ticker": "UVIX",
+                "close_price": 3.0 + 0.01 * i,
+                "nav": 3.0 + 0.01 * i,
+                "etf_adj_close": 3.0 + 0.01 * i,
+                "underlying_adj_close": 20.0 + 0.01 * i,
+            }
+            for i, d in enumerate(range(2, 22), start=0)
+        ]
+    )
+    prices, reason, nrows = _build_prices_flexible(
+        metrics,
+        "UVIX",
+        pd.Timestamp("2026-01-01"),
+        underlying="SVIX",
+    )
+    assert reason == "ok"
+    assert nrows >= 20
+    last = prices.iloc[-1]
+    assert last["a_px"] == pytest.approx(3.09)
+    assert last["b_px"] == pytest.approx(23.61)

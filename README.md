@@ -130,6 +130,13 @@ python rebalance_strategy.py --run-date 2026-04-22 --skip-phase-1
 
 Targeted maintenance runner for ETF shorts that are under target versus the current plan. By default it builds discrepancies from live IBKR positions; it can fall back to accounting discrepancy CSVs.
 
+Two lanes run together (no flag required):
+
+- **Bucket 1/2 (positive-delta income/core shorts):** SELL more ETF, then **BUY** underlying at `|delta| × fill`.
+- **Bucket 4 (inverse-decay pairs):** SELL more inverse ETF, then **SELL** underlying at the pair's **live** underlying:inverse ratio (from `net_exposure_bucket_4_detail.csv` when available).
+
+All underlying legs are **netted by symbol** before execution so a B1/B2 buy and a B4 sell on the same name (e.g. MSTR) collapse into one order. Artifacts: `data/runs/<date>/execution/harvest_*.csv` including `harvest_underlying_netting.csv`.
+
 ```bash
 python harvest_underexposed_shorts.py --dry-run
 python harvest_underexposed_shorts.py --run-date 2026-04-22 --top-n 20
@@ -171,7 +178,7 @@ Everything operational reads from this file. **Do not treat the table below as a
 | **`portfolio.rebalance.*`** | Minimum trade and net-exposure triggers used by `rebalance_strategy` and `harvest_underexposed_shorts`. |
 | **`portfolio.sleeves.core_leveraged`** | Core (levered long ETFs): `target_weight`, `min_delta_used`, optional **`min_net_decay_annual`**, **`net_decay_hysteresis`**, `weighting` (decay_score vs equal, caps, blend). |
 | **`portfolio.sleeves.yieldboost`** | YieldBoost / bucket‑2 sleeve: **`is_yieldboost`** names from the screener only, `rules.min_net_edge_annual`, `weighting`; budget vs core from **`target_weight`**. |
-| **`portfolio.sleeves.inverse_decay_bucket4`** | Inverse decay pairs: **`enabled`** master switch, borrow / vol / edge rules, **`partial_hedge_ratio`**, shares-outstanding cap, weighting. |
+| **`portfolio.sleeves.inverse_decay_bucket4`** | Inverse decay pairs: **`enabled`** master switch, borrow / vol / edge rules, shares-outstanding cap, weighting. |
 | **`portfolio.sleeves.flow_program`** | Flow shorts universe, schedule, **`fixed_usd_per_week`** (or deployment base from YAML), **fixed weights** summing to **1.0**. |
 
 `generate_trade_plan.py` documents sleeve behaviour in its module docstring; keep YAML and that docstring aligned when you change rules.
@@ -205,16 +212,16 @@ Full operator playbook, edge-case table, and verification checklist live in [`SP
 
 - **Sleeves** (`core_leveraged`, `yieldboost`, `inverse_decay_bucket4`, `flow_program`) are **portfolio construction** labels written into **`proposed_trades.csv`** and used by execution / rebalancing.
 - **Accounting buckets** (`bucket_1` … `bucket_4`) in **`ibkr_accounting.py`** are **attribution / reporting** groupings (e.g. high-delta levered vs inverse decay). They are related concepts but **not identical** to YAML sleeve names. When interpreting `pnl_bucket_*.csv`, read the accounting script headers.
-- **Bucket 4 (inverse decay)** attributes PnL and exposure at the **pair** level: short inverse ETF **and** short underlying. The structural short underlying leg is sized at `held inverse ETF position × β × partial_hedge_ratio` (default `0.75`) and shows up as a **negative-signed** row in `net_exposure_bucket_4_detail.csv`, so `gross_exposure_bucket_4 > |net_exposure_bucket_4|`.
+- **Bucket 4 (inverse decay)** attributes PnL and exposure at the **pair** level: short inverse ETF **and** short underlying. The structural short underlying leg is sized at `held inverse ETF position × β` and shows up as a **negative-signed** row in `net_exposure_bucket_4_detail.csv`, so `gross_exposure_bucket_4 > |net_exposure_bucket_4|`.
 - **B4 underlying attribution rule** (`accounting.b4_underlying_attribution`):
   - **`etf_implied`** (default) — the latest `inverse_decay_bucket4` plan row wins when present; otherwise the structural short is derived from held inverse ETFs (`compute_implied_b4_short`). This recovers the short on names like BE / CLSK / CRCL even after the rebalancer nets the sleeve order into a single broker stock line and the FIFO `qty_b4` ledger loses the tag.
   - **`plan_only`** — legacy behaviour: structural short only attributed when the latest plan still carries the sleeve row.
   - **`ledger_fifo`** — disable structural shorts entirely; trust the FIFO share ledger only.
-  See `accounting.b4_attribution_min_usd` (ignore noise below threshold) and `accounting.b4_partial_hedge_ratio_default` (registry fallback). The `b4_source` column in `b4_plan_ledger_reconciliation.csv` reports which signal won per underlying.
+  See `accounting.b4_attribution_min_usd` (ignore noise below threshold). The `b4_source` column in `b4_plan_ledger_reconciliation.csv` reports which signal won per underlying.
 - **Stable B1/B2 ratio-split** (`accounting.b12_spot_split_method`, `accounting.b12_pnl_mode`):
   - **Spot ↔ ETF sleeve rule** — physical spot on an underlying may only offset **held** ETF sleeves on that name: B1 spot requires a levered ETF (β > 1.5), B2 spot requires a standard/yieldboost ETF (0 < β ≤ 1.5), B4 spot requires a non-flow inverse ETF. Order references that name an ETF apply only when that sleeve is present; stale ledger `qty_b2` with no B2 ETF is zeroed at report time.
   - **Full Flex replay** — with `ledger_full_replay_include_bucket2: true` (default), every underlying with a bucket-2 ETF in the screened map or open book replays all trades from the restate window; add extras via `ledger_full_replay_underlyings` (e.g. MSTR, INTC).
-  - **`b12_spot_exposure_method`** (default `sleeve_balance`) — ratio-split **net exposure** only. **`sleeve_balance`**: long spot offsets each short ETF sleeve up to `|etf_net|` (flat B1/B2 when fully hedged); **unpaired stock** → `net_exposure_unbucketed` (not forced into B1). **`hedge_ratio`**: B2 hedge first, then B1; orphan → B1. **B4 ratio-split** (`totals.json` → `net_exposure_bucket_4`): inverse ETF legs (100% B4) **plus** structural short underlying carved from the spot line (plan or ETF-implied at `partial_hedge_ratio`, default **0.75**). Reconciliation: `B1 + B2 + B4 + unbucketed = book`. **`b12_spot_split_method`** (default `ledger_fifo`) still drives **PnL** spot (`ratio_spot_*`) and may differ from exposure until the B2 share ledger is replayed. Files: `net_exposure_bucket_{1,2,4}.csv`, `net_exposure_unbucketed.csv`, `net_exposure_bucket_4_detail.csv`.
+  - **`b12_spot_exposure_method`** (default `sleeve_balance`) — ratio-split **net exposure** only. **`sleeve_balance`**: long spot offsets each short ETF sleeve up to `|etf_net|` (flat B1/B2 when fully hedged); **unpaired stock** → `net_exposure_unbucketed` (not forced into B1). **`hedge_ratio`**: B2 hedge first, then B1; orphan → B1. **B4 ratio-split** (`totals.json` → `net_exposure_bucket_4`): inverse ETF legs (100% B4) **plus** structural short underlying carved from the spot line (plan or ETF-implied). Reconciliation: `B1 + B2 + B4 + unbucketed = book`. **`b12_spot_split_method`** (default `ledger_fifo`) still drives **PnL** spot (`ratio_spot_*`) and may differ from exposure until the B2 share ledger is replayed. Files: `net_exposure_bucket_{1,2,4}.csv`, `net_exposure_unbucketed.csv`, `net_exposure_bucket_4_detail.csv`.
   - **`ledger_fifo`** (exposure method) — exposure spot matches FIFO ledger (legacy).
   - **`held_exposure_waterfall`** — legacy ratio-split: spot is carved by held ETF hedge-residual + plan/ETF-implied B4 structural short (large B1↔B2 relabeling).
   - **`lot_timed_strict`** (default PnL) — FIFO lot ledger for realized and unrealized; plan-B4 `inject_slice` uses ledger unrealized weights (not held exposure when orphan). Yieldboost list (`yieldboost_spot_b2_underlyings`) forces spot→B2 when a B2 sleeve is held.

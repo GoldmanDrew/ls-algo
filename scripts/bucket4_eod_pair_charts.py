@@ -46,6 +46,9 @@ ACTIVE_B4_SLEEVES = frozenset({"inverse_decay_bucket4", "volatility_etp_bucket5"
 B5_SLEEVE = "volatility_etp_bucket5"
 MIN_BACKTEST_PRICE_ROWS = 20
 TRADING_DAYS = 252.0
+# Reject ETF marks when a_px/b_px ratio jumps implausibly vs the prior row
+# (guards against VIX-index-style corruption in etf_metrics_daily).
+MAX_ETF_LEG_RATIO_LOG_JUMP = float(os.environ.get("EOD_B4_MAX_ETF_LEG_RATIO_LOG_JUMP", "1.5"))
 # Minimum fraction of actual-history dates that must carry a per-leg PnL value
 # (from ``pnl_bucket_4_by_symbol.csv``) before the leg-decomposition lines are
 # drawn. Below this they are sparse fragments that don't sum to the pair total.
@@ -904,7 +907,109 @@ def _resolve_model_path(path: Path, env_key: str) -> Path:
     return Path(path)
 
 
-def _build_prices_flexible(metrics: pd.DataFrame, etf: str, start: pd.Timestamp) -> tuple[pd.DataFrame | None, str, int]:
+def _etf_px_candidates(row: pd.Series) -> list[float]:
+    out: list[float] = []
+    for col in ("etf_adj_close", "nav", "close_price"):
+        if col not in row.index:
+            continue
+        v = row[col]
+        if pd.notna(v) and float(v) > 0:
+            out.append(float(v))
+    return out
+
+
+def _pick_etf_px_from_row(
+    row: pd.Series,
+    prev_a_px: float | None,
+    *,
+    b_px: float | None = None,
+    prev_b_px: float | None = None,
+    max_ratio_log_jump: float = MAX_ETF_LEG_RATIO_LOG_JUMP,
+) -> float:
+    """Pick a sane ETF mark when close_price / nav / etf_adj_close disagree."""
+    candidates = _etf_px_candidates(row)
+    if not candidates:
+        return float("nan")
+    if prev_a_px is None or not np.isfinite(prev_a_px) or prev_a_px <= 0:
+        for col in ("etf_adj_close", "nav", "close_price"):
+            if col in row.index:
+                v = row[col]
+                if pd.notna(v) and float(v) > 0:
+                    return float(v)
+        return candidates[0]
+
+    best = min(candidates, key=lambda v: abs(np.log(v / prev_a_px)))
+    unanimous = len({round(c, 6) for c in candidates}) == 1
+    if unanimous and abs(np.log(best / prev_a_px)) > max_ratio_log_jump:
+        return prev_a_px
+
+    if (
+        b_px is not None
+        and prev_b_px is not None
+        and np.isfinite(b_px)
+        and np.isfinite(prev_b_px)
+        and b_px > 0
+        and prev_b_px > 0
+    ):
+        prev_ratio = prev_a_px / prev_b_px
+        new_ratio = best / b_px
+        if prev_ratio > 0 and abs(np.log(new_ratio / prev_ratio)) > max_ratio_log_jump:
+            return prev_a_px
+    return best
+
+
+def _build_etf_px_series(sub: pd.DataFrame, *, b_px_series: pd.Series | None = None) -> pd.Series:
+    """Row-wise ETF marks with continuity / leg-ratio sanity checks."""
+    sub = sub.sort_values("date")
+    out: list[float] = []
+    prev_a: float | None = None
+    prev_b: float | None = None
+    if b_px_series is not None:
+        if len(b_px_series) == len(sub) and b_px_series.index.equals(sub.index):
+            b_vals = b_px_series.to_numpy(dtype=float)
+        else:
+            b_idx = pd.DatetimeIndex(pd.to_datetime(sub["date"], errors="coerce")).normalize()
+            b_vals = b_px_series.reindex(b_idx).to_numpy(dtype=float)
+    else:
+        b_vals = None
+    for i, (_, row) in enumerate(sub.iterrows()):
+        b_px = None if b_vals is None else float(b_vals[i]) if np.isfinite(b_vals[i]) else None
+        px = _pick_etf_px_from_row(row, prev_a, b_px=b_px, prev_b_px=prev_b)
+        out.append(px)
+        if np.isfinite(px) and px > 0:
+            prev_a = float(px)
+        if b_px is not None and b_px > 0:
+            prev_b = float(b_px)
+    return pd.Series(out, index=sub.index, dtype=float)
+
+
+def _underlying_b_px_series(metrics: pd.DataFrame, underlying: str, dates: pd.Series) -> pd.Series | None:
+    """Leg-B prices from the underlying ticker's own metrics row when present."""
+    und = _norm(underlying)
+    sub = metrics[metrics["ticker"].astype(str).str.upper().eq(und)].copy()
+    if sub.empty:
+        return None
+    sub["date"] = pd.to_datetime(sub["date"], errors="coerce")
+    for c in ("close_price", "nav", "etf_adj_close", "underlying_adj_close"):
+        if c in sub.columns:
+            sub[c] = pd.to_numeric(sub[c], errors="coerce")
+    sub = sub.dropna(subset=["date"]).drop_duplicates("date").sort_values("date")
+    sub["b_px"] = _build_etf_px_series(sub)
+    sub = sub.dropna(subset=["b_px"])
+    sub = sub[sub["b_px"] > 0]
+    if sub.empty:
+        return None
+    aligned = pd.Series(sub["b_px"].to_numpy(), index=pd.DatetimeIndex(sub["date"]).normalize())
+    return aligned.reindex(pd.to_datetime(dates).dt.normalize())
+
+
+def _build_prices_flexible(
+    metrics: pd.DataFrame,
+    etf: str,
+    start: pd.Timestamp,
+    *,
+    underlying: str | None = None,
+) -> tuple[pd.DataFrame | None, str, int]:
     sub = metrics[metrics["ticker"].astype(str).str.upper().eq(_norm(etf))].copy()
     if sub.empty:
         return None, "ticker_missing_from_metrics", 0
@@ -912,25 +1017,27 @@ def _build_prices_flexible(metrics: pd.DataFrame, etf: str, start: pd.Timestamp)
     for c in ("close_price", "nav", "etf_adj_close", "underlying_adj_close"):
         if c in sub.columns:
             sub[c] = pd.to_numeric(sub[c], errors="coerce")
-    if "etf_px" not in sub.columns:
-        etf_px = sub.get("etf_adj_close", pd.Series(np.nan, index=sub.index)).where(
-            sub.get("etf_adj_close", pd.Series(np.nan, index=sub.index)) > 0
-        )
-        etf_px = etf_px.fillna(sub.get("close_price", pd.Series(np.nan, index=sub.index)).where(
-            sub.get("close_price", pd.Series(np.nan, index=sub.index)) > 0
-        ))
-        etf_px = etf_px.fillna(sub.get("nav", pd.Series(np.nan, index=sub.index)).where(
-            sub.get("nav", pd.Series(np.nan, index=sub.index)) > 0
-        ))
-        sub["etf_px"] = etf_px
-    sub = sub.dropna(subset=["date", "etf_px", "underlying_adj_close"])
-    sub = sub.drop_duplicates("date").sort_values("date")
+    sub = sub.dropna(subset=["date"]).drop_duplicates("date").sort_values("date")
     sub = sub[sub["date"] >= start]
-    sub = sub[(sub["etf_px"] > 0) & (sub["underlying_adj_close"] > 0)]
+    if sub.empty:
+        return None, "ticker_missing_from_metrics", 0
+
+    und_b_px = None
+    if underlying:
+        und_b_px = _underlying_b_px_series(metrics, underlying, sub["date"])
+    fallback_b = sub.get("underlying_adj_close", pd.Series(np.nan, index=sub.index))
+    if und_b_px is not None:
+        sub["b_px"] = und_b_px.where(und_b_px > 0).fillna(fallback_b)
+    else:
+        sub["b_px"] = fallback_b
+
+    sub["etf_px"] = _build_etf_px_series(sub, b_px_series=sub["b_px"])
+    sub = sub.dropna(subset=["date", "etf_px", "b_px"])
+    sub = sub[(sub["etf_px"] > 0) & (sub["b_px"] > 0)]
     if len(sub) < MIN_BACKTEST_PRICE_ROWS:
         return None, f"insufficient_price_history:{len(sub)}<{MIN_BACKTEST_PRICE_ROWS}", int(len(sub))
     prices = pd.DataFrame(
-        {"a_px": sub["etf_px"].to_numpy(), "b_px": sub["underlying_adj_close"].to_numpy()},
+        {"a_px": sub["etf_px"].to_numpy(), "b_px": sub["b_px"].to_numpy()},
         index=pd.DatetimeIndex(sub["date"]).normalize(),
     )
     return prices, "ok", int(len(prices))
@@ -1063,7 +1170,8 @@ def build_model_pair_results(
         }, cfg.tag
 
     try:
-        metrics = _load_metrics_filtered_any(metrics_csv, set(active_pairs["etf"].astype(str)))
+        metric_tickers = set(active_pairs["etf"].astype(str)) | set(active_pairs["underlying"].astype(str))
+        metrics = _load_metrics_filtered_any(metrics_csv, metric_tickers)
         metrics["ticker"] = metrics["ticker"].astype(str).map(_norm)
         metrics["date"] = pd.to_datetime(metrics["date"], errors="coerce")
         vs_hist = load_vol_shape_history(vol_shape_json) if vol_shape_json is not None and vol_shape_json.is_file() else {}
@@ -1085,7 +1193,9 @@ def build_model_pair_results(
             sub["date"].min() if not sub.empty else None,
             sub["date"].max() if not sub.empty else None,
         )
-        prices, reason, nrows = _build_prices_flexible(metrics, etf, model_start)
+        prices, reason, nrows = _build_prices_flexible(
+            metrics, etf, model_start, underlying=str(r["underlying"])
+        )
         price_status[pair] = (reason, nrows)
         if prices is None or prices.empty:
             continue
