@@ -519,6 +519,18 @@ svg.spark { display: block; }
 .pnl-bucket-fill.pos { background: #1a7f4b; }
 .pnl-bucket-fill.neg { background: #c0392b; }
 .pnl-bucket-val { font-size: 12px; text-align: right; }
+.pnl-equity-chart { display: block; margin: 8px 0 12px; max-width: 100%; }
+.pnl-recon {
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  margin: 8px 0;
+  background: var(--panel-bg, #1a1d24);
+}
+.pnl-recon.ok { border-left: 3px solid #1a7f4b; }
+.pnl-recon.warn { border-left: 3px solid #c0392b; }
+.pnl-bucket-mover-block { margin-bottom: 16px; }
+.pnl-bucket-mover-block h4 { margin: 0 0 6px; font-size: 13px; }
 
 /* ============================================================ */
 /* Bucket 4 risk simulator                                       */

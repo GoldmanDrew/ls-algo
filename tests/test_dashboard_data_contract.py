@@ -114,6 +114,9 @@ def test_write_run_manifest_and_verify_latest(tmp_path):
         "drawdown_panel": {},
         "pnl_panel": {},
         "movers_panel": {},
+        "bucket_movers_panel": {},
+        "component_attribution_panel": {},
+        "bucket_drawdown_panel": {},
         "display_sleeve_groups": [],
     }
     (out / f"{run_date}.json").write_text(json.dumps(snap), encoding="utf-8")

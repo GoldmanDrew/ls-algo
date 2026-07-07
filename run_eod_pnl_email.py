@@ -42,6 +42,7 @@ from reporting_scope import (
     screened_etf_and_underlying_sets as _screened_etf_and_underlying_sets,
     screened_universe_symbols as _screened_universe_symbols,
 )
+from risk_dashboard.pnl_ledger import upsert_bucket_underlying_history
 
 
 def _load_screened_for_run(run_date: str) -> pd.DataFrame:
@@ -91,6 +92,7 @@ RUNS_ROOT = PROJECT_ROOT / "data" / "runs"
 PNL_HISTORY_CSV = LEDGER_DIR / "pnl_history.csv"
 PLOT_PNG = LEDGER_DIR / "pnl_since_2026-02-27.png"
 ATTRIBUTION_HISTORY_CSV = LEDGER_DIR / "pnl_attribution_history.csv"
+BUCKET_UNDERLYING_HISTORY_CSV = LEDGER_DIR / "pnl_bucket_underlying_history.csv"
 PLOT_ATTRIBUTION_PNG = LEDGER_DIR / "pnl_attribution_timeseries.png"
 START_DATE = "2026-02-27"
 TOP_NET_EXPOSURE_MIN_ABS_USD = 500.0
@@ -2866,6 +2868,11 @@ def main() -> int:
 
     flex_positions_xml = PROJECT_ROOT / "data" / "runs" / run_date / "ibkr_flex" / "flex_positions.xml"
     att_hist = update_attribution_history(run_date, totals, pnl_symbol_csv, flex_positions_xml)
+    upsert_bucket_underlying_history(
+        run_date,
+        PROJECT_ROOT / "data" / "runs" / run_date / "accounting",
+        BUCKET_UNDERLYING_HISTORY_CSV,
+    )
     att_plot_path = make_attribution_plot(att_hist)
 
     # 5b) Bucket 4 per-pair PnL + hedge-ratio charts (fail-soft; env-gated)

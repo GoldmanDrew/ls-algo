@@ -26,17 +26,28 @@
     generatedAtLabel: document.getElementById("generated-at-label"),
     cockpitStrip: document.getElementById("cockpit-strip"),
     pnlStrip: document.getElementById("pnl-strip"),
+    pnlEquityChart: document.getElementById("pnl-equity-chart"),
+    pnlBucketDd: document.getElementById("pnl-bucket-dd"),
     drawdownMeta: document.getElementById("drawdown-meta"),
     pnlMeta: document.getElementById("pnl-meta"),
     pnlSummary: document.getElementById("pnl-summary"),
+    pnlRolling: document.getElementById("pnl-rolling"),
     pnlControls: document.getElementById("pnl-controls"),
     pnlDailyChart: document.getElementById("pnl-daily-chart"),
     pnlDailyTable: document.getElementById("pnl-daily-table"),
     pnlWeeklyTable: document.getElementById("pnl-weekly-table"),
+    pnlReconBanner: document.getElementById("pnl-recon-banner"),
     pnlBucketChart: document.getElementById("pnl-bucket-chart"),
+    pnlBucketContribTable: document.getElementById("pnl-bucket-contrib-table"),
+    pnlBucketMovers: document.getElementById("pnl-bucket-movers"),
+    pnlComponentChart: document.getElementById("pnl-component-chart"),
     pnlTableTitle: document.getElementById("pnl-table-title"),
+    moversControls: document.getElementById("movers-controls"),
+    moversWinnersTitle: document.getElementById("movers-winners-title"),
+    moversLosersTitle: document.getElementById("movers-losers-title"),
     moversWinners: document.getElementById("movers-winners"),
     moversLosers: document.getElementById("movers-losers"),
+    moversNote: document.getElementById("movers-note"),
     borrowShockContent: document.getElementById("borrow-shock-content"),
     borrowShockMeta: document.getElementById("borrow-shock-meta"),
     sharedUnderlyingContent: document.getElementById("shared-underlying-content"),
@@ -527,6 +538,173 @@
       .join("");
     return `<div class="pnl-bucket-bars">${rows}</div>
       <p class="dim small">${safeText(opts?.caption || "")}</p>`;
+  }
+
+  const PNL_BUCKET_COLORS = {
+    bucket_1: "#2563eb",
+    bucket_2: "#7c3aed",
+    bucket_3: "#0891b2",
+    bucket_4: "#ea580c",
+    bucket_5: "#ca8a04",
+    stock_sleeves: "#64748b",
+  };
+
+  function pnlEquityDrawdownSvg(curve, opts) {
+    const pts = (curve || []).filter((p) => p && p.equity_usd != null);
+    if (pts.length < 2) return `<p class="dim">Not enough equity history to chart.</p>`;
+    const width = opts?.width || 720;
+    const height = opts?.height || 160;
+    const padL = 48;
+    const padR = 12;
+    const padT = 12;
+    const padB = 28;
+    const innerW = width - padL - padR;
+    const innerH = height - padT - padB;
+    const equities = pts.map((p) => Number(p.equity_usd));
+    const dds = pts.map((p) => Number(p.drawdown_usd || 0));
+    const minEq = Math.min(...equities);
+    const maxEq = Math.max(...equities);
+    const spanEq = maxEq - minEq || 1;
+    const maxDdAbs = Math.max(...dds.map((d) => Math.abs(d)), 1);
+    const eqLine = pts
+      .map((p, i) => {
+        const x = padL + (i / (pts.length - 1)) * innerW;
+        const y = padT + innerH - ((Number(p.equity_usd) - minEq) / spanEq) * innerH;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" ");
+    const ddArea = [
+      `${padL},${padT + innerH}`,
+      ...pts.map((p, i) => {
+        const x = padL + (i / (pts.length - 1)) * innerW;
+        const ddNorm = Math.abs(Number(p.drawdown_usd || 0)) / maxDdAbs;
+        const y = padT + innerH - ddNorm * (innerH * 0.35);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }),
+      `${padL + innerW},${padT + innerH}`,
+    ].join(" ");
+    const last = pts[pts.length - 1];
+    return `<svg viewBox="0 0 ${width} ${height}" width="100%" class="pnl-equity-chart" preserveAspectRatio="xMidYMid meet">
+      <polygon points="${ddArea}" fill="#c0392b" opacity="0.15"/>
+      <polyline fill="none" stroke="#16537e" stroke-width="2" points="${eqLine}"/>
+      <text x="${padL}" y="${padT + 8}" class="pnl-axis-label">Equity (line) · drawdown depth (shaded)</text>
+      <text x="${width - padR}" y="${height - 8}" text-anchor="end" class="pnl-axis-label">${safeText(last.date)} · ${fmtUsd(last.equity_usd)}</text>
+    </svg>`;
+  }
+
+  function pnlStackedBarChartSvg(rows, bucketKeys, labels, opts) {
+    const data = (rows || []).filter((r) => r && r.buckets);
+    if (!data.length) return `<p class="dim">No bucket history to chart.</p>`;
+    const width = opts?.width || 720;
+    const height = opts?.height || 200;
+    const padL = 48;
+    const padR = 12;
+    const padT = 12;
+    const padB = 28;
+    const innerW = width - padL - padR;
+    const innerH = height - padT - padB;
+    const totals = data.map((r) =>
+      bucketKeys.reduce((s, k) => s + Number((r.buckets || {})[k] || 0), 0)
+    );
+    const maxAbs = Math.max(...totals.map((v) => Math.abs(v)), ...data.flatMap((r) => bucketKeys.map((k) => Math.abs(Number((r.buckets || {})[k] || 0)))), 1);
+    const zeroY = padT + innerH / 2;
+    const barW = Math.max(2, innerW / data.length - 2);
+    const bars = data
+      .map((r, i) => {
+        const x = padL + i * (innerW / data.length) + 1;
+        let posStack = 0;
+        let negStack = 0;
+        const segs = bucketKeys
+          .map((k) => {
+            const v = Number((r.buckets || {})[k] || 0);
+            if (Math.abs(v) < 0.01) return "";
+            const h = (Math.abs(v) / maxAbs) * (innerH / 2 - 2);
+            let y;
+            if (v >= 0) {
+              y = zeroY - posStack - h;
+              posStack += h;
+            } else {
+              y = zeroY + negStack;
+              negStack += h;
+            }
+            const fill = PNL_BUCKET_COLORS[k] || "#888";
+            const lbl = (labels && labels[k]) || k;
+            return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${fill}" opacity="0.9"><title>${safeText(lbl)}: ${fmtUsdSigned(v)}</title></rect>`;
+          })
+          .join("");
+        const total = totals[i];
+        return `${segs}<title>${safeText(r.date)} total ${fmtUsdSigned(total)}</title>`;
+      })
+      .join("");
+    return `<svg viewBox="0 0 ${width} ${height}" width="100%" class="pnl-bar-chart" preserveAspectRatio="xMidYMid meet">
+      <line x1="${padL}" y1="${zeroY}" x2="${width - padR}" y2="${zeroY}" stroke="#ccc" stroke-width="1"/>
+      ${bars}
+    </svg>`;
+  }
+
+  function pnlBucketContribTableHtml(periodData, labels, bucketKeys) {
+    if (!periodData || !periodData.buckets) return "";
+    const book = Number(periodData.book_usd || 0);
+    const rows = bucketKeys
+      .filter((k) => PNL_RECON_KEYS.indexOf(k) >= 0 || Math.abs(Number(periodData.buckets[k] || 0)) > 0.5)
+      .map((k) => {
+        const v = Number(periodData.buckets[k] || 0);
+        const pctBook = periodData.bucket_pct_book && periodData.bucket_pct_book[k];
+        return `<tr>
+          <td>${safeText((labels && labels[k]) || k)}</td>
+          <td class="num ${signedClass(v)}">${fmtUsdSigned(v)}</td>
+          <td class="num">${pctBook == null ? "-" : fmtPct(pctBook, 1)}</td>
+          <td class="num">${periodData.book_pct_nav == null ? "-" : fmtPct(Number(v) / (periodData.book_usd || 1) * (periodData.book_pct_nav || 0), 2)}</td>
+        </tr>`;
+      })
+      .join("");
+    return `<table class="tight"><thead><tr><th>Bucket</th><th class="num">P&amp;L</th><th class="num">% book</th><th class="num">% NAV</th></tr></thead><tbody>${rows}</tbody>
+      <tfoot><tr><td><strong>Book total</strong></td><td class="num ${signedClass(book)}"><strong>${fmtUsdSigned(book)}</strong></td><td colspan="2"></td></tr></tfoot></table>`;
+  }
+
+  const PNL_RECON_KEYS = ["bucket_1", "bucket_2", "bucket_3", "bucket_4", "bucket_5"];
+
+  function pnlReconBannerHtml(periodData, tol) {
+    if (!periodData) return "";
+    const delta = Number(periodData.recon_delta_usd || 0);
+    const ok = periodData.recon_ok !== false;
+    const cls = ok ? "ok" : "warn";
+    return `<div class="pnl-recon ${cls}">Book ${fmtUsdSigned(periodData.book_usd)} · bucket sum ${fmtUsdSigned(periodData.bucket_sum_usd)} · Δ ${fmtUsdSigned(delta)}${ok ? "" : ` (tolerance ${fmtUsd(tol || 100)})`}</div>`;
+  }
+
+  function pnlComponentBarsHtml(periodData) {
+    const comps = (periodData && periodData.components) || [];
+    if (!comps.length) return `<p class="dim">No component moves in this period.</p>`;
+    const maxAbs = Math.max(...comps.map((c) => Math.abs(Number(c.usd || 0))), 1);
+    const rows = comps
+      .map((c) => {
+        const v = Number(c.usd || 0);
+        const pct = (Math.abs(v) / maxAbs) * 100;
+        const cls = v >= 0 ? "pos" : "neg";
+        return `<div class="pnl-bucket-row">
+          <div class="pnl-bucket-label">${safeText(c.label)}</div>
+          <div class="pnl-bucket-track"><div class="pnl-bucket-fill ${cls}" style="width:${pct.toFixed(1)}%"></div></div>
+          <div class="pnl-bucket-val num ${cls}">${fmtUsdSigned(v)}</div>
+        </div>`;
+      })
+      .join("");
+    return `<div class="pnl-bucket-bars">${rows}</div>
+      <p class="dim small">Total ${fmtUsdSigned(periodData.total_usd)} · ${fmtPct(periodData.total_pct_nav, 2)} of NAV</p>`;
+  }
+
+  function moverTableHtml(rows, cls) {
+    return `<table class="tight"><thead><tr><th>Underlying</th><th>Symbols</th><th>P&amp;L</th></tr></thead>
+     <tbody>${
+       (rows || [])
+         .map(
+           (r) => `<tr>
+        <td><strong>${safeText(r.underlying)}</strong></td>
+        <td class="dim">${safeText(r.symbols, "-")}</td>
+        <td class="num ${cls}">${fmtUsdSigned(r.total_pnl)}</td>
+      </tr>`
+         )
+         .join("") || "<tr><td colspan=3 class=dim>(none)</td></tr>"
+     }</tbody></table>`;
   }
 
   function deltaBadge(value, opts) {
@@ -2119,7 +2297,7 @@
       pnl: [
         () => renderPerformance(snap),
         () => renderPnlPanel(snap),
-        () => renderMovers(snap.movers_panel || {}),
+        () => renderMovers(snap),
       ],
       risk: [
         () => renderSlideRisk(snap.slide_risk_panel || {}),
@@ -2907,6 +3085,7 @@
 
   function renderPerformance(snap) {
     const dd = snap.drawdown_panel || {};
+    const bktDd = snap.bucket_drawdown_panel || {};
     if (els.pnlStrip) {
       const items = [
         {
@@ -2946,14 +3125,56 @@
         )
         .join("");
     }
+    if (els.pnlEquityChart) {
+      els.pnlEquityChart.innerHTML = dd.available
+        ? pnlEquityDrawdownSvg(dd.curve || [])
+        : `<p class="dim">${safeText(dd.reason, "equity chart unavailable")}</p>`;
+    }
+    if (els.pnlBucketDd && bktDd.available) {
+      const top = (bktDd.rows || []).slice(0, 3);
+      els.pnlBucketDd.innerHTML =
+        `<strong>Bucket max drawdown (cum P&amp;L):</strong> ` +
+        top
+          .map(
+            (r) =>
+              `${safeText(r.bucket_label)} ${fmtUsdSigned(r.max_drawdown_usd)} (${safeText(r.max_drawdown_date, "?")})`
+          )
+          .join(" · ");
+    } else if (els.pnlBucketDd) {
+      els.pnlBucketDd.innerHTML = "";
+    }
     if (els.drawdownMeta) {
       els.drawdownMeta.innerHTML = dd.available
-        ? `<span class="dim small">Equity = NAV + cumulative PnL over ${dd.n_points} runs. Day-to-day P&amp;L is on the <a href="#pnl-section">P&amp;L tab</a>.</span>`
+        ? `<span class="dim small">Equity = NAV + cumulative PnL over ${dd.n_points} runs. Day-to-day P&amp;L is below.</span>`
         : `<span class="dim small">${safeText(dd.reason, "drawdown unavailable")}</span>`;
     }
   }
 
-  let _pnlPanelState = { view: "daily", lookback: 40, bucketPeriod: "today" };
+  let _pnlPanelState = {
+    view: "daily",
+    lookback: 40,
+    bucketPeriod: "today",
+    chartMode: "stacked_buckets",
+    moversScope: "book",
+    moversBucket: "bucket_1",
+  };
+
+  const PNL_PERIOD_OPTIONS = [
+    { value: "today", label: "Today" },
+    { value: "wtd", label: "Week to date" },
+    { value: "mtd", label: "Month to date" },
+    { value: "ytd", label: "YTD (cumulative)" },
+    { value: "prior_week", label: "Prior week" },
+    { value: "prior_month", label: "Prior month" },
+    { value: "last_week", label: "Prior week (alt)" },
+  ];
+
+  function pnlPeriodData(panel, period) {
+    const periods = panel.periods || {};
+    if (periods[period]) return periods[period];
+    if (period === "last_week" && periods.prior_week) return periods.prior_week;
+    return null;
+  }
 
   function renderPnlPanel(snap) {
     const panel = snap.pnl_panel || {};
@@ -2964,7 +3185,7 @@
           "P&amp;L history unavailable"
         )}</span>`;
       }
-      ["pnlSummary", "pnlControls", "pnlDailyChart", "pnlDailyTable", "pnlWeeklyTable", "pnlBucketChart"].forEach(
+      ["pnlSummary", "pnlRolling", "pnlControls", "pnlDailyChart", "pnlDailyTable", "pnlWeeklyTable", "pnlReconBanner", "pnlBucketChart", "pnlBucketContribTable", "pnlBucketMovers", "pnlComponentChart"].forEach(
         (k) => {
           if (els[k]) els[k].innerHTML = "";
         }
@@ -3026,36 +3247,9 @@
         .join("");
     }
 
-    function bucketRowsForPeriod(period) {
-      if (period === "wtd") {
-        const agg = {};
-        (panel.daily || []).forEach((r) => {
-          const d = new Date(r.date + "T12:00:00");
-          const run = new Date((panel.run_date || r.date) + "T12:00:00");
-          const weekStart = new Date(run);
-          weekStart.setDate(run.getDate() - ((run.getDay() + 6) % 7));
-          if (d < weekStart) return;
-          Object.entries(r.buckets || {}).forEach(([k, v]) => {
-            agg[k] = (agg[k] || 0) + Number(v || 0);
-          });
-        });
-        return { buckets: agg, caption: "Week to date bucket moves" };
-      }
-      if (period === "last_week") {
-        const wk = (panel.weekly || []);
-        const last = wk.length >= 2 ? wk[wk.length - 2] : null;
-        return {
-          buckets: (last && last.buckets) || {},
-          caption: last
-            ? `Prior week ${safeText(last.week_label)} (${safeText(last.week_start)} – ${safeText(last.week_end)})`
-            : "No prior week",
-        };
-      }
-      const today = (panel.daily || [])[panel.daily.length - 1];
-      return {
-        buckets: (today && today.buckets) || {},
-        caption: today ? `Today (${safeText(today.date)}) bucket moves` : "Today",
-      };
+    function bucketCaption(period) {
+      const opt = PNL_PERIOD_OPTIONS.find((o) => o.value === period);
+      return (opt && opt.label) || period;
     }
 
     function paint() {
@@ -3064,8 +3258,18 @@
       const lb = _pnlPanelState.lookback;
       const dailySlice =
         lb === "ytd" ? dailyAll : dailyAll.slice(-Math.min(lb, dailyAll.length));
+      const period = _pnlPanelState.bucketPeriod;
+      const periodData = pnlPeriodData(panel, period);
+      const compPanel = snap.component_attribution_panel || {};
+      const compPeriod = (compPanel.periods || {})[period] || (compPanel.periods || {}).today;
+      const bucketKeys = Object.keys(bucketLabels);
+      const chartBucketKeys = PNL_RECON_KEYS.concat(["stock_sleeves"]);
 
       if (els.pnlControls) {
+        const periodOpts = PNL_PERIOD_OPTIONS.map(
+          (o) =>
+            `<option value="${o.value}" ${period === o.value ? "selected" : ""}>${o.label}</option>`
+        ).join("");
         els.pnlControls.innerHTML = `
           <label class="pnl-ctl">View
             <select id="pnl-view">
@@ -3080,22 +3284,35 @@
               <option value="ytd" ${_pnlPanelState.lookback === "ytd" ? "selected" : ""}>All in panel</option>
             </select>
           </label>
-          <label class="pnl-ctl">Bucket period
-            <select id="pnl-bucket-period">
-              <option value="today" ${_pnlPanelState.bucketPeriod === "today" ? "selected" : ""}>Today</option>
-              <option value="wtd" ${_pnlPanelState.bucketPeriod === "wtd" ? "selected" : ""}>Week to date</option>
-              <option value="last_week" ${_pnlPanelState.bucketPeriod === "last_week" ? "selected" : ""}>Prior week</option>
+          <label class="pnl-ctl">Chart
+            <select id="pnl-chart-mode">
+              <option value="total" ${_pnlPanelState.chartMode === "total" ? "selected" : ""}>Book total</option>
+              <option value="stacked_buckets" ${_pnlPanelState.chartMode === "stacked_buckets" ? "selected" : ""}>Stacked buckets</option>
             </select>
+          </label>
+          <label class="pnl-ctl">Bucket period
+            <select id="pnl-bucket-period">${periodOpts}</select>
           </label>`;
         const viewEl = document.getElementById("pnl-view");
         const lbEl = document.getElementById("pnl-lookback");
+        const cmEl = document.getElementById("pnl-chart-mode");
         const bpEl = document.getElementById("pnl-bucket-period");
-        if (viewEl) viewEl.addEventListener("change", () => { _pnlPanelState.view = viewEl.value; paint(); });
+        if (viewEl) viewEl.addEventListener("change", () => { _pnlPanelState.view = viewEl.value; paint(); renderMovers(snap); });
         if (lbEl) lbEl.addEventListener("change", () => {
           _pnlPanelState.lookback = lbEl.value === "ytd" ? "ytd" : Number(lbEl.value);
           paint();
         });
-        if (bpEl) bpEl.addEventListener("change", () => { _pnlPanelState.bucketPeriod = bpEl.value; paint(); });
+        if (cmEl) cmEl.addEventListener("change", () => { _pnlPanelState.chartMode = cmEl.value; paint(); });
+        if (bpEl) bpEl.addEventListener("change", () => {
+          _pnlPanelState.bucketPeriod = bpEl.value;
+          paint();
+          renderMovers(snap);
+        });
+      }
+
+      if (els.pnlRolling && panel.rolling) {
+        const r = panel.rolling;
+        els.pnlRolling.innerHTML = `Lookback stats: ${r.n_days || 0} days · win rate ${fmtPct(r.win_rate, 0)} · best ${fmtUsdSigned(r.best_day_usd)} · worst ${fmtUsdSigned(r.worst_day_usd)} · avg ${fmtUsdSigned(r.avg_daily_usd)}`;
       }
 
       const chartRows =
@@ -3103,18 +3320,25 @@
           ? weeklyAll.slice(-16).map((w) => ({
               date: w.week_end || w.week_label,
               daily_usd: w.daily_usd,
+              buckets: w.buckets || {},
             }))
           : dailySlice;
 
       if (els.pnlDailyChart) {
-        els.pnlDailyChart.innerHTML = pnlBarChartSvg(chartRows, { width: 720, height: 200 });
+        if (_pnlPanelState.chartMode === "stacked_buckets" && _pnlPanelState.view === "daily") {
+          els.pnlDailyChart.innerHTML = pnlStackedBarChartSvg(chartRows, chartBucketKeys, bucketLabels, {
+            width: 720,
+            height: 200,
+          });
+        } else {
+          els.pnlDailyChart.innerHTML = pnlBarChartSvg(chartRows, { width: 720, height: 200 });
+        }
       }
       if (els.pnlTableTitle) {
         els.pnlTableTitle.textContent =
           _pnlPanelState.view === "weekly" ? "Daily detail (reference)" : "Daily P&L";
       }
 
-      const bucketKeys = Object.keys(bucketLabels);
       const dailyHead =
         `<table class="tight"><thead><tr><th>Date</th><th class="num">Daily</th><th class="num">% NAV</th>` +
         bucketKeys.map((k) => `<th class="num">${safeText(bucketLabels[k] || k)}</th>`).join("") +
@@ -3141,58 +3365,155 @@
       }
 
       if (els.pnlWeeklyTable) {
-        const wkHead = `<table class="tight"><thead><tr><th>Week</th><th>End</th><th class="num">Days</th><th class="num">P&amp;L</th><th class="num">% NAV</th></tr></thead><tbody>`;
+        const wkHead =
+          `<table class="tight"><thead><tr><th>Week</th><th>End</th><th class="num">Days</th><th class="num">P&amp;L</th><th class="num">% NAV</th>` +
+          bucketKeys.map((k) => `<th class="num">${safeText(bucketLabels[k] || k)}</th>`).join("") +
+          `</tr></thead><tbody>`;
         const wkBody = [...weeklyAll]
           .reverse()
-          .map(
-            (w) => `<tr>
+          .map((w) => {
+            const bks = w.buckets || {};
+            return `<tr>
             <td>${safeText(w.week_label)}</td>
             <td>${safeText(w.week_end)}</td>
             <td class="num">${w.n_days ?? "-"}</td>
             <td class="num ${signedClass(w.daily_usd)}">${fmtUsdSigned(w.daily_usd)}</td>
             <td class="num">${fmtPct(w.daily_pct_nav, 2)}</td>
-          </tr>`
-          )
+            ${bucketKeys
+              .map((k) => `<td class="num ${signedClass(bks[k])}">${fmtUsdSigned(bks[k])}</td>`)
+              .join("")}
+          </tr>`;
+          })
           .join("");
         els.pnlWeeklyTable.innerHTML = wkBody
           ? wkHead + wkBody + `</tbody></table>`
           : `<p class="dim">No weekly rows.</p>`;
       }
 
-      const bp = bucketRowsForPeriod(_pnlPanelState.bucketPeriod);
+      const bpBuckets = (periodData && periodData.buckets) || {};
+      if (els.pnlReconBanner) {
+        els.pnlReconBanner.innerHTML = periodData
+          ? pnlReconBannerHtml(periodData, panel.recon_tol_usd)
+          : "";
+      }
       if (els.pnlBucketChart) {
-        els.pnlBucketChart.innerHTML = pnlBucketBarsHtml(bp.buckets, bucketLabels, {
-          caption: bp.caption,
+        els.pnlBucketChart.innerHTML = pnlBucketBarsHtml(bpBuckets, bucketLabels, {
+          caption: `${bucketCaption(period)} bucket moves`,
         });
       }
+      if (els.pnlBucketContribTable) {
+        els.pnlBucketContribTable.innerHTML = periodData
+          ? pnlBucketContribTableHtml(periodData, bucketLabels, bucketKeys)
+          : "";
+      }
+      if (els.pnlComponentChart) {
+        els.pnlComponentChart.innerHTML =
+          compPanel.available && compPeriod
+            ? pnlComponentBarsHtml(compPeriod)
+            : `<p class="dim">${safeText(compPanel.reason, "Component attribution unavailable")}</p>`;
+      }
+
+      renderBucketMovers(snap, period);
     }
 
     paint();
   }
 
-  function renderMovers(panel) {
-    const moverTable = (rows, cls) =>
-      `<table class="tight"><thead><tr><th>Underlying</th><th>Symbols</th><th>P&amp;L</th></tr></thead>
-       <tbody>${
-         (rows || [])
-           .map(
-             (r) => `<tr>
-          <td><strong>${safeText(r.underlying)}</strong></td>
-          <td class="dim">${safeText(r.symbols, "-")}</td>
-          <td class="num ${cls}">${fmtUsdSigned(r.total_pnl)}</td>
-        </tr>`
-           )
-           .join("") || "<tr><td colspan=3 class=dim>(none)</td></tr>"
-       }</tbody></table>`;
+  function renderBucketMovers(snap, period) {
+    const bmp = snap.bucket_movers_panel || {};
+    const labels = (snap.pnl_panel || {}).bucket_labels || {};
+    if (!els.pnlBucketMovers) return;
+    if (!bmp.available) {
+      els.pnlBucketMovers.innerHTML = `<p class="dim">${safeText(bmp.reason, "Bucket movers unavailable")}</p>`;
+      return;
+    }
+    const periodBlock = (bmp.by_period || {})[period];
+    const usePeriod = bmp.history_available && periodBlock;
+    const blocks = usePeriod ? periodBlock.by_bucket : bmp.snapshot_ytd || {};
+    const title = usePeriod
+      ? `Period P&amp;L by name (${safeText(periodBlock.start_date || "start")} → ${safeText(periodBlock.end_date || "")})`
+      : "YTD cumulative by name (latest snapshot)";
+    const sections = Object.keys(blocks)
+      .sort()
+      .map((bucket) => {
+        const slot = blocks[bucket] || {};
+        const lbl = labels[bucket] || bucket;
+        return `<div class="pnl-bucket-mover-block">
+          <h4>${safeText(lbl)}</h4>
+          <div class="two-col">
+            <div><div class="dim small">Winners</div>${moverTableHtml(slot.winners, "pos")}</div>
+            <div><div class="dim small">Losers</div>${moverTableHtml(slot.losers, "neg")}</div>
+          </div>
+        </div>`;
+      })
+      .join("");
+    els.pnlBucketMovers.innerHTML = `<p class="dim small">${title}</p>${sections || "<p class=dim>No bucket mover rows.</p>"}`;
+  }
+
+  function renderMovers(snap) {
+    const panel = snap.movers_panel || {};
+    const bmp = snap.bucket_movers_panel || {};
+    const period = _pnlPanelState.bucketPeriod || "today";
+    const bucketLabels = (snap.pnl_panel || {}).bucket_labels || {};
+    const bucketKeys = Object.keys(bucketLabels).filter((k) => k.startsWith("bucket_"));
+
+    if (els.moversControls) {
+      els.moversControls.innerHTML = `
+        <label class="pnl-ctl">Movers scope
+          <select id="movers-scope">
+            <option value="book" ${_pnlPanelState.moversScope === "book" ? "selected" : ""}>Book</option>
+            <option value="bucket" ${_pnlPanelState.moversScope === "bucket" ? "selected" : ""}>Single bucket</option>
+          </select>
+        </label>
+        <label class="pnl-ctl">Bucket
+          <select id="movers-bucket">
+            ${bucketKeys.map((k) => `<option value="${k}" ${_pnlPanelState.moversBucket === k ? "selected" : ""}>${safeText(bucketLabels[k] || k)}</option>`).join("")}
+          </select>
+        </label>
+        <span class="dim small">Period follows Bucket period below (${safeText(period)})</span>`;
+      const scopeEl = document.getElementById("movers-scope");
+      const bucketEl = document.getElementById("movers-bucket");
+      if (scopeEl) scopeEl.addEventListener("change", () => { _pnlPanelState.moversScope = scopeEl.value; renderMovers(snap); });
+      if (bucketEl) bucketEl.addEventListener("change", () => { _pnlPanelState.moversBucket = bucketEl.value; renderMovers(snap); });
+    }
+
+    let winners = (panel && panel.winners) || [];
+    let losers = (panel && panel.losers) || [];
+    let note = (panel && panel.note) || "";
+
+    if (_pnlPanelState.moversScope === "bucket" && bmp.available) {
+      const periodBlock = (bmp.by_period || {})[period];
+      const bucket = _pnlPanelState.moversBucket || "bucket_1";
+      if (periodBlock && periodBlock.by_bucket && periodBlock.by_bucket[bucket]) {
+        winners = periodBlock.by_bucket[bucket].winners || [];
+        losers = periodBlock.by_bucket[bucket].losers || [];
+        note = `Period movers for ${bucketLabels[bucket] || bucket} (${period}).`;
+      } else if (bmp.snapshot_ytd && bmp.snapshot_ytd[bucket]) {
+        winners = bmp.snapshot_ytd[bucket].winners || [];
+        losers = bmp.snapshot_ytd[bucket].losers || [];
+        note = `YTD snapshot movers for ${bucketLabels[bucket] || bucket}.`;
+      }
+    }
+
+    if (els.moversWinnersTitle) {
+      els.moversWinnersTitle.textContent =
+        _pnlPanelState.moversScope === "bucket" ? "Bucket winners" : "Top winners";
+    }
+    if (els.moversLosersTitle) {
+      els.moversLosersTitle.textContent =
+        _pnlPanelState.moversScope === "bucket" ? "Bucket losers" : "Top losers";
+    }
     if (els.moversWinners) {
-      els.moversWinners.innerHTML = (panel && panel.available)
-        ? moverTable(panel.winners, "pos")
-        : `<p class="dim">${safeText(panel?.reason, "no mover data")}</p>`;
+      els.moversWinners.innerHTML =
+        panel && panel.available
+          ? moverTableHtml(winners, "pos")
+          : `<p class="dim">${safeText(panel?.reason, "no mover data")}</p>`;
     }
     if (els.moversLosers) {
-      els.moversLosers.innerHTML = (panel && panel.available)
-        ? moverTable(panel.losers, "neg")
-        : "";
+      els.moversLosers.innerHTML = panel && panel.available ? moverTableHtml(losers, "neg") : "";
+    }
+    if (els.moversNote) {
+      els.moversNote.textContent = note;
     }
   }
 
