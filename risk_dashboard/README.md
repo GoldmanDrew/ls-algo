@@ -12,9 +12,9 @@ deploy** as `site/data/latest.json` (no GitHub API at runtime).
 
 ```
 EOD pipeline → data/runs/<date>/accounting/
-       ↓ (Daily workflow: dashboard job)
-scripts/dashboard_pipeline.py → risk_dashboard/data/latest.json → commit
-       ↓ (Daily workflow: deploy job)
+       ↓ (same EOD job, after PnL email)
+scripts/dashboard_pipeline.py → risk_dashboard/data/latest.json
+       ↓ (commit + deploy job)
 GitHub Pages → SPA + login gate → fetch ./data/latest.json
 ```
 
@@ -57,7 +57,7 @@ site/
 ```
 .github/workflows/
 ??? eod_pnl_email.yml     (Daily: screener + EOD + snapshot + deploy + recovery)
-??? _dashboard_build.yml  (reusable snapshot build; not shown in sidebar)
+??? _dashboard_build.yml  (reusable snapshot build for manual workflow only)
 ??? risk_dashboard.yml    (Manual: rebuild & deploy only)
 ```
 
@@ -158,21 +158,18 @@ close the tab or hit *Sign out*. There is no third-party storage.
 
 | Trigger | What happens |
 |---|---|
-| **Daily** workflow (`eod_pnl_email.yml`) after EOD succeeds | build snapshot → commit → deploy Pages |
+| **Daily** workflow (`eod_pnl_email.yml`) EOD job | Flex + accounting + PnL email + dashboard snapshot + single commit |
+| **Daily** workflow deploy job | bundle `latest.json` → GitHub Pages |
 | **Daily** workflow 10:00 UTC recovery cron | rebuild snapshot only if manifest/`latest.json` is stale |
 | `workflow_dispatch` on **Manual: Dashboard Rebuild & Deploy** | full rebuild + deploy (or deploy-only if `skip_build=true`) |
-| `push` to `main` touching `site/**` or `risk_dashboard/**` code | redeploy via manual workflow only (daily path is authoritative) |
+| `push` to `main` (non-data paths) | screener only; EOD/dashboard run on schedule or manual dispatch |
 
-The build step:
+The build step (runs in the EOD job after PnL email, or via manual workflow):
 
 ```bash
-python -m pytest risk_dashboard/tests -q
-python -m risk_dashboard.build_site \
-    --run-date "$RUN_DATE" \
-    --runs-root data/runs \
-    --nav-usd "$MAGIS_NAV_USD" \
-    --out-dir risk_dashboard/data
-git add risk_dashboard/data && git commit ... && git push
+python scripts/dashboard_pipeline.py --run-date "$RUN_DATE" --write-manifest --fail-if-stale
+python -m pytest risk_dashboard/tests tests/test_dashboard_accounting_parity.py tests/test_dashboard_phase0_4.py -q
+git add data/ risk_dashboard/data && git commit ... && git push
 ```
 
 The deploy step uploads `site/` as a Pages artifact and deploys it.
@@ -249,9 +246,8 @@ Each row in the JSON also carries `sector_source` and
    `DEFAULT_BROAD_INDEX_BETA` (1.00). `shrinkage_applied` is True
    whenever the prior contributed more than 5% (i.e. `w < 0.95`).
 5. **Persist** `data/cache/beta_summary.json` with every
-   `BetaResult` + the sector means. CI commits the close cache and
-   summary back to `main` after each successful build (`[skip ci]`),
-   so the next run never starts cold.
+   `BetaResult` + the sector means. The daily EOD commit includes
+   the close cache and summary, so the next run never starts cold.
 
 ### UI badges
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build + verify dashboard snapshot (shared by EOD tail and risk_dashboard CI)."""
+"""Build + verify dashboard snapshot (EOD daily job + manual risk_dashboard CI)."""
 from __future__ import annotations
 
 import argparse

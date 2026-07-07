@@ -140,7 +140,7 @@ jobs:
         || (github.event_name == 'schedule' && github.event.schedule == '0 6 * * 1-6')
       )
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     outputs:
       run_date: ${{ needs.calendar.outputs.run_date }}
     steps:
@@ -149,9 +149,16 @@ jobs:
           token: ${{ secrets.GH_PAT || github.token }}
           ref: main
 
+      - uses: actions/checkout@v4
+        with:
+          repository: GoldmanDrew/etf-dashboard
+          ref: main
+          path: etf-dashboard
+
       - uses: ./.github/actions/python-repo-setup
         with:
           python-version: "3.11"
+          install-pytest: "true"
 
       - name: Run EOD pipeline + email
         env:
@@ -175,31 +182,37 @@ jobs:
           EOD_SKIP_PIPELINE=1 python run_eod_pnl_email.py
           python scripts/run_data_contract.py --run-date "$RUN_DATE"
 
-      - name: Commit PnL outputs
+      - name: Build + verify risk dashboard snapshot
+        env:
+          RUN_DATE: ${{ needs.calendar.outputs.run_date }}
+        run: |
+          python scripts/dashboard_pipeline.py \
+            --run-date "$RUN_DATE" \
+            --write-manifest \
+            --fail-if-stale
+
+      - name: Run dashboard tests
+        run: |
+          python -m pytest risk_dashboard/tests tests/test_dashboard_accounting_parity.py tests/test_dashboard_phase0_4.py -q
+
+      - name: Commit EOD + dashboard outputs
+        env:
+          RUN_DATE: ${{ needs.calendar.outputs.run_date }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/ || true
+          git add data/ risk_dashboard/data "data/runs/${RUN_DATE}/manifest.json" || true
           if git diff --cached --quiet; then
-            echo "No PnL changes"
+            echo "No EOD or dashboard changes"
           else
-            git commit -m "eod: $(date -u +%Y-%m-%d) pnl history update"
+            git commit -m "eod: $(date -u +%Y-%m-%d) pnl + risk dashboard snapshot"
             git pull --no-rebase -X ours origin main || true
             git push
           fi
 
-  dashboard:
+  deploy:
     needs: [calendar, eod]
     if: needs.eod.result == 'success'
-    uses: ./.github/workflows/_dashboard_build.yml
-    with:
-      run_date: ${{ needs.calendar.outputs.run_date }}
-      commit_snapshot: true
-      run_tests: true
-
-  deploy:
-    needs: [calendar, dashboard]
-    if: needs.dashboard.result == 'success'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -266,32 +279,6 @@ jobs:
       - uses: ./.github/actions/deploy-pages
         id: deployment
 
-  warm-beta:
-    needs: [calendar, dashboard]
-    if: needs.dashboard.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GH_PAT || github.token }}
-      - uses: ./.github/actions/python-repo-setup
-        with:
-          python-version: "3.11"
-      - name: Warm beta cache
-        env:
-          RUN_DATE: ${{ needs.calendar.outputs.run_date }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --no-rebase origin main || true
-          git add data/cache/beta_history data/cache/beta_summary.json 2>/dev/null || true
-          if git diff --cached --quiet; then
-            exit 0
-          fi
-          git commit -m "warm beta cache ${RUN_DATE} [skip ci]"
-          git pull --no-rebase -X ours origin main || true
-          git push
-
   recover:
     needs: [calendar, deploy]
     if: >-
@@ -308,6 +295,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GH_PAT || github.token }}
+
+      - uses: actions/checkout@v4
+        with:
+          repository: GoldmanDrew/etf-dashboard
+          ref: main
+          path: etf-dashboard
 
       - uses: ./.github/actions/python-repo-setup
         with:
