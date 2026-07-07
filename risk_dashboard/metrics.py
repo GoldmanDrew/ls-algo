@@ -4567,7 +4567,15 @@ def compute_drawdown_panel(
             max_dd_pct = dd_pct
             max_dd_date = str(r["date"])
         peak_equity = running_peak
-        points.append({"date": str(r["date"]), "cum_pnl_usd": cum, "equity_usd": equity})
+        points.append(
+            {
+                "date": str(r["date"]),
+                "cum_pnl_usd": cum,
+                "equity_usd": equity,
+                "drawdown_usd": dd,
+                "drawdown_pct": dd_pct,
+            }
+        )
 
     last = points[-1]
     cur_equity = last["equity_usd"]
@@ -4607,8 +4615,170 @@ PNL_PANEL_WEEKLY_LOOKBACK = 16
 
 def _pnl_panel_bucket_labels() -> dict[str, str]:
     labels = {k: BUCKET_LABELS.get(k, k) for k, _ in PNL_PANEL_BUCKET_KEYS}
-    labels["stock_sleeves"] = "Stock sleeves (unbucketed)"
+    labels["stock_sleeves"] = "Stock sleeves (B1+B2+B4+B5 rollup)"
     return labels
+
+
+PNL_RECON_BUCKET_KEYS: tuple[str, ...] = (
+    "bucket_1",
+    "bucket_2",
+    "bucket_3",
+    "bucket_4",
+    "bucket_5",
+)
+
+PNL_RECON_TOL_USD = 100.0
+
+COMPONENT_ATTRIBUTION_COLS: list[tuple[str, str]] = [
+    ("long_realized_pnl", "Long realized"),
+    ("long_unrealized_pnl", "Long unrealized"),
+    ("short_realized_pnl", "Short realized"),
+    ("short_unrealized_pnl", "Short unrealized"),
+    ("borrow_fees", "Borrow fees"),
+    ("short_credit_interest", "Short credit interest"),
+    ("other_fees", "Other fees"),
+    ("dividends", "Dividends"),
+    ("withholding_tax", "Withholding tax"),
+    ("pil_dividends", "PIL dividends"),
+    ("bond_interest", "Bond interest"),
+]
+
+
+def _pnl_empty_buckets() -> dict[str, float]:
+    return {k: 0.0 for k, _ in PNL_PANEL_BUCKET_KEYS}
+
+
+def _pnl_sum_daily_buckets(
+    daily_rows: list[dict[str, Any]],
+    pred,
+) -> tuple[float, dict[str, float]]:
+    book = 0.0
+    buckets = _pnl_empty_buckets()
+    for row in daily_rows:
+        if not pred(row):
+            continue
+        book += float(row.get("daily_usd") or 0.0)
+        for key, val in (row.get("buckets") or {}).items():
+            buckets[key] = buckets.get(key, 0.0) + float(val or 0.0)
+    return book, buckets
+
+
+def _pnl_period_payload(
+    book_usd: float,
+    buckets: dict[str, float],
+    *,
+    nav_usd: float,
+) -> dict[str, Any]:
+    recon_keys = PNL_RECON_BUCKET_KEYS
+    bucket_sum = sum(float(buckets.get(k) or 0.0) for k in recon_keys)
+    delta = book_usd - bucket_sum
+    pct_book: dict[str, float | None] = {}
+    for key in buckets:
+        val = float(buckets.get(key) or 0.0)
+        pct_book[key] = (val / book_usd) if abs(book_usd) > 1e-6 else None
+    return {
+        "book_usd": book_usd,
+        "book_pct_nav": (book_usd / nav_usd) if nav_usd > 0 else None,
+        "buckets": buckets,
+        "bucket_pct_book": pct_book,
+        "bucket_sum_usd": bucket_sum,
+        "recon_delta_usd": delta,
+        "recon_ok": abs(delta) <= PNL_RECON_TOL_USD,
+    }
+
+
+def _pnl_build_periods(
+    daily_rows: list[dict[str, Any]],
+    weekly_rows: list[dict[str, Any]],
+    *,
+    run_dt,
+    nav_usd: float,
+    ytd_usd: float,
+    df: pd.DataFrame,
+) -> dict[str, dict[str, Any]]:
+    from datetime import datetime as _dt
+
+    def _parse(d: str) -> _dt:
+        return _dt.strptime(d, "%Y-%m-%d")
+
+    week_start = run_dt.date().fromordinal(run_dt.toordinal() - run_dt.weekday())
+    month_start = run_dt.replace(day=1).date()
+    prior_week_ref = (run_dt.date().fromordinal(run_dt.toordinal() - 7)).isocalendar()
+    prior_month = (run_dt.replace(day=1) - pd.Timedelta(days=1)).strftime("%Y-%m")
+
+    today_book, today_buckets = _pnl_sum_daily_buckets(
+        daily_rows, lambda r: r["date"] == daily_rows[-1]["date"]
+    )
+    wtd_book, wtd_buckets = _pnl_sum_daily_buckets(
+        daily_rows, lambda r: _parse(r["date"]).date() >= week_start
+    )
+    mtd_book, mtd_buckets = _pnl_sum_daily_buckets(
+        daily_rows, lambda r: _parse(r["date"]).date() >= month_start
+    )
+    prior_week_book, prior_week_buckets = _pnl_sum_daily_buckets(
+        daily_rows,
+        lambda r: _parse(r["date"]).isocalendar()[:2] == prior_week_ref[:2],
+    )
+    prior_month_book, prior_month_buckets = _pnl_sum_daily_buckets(
+        daily_rows, lambda r: r["date"].startswith(prior_month)
+    )
+
+    ytd_buckets = _pnl_empty_buckets()
+    if not df.empty:
+        first = df.iloc[0]
+        last = df.iloc[-1]
+        for key, col in PNL_PANEL_BUCKET_KEYS:
+            ytd_buckets[key] = float(last.get(col) or 0.0) - float(first.get(col) or 0.0)
+
+    last_week = weekly_rows[-1] if weekly_rows else None
+    prior_week_row = weekly_rows[-2] if len(weekly_rows) >= 2 else None
+
+    periods: dict[str, dict[str, Any]] = {
+        "today": _pnl_period_payload(today_book, today_buckets, nav_usd=nav_usd),
+        "wtd": _pnl_period_payload(wtd_book, wtd_buckets, nav_usd=nav_usd),
+        "mtd": _pnl_period_payload(mtd_book, mtd_buckets, nav_usd=nav_usd),
+        "ytd": _pnl_period_payload(ytd_usd, ytd_buckets, nav_usd=nav_usd),
+        "prior_week": _pnl_period_payload(prior_week_book, prior_week_buckets, nav_usd=nav_usd),
+        "prior_month": _pnl_period_payload(prior_month_book, prior_month_buckets, nav_usd=nav_usd),
+    }
+    if last_week:
+        periods["current_week"] = _pnl_period_payload(
+            float(last_week.get("daily_usd") or 0.0),
+            dict(last_week.get("buckets") or {}),
+            nav_usd=nav_usd,
+        )
+    if prior_week_row:
+        periods["last_week"] = _pnl_period_payload(
+            float(prior_week_row.get("daily_usd") or 0.0),
+            dict(prior_week_row.get("buckets") or {}),
+            nav_usd=nav_usd,
+        )
+    return periods
+
+
+def _pnl_rolling_stats(daily_rows: list[dict[str, Any]], *, nav_usd: float) -> dict[str, Any]:
+    if not daily_rows:
+        return {}
+    vals = [float(r.get("daily_usd") or 0.0) for r in daily_rows]
+    wins = sum(1 for v in vals if v > 0)
+    losses = sum(1 for v in vals if v < 0)
+    best = max(vals)
+    worst = min(vals)
+    mean = sum(vals) / len(vals)
+    var = sum((v - mean) ** 2 for v in vals) / max(len(vals) - 1, 1)
+    stdev = var ** 0.5
+    return {
+        "n_days": len(vals),
+        "win_days": wins,
+        "loss_days": losses,
+        "win_rate": wins / len(vals) if vals else None,
+        "best_day_usd": best,
+        "worst_day_usd": worst,
+        "avg_daily_usd": mean,
+        "daily_stdev_usd": stdev,
+        "sharpe_like": (mean / stdev) if stdev > 1e-6 else None,
+        "lookback_pct_nav": (sum(vals) / nav_usd) if nav_usd > 0 else None,
+    }
 
 
 def compute_pnl_panel(
@@ -4745,11 +4915,23 @@ def compute_pnl_panel(
             }
         )
 
+    periods = _pnl_build_periods(
+        daily_rows,
+        weekly_rows,
+        run_dt=run_dt,
+        nav_usd=nav,
+        ytd_usd=ytd_usd,
+        df=df,
+    )
+    rolling = _pnl_rolling_stats(daily_rows[-daily_lookback:], nav_usd=nav)
+
     return {
         "available": True,
         "source": "pnl_history.csv",
         "run_date": str(run_date or last_daily["date"]),
         "bucket_labels": _pnl_panel_bucket_labels(),
+        "recon_bucket_keys": list(PNL_RECON_BUCKET_KEYS),
+        "recon_tol_usd": PNL_RECON_TOL_USD,
         "summary": {
             "daily_usd": last_daily["daily_usd"],
             "daily_pct_nav": last_daily["daily_pct_nav"],
@@ -4765,6 +4947,8 @@ def compute_pnl_panel(
             "prior_month_usd": prior_mtd_usd,
             "prior_month_pct_nav": (prior_mtd_usd / nav) if nav > 0 else None,
         },
+        "periods": periods,
+        "rolling": rolling,
         "daily": daily_rows[-daily_lookback:],
         "weekly": weekly_rows[-weekly_lookback:],
         "n_daily_rows": len(daily_rows),
@@ -4902,6 +5086,355 @@ def compute_movers_panel(
     }
 
 
+def compute_bucket_drawdown_panel(
+    pnl_history_csv: Path,
+    *,
+    nav_usd: float,
+    run_date: str | None = None,
+) -> dict[str, Any]:
+    """Per-bucket max drawdown on cumulative bucket PnL (excludes stock_sleeves rollup)."""
+    if not pnl_history_csv.is_file():
+        return {"available": False, "reason": f"missing {pnl_history_csv.name}"}
+    bucket_cols = [(k, c) for k, c in PNL_PANEL_BUCKET_KEYS if k in PNL_RECON_BUCKET_KEYS]
+    usecols = ["date"] + [c for _, c in bucket_cols]
+    try:
+        df = pd.read_csv(pnl_history_csv, usecols=usecols)
+    except Exception as exc:  # pragma: no cover
+        return {"available": False, "reason": f"unreadable pnl_history.csv: {exc}"}
+    if df.empty:
+        return {"available": False, "reason": "pnl_history.csv is empty"}
+    df["date"] = df["date"].astype(str)
+    if run_date:
+        df = df[df["date"] <= str(run_date)]
+    df = df.sort_values("date")
+    rows: list[dict[str, Any]] = []
+    for key, col in bucket_cols:
+        peak = float("-inf")
+        max_dd = 0.0
+        max_dd_date = None
+        cur_cum = 0.0
+        for _, r in df.iterrows():
+            cum = float(r.get(col) or 0.0)
+            cur_cum = cum
+            peak = max(peak, cum)
+            dd = cum - peak
+            if dd < max_dd:
+                max_dd = dd
+                max_dd_date = str(r["date"])
+        rows.append(
+            {
+                "bucket": key,
+                "bucket_label": BUCKET_LABELS.get(key, key),
+                "cum_pnl_usd": cur_cum,
+                "max_drawdown_usd": max_dd,
+                "max_drawdown_date": max_dd_date,
+            }
+        )
+    rows.sort(key=lambda r: abs(r["max_drawdown_usd"]), reverse=True)
+    return {
+        "available": True,
+        "rows": rows,
+        "note": "Bucket drawdown on cumulative YTD bucket PnL (not NAV-scaled).",
+    }
+
+
+def _movers_from_cum_history(
+    hist_df: pd.DataFrame,
+    *,
+    end_date: str,
+    start_date: str | None,
+    top_n: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    end_rows = hist_df[hist_df["date"] == end_date]
+    if end_rows.empty:
+        return [], []
+    if start_date:
+        start_rows = hist_df[hist_df["date"] == start_date]
+    else:
+        start_rows = pd.DataFrame()
+    start_map: dict[tuple[str, str], float] = {}
+    if not start_rows.empty:
+        for _, r in start_rows.iterrows():
+            start_map[(str(r["bucket"]), str(r["underlying"]))] = float(r["cum_pnl_usd"] or 0.0)
+    rows: list[dict[str, Any]] = []
+    for _, r in end_rows.iterrows():
+        key = (str(r["bucket"]), str(r["underlying"]))
+        end_val = float(r["cum_pnl_usd"] or 0.0)
+        start_val = start_map.get(key, 0.0)
+        delta = end_val - start_val
+        if abs(delta) < 0.5:
+            continue
+        rows.append(
+            {
+                "underlying": str(r["underlying"]),
+                "symbols": _clean_str(r.get("symbols")),
+                "total_pnl": delta,
+                "cum_pnl_usd": end_val,
+            }
+        )
+    winners = sorted([r for r in rows if r["total_pnl"] > 0], key=lambda r: r["total_pnl"], reverse=True)
+    losers = sorted([r for r in rows if r["total_pnl"] < 0], key=lambda r: r["total_pnl"])
+    return winners[:top_n], losers[:top_n]
+
+
+def _resolve_period_dates(
+    daily_rows: list[dict[str, Any]],
+    run_date: str,
+    period: str,
+) -> tuple[str, str | None]:
+    from datetime import datetime as _dt
+
+    if not daily_rows:
+        return run_date, None
+
+    def _parse(d: str) -> _dt:
+        return _dt.strptime(d, "%Y-%m-%d")
+
+    run_dt = _parse(run_date)
+    dates = [r["date"] for r in daily_rows]
+    if period == "today":
+        if len(dates) < 2:
+            return run_date, None
+        return run_date, daily_rows[-1]["prior_date"]
+    if period == "wtd":
+        week_start = run_dt.date().fromordinal(run_dt.toordinal() - run_dt.weekday())
+        prior = None
+        for d in dates:
+            if _parse(d).date() < week_start:
+                prior = d
+        return run_date, prior
+    if period == "mtd":
+        month_start = run_dt.replace(day=1).date()
+        prior = None
+        for d in dates:
+            if _parse(d).date() < month_start:
+                prior = d
+        return run_date, prior
+    if period == "ytd":
+        if not daily_rows:
+            return run_date, None
+        return run_date, daily_rows[0].get("prior_date") or daily_rows[0]["date"]
+    if period in ("prior_week", "last_week"):
+        prior_week_ref = (run_dt.date().fromordinal(run_dt.toordinal() - 7)).isocalendar()
+        week_dates = [d for d in dates if _parse(d).isocalendar()[:2] == prior_week_ref[:2]]
+        if not week_dates:
+            return run_date, None
+        start = week_dates[0]
+        prior = None
+        for d in dates:
+            if d < start:
+                prior = d
+        return week_dates[-1], prior
+    if period == "prior_month":
+        prior_month = (run_dt.replace(day=1) - pd.Timedelta(days=1)).strftime("%Y-%m")
+        month_dates = [d for d in dates if d.startswith(prior_month)]
+        if not month_dates:
+            return run_date, None
+        start = month_dates[0]
+        prior = None
+        for d in dates:
+            if d < start:
+                prior = d
+        return month_dates[-1], prior
+    return run_date, None
+
+
+def compute_bucket_movers_panel(
+    accounting_dir: Path,
+    *,
+    bucket_underlying_history_csv: Path | None = None,
+    pnl_history_csv: Path | None = None,
+    run_date: str,
+    top_n: int = 8,
+    periods: tuple[str, ...] = ("today", "wtd", "mtd", "ytd", "prior_week", "prior_month"),
+) -> dict[str, Any]:
+    """Per-bucket winners/losers for selected periods (history) plus YTD snapshot."""
+    snapshot: dict[str, dict[str, Any]] = {}
+    for bucket in BUCKET_KEYS:
+        pnl_csv = accounting_dir / f"pnl_{bucket}.csv"
+        detail = compute_bucket_detail(
+            bucket=bucket,
+            pnl_csv=pnl_csv,
+            net_exposure_csv=accounting_dir / f"net_exposure_{bucket}.csv",
+        )
+        winners = [
+            {
+                "underlying": _clean_str(r.get("underlying")),
+                "symbols": _clean_str(r.get("symbols")),
+                "total_pnl": float(r.get("total_pnl") or 0.0),
+            }
+            for r in (detail.get("winners") or [])
+            if float(r.get("total_pnl") or 0.0) > 0
+        ]
+        losers = [
+            {
+                "underlying": _clean_str(r.get("underlying")),
+                "symbols": _clean_str(r.get("symbols")),
+                "total_pnl": float(r.get("total_pnl") or 0.0),
+            }
+            for r in (detail.get("losers") or [])
+            if float(r.get("total_pnl") or 0.0) < 0
+        ]
+        snapshot[bucket] = {
+            "winners": winners[:top_n],
+            "losers": losers[:top_n],
+        }
+
+    by_period: dict[str, dict[str, Any]] = {}
+    hist_available = (
+        bucket_underlying_history_csv is not None
+        and bucket_underlying_history_csv.is_file()
+    )
+    daily_rows: list[dict[str, Any]] = []
+    if pnl_history_csv is not None and pnl_history_csv.is_file():
+        pnl_tmp = compute_pnl_panel(
+            pnl_history_csv,
+            nav_usd=1.0,
+            run_date=run_date,
+            daily_lookback=10_000,
+            weekly_lookback=520,
+        )
+        if pnl_tmp.get("available"):
+            daily_rows = pnl_tmp.get("daily") or []
+
+    if hist_available and daily_rows:
+        hist = pd.read_csv(bucket_underlying_history_csv)
+        hist["date"] = hist["date"].astype(str)
+        hist = hist[hist["date"] <= str(run_date)]
+        for period in periods:
+            end_date, start_date = _resolve_period_dates(daily_rows, run_date, period)
+            period_buckets: dict[str, Any] = {}
+            for bucket in BUCKET_KEYS:
+                sub = hist[hist["bucket"] == bucket]
+                if sub.empty:
+                    period_buckets[bucket] = {"winners": [], "losers": []}
+                    continue
+                w, l = _movers_from_cum_history(
+                    sub, end_date=end_date, start_date=start_date, top_n=top_n
+                )
+                period_buckets[bucket] = {"winners": w, "losers": l}
+            by_period[period] = {
+                "end_date": end_date,
+                "start_date": start_date,
+                "by_bucket": period_buckets,
+            }
+
+    return {
+        "available": True,
+        "snapshot_ytd": snapshot,
+        "by_period": by_period,
+        "history_available": bool(by_period),
+        "note": (
+            "Period movers from pnl_bucket_underlying_history.csv diffs; "
+            "snapshot_ytd from latest pnl_<bucket>.csv."
+        ),
+    }
+
+
+def compute_component_attribution_panel(
+    attribution_history_csv: Path,
+    *,
+    nav_usd: float,
+    run_date: str | None = None,
+    periods: tuple[str, ...] = ("today", "wtd", "mtd", "ytd", "prior_week", "prior_month"),
+) -> dict[str, Any]:
+    """Book-level component PnL deltas from pnl_attribution_history.csv."""
+    if not attribution_history_csv.is_file():
+        return {"available": False, "reason": f"missing {attribution_history_csv.name}"}
+    try:
+        df = pd.read_csv(attribution_history_csv)
+    except Exception as exc:  # pragma: no cover
+        return {"available": False, "reason": f"unreadable attribution history: {exc}"}
+    if df.empty or "date" not in df.columns:
+        return {"available": False, "reason": "attribution history empty"}
+    df["date"] = df["date"].astype(str)
+    if run_date:
+        df = df[df["date"] <= str(run_date)]
+    df = df.sort_values("date").reset_index(drop=True)
+    if len(df) < 2:
+        return {"available": False, "reason": "need at least two attribution rows"}
+
+    daily_rows: list[dict[str, Any]] = []
+    for i, row in df.iterrows():
+        if i == 0:
+            continue
+        prior = df.iloc[i - 1]
+        slot: dict[str, Any] = {"date": str(row["date"]), "prior_date": str(prior["date"])}
+        for col, _label in COMPONENT_ATTRIBUTION_COLS:
+            slot[col] = float(row.get(col) or 0.0) - float(prior.get(col) or 0.0)
+        slot["strategy_total_pnl"] = float(row.get("strategy_total_pnl") or 0.0) - float(
+            prior.get("strategy_total_pnl") or 0.0
+        )
+        daily_rows.append(slot)
+
+    nav = float(nav_usd) if nav_usd and nav_usd > 0 else 0.0
+    run_dt_str = str(run_date or daily_rows[-1]["date"])
+    from datetime import datetime as _dt
+
+    run_dt = _dt.strptime(run_dt_str, "%Y-%m-%d")
+    week_start = run_dt.date().fromordinal(run_dt.toordinal() - run_dt.weekday())
+    month_start = run_dt.replace(day=1).date()
+    prior_week_ref = (run_dt.date().fromordinal(run_dt.toordinal() - 7)).isocalendar()
+    prior_month = (run_dt.replace(day=1) - pd.Timedelta(days=1)).strftime("%Y-%m")
+
+    def _sum_period(pred) -> dict[str, float]:
+        out = {col: 0.0 for col, _ in COMPONENT_ATTRIBUTION_COLS}
+        out["strategy_total_pnl"] = 0.0
+        for row in daily_rows:
+            if not pred(row):
+                continue
+            for col, _ in COMPONENT_ATTRIBUTION_COLS:
+                out[col] += float(row.get(col) or 0.0)
+            out["strategy_total_pnl"] += float(row.get("strategy_total_pnl") or 0.0)
+        return out
+
+    def _payload(totals: dict[str, float]) -> dict[str, Any]:
+        components = []
+        for col, label in COMPONENT_ATTRIBUTION_COLS:
+            val = float(totals.get(col) or 0.0)
+            if abs(val) < 0.5:
+                continue
+            components.append(
+                {
+                    "key": col,
+                    "label": label,
+                    "usd": val,
+                    "pct_book": (val / totals["strategy_total_pnl"])
+                    if abs(totals["strategy_total_pnl"]) > 1e-6
+                    else None,
+                    "pct_nav": (val / nav) if nav > 0 else None,
+                }
+            )
+        components.sort(key=lambda r: abs(r["usd"]), reverse=True)
+        return {
+            "total_usd": totals["strategy_total_pnl"],
+            "total_pct_nav": (totals["strategy_total_pnl"] / nav) if nav > 0 else None,
+            "components": components,
+        }
+
+    period_map = {
+        "today": lambda r: r["date"] == daily_rows[-1]["date"],
+        "wtd": lambda r: _dt.strptime(r["date"], "%Y-%m-%d").date() >= week_start,
+        "mtd": lambda r: _dt.strptime(r["date"], "%Y-%m-%d").date() >= month_start,
+        "ytd": lambda r: True,
+        "prior_week": lambda r: _dt.strptime(r["date"], "%Y-%m-%d").isocalendar()[:2]
+        == prior_week_ref[:2],
+        "prior_month": lambda r: r["date"].startswith(prior_month),
+    }
+    out_periods: dict[str, Any] = {}
+    for key in periods:
+        pred = period_map.get(key)
+        if pred is None:
+            continue
+        out_periods[key] = _payload(_sum_period(pred))
+    return {
+        "available": True,
+        "source": "pnl_attribution_history.csv",
+        "periods": out_periods,
+        "component_labels": {col: label for col, label in COMPONENT_ATTRIBUTION_COLS},
+    }
+
+
 # ---------------------------------------------------------------------------
 # Top-level snapshot assembler
 
@@ -4930,6 +5463,9 @@ class RiskSnapshot:
     pnl_panel: dict[str, Any] = field(default_factory=dict)
     shared_underlying_panel: dict[str, Any] = field(default_factory=dict)
     movers_panel: dict[str, Any] = field(default_factory=dict)
+    bucket_movers_panel: dict[str, Any] = field(default_factory=dict)
+    component_attribution_panel: dict[str, Any] = field(default_factory=dict)
+    bucket_drawdown_panel: dict[str, Any] = field(default_factory=dict)
     display_sleeve_groups: list[dict[str, Any]] = field(default_factory=list)
     capital_panel: dict[str, Any] = field(default_factory=dict)
 
@@ -4986,6 +5522,9 @@ class RiskSnapshot:
             "pnl_panel": self.pnl_panel,
             "shared_underlying_panel": self.shared_underlying_panel,
             "movers_panel": self.movers_panel,
+            "bucket_movers_panel": self.bucket_movers_panel,
+            "component_attribution_panel": self.component_attribution_panel,
+            "bucket_drawdown_panel": self.bucket_drawdown_panel,
             "display_sleeve_groups": self.display_sleeve_groups,
             "capital_panel": self.capital_panel,
             "limits": getattr(self, "_limits", DEFAULT_LIMITS),
@@ -5216,6 +5755,23 @@ def build_snapshot(
         nav_usd=nav_usd,
         run_date=run_date,
     )
+    bucket_underlying_history = repo_root / "data" / "ledger" / "pnl_bucket_underlying_history.csv"
+    bucket_movers_panel = compute_bucket_movers_panel(
+        accounting,
+        bucket_underlying_history_csv=bucket_underlying_history,
+        pnl_history_csv=repo_root / "data" / "ledger" / "pnl_history.csv",
+        run_date=run_date,
+    )
+    component_attribution_panel = compute_component_attribution_panel(
+        repo_root / "data" / "ledger" / "pnl_attribution_history.csv",
+        nav_usd=nav_usd,
+        run_date=run_date,
+    )
+    bucket_drawdown_panel = compute_bucket_drawdown_panel(
+        repo_root / "data" / "ledger" / "pnl_history.csv",
+        nav_usd=nav_usd,
+        run_date=run_date,
+    )
     shared_underlying_panel = compute_shared_underlying_panel(
         accounting, blocked_exposure_keys=blocked_exposure_keys
     )
@@ -5267,6 +5823,9 @@ def build_snapshot(
         pnl_panel=pnl_panel,
         shared_underlying_panel=shared_underlying_panel,
         movers_panel=movers_panel,
+        bucket_movers_panel=bucket_movers_panel,
+        component_attribution_panel=component_attribution_panel,
+        bucket_drawdown_panel=bucket_drawdown_panel,
         display_sleeve_groups=display_sleeve_groups,
         capital_panel=capital_panel,
     )

@@ -90,16 +90,20 @@
           <div id="drawdown-meta" class="quality-line"></div>
         </div>
         <div id="pnl-strip" class="strip"></div>
+        <div id="pnl-equity-chart"></div>
+        <div id="pnl-bucket-dd" class="dim small"></div>
+        <div id="movers-controls" class="pnl-controls strip"></div>
         <div class="two-col">
           <div>
-            <h3>Top cumulative winners</h3>
+            <h3 id="movers-winners-title">Top cumulative winners</h3>
             <div id="movers-winners"></div>
           </div>
           <div>
-            <h3>Top cumulative losers</h3>
+            <h3 id="movers-losers-title">Top cumulative losers</h3>
             <div id="movers-losers"></div>
           </div>
         </div>
+        <p id="movers-note" class="dim small"></p>
       </section>
       <section id="pnl-section" class="panel">
         <div class="panel-head">
@@ -107,6 +111,7 @@
           <div id="pnl-meta" class="quality-line"></div>
         </div>
         <div id="pnl-summary" class="strip"></div>
+        <div id="pnl-rolling" class="strip dim small"></div>
         <div id="pnl-controls" class="pnl-controls strip"></div>
         <div id="pnl-daily-chart"></div>
         <div class="two-col">
@@ -120,7 +125,13 @@
           </div>
         </div>
         <h3>Bucket attribution</h3>
+        <div id="pnl-recon-banner"></div>
         <div id="pnl-bucket-chart"></div>
+        <div id="pnl-bucket-contrib-table"></div>
+        <h3>Name attribution by bucket</h3>
+        <div id="pnl-bucket-movers"></div>
+        <h3>Component attribution</h3>
+        <div id="pnl-component-chart"></div>
       </section>
     </div>
 

@@ -17,6 +17,8 @@ from risk_dashboard.metrics import (
     BUCKET_KEYS,
     SLEEVE_TARGET_WEIGHTS,
     compute_borrow_shock_panel,
+    compute_bucket_drawdown_panel,
+    compute_component_attribution_panel,
     compute_drawdown_panel,
     compute_movers_panel,
     compute_pnl_panel,
@@ -147,6 +149,40 @@ def test_pnl_panel_daily_and_weekly_deltas(tmp_path):
     assert last["buckets"]["bucket_1"] == pytest.approx(-1000)
     assert last["buckets"]["stock_sleeves"] == pytest.approx(600)
     assert panel["weekly"][-1]["daily_usd"] == pytest.approx(-1000)
+    assert "periods" in panel
+    assert panel["periods"]["today"]["book_usd"] == pytest.approx(-1000)
+    assert panel["periods"]["wtd"]["book_usd"] == pytest.approx(-1000)
+    assert "recon_ok" in panel["periods"]["today"]
+
+
+def test_component_attribution_panel_periods(tmp_path):
+    csv = tmp_path / "pnl_attribution_history.csv"
+    csv.write_text(
+        "date,long_realized_pnl,long_unrealized_pnl,short_realized_pnl,short_unrealized_pnl,"
+        "gross_realized_pnl,gross_unrealized_pnl,other_fees,borrow_fees,short_credit_interest,"
+        "excluded_cash_interest_base,dividends,withholding_tax,pil_dividends,bond_interest,strategy_total_pnl\n"
+        "2026-06-02,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n"
+        "2026-06-03,100,200,0,0,100,200,0,-10,0,0,0,0,0,0,290\n",
+        encoding="utf-8",
+    )
+    panel = compute_component_attribution_panel(csv, nav_usd=1_000_000, run_date="2026-06-03")
+    assert panel["available"] is True
+    assert panel["periods"]["today"]["total_usd"] == pytest.approx(290)
+
+
+def test_bucket_drawdown_panel(tmp_path):
+    csv = tmp_path / "pnl_history.csv"
+    csv.write_text(
+        "date,total_pnl,pnl_bucket_1,pnl_bucket_2,pnl_bucket_3,pnl_bucket_4,pnl_bucket_5,pnl_stock_sleeves\n"
+        "2026-06-01,0,0,0,0,0,0,0\n"
+        "2026-06-02,100,500,0,0,0,0,500\n"
+        "2026-06-03,-200,100,0,0,0,0,100\n",
+        encoding="utf-8",
+    )
+    panel = compute_bucket_drawdown_panel(csv, nav_usd=1_000_000, run_date="2026-06-03")
+    assert panel["available"] is True
+    b1 = next(r for r in panel["rows"] if r["bucket"] == "bucket_1")
+    assert b1["max_drawdown_usd"] == pytest.approx(-400)
 
 
 # ── Shared underlying + movers ─────────────────────────────────────────────
@@ -210,6 +246,9 @@ def test_snapshot_exposes_phase0_4_fields():
         "pnl_panel",
         "shared_underlying_panel",
         "movers_panel",
+        "bucket_movers_panel",
+        "component_attribution_panel",
+        "bucket_drawdown_panel",
         "display_sleeve_groups",
     ):
         assert key in snap, f"snapshot missing {key}"
