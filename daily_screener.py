@@ -178,6 +178,9 @@ leverage_pairs_leverageshares = [
     ("CDNG", "CDNS"), ("FOMG", "FORM"), ("ENTL", "ENTG"), ("FPSX", "FPS"),
     ("ASTG", "ASTS"), ("GFSG", "GFS"),  ("HPEL", "HPE"),  ("MTSG", "MTSI"),
     ("SMTG", "SMTC"), ("AEHG", "AEHR"),
+    # 2026-07-07 Leverage Shares Themes — 2X long daily (Cboe-listed)
+    ("GOOL", "GOOGL"), ("AMZG", "AMZN"), ("METG", "META"), ("AAPE", "AAPL"),
+    ("JBLG", "JBL"),  ("VIAG", "VIAV"),
 ]
 
 new_pairs = [
@@ -302,6 +305,8 @@ graniteshares_pairs_leveraged = [
     ("SEMY", "SOXX"), ("SMYY", "SMCI"), ("YSPY", "SPY"),  ("TSYY", "TSLA"),
     # YieldBOOST sector / duration (option income vs 3× sector proxies; spot for β/vol)
     ("BIOY", "XBI"), ("FINY", "XLF"), ("FIYY", "TLT"), ("TECY", "XLK"),
+    # 2026-07-07 GraniteShares 2X long daily
+    ("BBUL", "BB"), ("PUL", "P"),
 ]
 
 leverage_pairs_capped_accel = [
