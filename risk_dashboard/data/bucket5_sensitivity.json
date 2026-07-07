@@ -1,6 +1,6 @@
 {
   "schema": "bucket5_sensitivity.v1",
-  "generated_at_utc": "2026-07-06T18:02:44.631506+00:00",
+  "generated_at_utc": "2026-07-07T12:34:32.685297+00:00",
   "preset_base": "F_dynamic_deep30",
   "era": "extended",
   "axes": {
@@ -23,14 +23,14 @@
       "sleeve_frac": 0.15,
       "total_premium": 0.024,
       "borrow_stress_mult": 1.0,
-      "CAGR": 0.143536,
-      "Vol": 0.144971,
+      "CAGR": 0.14358,
+      "Vol": 0.144972,
       "MaxDD": -0.269711,
-      "Sharpe": 0.994263,
-      "Calmar": 0.532184,
+      "Sharpe": 0.994527,
+      "Calmar": 0.532347,
       "realized_usd": 10823555.486627,
-      "crash_mild": 0.6656732151614477,
-      "crash_severe": 2.175503103483042,
+      "crash_mild": 0.7178325020813203,
+      "crash_severe": 2.393054596193607,
       "series": {
         "combined_equity": [
           [
@@ -779,7 +779,7 @@
           ],
           [
             "2026-07-06",
-            11798910.0287
+            11807244.1015
           ]
         ],
         "drawdown": [
@@ -1538,14 +1538,14 @@
       "sleeve_frac": 0.15,
       "total_premium": 0.024,
       "borrow_stress_mult": 2.0,
-      "CAGR": 0.139366,
+      "CAGR": 0.13941,
       "Vol": 0.145455,
       "MaxDD": -0.274384,
-      "Sharpe": 0.966285,
-      "Calmar": 0.507926,
+      "Sharpe": 0.966547,
+      "Calmar": 0.508085,
       "realized_usd": 10465675.945815,
-      "crash_mild": 0.6656732151614477,
-      "crash_severe": 2.175503103483042,
+      "crash_mild": 0.7178325020813203,
+      "crash_severe": 2.393054596193607,
       "series": {
         "combined_equity": [
           [
@@ -2294,7 +2294,7 @@
           ],
           [
             "2026-07-06",
-            11031946.0865
+            11039726.4781
           ]
         ],
         "drawdown": [
@@ -3053,14 +3053,14 @@
       "sleeve_frac": 0.15,
       "total_premium": 0.03,
       "borrow_stress_mult": 1.0,
-      "CAGR": 0.154527,
+      "CAGR": 0.15457,
       "Vol": 0.155286,
       "MaxDD": -0.268862,
-      "Sharpe": 0.998094,
-      "Calmar": 0.574745,
+      "Sharpe": 0.998333,
+      "Calmar": 0.574905,
       "realized_usd": 13213944.596956,
-      "crash_mild": 0.8531381176055255,
-      "crash_severe": 2.766648222391566,
+      "crash_mild": 0.918337226255366,
+      "crash_severe": 3.038587588279772,
       "series": {
         "combined_equity": [
           [
@@ -3809,7 +3809,7 @@
           ],
           [
             "2026-07-06",
-            14069763.2095
+            14079396.9938
           ]
         ],
         "drawdown": [
@@ -4568,14 +4568,14 @@
       "sleeve_frac": 0.15,
       "total_premium": 0.03,
       "borrow_stress_mult": 2.0,
-      "CAGR": 0.14989,
+      "CAGR": 0.149932,
       "Vol": 0.155331,
       "MaxDD": -0.269893,
-      "Sharpe": 0.971925,
-      "Calmar": 0.555368,
+      "Sharpe": 0.972164,
+      "Calmar": 0.555526,
       "realized_usd": 12681029.291047,
-      "crash_mild": 0.8531381176055255,
-      "crash_severe": 2.766648222391566,
+      "crash_mild": 0.918337226255366,
+      "crash_severe": 3.038587588279772,
       "series": {
         "combined_equity": [
           [
@@ -5324,7 +5324,7 @@
           ],
           [
             "2026-07-06",
-            13065365.6123
+            13074308.8653
           ]
         ],
         "drawdown": [
@@ -6083,14 +6083,14 @@
       "sleeve_frac": 0.2,
       "total_premium": 0.024,
       "borrow_stress_mult": 1.0,
-      "CAGR": 0.146027,
-      "Vol": 0.167747,
+      "CAGR": 0.146085,
+      "Vol": 0.167748,
       "MaxDD": -0.366756,
-      "Sharpe": 0.895027,
-      "Calmar": 0.398159,
+      "Sharpe": 0.895326,
+      "Calmar": 0.398317,
       "realized_usd": 11298376.584171,
-      "crash_mild": 0.6376110836231601,
-      "crash_severe": 2.112477312766024,
+      "crash_mild": 0.6897703705430327,
+      "crash_severe": 2.330028805476589,
       "series": {
         "combined_equity": [
           [
@@ -6839,7 +6839,7 @@
           ],
           [
             "2026-07-06",
-            12281007.5226
+            12292371.1871
           ]
         ],
         "drawdown": [
@@ -7598,14 +7598,14 @@
       "sleeve_frac": 0.2,
       "total_premium": 0.024,
       "borrow_stress_mult": 2.0,
-      "CAGR": 0.140367,
+      "CAGR": 0.140425,
       "Vol": 0.168239,
       "MaxDD": -0.373655,
-      "Sharpe": 0.863472,
-      "Calmar": 0.375661,
+      "Sharpe": 0.863769,
+      "Calmar": 0.375814,
       "realized_usd": 10788304.855174,
-      "crash_mild": 0.6376110836231601,
-      "crash_severe": 2.112477312766024,
+      "crash_mild": 0.6897703705430327,
+      "crash_severe": 2.330028805476589,
       "series": {
         "combined_equity": [
           [
@@ -8354,7 +8354,7 @@
           ],
           [
             "2026-07-06",
-            11211643.5291
+            11221986.0199
           ]
         ],
         "drawdown": [
@@ -9113,14 +9113,14 @@
       "sleeve_frac": 0.2,
       "total_premium": 0.03,
       "borrow_stress_mult": 1.0,
-      "CAGR": 0.15664,
+      "CAGR": 0.156696,
       "Vol": 0.173054,
       "MaxDD": -0.362588,
-      "Sharpe": 0.924846,
-      "Calmar": 0.432005,
+      "Sharpe": 0.925127,
+      "Calmar": 0.432161,
       "realized_usd": 13741664.219441,
-      "crash_mild": 0.8250759860672379,
-      "crash_severe": 2.703622431674548,
+      "crash_mild": 0.8902750947170783,
+      "crash_severe": 2.975561797562754,
       "series": {
         "combined_equity": [
           [
@@ -9869,7 +9869,7 @@
           ],
           [
             "2026-07-06",
-            14551102.1603
+            14564186.9364
           ]
         ],
         "drawdown": [
@@ -10628,14 +10628,14 @@
       "sleeve_frac": 0.2,
       "total_premium": 0.03,
       "borrow_stress_mult": 2.0,
-      "CAGR": 0.150773,
+      "CAGR": 0.150795,
       "Vol": 0.173435,
       "MaxDD": -0.368813,
-      "Sharpe": 0.893848,
-      "Calmar": 0.408807,
+      "Sharpe": 0.893956,
+      "Calmar": 0.408865,
       "realized_usd": 13056000.438641,
-      "crash_mild": 0.8250759860672379,
-      "crash_severe": 2.703622431674548,
+      "crash_mild": 0.8902750947170783,
+      "crash_severe": 2.975561797562754,
       "series": {
         "combined_equity": [
           [
@@ -11384,7 +11384,7 @@
           ],
           [
             "2026-07-06",
-            13251357.2856
+            13255942.3148
           ]
         ],
         "drawdown": [
@@ -12143,14 +12143,14 @@
       "sleeve_frac": 0.25,
       "total_premium": 0.024,
       "borrow_stress_mult": 1.0,
-      "CAGR": 0.145524,
-      "Vol": 0.198724,
+      "CAGR": 0.145552,
+      "Vol": 0.198725,
       "MaxDD": -0.462038,
-      "Sharpe": 0.783407,
-      "Calmar": 0.314962,
+      "Sharpe": 0.783526,
+      "Calmar": 0.315021,
       "realized_usd": 11490889.455485,
-      "crash_mild": 0.6095489520848724,
-      "crash_severe": 2.0494515220490057,
+      "crash_mild": 0.661708239004745,
+      "crash_severe": 2.267003014759571,
       "series": {
         "combined_equity": [
           [
@@ -12899,7 +12899,7 @@
           ],
           [
             "2026-07-06",
-            12182221.3296
+            12187551.6081
           ]
         ],
         "drawdown": [
@@ -13658,14 +13658,14 @@
       "sleeve_frac": 0.25,
       "total_premium": 0.024,
       "borrow_stress_mult": 2.0,
-      "CAGR": 0.138746,
+      "CAGR": 0.138773,
       "Vol": 0.199374,
       "MaxDD": -0.468646,
-      "Sharpe": 0.751749,
-      "Calmar": 0.296058,
+      "Sharpe": 0.751867,
+      "Calmar": 0.296116,
       "realized_usd": 10886702.03018,
-      "crash_mild": 0.6095489520848724,
-      "crash_severe": 2.0494515220490057,
+      "crash_mild": 0.661708239004745,
+      "crash_severe": 2.267003014759571,
       "series": {
         "combined_equity": [
           [
@@ -14414,7 +14414,7 @@
           ],
           [
             "2026-07-06",
-            10922008.2025
+            10926773.0413
           ]
         ],
         "drawdown": [
@@ -15173,14 +15173,14 @@
       "sleeve_frac": 0.25,
       "total_premium": 0.03,
       "borrow_stress_mult": 1.0,
-      "CAGR": 0.156339,
+      "CAGR": 0.156364,
       "Vol": 0.199405,
       "MaxDD": -0.455595,
-      "Sharpe": 0.827606,
-      "Calmar": 0.343153,
+      "Sharpe": 0.827716,
+      "Calmar": 0.343209,
       "realized_usd": 13992634.061064,
-      "crash_mild": 0.7970138545289501,
-      "crash_severe": 2.6405966409575297,
+      "crash_mild": 0.8622129631787906,
+      "crash_severe": 2.9125360068457358,
       "series": {
         "combined_equity": [
           [
@@ -15929,7 +15929,7 @@
           ],
           [
             "2026-07-06",
-            14481582.2363
+            14487436.0043
           ]
         ],
         "drawdown": [
@@ -16688,14 +16688,14 @@
       "sleeve_frac": 0.25,
       "total_premium": 0.03,
       "borrow_stress_mult": 2.0,
-      "CAGR": 0.149436,
+      "CAGR": 0.149461,
       "Vol": 0.200225,
       "MaxDD": -0.462125,
-      "Sharpe": 0.795119,
-      "Calmar": 0.323368,
+      "Sharpe": 0.795227,
+      "Calmar": 0.323422,
       "realized_usd": 13244623.513311,
-      "crash_mild": 0.7970138545289501,
-      "crash_severe": 2.6405966409575297,
+      "crash_mild": 0.8622129631787906,
+      "crash_severe": 2.9125360068457358,
       "series": {
         "combined_equity": [
           [
@@ -17444,7 +17444,7 @@
           ],
           [
             "2026-07-06",
-            12970864.7921
+            12976084.7764
           ]
         ],
         "drawdown": [
