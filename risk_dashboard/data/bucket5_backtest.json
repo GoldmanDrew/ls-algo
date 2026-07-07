@@ -1,6 +1,6 @@
 {
   "schema": "bucket5_backtest_panel.v1",
-  "generated_at_utc": "2026-07-07T19:24:26.666438+00:00",
+  "generated_at_utc": "2026-07-07T20:13:49.910738+00:00",
   "run_date": "2026-07-07",
   "variants": {
     "B_live": {
@@ -13,23 +13,23 @@
         "ladder_per_roll_%": 2.4,
         "rebalances": 173,
         "sleeve_financing_%/yr": -0.005464,
-        "sleeve_carry_%/yr": 0.039313,
-        "combined_CAGR": 0.144649,
-        "combined_Vol": 0.137603,
-        "combined_Sharpe": 1.04497,
+        "sleeve_carry_%/yr": 0.039452,
+        "combined_CAGR": 0.144818,
+        "combined_Vol": 0.137601,
+        "combined_Sharpe": 1.046053,
         "combined_MaxDD": -0.064445,
-        "combined_Calmar": 2.24453,
+        "combined_Calmar": 2.247156,
         "ladder_premium_$": 0.0,
         "aug24": 0.211018,
         "realized_$": 842157.701351,
-        "redeploy_extra_$": 75084.151957,
+        "redeploy_extra_$": 75416.846855,
         "hedge_kind": "ladder",
         "dynamic_budget": true
       },
       "crash": {
-        "crash_mild_-20%": 0.3198829804867268,
-        "crash_severe_-30%": 0.8718106546789701,
-        "crash_volmageddon_-40%": 1.7019352301758475
+        "crash_mild_-20%": 0.32860518590566223,
+        "crash_severe_-30%": 0.9000463469086188,
+        "crash_volmageddon_-40%": 1.7634748618148035
       },
       "meta": {
         "start": "2022-03-30",
@@ -286,12 +286,12 @@
         "event_count": 102,
         "kinds": [
           "profit_3x",
-          "vix_45",
-          "profit_8x",
-          "profit_5x",
-          "scheduled_roll",
           "rearm",
-          "giveback"
+          "scheduled_roll",
+          "profit_5x",
+          "profit_8x",
+          "giveback",
+          "vix_45"
         ],
         "total_usd": 1689283.0
       },
@@ -4575,7 +4575,7 @@
           ],
           [
             "2026-07-07",
-            1773745.2163
+            1774857.6909
           ]
         ],
         "drawdown": [
@@ -8857,7 +8857,7 @@
           ],
           [
             "2026-07-07",
-            -0.0011
+            -0.0005
           ]
         ],
         "ratio": [
@@ -13139,7 +13139,7 @@
           ],
           [
             "2026-07-07",
-            0.8518
+            0.8489
           ]
         ]
       }
@@ -13154,23 +13154,23 @@
         "ladder_per_roll_%": 3.0,
         "rebalances": 173,
         "sleeve_financing_%/yr": -0.005464,
-        "sleeve_carry_%/yr": 0.039313,
-        "combined_CAGR": 0.204279,
-        "combined_Vol": 0.259929,
-        "combined_Sharpe": 0.823318,
+        "sleeve_carry_%/yr": 0.039452,
+        "combined_CAGR": 0.204446,
+        "combined_Vol": 0.259928,
+        "combined_Sharpe": 0.823852,
         "combined_MaxDD": -0.127831,
-        "combined_Calmar": 1.59804,
+        "combined_Calmar": 1.599342,
         "ladder_premium_$": 0.0,
         "aug24": 0.326202,
         "realized_$": 1294801.454446,
-        "redeploy_extra_$": 126894.169172,
+        "redeploy_extra_$": 127404.500073,
         "hedge_kind": "ladder",
         "dynamic_budget": true
       },
       "crash": {
-        "crash_mild_-20%": 0.7764406199063062,
-        "crash_severe_-30%": 2.5116629679008393,
-        "crash_volmageddon_-40%": 5.639926020387774
+        "crash_mild_-20%": 0.7958667430484414,
+        "crash_severe_-30%": 2.5905346604378807,
+        "crash_volmageddon_-40%": 5.838348172002431
       },
       "meta": {
         "start": "2022-03-30",
@@ -13427,12 +13427,12 @@
         "event_count": 94,
         "kinds": [
           "profit_3x",
-          "vix_45",
-          "profit_8x",
-          "profit_5x",
-          "scheduled_roll",
           "rearm",
-          "giveback"
+          "scheduled_roll",
+          "profit_5x",
+          "profit_8x",
+          "giveback",
+          "vix_45"
         ],
         "total_usd": 2649536.0
       },
@@ -17716,7 +17716,7 @@
           ],
           [
             "2026-07-07",
-            2200138.5021
+            2201428.6126
           ]
         ],
         "drawdown": [
@@ -21998,7 +21998,7 @@
           ],
           [
             "2026-07-07",
-            -0.0062
+            -0.0056
           ]
         ],
         "ratio": [
@@ -26280,7 +26280,7 @@
           ],
           [
             "2026-07-07",
-            0.8518
+            0.8489
           ]
         ]
       }
@@ -26295,23 +26295,23 @@
         "ladder_per_roll_%": 2.4,
         "rebalances": 806,
         "sleeve_financing_%/yr": -0.005405,
-        "sleeve_carry_%/yr": 0.015571,
-        "combined_CAGR": 0.131267,
-        "combined_Vol": 0.191579,
-        "combined_Sharpe": 0.732977,
+        "sleeve_carry_%/yr": 0.015603,
+        "combined_CAGR": 0.131299,
+        "combined_Vol": 0.191578,
+        "combined_Sharpe": 0.733125,
         "combined_MaxDD": -0.41614,
-        "combined_Calmar": 0.315439,
+        "combined_Calmar": 0.315515,
         "ladder_premium_$": 0.0,
         "aug24": 0.059785,
         "realized_$": 8933133.131211,
-        "redeploy_extra_$": 2194556.027474,
+        "redeploy_extra_$": 2198112.207241,
         "hedge_kind": "ladder",
         "dynamic_budget": true
       },
       "crash": {
-        "crash_mild_-20%": 0.3192237906112746,
-        "crash_severe_-30%": 0.8696835520015922,
-        "crash_volmageddon_-40%": 1.6973065054694039
+        "crash_mild_-20%": 0.32860518590566223,
+        "crash_severe_-30%": 0.9000463469086188,
+        "crash_volmageddon_-40%": 1.7634748618148035
       },
       "meta": {
         "start": "2008-01-02",
@@ -26567,14 +26567,14 @@
       "monetize_summary": {
         "event_count": 990,
         "kinds": [
-          "profit_3x",
-          "vix_45",
           "vix_65",
-          "profit_8x",
-          "profit_5x",
-          "scheduled_roll",
+          "profit_3x",
           "rearm",
-          "giveback"
+          "scheduled_roll",
+          "profit_5x",
+          "profit_8x",
+          "giveback",
+          "vix_45"
         ],
         "total_usd": 17691869.0
       },
@@ -29234,7 +29234,7 @@
           ],
           [
             "2026-07-07",
-            9679457.1609
+            9684474.9786
           ]
         ],
         "drawdown": [
@@ -31892,7 +31892,7 @@
           ],
           [
             "2026-07-07",
-            -0.0009
+            -0.0004
           ]
         ],
         "ratio": [
@@ -34550,7 +34550,7 @@
           ],
           [
             "2026-07-07",
-            0.8518
+            0.8489
           ]
         ]
       }
@@ -34565,23 +34565,23 @@
         "ladder_per_roll_%": 3.0,
         "rebalances": 806,
         "sleeve_financing_%/yr": -0.005405,
-        "sleeve_carry_%/yr": 0.015571,
-        "combined_CAGR": 0.156619,
+        "sleeve_carry_%/yr": 0.015603,
+        "combined_CAGR": 0.156649,
         "combined_Vol": 0.173035,
-        "combined_Sharpe": 0.924823,
+        "combined_Sharpe": 0.924972,
         "combined_MaxDD": -0.362588,
-        "combined_Calmar": 0.431949,
+        "combined_Calmar": 0.43203,
         "ladder_premium_$": 0.0,
         "aug24": 0.106608,
         "realized_$": 13744475.991997,
-        "redeploy_extra_$": 3183062.302986,
+        "redeploy_extra_$": 3188455.026807,
         "hedge_kind": "ladder",
         "dynamic_budget": true
       },
       "crash": {
-        "crash_mild_-20%": 0.7749728266219891,
-        "crash_severe_-30%": 2.5057287774172172,
-        "crash_volmageddon_-40%": 5.625029461533463
+        "crash_mild_-20%": 0.7958667430484414,
+        "crash_severe_-30%": 2.5905346604378807,
+        "crash_volmageddon_-40%": 5.838348172002431
       },
       "meta": {
         "start": "2008-01-02",
@@ -34837,14 +34837,14 @@
       "monetize_summary": {
         "event_count": 1005,
         "kinds": [
-          "profit_3x",
-          "vix_45",
-          "profit_8x",
           "vix_65",
-          "profit_5x",
-          "scheduled_roll",
+          "profit_3x",
           "rearm",
-          "giveback"
+          "scheduled_roll",
+          "profit_5x",
+          "profit_8x",
+          "giveback",
+          "vix_45"
         ],
         "total_usd": 26449905.0
       },
@@ -37504,7 +37504,7 @@
           ],
           [
             "2026-07-07",
-            14554789.176
+            14561643.5378
           ]
         ],
         "drawdown": [
@@ -40162,7 +40162,7 @@
           ],
           [
             "2026-07-07",
-            -0.0008
+            -0.0003
           ]
         ],
         "ratio": [
@@ -42820,7 +42820,7 @@
           ],
           [
             "2026-07-07",
-            0.8518
+            0.8489
           ]
         ]
       }
@@ -42841,21 +42841,21 @@
         "underlying": "SVIX",
         "proposed_gross_usd": 10500.0,
         "optimal_gross_usd": 10500.0,
-        "borrow_annual": 0.0226569999999999,
-        "shares_available": 1900000.0,
+        "borrow_annual": 0.018887,
+        "shares_available": 2000000.0,
         "locate_ok": true
       }
     ]
   },
   "regime": {
     "date": "2026-07-07",
-    "ratio": 0.8518,
+    "ratio": 0.8489,
     "label": "backwardation (stress)"
   },
   "repo": "ls-algo",
   "sensitivity_grid": {
     "schema": "bucket5_sensitivity.v1",
-    "generated_at_utc": "2026-07-07T19:25:10.171492+00:00",
+    "generated_at_utc": "2026-07-07T20:14:36.889034+00:00",
     "preset_base": "F_dynamic_deep30",
     "era": "extended",
     "axes": {
@@ -42878,14 +42878,14 @@
         "sleeve_frac": 0.15,
         "total_premium": 0.024,
         "borrow_stress_mult": 1.0,
-        "CAGR": 0.143517,
+        "CAGR": 0.143539,
         "Vol": 0.144956,
         "MaxDD": -0.269711,
-        "Sharpe": 0.994236,
-        "Calmar": 0.532113,
+        "Sharpe": 0.99437,
+        "Calmar": 0.532195,
         "realized_usd": 10825713.678437,
-        "crash_mild": 0.6257309753417442,
-        "crash_severe": 2.0174332376029205,
+        "crash_mild": 0.6424461084829058,
+        "crash_severe": 2.0852779440194515,
         "series": {
           "combined_equity": [
             [
@@ -43634,7 +43634,7 @@
             ],
             [
               "2026-07-07",
-              11801534.3022
+              11805733.1951
             ]
           ],
           "drawdown": [
@@ -44384,7 +44384,7 @@
             ],
             [
               "2026-07-07",
-              -0.0006
+              -0.0002
             ]
           ]
         }
@@ -44393,14 +44393,14 @@
         "sleeve_frac": 0.15,
         "total_premium": 0.024,
         "borrow_stress_mult": 2.0,
-        "CAGR": 0.139345,
+        "CAGR": 0.139373,
         "Vol": 0.145439,
         "MaxDD": -0.274384,
-        "Sharpe": 0.966242,
-        "Calmar": 0.507848,
+        "Sharpe": 0.966412,
+        "Calmar": 0.507949,
         "realized_usd": 10467656.834872,
-        "crash_mild": 0.6257309753417442,
-        "crash_severe": 2.0174332376029205,
+        "crash_mild": 0.6424461084829058,
+        "crash_severe": 2.0852779440194515,
         "series": {
           "combined_equity": [
             [
@@ -45149,7 +45149,7 @@
             ],
             [
               "2026-07-07",
-              11033831.761
+              11038813.7204
             ]
           ],
           "drawdown": [
@@ -45899,7 +45899,7 @@
             ],
             [
               "2026-07-07",
-              -0.0007
+              -0.0003
             ]
           ]
         }
@@ -45908,14 +45908,14 @@
         "sleeve_frac": 0.15,
         "total_premium": 0.03,
         "borrow_stress_mult": 1.0,
-        "CAGR": 0.1545,
+        "CAGR": 0.154528,
         "Vol": 0.15527,
         "MaxDD": -0.268862,
-        "Sharpe": 0.998032,
-        "Calmar": 0.574645,
+        "Sharpe": 0.998187,
+        "Calmar": 0.574748,
         "realized_usd": 13216816.00431,
-        "crash_mild": 0.8037363968427527,
-        "crash_severe": 2.5699798557629503,
+        "crash_mild": 0.824630313269205,
+        "crash_severe": 2.654785738783614,
         "series": {
           "combined_equity": [
             [
@@ -46664,7 +46664,7 @@
             ],
             [
               "2026-07-07",
-              14071772.0954
+              14077940.97
             ]
           ],
           "drawdown": [
@@ -47414,7 +47414,7 @@
             ],
             [
               "2026-07-07",
-              -0.0007
+              -0.0002
             ]
           ]
         }
@@ -47423,14 +47423,14 @@
         "sleeve_frac": 0.15,
         "total_premium": 0.03,
         "borrow_stress_mult": 2.0,
-        "CAGR": 0.149866,
+        "CAGR": 0.149891,
         "Vol": 0.155314,
         "MaxDD": -0.269893,
-        "Sharpe": 0.971883,
-        "Calmar": 0.55528,
+        "Sharpe": 0.972023,
+        "Calmar": 0.555372,
         "realized_usd": 12681413.772456,
-        "crash_mild": 0.8037363968427527,
-        "crash_severe": 2.5699798557629503,
+        "crash_mild": 0.824630313269205,
+        "crash_severe": 2.654785738783614,
         "series": {
           "combined_equity": [
             [
@@ -48179,7 +48179,7 @@
             ],
             [
               "2026-07-07",
-              13067662.1994
+              13072862.0599
             ]
           ],
           "drawdown": [
@@ -48929,7 +48929,7 @@
             ],
             [
               "2026-07-07",
-              -0.0006
+              -0.0002
             ]
           ]
         }
@@ -48938,14 +48938,14 @@
         "sleeve_frac": 0.2,
         "total_premium": 0.024,
         "borrow_stress_mult": 1.0,
-        "CAGR": 0.14598,
+        "CAGR": 0.146013,
         "Vol": 0.167731,
         "MaxDD": -0.366756,
-        "Sharpe": 0.894854,
-        "Calmar": 0.398032,
+        "Sharpe": 0.895023,
+        "Calmar": 0.39812,
         "realized_usd": 11294469.346884,
-        "crash_mild": 0.5969674051209806,
-        "crash_severe": 1.9531821592571874,
+        "crash_mild": 0.6136825382621423,
+        "crash_severe": 2.0210268656737185,
         "series": {
           "combined_equity": [
             [
@@ -49694,7 +49694,7 @@
             ],
             [
               "2026-07-07",
-              12278404.8419
+              12284772.5093
             ]
           ],
           "drawdown": [
@@ -50444,7 +50444,7 @@
             ],
             [
               "2026-07-07",
-              -0.0009
+              -0.0004
             ]
           ]
         }
@@ -50453,14 +50453,14 @@
         "sleeve_frac": 0.2,
         "total_premium": 0.024,
         "borrow_stress_mult": 2.0,
-        "CAGR": 0.140344,
+        "CAGR": 0.140377,
         "Vol": 0.168221,
         "MaxDD": -0.373655,
-        "Sharpe": 0.863426,
-        "Calmar": 0.375599,
+        "Sharpe": 0.863594,
+        "Calmar": 0.375685,
         "realized_usd": 10790237.193615,
-        "crash_mild": 0.5969674051209806,
-        "crash_severe": 1.9531821592571874,
+        "crash_mild": 0.6136825382621423,
+        "crash_severe": 2.0210268656737185,
         "series": {
           "combined_equity": [
             [
@@ -51209,7 +51209,7 @@
             ],
             [
               "2026-07-07",
-              11213341.8916
+              11219144.1044
             ]
           ],
           "drawdown": [
@@ -51959,7 +51959,7 @@
             ],
             [
               "2026-07-07",
-              -0.0009
+              -0.0004
             ]
           ]
         }
@@ -51968,14 +51968,14 @@
         "sleeve_frac": 0.2,
         "total_premium": 0.03,
         "borrow_stress_mult": 1.0,
-        "CAGR": 0.156617,
+        "CAGR": 0.156649,
         "Vol": 0.173035,
         "MaxDD": -0.362588,
-        "Sharpe": 0.924813,
-        "Calmar": 0.431943,
+        "Sharpe": 0.924972,
+        "Calmar": 0.43203,
         "realized_usd": 13744475.991997,
-        "crash_mild": 0.7749728266219891,
-        "crash_severe": 2.5057287774172172,
+        "crash_mild": 0.7958667430484414,
+        "crash_severe": 2.5905346604378807,
         "series": {
           "combined_equity": [
             [
@@ -52724,7 +52724,7 @@
             ],
             [
               "2026-07-07",
-              14554302.6871
+              14561643.5378
             ]
           ],
           "drawdown": [
@@ -53474,7 +53474,7 @@
             ],
             [
               "2026-07-07",
-              -0.0008
+              -0.0003
             ]
           ]
         }
@@ -53483,14 +53483,14 @@
         "sleeve_frac": 0.2,
         "total_premium": 0.03,
         "borrow_stress_mult": 2.0,
-        "CAGR": 0.150707,
+        "CAGR": 0.150745,
         "Vol": 0.173416,
         "MaxDD": -0.368813,
-        "Sharpe": 0.89359,
-        "Calmar": 0.408626,
+        "Sharpe": 0.893782,
+        "Calmar": 0.408729,
         "realized_usd": 13058384.483822,
-        "crash_mild": 0.7749728266219891,
-        "crash_severe": 2.5057287774172172,
+        "crash_mild": 0.7958667430484414,
+        "crash_severe": 2.5905346604378807,
         "series": {
           "combined_equity": [
             [
@@ -54239,7 +54239,7 @@
             ],
             [
               "2026-07-07",
-              13244585.2693
+              13252648.1402
             ]
           ],
           "drawdown": [
@@ -54989,7 +54989,7 @@
             ],
             [
               "2026-07-07",
-              -0.001
+              -0.0004
             ]
           ]
         }
@@ -54998,14 +54998,14 @@
         "sleeve_frac": 0.25,
         "total_premium": 0.024,
         "borrow_stress_mult": 1.0,
-        "CAGR": 0.14545,
+        "CAGR": 0.145498,
         "Vol": 0.198704,
         "MaxDD": -0.462038,
-        "Sharpe": 0.783137,
-        "Calmar": 0.3148,
+        "Sharpe": 0.783348,
+        "Calmar": 0.314904,
         "realized_usd": 11490762.595356,
-        "crash_mild": 0.5682038349002168,
-        "crash_severe": 1.888931080911454,
+        "crash_mild": 0.5849189680413784,
+        "crash_severe": 1.956775787327985,
         "series": {
           "combined_equity": [
             [
@@ -55754,7 +55754,7 @@
             ],
             [
               "2026-07-07",
-              12174174.3339
+              12183546.2242
             ]
           ],
           "drawdown": [
@@ -56504,7 +56504,7 @@
             ],
             [
               "2026-07-07",
-              -0.0012
+              -0.0005
             ]
           ]
         }
@@ -56513,14 +56513,14 @@
         "sleeve_frac": 0.25,
         "total_premium": 0.024,
         "borrow_stress_mult": 2.0,
-        "CAGR": 0.138642,
+        "CAGR": 0.138689,
         "Vol": 0.199354,
         "MaxDD": -0.468646,
-        "Sharpe": 0.751342,
-        "Calmar": 0.295835,
+        "Sharpe": 0.751552,
+        "Calmar": 0.295936,
         "realized_usd": 10882460.75411,
-        "crash_mild": 0.5682038349002168,
-        "crash_severe": 1.888931080911454,
+        "crash_mild": 0.5849189680413784,
+        "crash_severe": 1.956775787327985,
         "series": {
           "combined_equity": [
             [
@@ -57269,7 +57269,7 @@
             ],
             [
               "2026-07-07",
-              10909190.8288
+              10917548.9693
             ]
           ],
           "drawdown": [
@@ -58019,7 +58019,7 @@
             ],
             [
               "2026-07-07",
-              -0.0012
+              -0.0005
             ]
           ]
         }
@@ -58028,14 +58028,14 @@
         "sleeve_frac": 0.25,
         "total_premium": 0.03,
         "borrow_stress_mult": 1.0,
-        "CAGR": 0.15625,
-        "Vol": 0.199384,
+        "CAGR": 0.156297,
+        "Vol": 0.199383,
         "MaxDD": -0.455595,
-        "Sharpe": 0.827286,
-        "Calmar": 0.342957,
+        "Sharpe": 0.827491,
+        "Calmar": 0.34306,
         "realized_usd": 13991840.267849,
-        "crash_mild": 0.7462092564012253,
-        "crash_severe": 2.4414776990714837,
+        "crash_mild": 0.7671031728276776,
+        "crash_severe": 2.526283582092147,
         "series": {
           "combined_equity": [
             [
@@ -58784,7 +58784,7 @@
             ],
             [
               "2026-07-07",
-              14469380.184
+              14480200.2815
             ]
           ],
           "drawdown": [
@@ -59534,7 +59534,7 @@
             ],
             [
               "2026-07-07",
-              -0.0012
+              -0.0004
             ]
           ]
         }
@@ -59543,14 +59543,14 @@
         "sleeve_frac": 0.25,
         "total_premium": 0.03,
         "borrow_stress_mult": 2.0,
-        "CAGR": 0.149361,
-        "Vol": 0.200204,
+        "CAGR": 0.149407,
+        "Vol": 0.200203,
         "MaxDD": -0.462125,
-        "Sharpe": 0.794855,
-        "Calmar": 0.323205,
+        "Sharpe": 0.795058,
+        "Calmar": 0.323305,
         "realized_usd": 13246781.705122,
-        "crash_mild": 0.7462092564012253,
-        "crash_severe": 2.4414776990714837,
+        "crash_mild": 0.7671031728276776,
+        "crash_severe": 2.526283582092147,
         "series": {
           "combined_equity": [
             [
@@ -60299,7 +60299,7 @@
             ],
             [
               "2026-07-07",
-              12962418.742
+              12972068.9286
             ]
           ],
           "drawdown": [
@@ -61049,7 +61049,7 @@
             ],
             [
               "2026-07-07",
-              -0.0012
+              -0.0005
             ]
           ]
         }
