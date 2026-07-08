@@ -217,6 +217,48 @@ def test_dividend_panel_by_date(tmp_path):
     assert panel["sparkline"][-1]["net_usd"] == pytest.approx(-325.39)
 
 
+def test_dividend_panel_suppresses_attribution_lag_duplicate(tmp_path):
+    att = tmp_path / "pnl_attribution_history.csv"
+    att.write_text(
+        "date,long_realized_pnl,long_unrealized_pnl,short_realized_pnl,short_unrealized_pnl,"
+        "gross_realized_pnl,gross_unrealized_pnl,other_fees,borrow_fees,short_credit_interest,"
+        "excluded_cash_interest_base,dividends,withholding_tax,pil_dividends,bond_interest,strategy_total_pnl\n"
+        "2026-07-06,0,0,0,0,0,0,0,0,0,0,0,0,-1000,0,0\n"
+        "2026-07-07,0,0,0,0,0,0,0,0,0,0,0,0,-1000,0,0\n"
+        "2026-07-08,0,0,0,0,0,0,0,0,0,0,0,0,-25000,0,0\n",
+        encoding="utf-8",
+    )
+    div = tmp_path / "dividend_cash_history.csv"
+    div.write_text(
+        "date,symbol,underlying,bucket,pair,type,category,amount_usd,ex_date,description\n"
+        "2026-07-07,MTYY,MSTR,bucket_2,MSTR | MTYY,Payment In Lieu Of Dividends,pil_dividends,-24000,,PIL\n",
+        encoding="utf-8",
+    )
+    acct = tmp_path / "accounting"
+    acct.mkdir()
+    (acct / "pnl_by_symbol.csv").write_text(
+        "symbol,underlying,bucket,pair,total_pnl\nMTYY,MSTR,bucket_2,MSTR | MTYY,0\n",
+        encoding="utf-8",
+    )
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    panel = compute_dividend_panel(
+        dividend_cash_history_csv=div,
+        attribution_history_csv=att,
+        accounting_dir=acct,
+        runs_root=runs,
+        run_date="2026-07-08",
+        nav_usd=1_000_000,
+    )
+    assert panel["by_date"]["2026-07-07"]["net_usd"] == pytest.approx(-24000.0)
+    assert panel["by_date"]["2026-07-07"]["source"] == "cash"
+    day8 = panel["by_date"]["2026-07-08"]
+    assert day8["net_usd"] == pytest.approx(0.0)
+    assert day8["pil_usd"] == pytest.approx(0.0)
+    assert day8["lag_deduped"] is True
+    assert day8["attribution_net_usd"] == pytest.approx(-24000.0)
+
+
 def test_bucket_movers_by_date(tmp_path):
     hist_csv = tmp_path / "pnl_bucket_underlying_history.csv"
     hist_csv.write_text(
