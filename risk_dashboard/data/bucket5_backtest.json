@@ -1,6 +1,6 @@
 {
   "schema": "bucket5_backtest_panel.v1",
-  "generated_at_utc": "2026-07-08T18:02:12.011978+00:00",
+  "generated_at_utc": "2026-07-08T18:34:02.084753+00:00",
   "run_date": "2026-07-08",
   "variants": {
     "B_live": {
@@ -286,12 +286,12 @@
         "event_count": 102,
         "kinds": [
           "giveback",
-          "rearm",
-          "profit_3x",
-          "profit_8x",
           "vix_45",
+          "profit_3x",
           "profit_5x",
-          "scheduled_roll"
+          "rearm",
+          "scheduled_roll",
+          "profit_8x"
         ],
         "total_usd": 1689283.0
       },
@@ -13427,11 +13427,11 @@
         "event_count": 94,
         "kinds": [
           "giveback",
-          "rearm",
-          "profit_3x",
-          "profit_8x",
           "vix_45",
+          "profit_3x",
           "profit_5x",
+          "rearm",
+          "profit_8x",
           "scheduled_roll"
         ],
         "total_usd": 2649536.0
@@ -26567,14 +26567,14 @@
       "monetize_summary": {
         "event_count": 990,
         "kinds": [
-          "vix_65",
           "giveback",
-          "rearm",
-          "profit_3x",
           "vix_45",
-          "profit_8x",
+          "profit_3x",
           "profit_5x",
-          "scheduled_roll"
+          "scheduled_roll",
+          "rearm",
+          "profit_8x",
+          "vix_65"
         ],
         "total_usd": 17691869.0
       },
@@ -34837,14 +34837,14 @@
       "monetize_summary": {
         "event_count": 1005,
         "kinds": [
-          "vix_65",
           "giveback",
-          "rearm",
-          "profit_3x",
           "vix_45",
-          "profit_8x",
+          "profit_3x",
           "profit_5x",
-          "scheduled_roll"
+          "scheduled_roll",
+          "rearm",
+          "profit_8x",
+          "vix_65"
         ],
         "total_usd": 26449905.0
       },
@@ -42855,7 +42855,7 @@
   "repo": "ls-algo",
   "sensitivity_grid": {
     "schema": "bucket5_sensitivity.v1",
-    "generated_at_utc": "2026-07-08T18:02:12.472383+00:00",
+    "generated_at_utc": "2026-07-08T18:34:02.607435+00:00",
     "preset_base": "F_dynamic_deep30",
     "era": "extended",
     "axes": {

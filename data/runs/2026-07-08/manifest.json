@@ -1,8 +1,8 @@
 {
   "run_date": "2026-07-08",
-  "generated_at_utc": "2026-07-08T18:02:07.104379+00:00",
-  "git_sha": "10436789b09abf4850d973e48915966fd5fd9322",
-  "workflow_run_id": "28964284819",
+  "generated_at_utc": "2026-07-08T18:33:56.050047+00:00",
+  "git_sha": "68076773aee1a48857eceb899497f826b36e359a",
+  "workflow_run_id": "28966318407",
   "nav_usd": 1050000.0,
   "nav_source": "config:capital_usd",
   "screener_csv": "data/runs/2026-07-08/etf_screened_today.csv",
@@ -17,7 +17,7 @@
     "accounting/pnl_bucket_5_by_pair.csv": "b257099e5ab46ccd4e665020437f26a6fd831c33bff9e9aa322e30561bac348f",
     "accounting/pnl_bucket_5_by_symbol.csv": "4f2acb3b8a6bc7fb79a14bb1b815d565009695007e2d79e8d0a6f74958df384c",
     "ibkr_flex/flex_positions.xml": "e68d0bdaf5cf24bfb44b16cb7ef194588c3ac724f42cf67bcdd47f9162e869f8",
-    "etf_screened_today.csv": "7b5f8605199b8a12be8b6f18a84d70bddb554931f9aa02a4640f38f199f5b2a6"
+    "etf_screened_today.csv": "c7e9c34cfd3075d1a8ba4d4b8480189c503813002fd67be79b458a98449e0fc8"
   },
   "accounting_files": [
     "accounting/pnl_bucket_1.csv",
