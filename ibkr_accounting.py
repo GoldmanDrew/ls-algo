@@ -633,26 +633,11 @@ class HedgeRatioSpotMeta:
     ibkr_qty: float
 
 
-def _build_b4_phr_by_etf(
-    b4_registry: pd.DataFrame | None,
-    *,
-    partial_hedge_ratio_default: float = 0.75,
-) -> dict[str, float]:
-    out: dict[str, float] = {}
-    if b4_registry is None or b4_registry.empty:
-        return out
-    for _, row in b4_registry.iterrows():
-        etf = canonical_symbol(str(row.get("etf", "") or ""))
-        if not etf:
-            continue
-        try:
-            phr = float(row.get("partial_hedge_ratio", partial_hedge_ratio_default))
-        except (TypeError, ValueError):
-            phr = partial_hedge_ratio_default
-        if not np.isfinite(phr) or abs(phr) < 1e-12:
-            phr = partial_hedge_ratio_default
-        out[etf] = float(phr)
-    return out
+def _b4_structural_hedge_usd_for_etf(etf_net: float) -> float:
+    """Informational B4 structural short USD (``|etf_net|``); not ratio-split r4."""
+    if abs(float(etf_net)) <= 1e-12:
+        return 0.0
+    return abs(float(etf_net))
 
 
 def _b12_hedge_spot_usd_for_etf(
@@ -673,13 +658,6 @@ def _b12_hedge_spot_usd_for_etf(
     if etf_net >= -1e-12:
         return 0.0
     return abs(float(etf_net))
-
-
-def _b4_structural_hedge_usd_for_etf(etf_net: float, partial_hedge_ratio: float) -> float:
-    """Informational B4 structural short USD (``phr × |etf_net|``); not ratio-split r4."""
-    if abs(float(etf_net)) <= 1e-12:
-        return 0.0
-    return float(partial_hedge_ratio) * abs(float(etf_net))
 
 
 def _hedge_ratio_finalize_spot_ratios(
@@ -1322,8 +1300,6 @@ def hedge_ratio_spot_bucket_ratios(
     flow_short_syms: set[str] | None = None,
     b4_etf_syms: set[str] | None = None,
     b4_registry_b12_only: bool = False,
-    b4_phr_by_etf: dict[str, float] | None = None,
-    partial_hedge_ratio_default: float = 0.75,
     delta_floor: float = 0.25,
     ledger_qty: dict[str, float] | None = None,
     plan_b4_qty: float = 0.0,
@@ -1331,13 +1307,11 @@ def hedge_ratio_spot_bucket_ratios(
 ) -> tuple[SpotBucketRatios, HedgeRatioSpotMeta]:
     """
     Spot exposure split from trade-plan hedge ratios: B1/B2 long spot pairs with
-    ``|short_etf| × |β|`` (hr = 1/|β|). B4 ``partial_hedge_ratio`` (default 0.75)
-    is tracked for structural shorts only (ratio-split r4 stays 0 on B4-registry
-    spot lines).
+    ``|short_etf| × |β|`` (hr = 1/|β|). B4 structural shorts are tracked
+    separately (ratio-split r4 stays 0 on B4-registry spot lines).
     """
     flow = flow_short_syms or set()
     b4_set = b4_etf_syms or set()
-    phr_map = b4_phr_by_etf or {}
     u = canonical_symbol(underlying)
     spot_net = 0.0
     need_b1 = need_b2 = need_b4 = 0.0
@@ -1376,8 +1350,7 @@ def hedge_ratio_spot_bucket_ratios(
                 net, beta, bucket=bkt, delta_floor=delta_floor
             )
         elif bkt == "bucket_4":
-            phr = float(phr_map.get(sym_c, partial_hedge_ratio_default))
-            need_b4 += _b4_structural_hedge_usd_for_etf(net, phr)
+            need_b4 += _b4_structural_hedge_usd_for_etf(net)
 
     has_b1, has_b2, has_b4 = held_etf_bucket_flags_from_positions(
         u, pos, etf_to_under, etf_to_delta, flow_short_syms=flow
@@ -1434,8 +1407,6 @@ def hedge_ratio_spot_ratios_from_exposure_detail(
     flow_short_set: set[str],
     b4_etf_syms: set[str],
     b4_spot_b12_only: set[str] | None = None,
-    b4_phr_by_etf: dict[str, float] | None = None,
-    partial_hedge_ratio_default: float = 0.75,
     delta_floor: float = 0.25,
     ledger_qty_by_u: dict[str, dict[str, float]] | None = None,
     plan_b4_qty_by_u: dict[str, float] | None = None,
@@ -1458,7 +1429,6 @@ def hedge_ratio_spot_ratios_from_exposure_detail(
             d["symbol"].map(etf_to_delta_map), errors="coerce"
         ).fillna(1.0)
     _b4_b12 = b4_spot_b12_only or set()
-    phr_map = b4_phr_by_etf or {}
     _ledger = ledger_qty_by_u or {}
     _plan_b4 = plan_b4_qty_by_u or {}
     _spot_q = spot_qty_by_u or {}
@@ -1488,8 +1458,7 @@ def hedge_ratio_spot_ratios_from_exposure_detail(
                     net, beta, bucket=bkt, delta_floor=delta_floor
                 )
             elif bkt == "bucket_4":
-                phr = float(phr_map.get(sym, partial_hedge_ratio_default))
-                need_b4 += _b4_structural_hedge_usd_for_etf(net, phr)
+                need_b4 += _b4_structural_hedge_usd_for_etf(net)
         has_b1, has_b2, has_b4 = (
             need_b1 > 1e-12,
             need_b2 > 1e-12,
@@ -1768,7 +1737,7 @@ def build_hedge_residual_spot_ratio_map(
        sleeve target from the latest ``inverse_decay_bucket4`` trade plan row.
     2. **etf_implied_short** — when ``b4_attribution_mode == 'etf_implied'``
        and ``|etf_implied_short_usd[u]| >= b4_attribution_min_usd``. This is
-       computed from held inverse ETF positions × β × partial_hedge_ratio
+       computed from held inverse ETF positions × β
        and lets the accounting recover the structural short even after the
        rebalancer has netted the sleeve order into a single IBKR stock line
        and the FIFO ``qty_b4`` ledger has lost the tag.
@@ -2211,7 +2180,6 @@ def build_bucket4_pair_registry(
     *,
     flow_short_syms: set[str] | None = None,
     proposed_trades_csv: Path | None = None,
-    partial_hedge_ratio: float = 1.0,
 ) -> pd.DataFrame:
     """
     Canonical inverse-decay (bucket 4) ETF ↔ underlying pairs.
@@ -2219,7 +2187,7 @@ def build_bucket4_pair_registry(
     Sources: screened CSV (β < 0, not flow shorts), supplemental ETF map,
     optional proposed_trades sleeve ``inverse_decay_bucket4``.
     """
-    cols = ["etf", "underlying", "delta", "partial_hedge_ratio"]
+    cols = ["etf", "underlying", "delta"]
     etf_to_under, etf_to_delta = load_etf_delta_map(screened_csv)
     for sym, und in SUPPLEMENTAL_ETF_MAP.items():
         etf_to_under.setdefault(sym, und)
@@ -2236,7 +2204,6 @@ def build_bucket4_pair_registry(
                 "etf": canonical_symbol(etf),
                 "underlying": canonical_symbol(under),
                 "delta": delta,
-                "partial_hedge_ratio": float(partial_hedge_ratio),
             }
         )
 
@@ -2262,7 +2229,6 @@ def build_bucket4_pair_registry(
                                 "etf": etf,
                                 "underlying": under,
                                 "delta": delta,
-                                "partial_hedge_ratio": float(partial_hedge_ratio),
                             }
                         )
         except Exception:
@@ -2982,7 +2948,6 @@ def compute_implied_b4_short(
     *,
     b4_registry: pd.DataFrame,
     spot_mark_base: float,
-    partial_hedge_ratio_default: float = 0.75,
 ) -> tuple[float, float]:
     """
     Implied B4 structural short for ``underlying`` from held inverse-ETF positions.
@@ -2990,11 +2955,11 @@ def compute_implied_b4_short(
     For each B4 registry pair mapped to ``underlying`` we sum the held ETF's
     delta-normalised market value (``position × delta × markPx × fxRateToBase``)
     — which yields the long-equivalent exposure created by being short the
-    inverse ETF — and return its negative scaled by ``partial_hedge_ratio``.
-    This is the structural short underlying leg the strategy *intends* to
-    run against the held B4 inverse ETF book even when the latest plan no
-    longer carries an explicit ``inverse_decay_bucket4`` row and the FIFO
-    share ledger has been netted into a single broker stock line.
+    inverse ETF — and return its negative. This is the structural short
+    underlying leg the strategy *intends* to run against the held B4 inverse
+    ETF book even when the latest plan no longer carries an explicit
+    ``inverse_decay_bucket4`` row and the FIFO share ledger has been netted
+    into a single broker stock line.
 
     Returns ``(short_usd, short_qty)``. Both are ≤ 0 when the held inverse
     ETF position is short (the typical case); both are ≥ 0 if the inverse
@@ -3021,12 +2986,6 @@ def compute_implied_b4_short(
             delta = float(row.get("delta", -1.0))
         except (TypeError, ValueError):
             delta = -1.0
-        try:
-            phr = float(row.get("partial_hedge_ratio", partial_hedge_ratio_default))
-        except (TypeError, ValueError):
-            phr = partial_hedge_ratio_default
-        if not np.isfinite(phr) or abs(phr) < 1e-12:
-            phr = partial_hedge_ratio_default
         held = pos_u[pos_u["symbol"] == etf]
         if held.empty:
             continue
@@ -3041,7 +3000,7 @@ def compute_implied_b4_short(
             if abs(qty) <= 1e-12 or mark_base <= 0:
                 continue
             etf_beta_norm = qty * delta * mark_base
-            short_usd += -phr * etf_beta_norm
+            short_usd += -etf_beta_norm
 
     spot_mark = float(spot_mark_base or 0.0)
     short_qty = short_usd / spot_mark if abs(spot_mark) > 1e-12 else 0.0
@@ -3220,7 +3179,7 @@ def build_b4_plan_ledger_reconciliation(
 
     The ``b4_source`` column reports which signal won at attribution time:
     ``plan`` (current ``inverse_decay_bucket4`` plan row), ``etf_implied``
-    (held inverse ETFs × β × partial_hedge_ratio), ``ledger`` (FIFO
+    (held inverse ETFs × β), ``ledger`` (FIFO
     ``qty_b4`` only), or ``none``. ``ledger_missing_b4`` fires whenever an
     intended structural short (plan or implied) is absent from the FIFO
     share ledger — useful when the rebalancer netted sleeve orders into a
@@ -4047,6 +4006,20 @@ def override_mark_prices(
     return pos
 
 
+DIVIDEND_CASH_TYPES: tuple[str, ...] = (
+    "Dividends",
+    "Withholding Tax",
+    "Payment In Lieu Of Dividends",
+)
+
+
+def _yyyymmdd_to_iso(raw: str) -> str:
+    s = (raw or "").strip()[:8]
+    if len(s) != 8 or not s.isdigit():
+        return ""
+    return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+
+
 def parse_cash_transactions(cash_xml: Path) -> pd.DataFrame:
     r = ET.parse(cash_xml).getroot()
     ct = r.find(".//CashTransactions")
@@ -4058,6 +4031,8 @@ def parse_cash_transactions(cash_xml: Path) -> pd.DataFrame:
         rows.append(
             {
                 "date": (a.get("dateTime", "") or "")[:8],
+                "reportDate": (a.get("reportDate", "") or "")[:8],
+                "exDate": (a.get("exDate", "") or "")[:8],
                 "type": a.get("type", ""),
                 "currency": a.get("currency", ""),
                 "symbol": canonical_symbol(a.get("symbol", "") or ""),
@@ -4072,6 +4047,8 @@ def parse_cash_transactions(cash_xml: Path) -> pd.DataFrame:
         return pd.DataFrame(
             columns=[
                 "date",
+                "reportDate",
+                "exDate",
                 "type",
                 "currency",
                 "symbol",
@@ -4082,8 +4059,63 @@ def parse_cash_transactions(cash_xml: Path) -> pd.DataFrame:
                 "amount_base",
             ]
         )
-    df["amount_base"] = df.apply(lambda r: to_base(r["amount"], r["fxRateToBase"]), axis=1)
+    df["amount_base"] = df.apply(lambda row: to_base(row["amount"], row["fxRateToBase"]), axis=1)
     return df
+
+
+def parse_change_in_dividend_accruals(cash_xml: Path) -> pd.DataFrame:
+    """Parse Flex ``ChangeInDividendAccruals`` for ex-div / pay-date calendar."""
+    cols = [
+        "reportDate",
+        "date",
+        "exDate",
+        "payDate",
+        "symbol",
+        "underlyingSymbol",
+        "quantity",
+        "grossRate",
+        "grossAmount",
+        "netAmount",
+        "tax",
+        "code",
+        "currency",
+        "fxRateToBase",
+        "grossAmount_base",
+        "netAmount_base",
+    ]
+    if not cash_xml.exists():
+        return pd.DataFrame(columns=cols)
+    r = ET.parse(cash_xml).getroot()
+    root = r.find(".//ChangeInDividendAccruals")
+    if root is None:
+        return pd.DataFrame(columns=cols)
+    rows: list[dict] = []
+    for node in root:
+        a = node.attrib
+        fx = float(a.get("fxRateToBase", "1") or 1)
+        gross = float(a.get("grossAmount", "0") or 0)
+        net = float(a.get("netAmount", "0") or 0)
+        rows.append(
+            {
+                "reportDate": (a.get("reportDate", "") or "")[:8],
+                "date": (a.get("date", "") or "")[:8],
+                "exDate": (a.get("exDate", "") or "")[:8],
+                "payDate": (a.get("payDate", "") or "")[:8],
+                "symbol": canonical_symbol(a.get("symbol", "") or ""),
+                "underlyingSymbol": canonical_symbol(a.get("underlyingSymbol", "") or ""),
+                "quantity": float(a.get("quantity", "0") or 0),
+                "grossRate": float(a.get("grossRate", "0") or 0),
+                "grossAmount": gross,
+                "netAmount": net,
+                "tax": float(a.get("tax", "0") or 0),
+                "code": (a.get("code", "") or "").strip(),
+                "currency": a.get("currency", ""),
+                "fxRateToBase": fx,
+                "grossAmount_base": to_base(gross, fx),
+                "netAmount_base": to_base(net, fx),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def parse_borrow_fee_details(borrow_xml: Path, run_date: str) -> pd.DataFrame:
@@ -4645,9 +4677,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         )
         b4_attribution_mode = "etf_implied"
     b4_attribution_min_usd = float(_acct_cfg.get("b4_attribution_min_usd", 500.0) or 500.0)
-    b4_partial_hedge_ratio_default = float(
-        _acct_cfg.get("b4_partial_hedge_ratio_default", 0.75) or 0.75
-    )
     # Date the live B4 (inverse-decay) sleeve went live. The synthetic structural
     # short carries only the underlying's move *since* this date (point-in-time),
     # and no structural short exists on runs before it — the pre-inception move
@@ -4666,11 +4695,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         _acct_cfg.get("exposure_reconciliation_tol_net_abs_usd", 500.0) or 500.0
     )
     bucket_state_path = PROJECT_ROOT / "data" / "accounting" / "underlying_bucket_state.csv"
-    b4_partial_hedge_ratio = float(
-        ((sleeves_cfg.get("inverse_decay_bucket4") or {}).get("rules") or {}).get(
-            "partial_hedge_ratio", 1.0
-        )
-    )
 
     dated_screened_path = PROJECT_ROOT / "data" / "runs" / run_date / "etf_screened_today.csv"
     etf_screened_path = (
@@ -4849,7 +4873,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         etf_screened_path,
         flow_short_syms=flow_short_set,
         proposed_trades_csv=proposed_trades_path,
-        partial_hedge_ratio=b4_partial_hedge_ratio,
     )
     b4_registry.to_csv(outdir / "bucket4_pairs.csv", index=False)
     b4_etf_syms = set(b4_registry["etf"].astype(str).tolist()) if not b4_registry.empty else set()
@@ -4863,10 +4886,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             f"[ACCOUNTING] volatility ETP bucket-5: {len(bucket5_etf_syms)} ETF symbol(s) "
             f"(e.g. {', '.join(sorted(bucket5_etf_syms)[:8])})"
         )
-    b4_phr_by_etf = _build_b4_phr_by_etf(
-        b4_registry,
-        partial_hedge_ratio_default=b4_partial_hedge_ratio_default,
-    )
     df["underlying"] = df["symbol"].map(etf_to_under)
     df["underlying"] = df["underlying"].fillna(df["underlyingSymbol"]).fillna(df["symbol"])
 
@@ -5826,7 +5845,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
             pos,
             b4_registry=b4_registry,
             spot_mark_base=_mark_u_b4,
-            partial_hedge_ratio_default=b4_partial_hedge_ratio_default,
         )
         # Cap the mirror at the actual long line: |short| ≤ |spot shares held|,
         # and never invert (a long spot can only be mirrored by a short slice).
@@ -5857,7 +5875,7 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         print(
             f"[ACCOUNTING] structural B4 exposure for "
             f"{len(_b4_plan_exposure_underlyings)} underlying(s) "
-            f"(attribution={b4_attribution_mode}, phr={b4_partial_hedge_ratio_default}): "
+            f"(attribution={b4_attribution_mode}): "
             f"{', '.join(sorted(_b4_plan_exposure_underlyings)[:8])}"
             f"{'...' if len(_b4_plan_exposure_underlyings) > 8 else ''}"
         )
@@ -6103,8 +6121,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 flow_short_syms=flow_short_set,
                 b4_etf_syms=b4_etf_syms,
                 b4_registry_b12_only=_u in b4_underlyings,
-                b4_phr_by_etf=b4_phr_by_etf,
-                partial_hedge_ratio_default=b4_partial_hedge_ratio_default,
                 delta_floor=b12_hedge_delta_floor,
                 ledger_qty=_ledger_for_ratio,
                 plan_b4_qty=_plan_b4_qty_row,
@@ -7150,8 +7166,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
                 flow_short_set=flow_short_set,
                 b4_etf_syms=b4_etf_syms,
                 b4_spot_b12_only=_b4_spot_b12_only_expo,
-                b4_phr_by_etf=b4_phr_by_etf,
-                partial_hedge_ratio_default=b4_partial_hedge_ratio_default,
                 delta_floor=b12_hedge_delta_floor,
                 ledger_qty_by_u=_ledger_qty_map,
                 plan_b4_qty_by_u=_plan_b4_qty_by_u,
@@ -7568,7 +7582,6 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
         "b4_plan_exposure_underlyings": sorted(_b4_plan_exposure_underlyings),
         "b4_underlying_attribution": b4_attribution_mode,
         "b4_attribution_min_usd": float(b4_attribution_min_usd),
-        "b4_partial_hedge_ratio_default": float(b4_partial_hedge_ratio_default),
         "b4_etf_implied_underlyings": sorted(_implied_b4_short_usd),
         "b4_attribution_sources": {
             "plan": sorted([k for k, v in _b4_attribution_source.items() if v == "plan"]),

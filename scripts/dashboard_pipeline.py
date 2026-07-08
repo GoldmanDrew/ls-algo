@@ -78,6 +78,8 @@ def main(argv: list[str] | None = None) -> int:
             ]
         )
 
+    _run([sys.executable, "scripts/dividend_ledger.py"])
+
     screener = resolve_screener_csv(run_date, runs_root)
     build_cmd = [
         sys.executable,

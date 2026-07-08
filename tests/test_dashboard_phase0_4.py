@@ -20,6 +20,7 @@ from risk_dashboard.metrics import (
     compute_bucket_drawdown_panel,
     compute_bucket_movers_panel,
     compute_component_attribution_panel,
+    compute_dividend_panel,
     compute_drawdown_panel,
     compute_movers_panel,
     compute_pnl_panel,
@@ -175,6 +176,47 @@ def test_component_attribution_panel_periods(tmp_path):
     assert panel["by_date"]["2026-06-03"]["total_usd"] == pytest.approx(290)
 
 
+def test_dividend_panel_by_date(tmp_path):
+    att = tmp_path / "pnl_attribution_history.csv"
+    att.write_text(
+        "date,long_realized_pnl,long_unrealized_pnl,short_realized_pnl,short_unrealized_pnl,"
+        "gross_realized_pnl,gross_unrealized_pnl,other_fees,borrow_fees,short_credit_interest,"
+        "excluded_cash_interest_base,dividends,withholding_tax,pil_dividends,bond_interest,strategy_total_pnl\n"
+        "2026-07-01,0,0,0,0,0,0,0,0,0,0,100,0,-1000,0,0\n"
+        "2026-07-02,0,0,0,0,0,0,0,0,0,0,103,0,-1329,0,0\n",
+        encoding="utf-8",
+    )
+    div = tmp_path / "dividend_cash_history.csv"
+    div.write_text(
+        "date,symbol,underlying,bucket,pair,type,category,amount_usd,ex_date,description\n"
+        "2026-07-02,CRM,CRM,bucket_1,CRM (spot),Dividends,dividends,3.96,20260702,CRM dividend\n"
+        "2026-07-02,MTYY,MSTR,bucket_2,MSTR | MTYY,Payment In Lieu Of Dividends,pil_dividends,-329.35,,PIL\n",
+        encoding="utf-8",
+    )
+    acct = tmp_path / "accounting"
+    acct.mkdir()
+    (acct / "pnl_by_symbol.csv").write_text(
+        "symbol,underlying,bucket,pair,total_pnl\nCRM,CRM,bucket_1,CRM (spot),0\n",
+        encoding="utf-8",
+    )
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    panel = compute_dividend_panel(
+        dividend_cash_history_csv=div,
+        attribution_history_csv=att,
+        accounting_dir=acct,
+        runs_root=runs,
+        run_date="2026-07-02",
+        nav_usd=1_000_000,
+    )
+    assert panel["available"] is True
+    day = panel["by_date"]["2026-07-02"]
+    assert day["net_usd"] == pytest.approx(-325.39)
+    assert day["pil_usd"] == pytest.approx(-329.35)
+    assert len(day["rows"]) == 2
+    assert panel["sparkline"][-1]["net_usd"] == pytest.approx(-325.39)
+
+
 def test_bucket_movers_by_date(tmp_path):
     hist_csv = tmp_path / "pnl_bucket_underlying_history.csv"
     hist_csv.write_text(
@@ -294,6 +336,7 @@ def test_snapshot_exposes_phase0_4_fields():
         "movers_panel",
         "bucket_movers_panel",
         "component_attribution_panel",
+        "dividend_panel",
         "bucket_drawdown_panel",
         "display_sleeve_groups",
     ):

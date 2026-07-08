@@ -670,3 +670,24 @@ tr.pnl-day-selected { background: rgba(37, 99, 235, 0.15); }
   letter-spacing: 0.04em;
 }
 .b4sim-pair-tag-blk { background: var(--hard-bg); color: var(--neg); }
+
+.pnl-div-summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 8px 0 4px;
+}
+.stat-compact { min-width: 120px; }
+.pnl-div-spark-wrap { margin: 8px 0 12px; }
+.pnl-div-warn-banner {
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  margin: 8px 0;
+  border: 1px solid var(--border);
+}
+.pnl-div-warn-banner.warn { background: var(--warn-bg); color: #b7791f; }
+.pnl-div-warn-banner.ok { background: var(--bg-soft); color: var(--text-secondary); }
+.pnl-div-detail-table { margin-top: 8px; }
+.pnl-div-extra { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.pnl-div-drill:hover .pnl-bucket-label { text-decoration: underline; }
