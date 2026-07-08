@@ -2803,24 +2803,7 @@ def main() -> None:
                         min_underlying_vol=float(b4_opt2.get("min_underlying_vol", b4_min_underlying_vol_entry)),
                         min_net_decay=float(b4_opt2.get("min_net_decay", b4_min_edge)),
                         use_ibkr_uvix_borrow=bool(b4_opt2.get("use_ibkr_uvix_borrow", False)),
-                        pf_params=V6PfParams(
-                            min_pairs=mp,
-                            vol_etp_weight_penalty=float(
-                                b4_opt2.get("vol_etp_weight_penalty", 0.0)
-                            ),
-                            borrow_aversion_source=str(
-                                b4_opt2.get("borrow_aversion_source", "spot")
-                            ),
-                            decay_borrow_quad=float(
-                                b4_opt2.get("decay_borrow_quad", 18.0)
-                            ),
-                            borrow_linear_aversion=float(
-                                b4_opt2.get("borrow_linear_aversion", 0.0)
-                            ),
-                            borrow_uncertainty_penalty=float(
-                                b4_opt2.get("borrow_uncertainty_penalty", 0.0)
-                            ),
-                        ),
+                        pf_params=V6PfParams.from_opt2_dict(b4_opt2, min_pairs=mp),
                         hedge_source=_hedge_source,
                         hedge_cadence_policy=_hcp,
                     )
@@ -2956,12 +2939,18 @@ def main() -> None:
                         (_norm_sym(str(r["ETF"])), _norm_sym(str(r["Underlying"]))): float(r.get("ratchet_trim_lambda", 0.0) or 0.0)
                         for _, r in tgt_df.iterrows()
                     }
+                    trim_usd_by_key = {
+                        (_norm_sym(str(r["ETF"])), _norm_sym(str(r["Underlying"]))): float(r.get("ratchet_trim_usd", 0.0) or 0.0)
+                        for _, r in tgt_df.iterrows()
+                    }
                     # Default columns so non-opt2 / fallback B4 rows are explicitly
                     # NOT released (NaN would read as truthy in the resize guard).
                     if "ratchet_released" not in b4c.columns:
                         b4c["ratchet_released"] = False
                     if "ratchet_trim_lambda" not in b4c.columns:
                         b4c["ratchet_trim_lambda"] = 0.0
+                    if "ratchet_trim_usd" not in b4c.columns:
+                        b4c["ratchet_trim_usd"] = 0.0
                     for idx in b4c.index:
                         k = (
                             _norm_sym(str(b4c.at[idx, "ETF"])),
@@ -2979,9 +2968,12 @@ def main() -> None:
                             b4c.at[idx, "ratchet_released"] = bool(released_by_key[k])
                         if k in trim_lambda_by_key:
                             b4c.at[idx, "ratchet_trim_lambda"] = float(trim_lambda_by_key[k])
+                        if k in trim_usd_by_key:
+                            b4c.at[idx, "ratchet_trim_usd"] = float(trim_usd_by_key[k])
                     print(f"[INFO] bucket4_weekly_opt2: tail-risk weights + dynamic hedge targets (n={len(tgt_df)})")
                 except Exception as e:
-                    print(f"[WARN] bucket4_weekly_opt2 disabled for this run ({e}); using decay_score sizing")
+                    print(f"[ERROR] bucket4_weekly_opt2 failed ({e}); decay_score fallback disabled while enabled=true")
+                    raise
             b4_parts.append(b4c)
 
         if not b4_vol_names.empty and b4_vol_cash > 1e-9:
@@ -3512,6 +3504,7 @@ def main() -> None:
             "low_n_size_mult",
             "ratchet_released",
             "ratchet_trim_lambda",
+            "ratchet_trim_usd",
         ):
             if col in sized.columns:
                 keep.loc[sized.index, col] = sized[col]
@@ -3522,6 +3515,10 @@ def main() -> None:
         if "ratchet_trim_lambda" in keep.columns:
             keep["ratchet_trim_lambda"] = pd.to_numeric(
                 keep["ratchet_trim_lambda"], errors="coerce"
+            ).fillna(0.0)
+        if "ratchet_trim_usd" in keep.columns:
+            keep["ratchet_trim_usd"] = pd.to_numeric(
+                keep["ratchet_trim_usd"], errors="coerce"
             ).fillna(0.0)
 
         # ---- Optimal (structural-only) target columns: parallel set written next to executable.
@@ -3648,6 +3645,11 @@ def main() -> None:
 
         print(f"[OK] Wrote proposed trades -> {dated_path}  (n={len(proposed)})")
         print(f"[OK] Updated latest proposed trades -> {proposed_latest_csv}  (n={len(proposed)})")
+
+        if bool((b4_rules.get("bucket4_weekly_opt2") or {}).get("enabled")):
+            from scripts.b4_plan_contract import verify_b4_gtp_artifacts
+
+            verify_b4_gtp_artifacts(args.run_date, proposed_path=dated_path)
 
         # ----- optimal_targets.csv: structural-only target slice for harvest + rebalance.
         # Same row-level granularity as proposed_trades.csv but only the optimal_* columns

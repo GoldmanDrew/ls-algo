@@ -114,3 +114,24 @@ def test_ratchet_partial_hedge_ratio_applies_to_underlying_only():
     assert r["inverse_etf_short_usd"] == pytest.approx(60_000.0, rel=1e-6)
     # underlying = 0.5*2.0*60k*0.75 = 45k
     assert r["underlying_short_usd"] == pytest.approx(45_000.0, rel=1e-6)
+
+
+def test_continuous_trim_releases_and_reduces_inverse():
+    st = _make_state()
+    cur = {PAIR: {"inverse_etf_short_usd": 80_000.0}}
+    df, _ = compute_bucket4_targets(
+        st, {PAIR: 1.0}, "2026-01-02", GROSS, partial_hedge_ratio=1.0,
+        ratchet_enabled=True,
+        ratchet_trim_enabled=True,
+        ratchet_trim_max=0.5,
+        ratchet_trim_creep_full=1.0,
+        current_leg_notional_by_pair=cur,
+        forward_edge_by_pair={PAIR: 0.10},
+    )
+    r = df.iloc[0]
+    assert r["inverse_short_solved_usd"] == pytest.approx(50_000.0, rel=1e-6)
+    assert 50_000.0 < r["inverse_etf_short_usd"] < 80_000.0
+    assert bool(r["ratchet_released"]) is True
+    assert float(r["ratchet_trim_lambda"]) > 0.0
+    assert float(r["ratchet_trim_usd"]) > 0.0
+    assert r["ratchet_source"] == "edge_trim"

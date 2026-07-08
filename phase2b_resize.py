@@ -221,6 +221,7 @@ def build_resize_trades(
     tax_router: Optional[Callable[[List[Dict], List[ResizeDecision]],
                                   Tuple[List[Dict], List[ResizeDecision]]]] = None,
     target_basis: str = "hybrid",
+    b4_allow_inverse_cover: bool = False,
 ) -> Tuple[List[Dict], List[ResizeDecision]]:
     """
     Iterate the hedgeable plan and produce resize trade candidates whose
@@ -413,19 +414,28 @@ def build_resize_trades(
             e_dec.etf = etf
 
             # Bucket 4 grow-only ratchet (execution-time guard / defense-in-depth):
-            # the inverse-ETF short leg is never covered. For a short leg, action
-            # BUY == reduce the short (cover); convert that into a skip so we keep
-            # the hard-to-relocate inverse inventory and manage delta via the
-            # underlying leg instead. SELL (grow the short) is always allowed.
+            # the inverse-ETF short leg is never covered unless the plan marked the
+            # pair ``ratchet_released`` and execution allows gradual trim.
             _sleeve_name = str(row.get("sleeve", "") or "").strip().lower()
-            if _sleeve_name in {"inverse_decay_bucket4", "volatility_etp_bucket5"} and e_dec.action == "BUY":
-                e_dec.decision = "skip"
-                e_dec.action = None
-                e_dec.trade_usd = 0.0
-                e_dec.qty = 0
-                e_dec.reason = (e_dec.reason or "") + "|b4_ratchet_no_cover"
-                decisions.append(e_dec)
-                continue
+            _ratchet_released = bool(row.get("ratchet_released", False))
+            _trim_usd = float(row.get("ratchet_trim_usd", 0.0) or 0.0)
+            if (
+                _sleeve_name in {"inverse_decay_bucket4", "volatility_etp_bucket5"}
+                and e_dec.action == "BUY"
+            ):
+                if not (b4_allow_inverse_cover and _ratchet_released):
+                    e_dec.decision = "skip"
+                    e_dec.action = None
+                    e_dec.trade_usd = 0.0
+                    e_dec.qty = 0
+                    e_dec.reason = (e_dec.reason or "") + "|b4_ratchet_no_cover"
+                    decisions.append(e_dec)
+                    continue
+                if _trim_usd > 0.0 and e_dec.trade_usd > _trim_usd + 1e-6:
+                    e_dec.trade_usd = float(_trim_usd)
+                    e_dec.reason = (e_dec.reason or "") + "|b4_ratchet_trim_capped"
+                else:
+                    e_dec.reason = (e_dec.reason or "") + "|b4_ratchet_trim_allowed"
 
             if e_dec.decision in ("trim", "grow") and e_dec.action and e_dec.trade_usd > 0:
                 if (

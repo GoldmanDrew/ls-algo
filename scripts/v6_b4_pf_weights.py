@@ -61,10 +61,24 @@ class V6PfParams:
     #: 100%-vol crypto names, so vol ETPs don't stand out enough on their own.
     #: 0.0 = off.
     vol_etp_weight_penalty: float = 0.0
+    #: ``spot`` uses pair-cache ``borrow_a_annual``; ``posterior`` prefers
+    #: ``borrow_posterior_annual`` from the screener when present.
+    borrow_aversion_source: str = "spot"
+    #: Downweight by ``1 / (1 + penalty * borrow_posterior_var_annual)`` when > 0.
+    borrow_uncertainty_penalty: float = 0.0
 
     def __post_init__(self) -> None:
         if self.tail_risk_symbol_overrides is None:
             self.tail_risk_symbol_overrides = {"UVIX/SVIX": "UVIX"}
+
+    @classmethod
+    def from_opt2_dict(cls, opt2: dict, *, min_pairs: int | None = None) -> "V6PfParams":
+        """Build params from ``bucket4_weekly_opt2`` config; ignores unknown keys."""
+        fields = cls.__dataclass_fields__
+        kwargs = {k: v for k, v in dict(opt2 or {}).items() if k in fields}
+        if min_pairs is not None:
+            kwargs["min_pairs"] = int(min_pairs)
+        return cls(**kwargs)
 
 
 def _nonneg_borrow_annual(x: float) -> float:
@@ -72,6 +86,40 @@ def _nonneg_borrow_annual(x: float) -> float:
     if not np.isfinite(v) or v < 0.0:
         return 0.0
     return float(v)
+
+
+def load_borrow_posterior_by_pair(
+    screened_csv: str,
+    *,
+    norm_sym: Callable[[str], str],
+) -> dict[tuple[str, str], dict[str, float]]:
+    """Per-pair posterior borrow mean/var from the screener CSV."""
+    p = pd.read_csv(screened_csv)
+    cols = {c.lower(): c for c in p.columns}
+    ec, uc = cols.get("etf"), cols.get("underlying")
+    if ec is None or uc is None:
+        return {}
+    ann_col = cols.get("borrow_posterior_annual")
+    var_col = cols.get("borrow_posterior_var_annual")
+    out: dict[tuple[str, str], dict[str, float]] = {}
+    for _, row in p.iterrows():
+        key = (norm_sym(str(row[ec])), norm_sym(str(row[uc])))
+        annual = (
+            float(pd.to_numeric(row.get(ann_col), errors="coerce"))
+            if ann_col is not None
+            else float("nan")
+        )
+        var = (
+            float(pd.to_numeric(row.get(var_col), errors="coerce"))
+            if var_col is not None
+            else float("nan")
+        )
+        if np.isfinite(annual):
+            out[key] = {
+                "annual": _nonneg_borrow_annual(annual),
+                "var": float(var) if np.isfinite(var) and var >= 0 else 0.0,
+            }
+    return out
 
 
 def load_net_decay_by_pair(
@@ -239,6 +287,12 @@ def compute_v6_b4_pf_weight_dict(
     """
     p = params or V6PfParams()
     decay_map, decay_src = load_net_decay_by_pair(screened_csv, norm_sym=norm_sym)
+    borrow_src = str(p.borrow_aversion_source or "spot").strip().lower()
+    posterior_borrow = (
+        load_borrow_posterior_by_pair(screened_csv, norm_sym=norm_sym)
+        if borrow_src == "posterior"
+        else {}
+    )
 
     uvix_borrow_annual_base: float | None = None
     if use_ibkr_uvix_borrow:
@@ -285,7 +339,14 @@ def compute_v6_b4_pf_weight_dict(
         pair_lbl = f"{etf_sym}/{und_sym}"
         decay_u = float(decay_map.get((norm_sym(etf_sym), norm_sym(und_sym)), p.min_expected_decay_annual))
         decay_eff = max(p.min_expected_decay_annual, decay_u)
-        borrow_a = _etf_borrow_annual_actual(etf_sym, kw0)
+        pair_key = (norm_sym(etf_sym), norm_sym(und_sym))
+        post = posterior_borrow.get(pair_key) or {}
+        if borrow_src == "posterior" and post.get("annual") is not None:
+            borrow_a = float(post["annual"])
+            borrow_var = float(post.get("var", 0.0) or 0.0)
+        else:
+            borrow_a = _etf_borrow_annual_actual(etf_sym, kw0)
+            borrow_var = 0.0
         risk_symbol = str(p.tail_risk_symbol_overrides.get(pair_lbl, und_sym))
         risk_raw = _tail_risk_raw(
             risk_symbol, start_sim, norm_sym=norm_sym, pair_cache=pair_cache, closes_broad=closes_broad, params=p
@@ -297,6 +358,9 @@ def compute_v6_b4_pf_weight_dict(
         if lin <= 0.0:
             lin = 1e-18
         base_score = (decay_eff ** float(p.decay_exponent)) / quad / lin
+        unc_pen = float(p.borrow_uncertainty_penalty)
+        if unc_pen > 0.0 and borrow_var > 0.0:
+            base_score = base_score / (1.0 + unc_pen * borrow_var)
         rows_w.append(
             {
                 "pair": pair_lbl,

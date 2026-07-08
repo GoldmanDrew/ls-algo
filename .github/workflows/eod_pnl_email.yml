@@ -178,7 +178,7 @@ jobs:
         run: |
           python ibkr_flex.py --run-date "$RUN_DATE"
           python scripts/ibkr_accounting_pnl.py "$RUN_DATE"
-          python -m scripts.b4_reconstruct_state --run-date "$RUN_DATE" || true
+          python -m scripts.b4_reconstruct_state --run-date "$RUN_DATE"
           EOD_SKIP_PIPELINE=1 python run_eod_pnl_email.py
           python scripts/run_data_contract.py --run-date "$RUN_DATE"
 

@@ -87,16 +87,22 @@ These four blocks ship in `strategy_config.yml` with `enabled: false`. They are
 documented here so the config stays terse. Code paths exist but are skipped
 while disabled.
 
-### `ratchet` (grow-only inverse leg)
+### `ratchet` (grow-only inverse leg + continuous trim) — **LIVE**
 - **What:** floors the inverse-ETF short leg at
   `max(solved, currently_held, persisted_floor)` so the short side only grows;
-  any delta reduction flows through the underlying hedge leg instead.
-- **Applied in:** `scripts/bucket4_weekly_opt2.py` (re-solves the underlying leg
-  against the floored inverse leg, keeping `h` consistent) and
-  `generate_trade_plan.py` (`_b4_*_ratchet_state` helpers).
-- **State:** `data/b4_inverse_ratchet_state.json`.
-- **Why off:** avoids locking in size during the current ramp; turn on once
-  pair sizes are stable.
+  continuous trim gradually closes the creep gap when enabled, re-solving the
+  underlying leg to preserve hedge ratio `h`.
+- **Applied in:** `scripts/bucket4_weekly_opt2.py` (planning),
+  `generate_trade_plan.py` (`_b4_*_ratchet_state` helpers),
+  `scripts/b4_reconstruct_state.py` (held legs from accounting detail),
+  `phase2b_resize.py` (execution guard / trim allowance).
+- **State:** `data/b4_inverse_ratchet_state.json` (trim mode tracks current target,
+  not high-water).
+- **Artifacts:** `data/runs/<date>/b4_hedge_cadence/b4_ratchet_targets.csv`,
+  `ratchet_released` / `ratchet_trim_lambda` / `ratchet_trim_usd` on
+  `proposed_trades.csv`.
+- **Execution:** `ratchet.execution.allow_inverse_cover: true` permits capped
+  inverse ETF covers when `ratchet_released=True` on the plan row.
 
 ### `drawdown_governor` (sleeve drawdown brake)
 - **What:** on worst-drawdown pairs, pause new inverse adds (`dd_freeze`) and

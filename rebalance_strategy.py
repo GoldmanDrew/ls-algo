@@ -3086,6 +3086,10 @@ def main() -> None:
             # target is the signed sum across all sleeves. This is what nets
             # B1 long-NVDA against B4 short-NVDA into a single underlying
             # decision rather than two opposing trades.
+            _b4_sleeve = ((port_cfg.get("sleeves") or {}).get("inverse_decay_bucket4") or {})
+            _b4_rules = (_b4_sleeve.get("rules") or {})
+            _ratchet_exec = ((_b4_rules.get("ratchet") or {}).get("execution") or {})
+            b4_allow_inverse_cover = bool(_ratchet_exec.get("allow_inverse_cover", False))
             resize_trades, resize_decisions = build_resize_trades(
                 hedgeable_plan=resize_plan,
                 strat_pos=strat_pos,
@@ -3097,6 +3101,7 @@ def main() -> None:
                 skip_underlyings=established_underlyings,
                 tax_router=tax_router_fn,
                 target_basis=resize_target_basis,
+                b4_allow_inverse_cover=b4_allow_inverse_cover,
             )
 
             decisions_csv = rb_dir / "resize_decisions.csv"

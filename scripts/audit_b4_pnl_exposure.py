@@ -234,8 +234,61 @@ def main() -> int:
                 day_breaks += 1
     print(f"   -> {day_breaks} day-to-day break(s) out of {checks} held-flat checks\n")
 
+    # ── 4) RATCHET CREEP: held gross vs solved target (convergence monitor) ──
     print("=" * 78)
-    print(f"SUMMARY: exposure_breaks={exp_breaks}  etf_pnl_breaks={pnl_breaks}  day_breaks={day_breaks}")
+    print("4) RATCHET CREEP  (held vs target; flag creep>1.5x or |book_h-model_h|>0.25)")
+    creep_flags = 0
+    ledger_path = REPO / "data" / "ledger" / f"b4_pair_pnl_hedge_summary_{latest}.csv"
+    ratchet_path = RUNS / latest / "b4_hedge_cadence" / "b4_ratchet_targets.csv"
+    if ledger_path.is_file():
+        led = pd.read_csv(ledger_path)
+        for _, r in led.iterrows():
+            etf = _norm(r.get("etf", ""))
+            und = _norm(r.get("underlying", ""))
+            gross_held = _f(r.get("current_total_gross"))
+            gross_tgt = _f(r.get("gross_target_usd"))
+            creep = _f(r.get("ratchet_creep_ratio"), np.nan)
+            book_h = _f(r.get("current_book_h"), np.nan)
+            model_h = _f(r.get("current_model_h"), np.nan)
+            trim_lam = _f(r.get("ratchet_trim_lambda"), np.nan)
+            trim_usd = _f(r.get("ratchet_trim_usd"), np.nan)
+            gap = _f(r.get("ratchet_gap_usd"), np.nan)
+            if not np.isfinite(creep) and gross_tgt > 1e-6 and gross_held > 1e-6:
+                creep = gross_held / gross_tgt
+            h_gap = abs(book_h - model_h) if np.isfinite(book_h) and np.isfinite(model_h) else np.nan
+            flagged = (np.isfinite(creep) and creep > 1.5) or (np.isfinite(h_gap) and h_gap > 0.25)
+            if flagged:
+                creep_flags += 1
+                print(
+                    f"   [CREEP] {etf}|{und} held={gross_held:,.0f} tgt={gross_tgt:,.0f} "
+                    f"creep={creep:.2f}x book_h={book_h:.3f} model_h={model_h:.3f} "
+                    f"λ={trim_lam:.3f} trim_usd={trim_usd:,.0f} gap={gap:,.0f}"
+                )
+        if creep_flags == 0:
+            print("   -> no pairs above creep/h-hedge thresholds")
+        else:
+            print(f"   -> {creep_flags} pair(s) flagged for convergence review")
+    elif ratchet_path.is_file():
+        rt = pd.read_csv(ratchet_path)
+        for _, r in rt.iterrows():
+            etf = _norm(r.get("ETF", ""))
+            und = _norm(r.get("Underlying", ""))
+            held = _f(r.get("inverse_etf_short_usd"))
+            solved = _f(r.get("inverse_short_solved_usd"))
+            creep = held / solved if solved > 1e-6 else np.nan
+            if np.isfinite(creep) and creep > 1.5:
+                creep_flags += 1
+                print(f"   [CREEP] {etf}|{und} inv_held={held:,.0f} inv_solved={solved:,.0f} creep={creep:.2f}x")
+        print(f"   -> {creep_flags} pair(s) flagged (ratchet targets only; no ledger)")
+    else:
+        print("   -> skipped (no ledger summary or b4_ratchet_targets for latest run)")
+    print()
+
+    print("=" * 78)
+    print(
+        f"SUMMARY: exposure_breaks={exp_breaks}  etf_pnl_breaks={pnl_breaks}  "
+        f"day_breaks={day_breaks}  creep_flags={creep_flags}"
+    )
     return 0
 
 

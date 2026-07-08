@@ -441,6 +441,10 @@ portfolio:
           enabled: true
           state_json: data/b4_inverse_ratchet_state.json
           reconcile_tolerance_usd: 250.0
+          execution:
+            # When true, phase2b_resize permits capped inverse-ETF covers on pairs
+            # where the plan set ratchet_released (continuous trim).
+            allow_inverse_cover: true
           # CONTINUOUS GROSS REDUCTION (preferred; supersedes the binary
           # release_below_edge below). Each rebalance, trim a lambda-fraction of the
           # gap between the pinned inverse leg (max of held / persisted floor) and
