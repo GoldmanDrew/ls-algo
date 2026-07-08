@@ -53,6 +53,7 @@ import pandas as pd
 import yaml
 
 REPO = Path(__file__).resolve().parents[1]
+MIN_PRICE_PANEL_DAYS = 40
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
@@ -107,7 +108,7 @@ def load_price_panel(run_date: str) -> dict[str, pd.DataFrame]:
     out: dict[str, pd.DataFrame] = {}
     for etf, g in md.groupby("ticker"):
         g = g.dropna(subset=["etf_adj_close", "underlying_adj_close"])
-        if len(g) < 80:
+        if len(g) < MIN_PRICE_PANEL_DAYS:
             continue
         df = pd.DataFrame({
             "a_px": g["etf_adj_close"].to_numpy(dtype=float),
