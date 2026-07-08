@@ -1,6 +1,6 @@
 {
   "schema": "bucket5_backtest_panel.v1",
-  "generated_at_utc": "2026-07-08T17:28:16.292493+00:00",
+  "generated_at_utc": "2026-07-08T17:57:04.609668+00:00",
   "run_date": "2026-07-08",
   "variants": {
     "B_live": {
@@ -285,11 +285,11 @@
       "monetize_summary": {
         "event_count": 102,
         "kinds": [
-          "scheduled_roll",
-          "profit_3x",
-          "profit_5x",
-          "profit_8x",
           "giveback",
+          "profit_5x",
+          "scheduled_roll",
+          "profit_8x",
+          "profit_3x",
           "vix_45",
           "rearm"
         ],
@@ -13426,11 +13426,11 @@
       "monetize_summary": {
         "event_count": 94,
         "kinds": [
-          "scheduled_roll",
-          "profit_3x",
-          "profit_5x",
-          "profit_8x",
           "giveback",
+          "profit_5x",
+          "scheduled_roll",
+          "profit_8x",
+          "profit_3x",
           "vix_45",
           "rearm"
         ],
@@ -26567,12 +26567,12 @@
       "monetize_summary": {
         "event_count": 990,
         "kinds": [
-          "scheduled_roll",
-          "profit_3x",
-          "profit_5x",
-          "profit_8x",
-          "giveback",
           "vix_65",
+          "giveback",
+          "profit_5x",
+          "scheduled_roll",
+          "profit_8x",
+          "profit_3x",
           "vix_45",
           "rearm"
         ],
@@ -34837,12 +34837,12 @@
       "monetize_summary": {
         "event_count": 1005,
         "kinds": [
-          "scheduled_roll",
-          "profit_3x",
-          "profit_5x",
-          "profit_8x",
-          "giveback",
           "vix_65",
+          "giveback",
+          "profit_5x",
+          "scheduled_roll",
+          "profit_8x",
+          "profit_3x",
           "vix_45",
           "rearm"
         ],
@@ -42841,7 +42841,7 @@
         "underlying": "SVIX",
         "proposed_gross_usd": 10500.0,
         "optimal_gross_usd": 10500.0,
-        "borrow_annual": 0.040749,
+        "borrow_annual": 0.040751,
         "shares_available": 2000000.0,
         "locate_ok": true
       }
@@ -42855,7 +42855,7 @@
   "repo": "ls-algo",
   "sensitivity_grid": {
     "schema": "bucket5_sensitivity.v1",
-    "generated_at_utc": "2026-07-08T17:28:16.800396+00:00",
+    "generated_at_utc": "2026-07-08T17:57:05.105804+00:00",
     "preset_base": "F_dynamic_deep30",
     "era": "extended",
     "axes": {
