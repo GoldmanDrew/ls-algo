@@ -3,7 +3,12 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import pandas as pd
 
@@ -14,7 +19,6 @@ from ibkr_accounting import (
     parse_cash_transactions,
 )
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LEDGER_DIR = PROJECT_ROOT / "data" / "ledger"
 RUNS_ROOT = PROJECT_ROOT / "data" / "runs"
 DIVIDEND_CASH_HISTORY_CSV = LEDGER_DIR / "dividend_cash_history.csv"
