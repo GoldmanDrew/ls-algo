@@ -1,0 +1,9048 @@
+{
+  "schema": "bucket5_backtest.v1",
+  "generated_at_utc": "2026-07-08T08:28:25.933707+00:00",
+  "preset": "B_production",
+  "config": {
+    "sleeve_frac": 0.2,
+    "tbill_rate": 0.043,
+    "regime": {
+      "rho_contango": 1.0,
+      "rho_backwardation": 2.0,
+      "gross_contango": 1.0,
+      "gross_backwardation": 0.35,
+      "r_lo": 0.88,
+      "r_hi": 1.0
+    },
+    "base_days": 14.0,
+    "cadence_k": 6.0,
+    "rungs": [
+      {
+        "otm_pct": 0.1,
+        "per_roll_frac": 0.008
+      },
+      {
+        "otm_pct": 0.2,
+        "per_roll_frac": 0.008
+      },
+      {
+        "otm_pct": 0.3,
+        "per_roll_frac": 0.008
+      }
+    ],
+    "initial_capital": 1000000.0,
+    "uvix_slip_bps": 5.0,
+    "fee_bps": 1.0,
+    "monetize": {
+      "profit_tiers": [
+        [
+          3.0,
+          0.34
+        ],
+        [
+          5.0,
+          0.5
+        ],
+        [
+          8.0,
+          1.0
+        ]
+      ],
+      "vix_tiers": [
+        [
+          45.0,
+          0.5
+        ],
+        [
+          65.0,
+          1.0
+        ]
+      ],
+      "giveback_frac": 0.35,
+      "giveback_min_mult": 2.0,
+      "bank_frac": 0.6,
+      "rearm": true,
+      "runner_frac": 0.0,
+      "runner_mult": 12.0
+    },
+    "redeploy": {
+      "sleeve_w_contango": 0.2,
+      "sleeve_w_backwardation": 0.65,
+      "r_lo": 0.88,
+      "r_hi": 1.0
+    },
+    "hedge_kind": "ladder",
+    "hedge_budget": {
+      "enabled": true,
+      "contango_mult": 1.2,
+      "stress_mult": 0.85,
+      "vix_lo": 14.0,
+      "vix_hi": 28.0,
+      "vix_calm_boost": 1.1,
+      "r_lo": 0.88,
+      "r_hi": 1.0
+    },
+    "backspread": null,
+    "hybrid_ladder_frac": 0.7,
+    "borrow_uvix_annual": 0.0284,
+    "borrow_svix_annual": 0.0347,
+    "short_proceeds_annual": 0.0
+  },
+  "meta": {
+    "start": "2008-01-02",
+    "end": "2026-07-07",
+    "n_days": 4639,
+    "synthetic_days": 3569,
+    "era": "extended",
+    "rebalances": 806,
+    "pricing_mode": "bs_skew",
+    "borrow_uvix_annual": 0.0284,
+    "borrow_svix_annual": 0.0347,
+    "cache_key": "a1a7a5ae5c1405ee",
+    "engine_sha": "b96da6a6ea46"
+  },
+  "metrics": {
+    "sleeve_frac": 0.2,
+    "tbill_rate": 0.043,
+    "ladder_per_roll_%": 2.4,
+    "rebalances": 806,
+    "sleeve_financing_%/yr": -0.005405,
+    "sleeve_carry_%/yr": 0.015568,
+    "combined_CAGR": 0.131264,
+    "combined_Vol": 0.191579,
+    "combined_Sharpe": 0.732963,
+    "combined_MaxDD": -0.41614,
+    "combined_Calmar": 0.315431,
+    "ladder_premium_$": 0.0,
+    "aug24": 0.059785,
+    "realized_$": 8933133.131211,
+    "redeploy_extra_$": 2194220.535012,
+    "hedge_kind": "ladder",
+    "dynamic_budget": true
+  },
+  "crash": {
+    "crash_mild_-20%": 0.32860518590566223,
+    "crash_severe_-30%": 0.9000463469086188,
+    "crash_volmageddon_-40%": 1.7634748618148035
+  },
+  "assumptions": {
+    "borrow_uvix_annual": 0.0284,
+    "borrow_svix_annual": 0.0347,
+    "uvix_slip_bps": 5.0,
+    "fee_bps": 1.0,
+    "tbill_rate": 0.043,
+    "sleeve_frac": 0.2
+  },
+  "cached": false,
+  "monetize_events": [
+    {
+      "date": "2008-01-22",
+      "kind": "profit_3x",
+      "usd": 8701.04,
+      "otm_pct": 0.3,
+      "mult": 3.493,
+      "vix": 31.01,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2008-01-24",
+      "kind": "giveback",
+      "usd": 10603.95,
+      "otm_pct": 0.3,
+      "mult": 2.128,
+      "vix": 27.78,
+      "contracts_sold": 8
+    },
+    {
+      "date": "2008-01-24",
+      "kind": "rearm",
+      "usd": 4241.58,
+      "otm_pct": 0.3,
+      "mult": 2.128,
+      "vix": 27.78,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-04-09",
+      "kind": "scheduled_roll",
+      "usd": 3588.84,
+      "otm_pct": 0.1,
+      "mult": 0.92,
+      "vix": 22.81,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-04-09",
+      "kind": "scheduled_roll",
+      "usd": 3571.25,
+      "otm_pct": 0.2,
+      "mult": 0.534,
+      "vix": 22.81,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2008-04-30",
+      "kind": "scheduled_roll",
+      "usd": 106.73,
+      "otm_pct": 0.3,
+      "mult": 0.026,
+      "vix": 20.79,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2008-07-14",
+      "kind": "scheduled_roll",
+      "usd": 11897.34,
+      "otm_pct": 0.1,
+      "mult": 1.699,
+      "vix": 28.48,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2008-07-14",
+      "kind": "scheduled_roll",
+      "usd": 10165.05,
+      "otm_pct": 0.2,
+      "mult": 1.386,
+      "vix": 28.48,
+      "contracts_sold": 5
+    },
+    {
+      "date": "2008-08-04",
+      "kind": "scheduled_roll",
+      "usd": 5451.02,
+      "otm_pct": 0.3,
+      "mult": 0.7,
+      "vix": 23.49,
+      "contracts_sold": 20
+    },
+    {
+      "date": "2008-09-17",
+      "kind": "profit_3x",
+      "usd": 7802.92,
+      "otm_pct": 0.3,
+      "mult": 3.518,
+      "vix": 36.22,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2008-09-18",
+      "kind": "giveback",
+      "usd": 9506.61,
+      "otm_pct": 0.3,
+      "mult": 2.143,
+      "vix": 33.1,
+      "contracts_sold": 8
+    },
+    {
+      "date": "2008-09-18",
+      "kind": "rearm",
+      "usd": 3802.64,
+      "otm_pct": 0.3,
+      "mult": 2.143,
+      "vix": 33.1,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-09-29",
+      "kind": "rearm",
+      "usd": 4212.62,
+      "otm_pct": 0.1,
+      "mult": 2.229,
+      "vix": 46.72,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-09-29",
+      "kind": "vix_45",
+      "usd": 10531.55,
+      "otm_pct": 0.1,
+      "mult": 2.229,
+      "vix": 46.72,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-09-29",
+      "kind": "vix_45",
+      "usd": 5830.26,
+      "otm_pct": 0.2,
+      "mult": 2.511,
+      "vix": 46.72,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-09-29",
+      "kind": "vix_45",
+      "usd": 4589.81,
+      "otm_pct": 0.3,
+      "mult": 2.939,
+      "vix": 46.72,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-02",
+      "kind": "rearm",
+      "usd": 3390.59,
+      "otm_pct": 0.1,
+      "mult": 0.922,
+      "vix": 45.26,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-02",
+      "kind": "vix_45",
+      "usd": 8476.48,
+      "otm_pct": 0.1,
+      "mult": 0.922,
+      "vix": 45.26,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-03",
+      "kind": "rearm",
+      "usd": 3649.47,
+      "otm_pct": 0.1,
+      "mult": 1.031,
+      "vix": 45.14,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-03",
+      "kind": "vix_45",
+      "usd": 9123.67,
+      "otm_pct": 0.1,
+      "mult": 1.031,
+      "vix": 45.14,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-06",
+      "kind": "profit_3x",
+      "usd": 7817.74,
+      "otm_pct": 0.2,
+      "mult": 3.366,
+      "vix": 52.05,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-06",
+      "kind": "profit_3x",
+      "usd": 6185.59,
+      "otm_pct": 0.3,
+      "mult": 3.96,
+      "vix": 52.05,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-06",
+      "kind": "rearm",
+      "usd": 4644.32,
+      "otm_pct": 0.1,
+      "mult": 1.335,
+      "vix": 52.05,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-06",
+      "kind": "rearm",
+      "usd": 3127.1,
+      "otm_pct": 0.2,
+      "mult": 3.366,
+      "vix": 52.05,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-06",
+      "kind": "rearm",
+      "usd": 2474.24,
+      "otm_pct": 0.3,
+      "mult": 3.96,
+      "vix": 52.05,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-06",
+      "kind": "vix_45",
+      "usd": 11610.79,
+      "otm_pct": 0.1,
+      "mult": 1.335,
+      "vix": 52.05,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-07",
+      "kind": "rearm",
+      "usd": 4857.05,
+      "otm_pct": 0.1,
+      "mult": 1.191,
+      "vix": 53.68,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-07",
+      "kind": "rearm",
+      "usd": 3271.34,
+      "otm_pct": 0.2,
+      "mult": 1.21,
+      "vix": 53.68,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-07",
+      "kind": "rearm",
+      "usd": 2052.07,
+      "otm_pct": 0.3,
+      "mult": 1.235,
+      "vix": 53.68,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-07",
+      "kind": "vix_45",
+      "usd": 12142.63,
+      "otm_pct": 0.1,
+      "mult": 1.191,
+      "vix": 53.68,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-07",
+      "kind": "vix_45",
+      "usd": 8178.36,
+      "otm_pct": 0.2,
+      "mult": 1.21,
+      "vix": 53.68,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-07",
+      "kind": "vix_45",
+      "usd": 5130.17,
+      "otm_pct": 0.3,
+      "mult": 1.235,
+      "vix": 53.68,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-08",
+      "kind": "rearm",
+      "usd": 4486.97,
+      "otm_pct": 0.1,
+      "mult": 1.119,
+      "vix": 57.53,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-08",
+      "kind": "rearm",
+      "usd": 3074.22,
+      "otm_pct": 0.2,
+      "mult": 1.145,
+      "vix": 57.53,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-08",
+      "kind": "rearm",
+      "usd": 1967.84,
+      "otm_pct": 0.3,
+      "mult": 1.176,
+      "vix": 57.53,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-08",
+      "kind": "vix_45",
+      "usd": 11217.43,
+      "otm_pct": 0.1,
+      "mult": 1.119,
+      "vix": 57.53,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-08",
+      "kind": "vix_45",
+      "usd": 7685.55,
+      "otm_pct": 0.2,
+      "mult": 1.145,
+      "vix": 57.53,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-08",
+      "kind": "vix_45",
+      "usd": 4919.6,
+      "otm_pct": 0.3,
+      "mult": 1.176,
+      "vix": 57.53,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-09",
+      "kind": "rearm",
+      "usd": 5777.69,
+      "otm_pct": 0.1,
+      "mult": 1.322,
+      "vix": 63.92,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-09",
+      "kind": "rearm",
+      "usd": 4120.78,
+      "otm_pct": 0.2,
+      "mult": 1.374,
+      "vix": 63.92,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-09",
+      "kind": "rearm",
+      "usd": 2768.81,
+      "otm_pct": 0.3,
+      "mult": 1.439,
+      "vix": 63.92,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-09",
+      "kind": "vix_45",
+      "usd": 14444.23,
+      "otm_pct": 0.1,
+      "mult": 1.322,
+      "vix": 63.92,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-09",
+      "kind": "vix_45",
+      "usd": 10301.95,
+      "otm_pct": 0.2,
+      "mult": 1.374,
+      "vix": 63.92,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-09",
+      "kind": "vix_45",
+      "usd": 6922.01,
+      "otm_pct": 0.3,
+      "mult": 1.439,
+      "vix": 63.92,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-10",
+      "kind": "rearm",
+      "usd": 5270.68,
+      "otm_pct": 0.1,
+      "mult": 1.138,
+      "vix": 69.95,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-10",
+      "kind": "rearm",
+      "usd": 3827.02,
+      "otm_pct": 0.2,
+      "mult": 1.167,
+      "vix": 69.95,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-10",
+      "kind": "rearm",
+      "usd": 2626.45,
+      "otm_pct": 0.3,
+      "mult": 1.201,
+      "vix": 69.95,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-10",
+      "kind": "vix_65",
+      "usd": 13176.71,
+      "otm_pct": 0.1,
+      "mult": 1.138,
+      "vix": 69.95,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-10",
+      "kind": "vix_65",
+      "usd": 9567.56,
+      "otm_pct": 0.2,
+      "mult": 1.167,
+      "vix": 69.95,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-10",
+      "kind": "vix_65",
+      "usd": 6566.12,
+      "otm_pct": 0.3,
+      "mult": 1.201,
+      "vix": 69.95,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-13",
+      "kind": "rearm",
+      "usd": 2896.17,
+      "otm_pct": 0.1,
+      "mult": 0.565,
+      "vix": 54.99,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-13",
+      "kind": "rearm",
+      "usd": 1928.41,
+      "otm_pct": 0.2,
+      "mult": 0.518,
+      "vix": 54.99,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-13",
+      "kind": "rearm",
+      "usd": 1192.25,
+      "otm_pct": 0.3,
+      "mult": 0.466,
+      "vix": 54.99,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-13",
+      "kind": "vix_45",
+      "usd": 7240.42,
+      "otm_pct": 0.1,
+      "mult": 0.565,
+      "vix": 54.99,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-13",
+      "kind": "vix_45",
+      "usd": 4821.02,
+      "otm_pct": 0.2,
+      "mult": 0.518,
+      "vix": 54.99,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-13",
+      "kind": "vix_45",
+      "usd": 2980.64,
+      "otm_pct": 0.3,
+      "mult": 0.466,
+      "vix": 54.99,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-14",
+      "kind": "rearm",
+      "usd": 4236.54,
+      "otm_pct": 0.1,
+      "mult": 1.011,
+      "vix": 55.13,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-14",
+      "kind": "rearm",
+      "usd": 2864.9,
+      "otm_pct": 0.2,
+      "mult": 1.011,
+      "vix": 55.13,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-14",
+      "kind": "rearm",
+      "usd": 1805.5,
+      "otm_pct": 0.3,
+      "mult": 1.01,
+      "vix": 55.13,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-14",
+      "kind": "vix_45",
+      "usd": 10591.35,
+      "otm_pct": 0.1,
+      "mult": 1.011,
+      "vix": 55.13,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-14",
+      "kind": "vix_45",
+      "usd": 7162.24,
+      "otm_pct": 0.2,
+      "mult": 1.011,
+      "vix": 55.13,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-14",
+      "kind": "vix_45",
+      "usd": 4513.76,
+      "otm_pct": 0.3,
+      "mult": 1.01,
+      "vix": 55.13,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-15",
+      "kind": "rearm",
+      "usd": 6554.16,
+      "otm_pct": 0.1,
+      "mult": 1.567,
+      "vix": 69.25,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-15",
+      "kind": "rearm",
+      "usd": 4781.69,
+      "otm_pct": 0.2,
+      "mult": 1.689,
+      "vix": 69.25,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-15",
+      "kind": "rearm",
+      "usd": 3301.56,
+      "otm_pct": 0.3,
+      "mult": 1.848,
+      "vix": 69.25,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-15",
+      "kind": "vix_65",
+      "usd": 16385.41,
+      "otm_pct": 0.1,
+      "mult": 1.567,
+      "vix": 69.25,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-15",
+      "kind": "vix_65",
+      "usd": 11954.21,
+      "otm_pct": 0.2,
+      "mult": 1.689,
+      "vix": 69.25,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-15",
+      "kind": "vix_65",
+      "usd": 8253.9,
+      "otm_pct": 0.3,
+      "mult": 1.848,
+      "vix": 69.25,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-16",
+      "kind": "rearm",
+      "usd": 4587.78,
+      "otm_pct": 0.1,
+      "mult": 0.897,
+      "vix": 67.61,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-16",
+      "kind": "rearm",
+      "usd": 3284.26,
+      "otm_pct": 0.2,
+      "mult": 0.887,
+      "vix": 67.61,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-16",
+      "kind": "rearm",
+      "usd": 2215.43,
+      "otm_pct": 0.3,
+      "mult": 0.874,
+      "vix": 67.61,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-16",
+      "kind": "vix_65",
+      "usd": 11469.44,
+      "otm_pct": 0.1,
+      "mult": 0.897,
+      "vix": 67.61,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-16",
+      "kind": "vix_65",
+      "usd": 8210.66,
+      "otm_pct": 0.2,
+      "mult": 0.887,
+      "vix": 67.61,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-16",
+      "kind": "vix_65",
+      "usd": 5538.59,
+      "otm_pct": 0.3,
+      "mult": 0.874,
+      "vix": 67.61,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-17",
+      "kind": "rearm",
+      "usd": 5467.6,
+      "otm_pct": 0.1,
+      "mult": 1.057,
+      "vix": 70.33,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-17",
+      "kind": "rearm",
+      "usd": 3973.57,
+      "otm_pct": 0.2,
+      "mult": 1.067,
+      "vix": 70.33,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-17",
+      "kind": "rearm",
+      "usd": 2729.9,
+      "otm_pct": 0.3,
+      "mult": 1.08,
+      "vix": 70.33,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-17",
+      "kind": "vix_65",
+      "usd": 13669.01,
+      "otm_pct": 0.1,
+      "mult": 1.057,
+      "vix": 70.33,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-17",
+      "kind": "vix_65",
+      "usd": 9933.94,
+      "otm_pct": 0.2,
+      "mult": 1.067,
+      "vix": 70.33,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-17",
+      "kind": "vix_65",
+      "usd": 6824.76,
+      "otm_pct": 0.3,
+      "mult": 1.08,
+      "vix": 70.33,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-20",
+      "kind": "rearm",
+      "usd": 3323.92,
+      "otm_pct": 0.1,
+      "mult": 0.615,
+      "vix": 52.97,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-20",
+      "kind": "rearm",
+      "usd": 2202.36,
+      "otm_pct": 0.2,
+      "mult": 0.561,
+      "vix": 52.97,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-20",
+      "kind": "rearm",
+      "usd": 1354.16,
+      "otm_pct": 0.3,
+      "mult": 0.501,
+      "vix": 52.97,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-20",
+      "kind": "vix_45",
+      "usd": 8309.81,
+      "otm_pct": 0.1,
+      "mult": 0.615,
+      "vix": 52.97,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-20",
+      "kind": "vix_45",
+      "usd": 5505.9,
+      "otm_pct": 0.2,
+      "mult": 0.561,
+      "vix": 52.97,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-20",
+      "kind": "vix_45",
+      "usd": 3385.41,
+      "otm_pct": 0.3,
+      "mult": 0.501,
+      "vix": 52.97,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-21",
+      "kind": "rearm",
+      "usd": 4208.18,
+      "otm_pct": 0.1,
+      "mult": 1.075,
+      "vix": 53.11,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-21",
+      "kind": "rearm",
+      "usd": 2818.91,
+      "otm_pct": 0.2,
+      "mult": 1.079,
+      "vix": 53.11,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-21",
+      "kind": "rearm",
+      "usd": 1756.79,
+      "otm_pct": 0.3,
+      "mult": 1.083,
+      "vix": 53.11,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-21",
+      "kind": "vix_45",
+      "usd": 10520.46,
+      "otm_pct": 0.1,
+      "mult": 1.075,
+      "vix": 53.11,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-21",
+      "kind": "vix_45",
+      "usd": 7047.28,
+      "otm_pct": 0.2,
+      "mult": 1.079,
+      "vix": 53.11,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-21",
+      "kind": "vix_45",
+      "usd": 4391.99,
+      "otm_pct": 0.3,
+      "mult": 1.083,
+      "vix": 53.11,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-22",
+      "kind": "rearm",
+      "usd": 5991.37,
+      "otm_pct": 0.1,
+      "mult": 1.574,
+      "vix": 69.65,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-22",
+      "kind": "rearm",
+      "usd": 4365.4,
+      "otm_pct": 0.2,
+      "mult": 1.716,
+      "vix": 69.65,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-22",
+      "kind": "rearm",
+      "usd": 3009.03,
+      "otm_pct": 0.3,
+      "mult": 1.903,
+      "vix": 69.65,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-22",
+      "kind": "vix_65",
+      "usd": 14978.42,
+      "otm_pct": 0.1,
+      "mult": 1.574,
+      "vix": 69.65,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-22",
+      "kind": "vix_65",
+      "usd": 10913.49,
+      "otm_pct": 0.2,
+      "mult": 1.716,
+      "vix": 69.65,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-22",
+      "kind": "vix_65",
+      "usd": 7522.57,
+      "otm_pct": 0.3,
+      "mult": 1.903,
+      "vix": 69.65,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-23",
+      "kind": "rearm",
+      "usd": 4789.61,
+      "otm_pct": 0.1,
+      "mult": 0.941,
+      "vix": 67.8,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-23",
+      "kind": "rearm",
+      "usd": 3441.13,
+      "otm_pct": 0.2,
+      "mult": 0.932,
+      "vix": 67.8,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-23",
+      "kind": "rearm",
+      "usd": 2331.59,
+      "otm_pct": 0.3,
+      "mult": 0.922,
+      "vix": 67.8,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-23",
+      "kind": "vix_65",
+      "usd": 11974.02,
+      "otm_pct": 0.1,
+      "mult": 0.941,
+      "vix": 67.8,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-23",
+      "kind": "vix_65",
+      "usd": 8602.82,
+      "otm_pct": 0.2,
+      "mult": 0.932,
+      "vix": 67.8,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-23",
+      "kind": "vix_65",
+      "usd": 5828.97,
+      "otm_pct": 0.3,
+      "mult": 0.922,
+      "vix": 67.8,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-24",
+      "kind": "rearm",
+      "usd": 6311.22,
+      "otm_pct": 0.1,
+      "mult": 1.267,
+      "vix": 79.13,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-24",
+      "kind": "rearm",
+      "usd": 4730.71,
+      "otm_pct": 0.2,
+      "mult": 1.319,
+      "vix": 79.13,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-24",
+      "kind": "rearm",
+      "usd": 3373.37,
+      "otm_pct": 0.3,
+      "mult": 1.384,
+      "vix": 79.13,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-24",
+      "kind": "vix_65",
+      "usd": 15778.04,
+      "otm_pct": 0.1,
+      "mult": 1.267,
+      "vix": 79.13,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-24",
+      "kind": "vix_65",
+      "usd": 11826.79,
+      "otm_pct": 0.2,
+      "mult": 1.319,
+      "vix": 79.13,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-24",
+      "kind": "vix_65",
+      "usd": 8433.43,
+      "otm_pct": 0.3,
+      "mult": 1.384,
+      "vix": 79.13,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-27",
+      "kind": "rearm",
+      "usd": 6151.26,
+      "otm_pct": 0.1,
+      "mult": 1.057,
+      "vix": 80.06,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-27",
+      "kind": "rearm",
+      "usd": 4621.92,
+      "otm_pct": 0.2,
+      "mult": 1.061,
+      "vix": 80.06,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-27",
+      "kind": "rearm",
+      "usd": 3305.29,
+      "otm_pct": 0.3,
+      "mult": 1.066,
+      "vix": 80.06,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-27",
+      "kind": "vix_65",
+      "usd": 15378.15,
+      "otm_pct": 0.1,
+      "mult": 1.057,
+      "vix": 80.06,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-27",
+      "kind": "vix_65",
+      "usd": 11554.8,
+      "otm_pct": 0.2,
+      "mult": 1.061,
+      "vix": 80.06,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-27",
+      "kind": "vix_65",
+      "usd": 8263.24,
+      "otm_pct": 0.3,
+      "mult": 1.066,
+      "vix": 80.06,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-28",
+      "kind": "rearm",
+      "usd": 3786.47,
+      "otm_pct": 0.1,
+      "mult": 0.662,
+      "vix": 66.96,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-28",
+      "kind": "rearm",
+      "usd": 2686.62,
+      "otm_pct": 0.2,
+      "mult": 0.626,
+      "vix": 66.96,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-28",
+      "kind": "rearm",
+      "usd": 1792.59,
+      "otm_pct": 0.3,
+      "mult": 0.585,
+      "vix": 66.96,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-28",
+      "kind": "vix_65",
+      "usd": 9466.18,
+      "otm_pct": 0.1,
+      "mult": 0.662,
+      "vix": 66.96,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-28",
+      "kind": "vix_65",
+      "usd": 6716.55,
+      "otm_pct": 0.2,
+      "mult": 0.626,
+      "vix": 66.96,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-28",
+      "kind": "vix_65",
+      "usd": 4481.48,
+      "otm_pct": 0.3,
+      "mult": 0.585,
+      "vix": 66.96,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-29",
+      "kind": "rearm",
+      "usd": 5442.56,
+      "otm_pct": 0.1,
+      "mult": 1.072,
+      "vix": 69.96,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-29",
+      "kind": "rearm",
+      "usd": 3951.73,
+      "otm_pct": 0.2,
+      "mult": 1.084,
+      "vix": 69.96,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-29",
+      "kind": "rearm",
+      "usd": 2711.94,
+      "otm_pct": 0.3,
+      "mult": 1.099,
+      "vix": 69.96,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-29",
+      "kind": "vix_65",
+      "usd": 13606.41,
+      "otm_pct": 0.1,
+      "mult": 1.072,
+      "vix": 69.96,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-29",
+      "kind": "vix_65",
+      "usd": 9879.32,
+      "otm_pct": 0.2,
+      "mult": 1.084,
+      "vix": 69.96,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-29",
+      "kind": "vix_65",
+      "usd": 6779.85,
+      "otm_pct": 0.3,
+      "mult": 1.099,
+      "vix": 69.96,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-30",
+      "kind": "rearm",
+      "usd": 4392.32,
+      "otm_pct": 0.1,
+      "mult": 0.828,
+      "vix": 62.9,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-30",
+      "kind": "rearm",
+      "usd": 3085.25,
+      "otm_pct": 0.2,
+      "mult": 0.801,
+      "vix": 62.9,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-30",
+      "kind": "rearm",
+      "usd": 2034.49,
+      "otm_pct": 0.3,
+      "mult": 0.769,
+      "vix": 62.9,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-30",
+      "kind": "vix_45",
+      "usd": 10980.8,
+      "otm_pct": 0.1,
+      "mult": 0.828,
+      "vix": 62.9,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-30",
+      "kind": "vix_45",
+      "usd": 7713.12,
+      "otm_pct": 0.2,
+      "mult": 0.801,
+      "vix": 62.9,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-30",
+      "kind": "vix_45",
+      "usd": 5086.23,
+      "otm_pct": 0.3,
+      "mult": 0.769,
+      "vix": 62.9,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-31",
+      "kind": "rearm",
+      "usd": 4304.4,
+      "otm_pct": 0.1,
+      "mult": 0.905,
+      "vix": 59.89,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-31",
+      "kind": "rearm",
+      "usd": 2982.29,
+      "otm_pct": 0.2,
+      "mult": 0.889,
+      "vix": 59.89,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-31",
+      "kind": "rearm",
+      "usd": 1934.63,
+      "otm_pct": 0.3,
+      "mult": 0.87,
+      "vix": 59.89,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-10-31",
+      "kind": "vix_45",
+      "usd": 10761.0,
+      "otm_pct": 0.1,
+      "mult": 0.905,
+      "vix": 59.89,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-31",
+      "kind": "vix_45",
+      "usd": 7455.72,
+      "otm_pct": 0.2,
+      "mult": 0.889,
+      "vix": 59.89,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-10-31",
+      "kind": "vix_45",
+      "usd": 4836.56,
+      "otm_pct": 0.3,
+      "mult": 0.87,
+      "vix": 59.89,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-03",
+      "kind": "rearm",
+      "usd": 3922.18,
+      "otm_pct": 0.1,
+      "mult": 0.866,
+      "vix": 53.68,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-03",
+      "kind": "rearm",
+      "usd": 2627.5,
+      "otm_pct": 0.2,
+      "mult": 0.834,
+      "vix": 53.68,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-03",
+      "kind": "rearm",
+      "usd": 1637.39,
+      "otm_pct": 0.3,
+      "mult": 0.798,
+      "vix": 53.68,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-03",
+      "kind": "vix_45",
+      "usd": 9805.45,
+      "otm_pct": 0.1,
+      "mult": 0.866,
+      "vix": 53.68,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-03",
+      "kind": "vix_45",
+      "usd": 6568.74,
+      "otm_pct": 0.2,
+      "mult": 0.834,
+      "vix": 53.68,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-03",
+      "kind": "vix_45",
+      "usd": 4093.46,
+      "otm_pct": 0.3,
+      "mult": 0.798,
+      "vix": 53.68,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-04",
+      "kind": "rearm",
+      "usd": 2967.42,
+      "otm_pct": 0.1,
+      "mult": 0.759,
+      "vix": 47.73,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-04",
+      "kind": "rearm",
+      "usd": 1892.47,
+      "otm_pct": 0.2,
+      "mult": 0.722,
+      "vix": 47.73,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-04",
+      "kind": "rearm",
+      "usd": 1111.95,
+      "otm_pct": 0.3,
+      "mult": 0.68,
+      "vix": 47.73,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-04",
+      "kind": "vix_45",
+      "usd": 7418.56,
+      "otm_pct": 0.1,
+      "mult": 0.759,
+      "vix": 47.73,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-04",
+      "kind": "vix_45",
+      "usd": 4731.18,
+      "otm_pct": 0.2,
+      "mult": 0.722,
+      "vix": 47.73,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-04",
+      "kind": "vix_45",
+      "usd": 2779.87,
+      "otm_pct": 0.3,
+      "mult": 0.68,
+      "vix": 47.73,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-05",
+      "kind": "rearm",
+      "usd": 4677.98,
+      "otm_pct": 0.1,
+      "mult": 1.352,
+      "vix": 54.56,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-05",
+      "kind": "rearm",
+      "usd": 3171.13,
+      "otm_pct": 0.2,
+      "mult": 1.426,
+      "vix": 54.56,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-05",
+      "kind": "rearm",
+      "usd": 2004.79,
+      "otm_pct": 0.3,
+      "mult": 1.519,
+      "vix": 54.56,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-05",
+      "kind": "vix_45",
+      "usd": 11694.95,
+      "otm_pct": 0.1,
+      "mult": 1.352,
+      "vix": 54.56,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-05",
+      "kind": "vix_45",
+      "usd": 7927.82,
+      "otm_pct": 0.2,
+      "mult": 1.426,
+      "vix": 54.56,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-05",
+      "kind": "vix_45",
+      "usd": 5011.97,
+      "otm_pct": 0.3,
+      "mult": 1.519,
+      "vix": 54.56,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-06",
+      "kind": "rearm",
+      "usd": 5289.62,
+      "otm_pct": 0.1,
+      "mult": 1.343,
+      "vix": 63.68,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-06",
+      "kind": "rearm",
+      "usd": 3758.48,
+      "otm_pct": 0.2,
+      "mult": 1.415,
+      "vix": 63.68,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-06",
+      "kind": "rearm",
+      "usd": 2513.7,
+      "otm_pct": 0.3,
+      "mult": 1.506,
+      "vix": 63.68,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-06",
+      "kind": "vix_45",
+      "usd": 13224.05,
+      "otm_pct": 0.1,
+      "mult": 1.343,
+      "vix": 63.68,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-06",
+      "kind": "vix_45",
+      "usd": 9396.21,
+      "otm_pct": 0.2,
+      "mult": 1.415,
+      "vix": 63.68,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-06",
+      "kind": "vix_45",
+      "usd": 6284.25,
+      "otm_pct": 0.3,
+      "mult": 1.506,
+      "vix": 63.68,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-07",
+      "kind": "rearm",
+      "usd": 3626.13,
+      "otm_pct": 0.1,
+      "mult": 0.791,
+      "vix": 56.1,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-07",
+      "kind": "rearm",
+      "usd": 2456.29,
+      "otm_pct": 0.2,
+      "mult": 0.757,
+      "vix": 56.1,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-07",
+      "kind": "rearm",
+      "usd": 1550.86,
+      "otm_pct": 0.3,
+      "mult": 0.718,
+      "vix": 56.1,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-07",
+      "kind": "vix_45",
+      "usd": 9065.33,
+      "otm_pct": 0.1,
+      "mult": 0.791,
+      "vix": 56.1,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-07",
+      "kind": "vix_45",
+      "usd": 6140.73,
+      "otm_pct": 0.2,
+      "mult": 0.757,
+      "vix": 56.1,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-07",
+      "kind": "vix_45",
+      "usd": 3877.15,
+      "otm_pct": 0.3,
+      "mult": 0.718,
+      "vix": 56.1,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-10",
+      "kind": "rearm",
+      "usd": 4456.36,
+      "otm_pct": 0.1,
+      "mult": 1.116,
+      "vix": 59.98,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-10",
+      "kind": "rearm",
+      "usd": 3098.62,
+      "otm_pct": 0.2,
+      "mult": 1.14,
+      "vix": 59.98,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-10",
+      "kind": "rearm",
+      "usd": 2018.98,
+      "otm_pct": 0.3,
+      "mult": 1.169,
+      "vix": 59.98,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-10",
+      "kind": "vix_45",
+      "usd": 11140.91,
+      "otm_pct": 0.1,
+      "mult": 1.116,
+      "vix": 59.98,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-10",
+      "kind": "vix_45",
+      "usd": 7746.56,
+      "otm_pct": 0.2,
+      "mult": 1.14,
+      "vix": 59.98,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-10",
+      "kind": "vix_45",
+      "usd": 5047.46,
+      "otm_pct": 0.3,
+      "mult": 1.169,
+      "vix": 59.98,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-11",
+      "kind": "rearm",
+      "usd": 4622.6,
+      "otm_pct": 0.1,
+      "mult": 1.073,
+      "vix": 61.44,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-11",
+      "kind": "rearm",
+      "usd": 3240.92,
+      "otm_pct": 0.2,
+      "mult": 1.082,
+      "vix": 61.44,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-11",
+      "kind": "rearm",
+      "usd": 2132.82,
+      "otm_pct": 0.3,
+      "mult": 1.093,
+      "vix": 61.44,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-11",
+      "kind": "vix_45",
+      "usd": 11556.49,
+      "otm_pct": 0.1,
+      "mult": 1.073,
+      "vix": 61.44,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-11",
+      "kind": "vix_45",
+      "usd": 8102.29,
+      "otm_pct": 0.2,
+      "mult": 1.082,
+      "vix": 61.44,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-11",
+      "kind": "vix_45",
+      "usd": 5332.06,
+      "otm_pct": 0.3,
+      "mult": 1.093,
+      "vix": 61.44,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-12",
+      "kind": "rearm",
+      "usd": 5260.08,
+      "otm_pct": 0.1,
+      "mult": 1.21,
+      "vix": 66.46,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-12",
+      "kind": "rearm",
+      "usd": 3782.41,
+      "otm_pct": 0.2,
+      "mult": 1.242,
+      "vix": 66.46,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-12",
+      "kind": "rearm",
+      "usd": 2566.21,
+      "otm_pct": 0.3,
+      "mult": 1.282,
+      "vix": 66.46,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-12",
+      "kind": "vix_65",
+      "usd": 13150.2,
+      "otm_pct": 0.1,
+      "mult": 1.21,
+      "vix": 66.46,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-12",
+      "kind": "vix_65",
+      "usd": 9456.03,
+      "otm_pct": 0.2,
+      "mult": 1.242,
+      "vix": 66.46,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-12",
+      "kind": "vix_65",
+      "usd": 6415.52,
+      "otm_pct": 0.3,
+      "mult": 1.282,
+      "vix": 66.46,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-13",
+      "kind": "rearm",
+      "usd": 3447.49,
+      "otm_pct": 0.1,
+      "mult": 0.756,
+      "vix": 59.83,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-13",
+      "kind": "rearm",
+      "usd": 2373.74,
+      "otm_pct": 0.2,
+      "mult": 0.727,
+      "vix": 59.83,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-13",
+      "kind": "rearm",
+      "usd": 1528.02,
+      "otm_pct": 0.3,
+      "mult": 0.693,
+      "vix": 59.83,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-13",
+      "kind": "vix_45",
+      "usd": 8618.72,
+      "otm_pct": 0.1,
+      "mult": 0.756,
+      "vix": 59.83,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-13",
+      "kind": "vix_45",
+      "usd": 5934.35,
+      "otm_pct": 0.2,
+      "mult": 0.727,
+      "vix": 59.83,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-13",
+      "kind": "vix_45",
+      "usd": 3820.04,
+      "otm_pct": 0.3,
+      "mult": 0.693,
+      "vix": 59.83,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-14",
+      "kind": "rearm",
+      "usd": 5219.11,
+      "otm_pct": 0.1,
+      "mult": 1.226,
+      "vix": 66.31,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-14",
+      "kind": "rearm",
+      "usd": 3746.87,
+      "otm_pct": 0.2,
+      "mult": 1.267,
+      "vix": 66.31,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-14",
+      "kind": "rearm",
+      "usd": 2537.04,
+      "otm_pct": 0.3,
+      "mult": 1.318,
+      "vix": 66.31,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-14",
+      "kind": "vix_65",
+      "usd": 13047.77,
+      "otm_pct": 0.1,
+      "mult": 1.226,
+      "vix": 66.31,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-14",
+      "kind": "vix_65",
+      "usd": 9367.17,
+      "otm_pct": 0.2,
+      "mult": 1.267,
+      "vix": 66.31,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-14",
+      "kind": "vix_65",
+      "usd": 6342.6,
+      "otm_pct": 0.3,
+      "mult": 1.318,
+      "vix": 66.31,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-17",
+      "kind": "rearm",
+      "usd": 5109.8,
+      "otm_pct": 0.1,
+      "mult": 1.097,
+      "vix": 69.15,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-17",
+      "kind": "rearm",
+      "usd": 3703.92,
+      "otm_pct": 0.2,
+      "mult": 1.111,
+      "vix": 69.15,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-17",
+      "kind": "rearm",
+      "usd": 2536.95,
+      "otm_pct": 0.3,
+      "mult": 1.128,
+      "vix": 69.15,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-17",
+      "kind": "vix_65",
+      "usd": 12774.49,
+      "otm_pct": 0.1,
+      "mult": 1.097,
+      "vix": 69.15,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-17",
+      "kind": "vix_65",
+      "usd": 9259.81,
+      "otm_pct": 0.2,
+      "mult": 1.111,
+      "vix": 69.15,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-17",
+      "kind": "vix_65",
+      "usd": 6342.37,
+      "otm_pct": 0.3,
+      "mult": 1.128,
+      "vix": 69.15,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-18",
+      "kind": "rearm",
+      "usd": 4552.06,
+      "otm_pct": 0.1,
+      "mult": 0.952,
+      "vix": 67.64,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-18",
+      "kind": "rearm",
+      "usd": 3269.23,
+      "otm_pct": 0.2,
+      "mult": 0.944,
+      "vix": 67.64,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-18",
+      "kind": "rearm",
+      "usd": 2214.14,
+      "otm_pct": 0.3,
+      "mult": 0.935,
+      "vix": 67.64,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-18",
+      "kind": "vix_65",
+      "usd": 11380.14,
+      "otm_pct": 0.1,
+      "mult": 0.952,
+      "vix": 67.64,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-18",
+      "kind": "vix_65",
+      "usd": 8173.07,
+      "otm_pct": 0.2,
+      "mult": 0.944,
+      "vix": 67.64,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-18",
+      "kind": "vix_65",
+      "usd": 5535.36,
+      "otm_pct": 0.3,
+      "mult": 0.935,
+      "vix": 67.64,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-19",
+      "kind": "rearm",
+      "usd": 5789.8,
+      "otm_pct": 0.1,
+      "mult": 1.232,
+      "vix": 74.26,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-19",
+      "kind": "rearm",
+      "usd": 4285.81,
+      "otm_pct": 0.2,
+      "mult": 1.267,
+      "vix": 74.26,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-19",
+      "kind": "rearm",
+      "usd": 3010.79,
+      "otm_pct": 0.3,
+      "mult": 1.311,
+      "vix": 74.26,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-19",
+      "kind": "vix_65",
+      "usd": 14474.49,
+      "otm_pct": 0.1,
+      "mult": 1.232,
+      "vix": 74.26,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-19",
+      "kind": "vix_65",
+      "usd": 10714.52,
+      "otm_pct": 0.2,
+      "mult": 1.267,
+      "vix": 74.26,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-19",
+      "kind": "vix_65",
+      "usd": 7526.98,
+      "otm_pct": 0.3,
+      "mult": 1.311,
+      "vix": 74.26,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-20",
+      "kind": "rearm",
+      "usd": 6043.37,
+      "otm_pct": 0.1,
+      "mult": 1.214,
+      "vix": 80.86,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-20",
+      "kind": "rearm",
+      "usd": 4567.82,
+      "otm_pct": 0.2,
+      "mult": 1.243,
+      "vix": 80.86,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-20",
+      "kind": "rearm",
+      "usd": 3290.47,
+      "otm_pct": 0.3,
+      "mult": 1.28,
+      "vix": 80.86,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-20",
+      "kind": "vix_65",
+      "usd": 15108.42,
+      "otm_pct": 0.1,
+      "mult": 1.214,
+      "vix": 80.86,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-20",
+      "kind": "vix_65",
+      "usd": 11419.55,
+      "otm_pct": 0.2,
+      "mult": 1.243,
+      "vix": 80.86,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-20",
+      "kind": "vix_65",
+      "usd": 8226.18,
+      "otm_pct": 0.3,
+      "mult": 1.28,
+      "vix": 80.86,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-21",
+      "kind": "rearm",
+      "usd": 4076.91,
+      "otm_pct": 0.1,
+      "mult": 0.792,
+      "vix": 72.67,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-21",
+      "kind": "rearm",
+      "usd": 2973.47,
+      "otm_pct": 0.2,
+      "mult": 0.767,
+      "vix": 72.67,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-21",
+      "kind": "rearm",
+      "usd": 2051.15,
+      "otm_pct": 0.3,
+      "mult": 0.738,
+      "vix": 72.67,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-21",
+      "kind": "vix_65",
+      "usd": 10192.28,
+      "otm_pct": 0.1,
+      "mult": 0.792,
+      "vix": 72.67,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-21",
+      "kind": "vix_65",
+      "usd": 7433.67,
+      "otm_pct": 0.2,
+      "mult": 0.767,
+      "vix": 72.67,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-21",
+      "kind": "vix_65",
+      "usd": 5127.88,
+      "otm_pct": 0.3,
+      "mult": 0.738,
+      "vix": 72.67,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-24",
+      "kind": "rearm",
+      "usd": 3676.28,
+      "otm_pct": 0.1,
+      "mult": 0.765,
+      "vix": 64.7,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-24",
+      "kind": "rearm",
+      "usd": 2597.22,
+      "otm_pct": 0.2,
+      "mult": 0.736,
+      "vix": 64.7,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-24",
+      "kind": "rearm",
+      "usd": 1724.37,
+      "otm_pct": 0.3,
+      "mult": 0.703,
+      "vix": 64.7,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-24",
+      "kind": "vix_45",
+      "usd": 9190.69,
+      "otm_pct": 0.1,
+      "mult": 0.765,
+      "vix": 64.7,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-24",
+      "kind": "vix_45",
+      "usd": 6493.04,
+      "otm_pct": 0.2,
+      "mult": 0.736,
+      "vix": 64.7,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-24",
+      "kind": "vix_45",
+      "usd": 4310.93,
+      "otm_pct": 0.3,
+      "mult": 0.703,
+      "vix": 64.7,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-25",
+      "kind": "rearm",
+      "usd": 4018.59,
+      "otm_pct": 0.1,
+      "mult": 0.909,
+      "vix": 60.9,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-25",
+      "kind": "rearm",
+      "usd": 2805.41,
+      "otm_pct": 0.2,
+      "mult": 0.891,
+      "vix": 60.9,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-25",
+      "kind": "rearm",
+      "usd": 1836.67,
+      "otm_pct": 0.3,
+      "mult": 0.87,
+      "vix": 60.9,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-25",
+      "kind": "vix_45",
+      "usd": 10046.47,
+      "otm_pct": 0.1,
+      "mult": 0.909,
+      "vix": 60.9,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-25",
+      "kind": "vix_45",
+      "usd": 7013.53,
+      "otm_pct": 0.2,
+      "mult": 0.891,
+      "vix": 60.9,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-25",
+      "kind": "vix_45",
+      "usd": 4591.68,
+      "otm_pct": 0.3,
+      "mult": 0.87,
+      "vix": 60.9,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-26",
+      "kind": "rearm",
+      "usd": 3303.07,
+      "otm_pct": 0.1,
+      "mult": 0.802,
+      "vix": 54.92,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-26",
+      "kind": "rearm",
+      "usd": 2223.5,
+      "otm_pct": 0.2,
+      "mult": 0.772,
+      "vix": 54.92,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-26",
+      "kind": "rearm",
+      "usd": 1393.51,
+      "otm_pct": 0.3,
+      "mult": 0.737,
+      "vix": 54.92,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-26",
+      "kind": "vix_45",
+      "usd": 8257.67,
+      "otm_pct": 0.1,
+      "mult": 0.802,
+      "vix": 54.92,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-26",
+      "kind": "vix_45",
+      "usd": 5558.76,
+      "otm_pct": 0.2,
+      "mult": 0.772,
+      "vix": 54.92,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-26",
+      "kind": "vix_45",
+      "usd": 3483.78,
+      "otm_pct": 0.3,
+      "mult": 0.737,
+      "vix": 54.92,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-28",
+      "kind": "rearm",
+      "usd": 3636.75,
+      "otm_pct": 0.1,
+      "mult": 0.978,
+      "vix": 55.28,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-28",
+      "kind": "rearm",
+      "usd": 2457.04,
+      "otm_pct": 0.2,
+      "mult": 0.976,
+      "vix": 55.28,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-28",
+      "kind": "rearm",
+      "usd": 1546.65,
+      "otm_pct": 0.3,
+      "mult": 0.973,
+      "vix": 55.28,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-11-28",
+      "kind": "vix_45",
+      "usd": 9091.87,
+      "otm_pct": 0.1,
+      "mult": 0.978,
+      "vix": 55.28,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-28",
+      "kind": "vix_45",
+      "usd": 6142.61,
+      "otm_pct": 0.2,
+      "mult": 0.976,
+      "vix": 55.28,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-11-28",
+      "kind": "vix_45",
+      "usd": 3866.62,
+      "otm_pct": 0.3,
+      "mult": 0.973,
+      "vix": 55.28,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-01",
+      "kind": "rearm",
+      "usd": 5808.32,
+      "otm_pct": 0.1,
+      "mult": 1.541,
+      "vix": 68.51,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-01",
+      "kind": "rearm",
+      "usd": 4225.54,
+      "otm_pct": 0.2,
+      "mult": 1.654,
+      "vix": 68.51,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-01",
+      "kind": "rearm",
+      "usd": 2907.64,
+      "otm_pct": 0.3,
+      "mult": 1.802,
+      "vix": 68.51,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-01",
+      "kind": "vix_65",
+      "usd": 14520.79,
+      "otm_pct": 0.1,
+      "mult": 1.541,
+      "vix": 68.51,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-01",
+      "kind": "vix_65",
+      "usd": 10563.85,
+      "otm_pct": 0.2,
+      "mult": 1.654,
+      "vix": 68.51,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-01",
+      "kind": "vix_65",
+      "usd": 7269.09,
+      "otm_pct": 0.3,
+      "mult": 1.802,
+      "vix": 68.51,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-02",
+      "kind": "rearm",
+      "usd": 3759.5,
+      "otm_pct": 0.1,
+      "mult": 0.829,
+      "vix": 62.98,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-02",
+      "kind": "rearm",
+      "usd": 2637.87,
+      "otm_pct": 0.2,
+      "mult": 0.805,
+      "vix": 62.98,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-02",
+      "kind": "rearm",
+      "usd": 1737.1,
+      "otm_pct": 0.3,
+      "mult": 0.778,
+      "vix": 62.98,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-02",
+      "kind": "vix_45",
+      "usd": 9398.76,
+      "otm_pct": 0.1,
+      "mult": 0.829,
+      "vix": 62.98,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-02",
+      "kind": "vix_45",
+      "usd": 6594.68,
+      "otm_pct": 0.2,
+      "mult": 0.805,
+      "vix": 62.98,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-02",
+      "kind": "vix_45",
+      "usd": 4342.75,
+      "otm_pct": 0.3,
+      "mult": 0.778,
+      "vix": 62.98,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-03",
+      "kind": "rearm",
+      "usd": 3820.54,
+      "otm_pct": 0.1,
+      "mult": 0.902,
+      "vix": 60.72,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-03",
+      "kind": "rearm",
+      "usd": 2655.25,
+      "otm_pct": 0.2,
+      "mult": 0.888,
+      "vix": 60.72,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-03",
+      "kind": "rearm",
+      "usd": 1728.79,
+      "otm_pct": 0.3,
+      "mult": 0.872,
+      "vix": 60.72,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-03",
+      "kind": "vix_45",
+      "usd": 9551.34,
+      "otm_pct": 0.1,
+      "mult": 0.902,
+      "vix": 60.72,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-03",
+      "kind": "vix_45",
+      "usd": 6638.13,
+      "otm_pct": 0.2,
+      "mult": 0.888,
+      "vix": 60.72,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-03",
+      "kind": "vix_45",
+      "usd": 4321.97,
+      "otm_pct": 0.3,
+      "mult": 0.872,
+      "vix": 60.72,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-04",
+      "kind": "rearm",
+      "usd": 4638.23,
+      "otm_pct": 0.1,
+      "mult": 1.119,
+      "vix": 63.64,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-04",
+      "kind": "rearm",
+      "usd": 3287.86,
+      "otm_pct": 0.2,
+      "mult": 1.136,
+      "vix": 63.64,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-04",
+      "kind": "rearm",
+      "usd": 2192.5,
+      "otm_pct": 0.3,
+      "mult": 1.158,
+      "vix": 63.64,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-04",
+      "kind": "vix_45",
+      "usd": 11595.57,
+      "otm_pct": 0.1,
+      "mult": 1.119,
+      "vix": 63.64,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-04",
+      "kind": "vix_45",
+      "usd": 8219.64,
+      "otm_pct": 0.2,
+      "mult": 1.136,
+      "vix": 63.64,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-04",
+      "kind": "vix_45",
+      "usd": 5481.26,
+      "otm_pct": 0.3,
+      "mult": 1.158,
+      "vix": 63.64,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-05",
+      "kind": "rearm",
+      "usd": 3657.49,
+      "otm_pct": 0.1,
+      "mult": 0.855,
+      "vix": 59.93,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-05",
+      "kind": "rearm",
+      "usd": 2528.71,
+      "otm_pct": 0.2,
+      "mult": 0.836,
+      "vix": 59.93,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-05",
+      "kind": "rearm",
+      "usd": 1636.05,
+      "otm_pct": 0.3,
+      "mult": 0.812,
+      "vix": 59.93,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-05",
+      "kind": "vix_45",
+      "usd": 9143.73,
+      "otm_pct": 0.1,
+      "mult": 0.855,
+      "vix": 59.93,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-05",
+      "kind": "vix_45",
+      "usd": 6321.77,
+      "otm_pct": 0.2,
+      "mult": 0.836,
+      "vix": 59.93,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-05",
+      "kind": "vix_45",
+      "usd": 4090.13,
+      "otm_pct": 0.3,
+      "mult": 0.812,
+      "vix": 59.93,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-08",
+      "kind": "rearm",
+      "usd": 3649.34,
+      "otm_pct": 0.1,
+      "mult": 0.89,
+      "vix": 58.49,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-08",
+      "kind": "rearm",
+      "usd": 2503.2,
+      "otm_pct": 0.2,
+      "mult": 0.878,
+      "vix": 58.49,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-08",
+      "kind": "rearm",
+      "usd": 1604.28,
+      "otm_pct": 0.3,
+      "mult": 0.864,
+      "vix": 58.49,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-08",
+      "kind": "vix_45",
+      "usd": 9123.36,
+      "otm_pct": 0.1,
+      "mult": 0.89,
+      "vix": 58.49,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-08",
+      "kind": "vix_45",
+      "usd": 6258.0,
+      "otm_pct": 0.2,
+      "mult": 0.878,
+      "vix": 58.49,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-08",
+      "kind": "vix_45",
+      "usd": 4010.69,
+      "otm_pct": 0.3,
+      "mult": 0.864,
+      "vix": 58.49,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-09",
+      "kind": "rearm",
+      "usd": 4350.41,
+      "otm_pct": 0.1,
+      "mult": 1.055,
+      "vix": 58.91,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-09",
+      "kind": "rearm",
+      "usd": 3011.79,
+      "otm_pct": 0.2,
+      "mult": 1.058,
+      "vix": 58.91,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-09",
+      "kind": "rearm",
+      "usd": 1952.29,
+      "otm_pct": 0.3,
+      "mult": 1.063,
+      "vix": 58.91,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-09",
+      "kind": "vix_45",
+      "usd": 10876.01,
+      "otm_pct": 0.1,
+      "mult": 1.055,
+      "vix": 58.91,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-09",
+      "kind": "vix_45",
+      "usd": 7529.46,
+      "otm_pct": 0.2,
+      "mult": 1.058,
+      "vix": 58.91,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-09",
+      "kind": "vix_45",
+      "usd": 4880.72,
+      "otm_pct": 0.3,
+      "mult": 1.063,
+      "vix": 58.91,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-10",
+      "kind": "rearm",
+      "usd": 3662.9,
+      "otm_pct": 0.1,
+      "mult": 0.901,
+      "vix": 55.73,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-10",
+      "kind": "rearm",
+      "usd": 2480.76,
+      "otm_pct": 0.2,
+      "mult": 0.882,
+      "vix": 55.73,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-10",
+      "kind": "rearm",
+      "usd": 1566.12,
+      "otm_pct": 0.3,
+      "mult": 0.86,
+      "vix": 55.73,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-10",
+      "kind": "vix_45",
+      "usd": 9157.25,
+      "otm_pct": 0.1,
+      "mult": 0.901,
+      "vix": 55.73,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-10",
+      "kind": "vix_45",
+      "usd": 6201.89,
+      "otm_pct": 0.2,
+      "mult": 0.882,
+      "vix": 55.73,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-10",
+      "kind": "vix_45",
+      "usd": 3915.3,
+      "otm_pct": 0.3,
+      "mult": 0.86,
+      "vix": 55.73,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-11",
+      "kind": "rearm",
+      "usd": 4063.47,
+      "otm_pct": 0.1,
+      "mult": 1.063,
+      "vix": 55.78,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-11",
+      "kind": "rearm",
+      "usd": 2766.39,
+      "otm_pct": 0.2,
+      "mult": 1.065,
+      "vix": 55.78,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-11",
+      "kind": "rearm",
+      "usd": 1757.68,
+      "otm_pct": 0.3,
+      "mult": 1.068,
+      "vix": 55.78,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-11",
+      "kind": "vix_45",
+      "usd": 10158.66,
+      "otm_pct": 0.1,
+      "mult": 1.063,
+      "vix": 55.78,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-11",
+      "kind": "vix_45",
+      "usd": 6915.96,
+      "otm_pct": 0.2,
+      "mult": 1.065,
+      "vix": 55.78,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-11",
+      "kind": "vix_45",
+      "usd": 4394.21,
+      "otm_pct": 0.3,
+      "mult": 1.068,
+      "vix": 55.78,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-12",
+      "kind": "rearm",
+      "usd": 3511.72,
+      "otm_pct": 0.1,
+      "mult": 0.944,
+      "vix": 54.28,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-12",
+      "kind": "rearm",
+      "usd": 2358.7,
+      "otm_pct": 0.2,
+      "mult": 0.933,
+      "vix": 54.28,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-12",
+      "kind": "rearm",
+      "usd": 1474.4,
+      "otm_pct": 0.3,
+      "mult": 0.92,
+      "vix": 54.28,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-12",
+      "kind": "vix_45",
+      "usd": 8779.31,
+      "otm_pct": 0.1,
+      "mult": 0.944,
+      "vix": 54.28,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-12",
+      "kind": "vix_45",
+      "usd": 5896.74,
+      "otm_pct": 0.2,
+      "mult": 0.933,
+      "vix": 54.28,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-12",
+      "kind": "vix_45",
+      "usd": 3686.0,
+      "otm_pct": 0.3,
+      "mult": 0.92,
+      "vix": 54.28,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-15",
+      "kind": "rearm",
+      "usd": 3923.14,
+      "otm_pct": 0.1,
+      "mult": 1.086,
+      "vix": 56.76,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-15",
+      "kind": "rearm",
+      "usd": 2680.92,
+      "otm_pct": 0.2,
+      "mult": 1.102,
+      "vix": 56.76,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-15",
+      "kind": "rearm",
+      "usd": 1710.92,
+      "otm_pct": 0.3,
+      "mult": 1.122,
+      "vix": 56.76,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-15",
+      "kind": "vix_45",
+      "usd": 9807.84,
+      "otm_pct": 0.1,
+      "mult": 1.086,
+      "vix": 56.76,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-15",
+      "kind": "vix_45",
+      "usd": 6702.3,
+      "otm_pct": 0.2,
+      "mult": 1.102,
+      "vix": 56.76,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-15",
+      "kind": "vix_45",
+      "usd": 4277.31,
+      "otm_pct": 0.3,
+      "mult": 1.122,
+      "vix": 56.76,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-16",
+      "kind": "rearm",
+      "usd": 3008.24,
+      "otm_pct": 0.1,
+      "mult": 0.791,
+      "vix": 52.37,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-16",
+      "kind": "rearm",
+      "usd": 1987.76,
+      "otm_pct": 0.2,
+      "mult": 0.764,
+      "vix": 52.37,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-16",
+      "kind": "rearm",
+      "usd": 1218.34,
+      "otm_pct": 0.3,
+      "mult": 0.732,
+      "vix": 52.37,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-16",
+      "kind": "vix_45",
+      "usd": 7520.59,
+      "otm_pct": 0.1,
+      "mult": 0.791,
+      "vix": 52.37,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-16",
+      "kind": "vix_45",
+      "usd": 4969.39,
+      "otm_pct": 0.2,
+      "mult": 0.764,
+      "vix": 52.37,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-16",
+      "kind": "vix_45",
+      "usd": 3045.84,
+      "otm_pct": 0.3,
+      "mult": 0.732,
+      "vix": 52.37,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-17",
+      "kind": "rearm",
+      "usd": 3419.92,
+      "otm_pct": 0.1,
+      "mult": 0.953,
+      "vix": 49.84,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-17",
+      "kind": "rearm",
+      "usd": 2237.19,
+      "otm_pct": 0.2,
+      "mult": 0.936,
+      "vix": 49.84,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-17",
+      "kind": "rearm",
+      "usd": 1355.42,
+      "otm_pct": 0.3,
+      "mult": 0.916,
+      "vix": 49.84,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-17",
+      "kind": "vix_45",
+      "usd": 8549.81,
+      "otm_pct": 0.1,
+      "mult": 0.953,
+      "vix": 49.84,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-17",
+      "kind": "vix_45",
+      "usd": 5592.97,
+      "otm_pct": 0.2,
+      "mult": 0.936,
+      "vix": 49.84,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-17",
+      "kind": "vix_45",
+      "usd": 3388.55,
+      "otm_pct": 0.3,
+      "mult": 0.916,
+      "vix": 49.84,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-18",
+      "kind": "rearm",
+      "usd": 3259.47,
+      "otm_pct": 0.1,
+      "mult": 0.981,
+      "vix": 47.34,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-18",
+      "kind": "rearm",
+      "usd": 2094.54,
+      "otm_pct": 0.2,
+      "mult": 0.964,
+      "vix": 47.34,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-18",
+      "kind": "rearm",
+      "usd": 1242.48,
+      "otm_pct": 0.3,
+      "mult": 0.943,
+      "vix": 47.34,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-18",
+      "kind": "vix_45",
+      "usd": 8148.68,
+      "otm_pct": 0.1,
+      "mult": 0.981,
+      "vix": 47.34,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-18",
+      "kind": "vix_45",
+      "usd": 5236.35,
+      "otm_pct": 0.2,
+      "mult": 0.964,
+      "vix": 47.34,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-18",
+      "kind": "vix_45",
+      "usd": 3106.2,
+      "otm_pct": 0.3,
+      "mult": 0.943,
+      "vix": 47.34,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-23",
+      "kind": "rearm",
+      "usd": 2988.05,
+      "otm_pct": 0.1,
+      "mult": 0.987,
+      "vix": 45.02,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-23",
+      "kind": "rearm",
+      "usd": 1875.59,
+      "otm_pct": 0.2,
+      "mult": 0.966,
+      "vix": 45.02,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-23",
+      "kind": "rearm",
+      "usd": 1081.74,
+      "otm_pct": 0.3,
+      "mult": 0.94,
+      "vix": 45.02,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2008-12-23",
+      "kind": "vix_45",
+      "usd": 7470.13,
+      "otm_pct": 0.1,
+      "mult": 0.987,
+      "vix": 45.02,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-23",
+      "kind": "vix_45",
+      "usd": 4688.99,
+      "otm_pct": 0.2,
+      "mult": 0.966,
+      "vix": 45.02,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2008-12-23",
+      "kind": "vix_45",
+      "usd": 2704.35,
+      "otm_pct": 0.3,
+      "mult": 0.94,
+      "vix": 45.02,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-12",
+      "kind": "rearm",
+      "usd": 2555.8,
+      "otm_pct": 0.1,
+      "mult": 0.93,
+      "vix": 45.84,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-12",
+      "kind": "rearm",
+      "usd": 1568.73,
+      "otm_pct": 0.2,
+      "mult": 0.907,
+      "vix": 45.84,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-12",
+      "kind": "rearm",
+      "usd": 879.11,
+      "otm_pct": 0.3,
+      "mult": 0.879,
+      "vix": 45.84,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-12",
+      "kind": "vix_45",
+      "usd": 6389.49,
+      "otm_pct": 0.1,
+      "mult": 0.93,
+      "vix": 45.84,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-12",
+      "kind": "vix_45",
+      "usd": 3921.81,
+      "otm_pct": 0.2,
+      "mult": 0.907,
+      "vix": 45.84,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-12",
+      "kind": "vix_45",
+      "usd": 2197.77,
+      "otm_pct": 0.3,
+      "mult": 0.879,
+      "vix": 45.84,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-14",
+      "kind": "rearm",
+      "usd": 3359.03,
+      "otm_pct": 0.1,
+      "mult": 1.187,
+      "vix": 49.14,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-14",
+      "kind": "rearm",
+      "usd": 2184.53,
+      "otm_pct": 0.2,
+      "mult": 1.221,
+      "vix": 49.14,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-14",
+      "kind": "rearm",
+      "usd": 1314.14,
+      "otm_pct": 0.3,
+      "mult": 1.262,
+      "vix": 49.14,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-14",
+      "kind": "vix_45",
+      "usd": 8397.57,
+      "otm_pct": 0.1,
+      "mult": 1.187,
+      "vix": 49.14,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-14",
+      "kind": "vix_45",
+      "usd": 5461.34,
+      "otm_pct": 0.2,
+      "mult": 1.221,
+      "vix": 49.14,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-14",
+      "kind": "vix_45",
+      "usd": 3285.34,
+      "otm_pct": 0.3,
+      "mult": 1.262,
+      "vix": 49.14,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-15",
+      "kind": "rearm",
+      "usd": 3152.57,
+      "otm_pct": 0.1,
+      "mult": 1.044,
+      "vix": 51.0,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-15",
+      "kind": "rearm",
+      "usd": 2072.93,
+      "otm_pct": 0.2,
+      "mult": 1.056,
+      "vix": 51.0,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-15",
+      "kind": "rearm",
+      "usd": 1263.38,
+      "otm_pct": 0.3,
+      "mult": 1.071,
+      "vix": 51.0,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-15",
+      "kind": "vix_45",
+      "usd": 7881.42,
+      "otm_pct": 0.1,
+      "mult": 1.044,
+      "vix": 51.0,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-15",
+      "kind": "vix_45",
+      "usd": 5182.32,
+      "otm_pct": 0.2,
+      "mult": 1.056,
+      "vix": 51.0,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-15",
+      "kind": "vix_45",
+      "usd": 3158.44,
+      "otm_pct": 0.3,
+      "mult": 1.071,
+      "vix": 51.0,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-16",
+      "kind": "rearm",
+      "usd": 2694.35,
+      "otm_pct": 0.1,
+      "mult": 0.847,
+      "vix": 46.11,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-16",
+      "kind": "rearm",
+      "usd": 1702.91,
+      "otm_pct": 0.2,
+      "mult": 0.812,
+      "vix": 46.11,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-16",
+      "kind": "rearm",
+      "usd": 990.16,
+      "otm_pct": 0.3,
+      "mult": 0.773,
+      "vix": 46.11,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-16",
+      "kind": "vix_45",
+      "usd": 6735.87,
+      "otm_pct": 0.1,
+      "mult": 0.847,
+      "vix": 46.11,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-16",
+      "kind": "vix_45",
+      "usd": 4257.28,
+      "otm_pct": 0.2,
+      "mult": 0.812,
+      "vix": 46.11,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-16",
+      "kind": "vix_45",
+      "usd": 2475.41,
+      "otm_pct": 0.3,
+      "mult": 0.773,
+      "vix": 46.11,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-20",
+      "kind": "rearm",
+      "usd": 4119.54,
+      "otm_pct": 0.1,
+      "mult": 1.478,
+      "vix": 56.65,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-20",
+      "kind": "rearm",
+      "usd": 2822.61,
+      "otm_pct": 0.2,
+      "mult": 1.598,
+      "vix": 56.65,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-20",
+      "kind": "rearm",
+      "usd": 1807.24,
+      "otm_pct": 0.3,
+      "mult": 1.752,
+      "vix": 56.65,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-20",
+      "kind": "vix_45",
+      "usd": 10298.84,
+      "otm_pct": 0.1,
+      "mult": 1.478,
+      "vix": 56.65,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-20",
+      "kind": "vix_45",
+      "usd": 7056.53,
+      "otm_pct": 0.2,
+      "mult": 1.598,
+      "vix": 56.65,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-20",
+      "kind": "vix_45",
+      "usd": 4518.09,
+      "otm_pct": 0.3,
+      "mult": 1.752,
+      "vix": 56.65,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-21",
+      "kind": "rearm",
+      "usd": 2338.57,
+      "otm_pct": 0.1,
+      "mult": 0.671,
+      "vix": 46.42,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-21",
+      "kind": "rearm",
+      "usd": 1471.2,
+      "otm_pct": 0.2,
+      "mult": 0.619,
+      "vix": 46.42,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-21",
+      "kind": "rearm",
+      "usd": 850.4,
+      "otm_pct": 0.3,
+      "mult": 0.562,
+      "vix": 46.42,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-21",
+      "kind": "vix_45",
+      "usd": 5846.41,
+      "otm_pct": 0.1,
+      "mult": 0.671,
+      "vix": 46.42,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-21",
+      "kind": "vix_45",
+      "usd": 3678.01,
+      "otm_pct": 0.2,
+      "mult": 0.619,
+      "vix": 46.42,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-21",
+      "kind": "vix_45",
+      "usd": 2126.0,
+      "otm_pct": 0.3,
+      "mult": 0.562,
+      "vix": 46.42,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-22",
+      "kind": "rearm",
+      "usd": 2946.74,
+      "otm_pct": 0.1,
+      "mult": 1.065,
+      "vix": 47.29,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-22",
+      "kind": "rearm",
+      "usd": 1883.82,
+      "otm_pct": 0.2,
+      "mult": 1.073,
+      "vix": 47.29,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-22",
+      "kind": "rearm",
+      "usd": 1110.27,
+      "otm_pct": 0.3,
+      "mult": 1.083,
+      "vix": 47.29,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-22",
+      "kind": "vix_45",
+      "usd": 7366.85,
+      "otm_pct": 0.1,
+      "mult": 1.065,
+      "vix": 47.29,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-22",
+      "kind": "vix_45",
+      "usd": 4709.55,
+      "otm_pct": 0.2,
+      "mult": 1.073,
+      "vix": 47.29,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-22",
+      "kind": "vix_45",
+      "usd": 2775.69,
+      "otm_pct": 0.3,
+      "mult": 1.083,
+      "vix": 47.29,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-23",
+      "kind": "rearm",
+      "usd": 2740.89,
+      "otm_pct": 0.1,
+      "mult": 0.98,
+      "vix": 47.27,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-23",
+      "kind": "rearm",
+      "usd": 1746.65,
+      "otm_pct": 0.2,
+      "mult": 0.977,
+      "vix": 47.27,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-23",
+      "kind": "rearm",
+      "usd": 1025.43,
+      "otm_pct": 0.3,
+      "mult": 0.973,
+      "vix": 47.27,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-23",
+      "kind": "vix_45",
+      "usd": 6852.22,
+      "otm_pct": 0.1,
+      "mult": 0.98,
+      "vix": 47.27,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-23",
+      "kind": "vix_45",
+      "usd": 4366.63,
+      "otm_pct": 0.2,
+      "mult": 0.977,
+      "vix": 47.27,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-23",
+      "kind": "vix_45",
+      "usd": 2563.57,
+      "otm_pct": 0.3,
+      "mult": 0.973,
+      "vix": 47.27,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-26",
+      "kind": "rearm",
+      "usd": 2623.36,
+      "otm_pct": 0.1,
+      "mult": 0.933,
+      "vix": 45.69,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-26",
+      "kind": "rearm",
+      "usd": 1648.95,
+      "otm_pct": 0.2,
+      "mult": 0.918,
+      "vix": 45.69,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-26",
+      "kind": "rearm",
+      "usd": 952.43,
+      "otm_pct": 0.3,
+      "mult": 0.9,
+      "vix": 45.69,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-01-26",
+      "kind": "vix_45",
+      "usd": 6558.39,
+      "otm_pct": 0.1,
+      "mult": 0.933,
+      "vix": 45.69,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-26",
+      "kind": "vix_45",
+      "usd": 4122.38,
+      "otm_pct": 0.2,
+      "mult": 0.918,
+      "vix": 45.69,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-01-26",
+      "kind": "vix_45",
+      "usd": 2381.06,
+      "otm_pct": 0.3,
+      "mult": 0.9,
+      "vix": 45.69,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-02",
+      "kind": "rearm",
+      "usd": 2716.24,
+      "otm_pct": 0.1,
+      "mult": 1.008,
+      "vix": 45.52,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-02",
+      "kind": "rearm",
+      "usd": 1695.22,
+      "otm_pct": 0.2,
+      "mult": 0.998,
+      "vix": 45.52,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-02",
+      "kind": "rearm",
+      "usd": 970.34,
+      "otm_pct": 0.3,
+      "mult": 0.986,
+      "vix": 45.52,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-02",
+      "kind": "vix_45",
+      "usd": 6790.61,
+      "otm_pct": 0.1,
+      "mult": 1.008,
+      "vix": 45.52,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-02",
+      "kind": "vix_45",
+      "usd": 4238.05,
+      "otm_pct": 0.2,
+      "mult": 0.998,
+      "vix": 45.52,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-02",
+      "kind": "vix_45",
+      "usd": 2425.85,
+      "otm_pct": 0.3,
+      "mult": 0.986,
+      "vix": 45.52,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-10",
+      "kind": "rearm",
+      "usd": 2640.35,
+      "otm_pct": 0.1,
+      "mult": 0.999,
+      "vix": 46.67,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-10",
+      "kind": "rearm",
+      "usd": 1657.35,
+      "otm_pct": 0.2,
+      "mult": 0.996,
+      "vix": 46.67,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-10",
+      "kind": "rearm",
+      "usd": 954.94,
+      "otm_pct": 0.3,
+      "mult": 0.992,
+      "vix": 46.67,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-10",
+      "kind": "vix_45",
+      "usd": 6600.88,
+      "otm_pct": 0.1,
+      "mult": 0.999,
+      "vix": 46.67,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-10",
+      "kind": "vix_45",
+      "usd": 4143.37,
+      "otm_pct": 0.2,
+      "mult": 0.996,
+      "vix": 46.67,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-10",
+      "kind": "vix_45",
+      "usd": 2387.34,
+      "otm_pct": 0.3,
+      "mult": 0.992,
+      "vix": 46.67,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-17",
+      "kind": "rearm",
+      "usd": 3219.99,
+      "otm_pct": 0.1,
+      "mult": 1.173,
+      "vix": 48.66,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-17",
+      "kind": "rearm",
+      "usd": 2074.88,
+      "otm_pct": 0.2,
+      "mult": 1.189,
+      "vix": 48.66,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-17",
+      "kind": "rearm",
+      "usd": 1233.83,
+      "otm_pct": 0.3,
+      "mult": 1.207,
+      "vix": 48.66,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-17",
+      "kind": "vix_45",
+      "usd": 8049.97,
+      "otm_pct": 0.1,
+      "mult": 1.173,
+      "vix": 48.66,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-17",
+      "kind": "vix_45",
+      "usd": 5187.19,
+      "otm_pct": 0.2,
+      "mult": 1.189,
+      "vix": 48.66,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-17",
+      "kind": "vix_45",
+      "usd": 3084.58,
+      "otm_pct": 0.3,
+      "mult": 1.207,
+      "vix": 48.66,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-18",
+      "kind": "rearm",
+      "usd": 2740.13,
+      "otm_pct": 0.1,
+      "mult": 0.992,
+      "vix": 48.46,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-18",
+      "kind": "rearm",
+      "usd": 1761.39,
+      "otm_pct": 0.2,
+      "mult": 0.988,
+      "vix": 48.46,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-18",
+      "kind": "rearm",
+      "usd": 1044.68,
+      "otm_pct": 0.3,
+      "mult": 0.984,
+      "vix": 48.46,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-18",
+      "kind": "vix_45",
+      "usd": 6850.33,
+      "otm_pct": 0.1,
+      "mult": 0.992,
+      "vix": 48.46,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-18",
+      "kind": "vix_45",
+      "usd": 4403.47,
+      "otm_pct": 0.2,
+      "mult": 0.988,
+      "vix": 48.46,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-18",
+      "kind": "vix_45",
+      "usd": 2611.7,
+      "otm_pct": 0.3,
+      "mult": 0.984,
+      "vix": 48.46,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-19",
+      "kind": "rearm",
+      "usd": 2711.37,
+      "otm_pct": 0.1,
+      "mult": 0.988,
+      "vix": 47.08,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-19",
+      "kind": "rearm",
+      "usd": 1726.06,
+      "otm_pct": 0.2,
+      "mult": 0.977,
+      "vix": 47.08,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-19",
+      "kind": "rearm",
+      "usd": 1012.03,
+      "otm_pct": 0.3,
+      "mult": 0.963,
+      "vix": 47.08,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-19",
+      "kind": "vix_45",
+      "usd": 6778.42,
+      "otm_pct": 0.1,
+      "mult": 0.988,
+      "vix": 47.08,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-19",
+      "kind": "vix_45",
+      "usd": 4315.14,
+      "otm_pct": 0.2,
+      "mult": 0.977,
+      "vix": 47.08,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-19",
+      "kind": "vix_45",
+      "usd": 2530.09,
+      "otm_pct": 0.3,
+      "mult": 0.963,
+      "vix": 47.08,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-20",
+      "kind": "rearm",
+      "usd": 2847.44,
+      "otm_pct": 0.1,
+      "mult": 1.094,
+      "vix": 49.3,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-20",
+      "kind": "rearm",
+      "usd": 1845.24,
+      "otm_pct": 0.2,
+      "mult": 1.113,
+      "vix": 49.3,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-20",
+      "kind": "rearm",
+      "usd": 1105.07,
+      "otm_pct": 0.3,
+      "mult": 1.136,
+      "vix": 49.3,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-20",
+      "kind": "vix_45",
+      "usd": 7118.61,
+      "otm_pct": 0.1,
+      "mult": 1.094,
+      "vix": 49.3,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-20",
+      "kind": "vix_45",
+      "usd": 4613.1,
+      "otm_pct": 0.2,
+      "mult": 1.113,
+      "vix": 49.3,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-20",
+      "kind": "vix_45",
+      "usd": 2762.67,
+      "otm_pct": 0.3,
+      "mult": 1.136,
+      "vix": 49.3,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-23",
+      "kind": "rearm",
+      "usd": 3252.91,
+      "otm_pct": 0.1,
+      "mult": 1.185,
+      "vix": 52.62,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-23",
+      "kind": "rearm",
+      "usd": 2165.71,
+      "otm_pct": 0.2,
+      "mult": 1.217,
+      "vix": 52.62,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-23",
+      "kind": "rearm",
+      "usd": 1339.59,
+      "otm_pct": 0.3,
+      "mult": 1.257,
+      "vix": 52.62,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-23",
+      "kind": "vix_45",
+      "usd": 8132.27,
+      "otm_pct": 0.1,
+      "mult": 1.185,
+      "vix": 52.62,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-23",
+      "kind": "vix_45",
+      "usd": 5414.28,
+      "otm_pct": 0.2,
+      "mult": 1.217,
+      "vix": 52.62,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-23",
+      "kind": "vix_45",
+      "usd": 3348.98,
+      "otm_pct": 0.3,
+      "mult": 1.257,
+      "vix": 52.62,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-24",
+      "kind": "rearm",
+      "usd": 2099.44,
+      "otm_pct": 0.1,
+      "mult": 0.724,
+      "vix": 45.49,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-24",
+      "kind": "rearm",
+      "usd": 1307.57,
+      "otm_pct": 0.2,
+      "mult": 0.68,
+      "vix": 45.49,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-24",
+      "kind": "rearm",
+      "usd": 746.77,
+      "otm_pct": 0.3,
+      "mult": 0.63,
+      "vix": 45.49,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-24",
+      "kind": "vix_45",
+      "usd": 5248.6,
+      "otm_pct": 0.1,
+      "mult": 0.724,
+      "vix": 45.49,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-24",
+      "kind": "vix_45",
+      "usd": 3268.93,
+      "otm_pct": 0.2,
+      "mult": 0.68,
+      "vix": 45.49,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-24",
+      "kind": "vix_45",
+      "usd": 1866.93,
+      "otm_pct": 0.3,
+      "mult": 0.63,
+      "vix": 45.49,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-27",
+      "kind": "rearm",
+      "usd": 2871.56,
+      "otm_pct": 0.1,
+      "mult": 1.167,
+      "vix": 46.35,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-27",
+      "kind": "rearm",
+      "usd": 1819.8,
+      "otm_pct": 0.2,
+      "mult": 1.177,
+      "vix": 46.35,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-27",
+      "kind": "rearm",
+      "usd": 1061.07,
+      "otm_pct": 0.3,
+      "mult": 1.19,
+      "vix": 46.35,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-02-27",
+      "kind": "vix_45",
+      "usd": 7178.91,
+      "otm_pct": 0.1,
+      "mult": 1.167,
+      "vix": 46.35,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-27",
+      "kind": "vix_45",
+      "usd": 4549.49,
+      "otm_pct": 0.2,
+      "mult": 1.177,
+      "vix": 46.35,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-02-27",
+      "kind": "vix_45",
+      "usd": 2652.66,
+      "otm_pct": 0.3,
+      "mult": 1.19,
+      "vix": 46.35,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-02",
+      "kind": "rearm",
+      "usd": 3200.78,
+      "otm_pct": 0.1,
+      "mult": 1.332,
+      "vix": 52.65,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-02",
+      "kind": "rearm",
+      "usd": 2134.86,
+      "otm_pct": 0.2,
+      "mult": 1.404,
+      "vix": 52.65,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-02",
+      "kind": "rearm",
+      "usd": 1323.42,
+      "otm_pct": 0.3,
+      "mult": 1.495,
+      "vix": 52.65,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-02",
+      "kind": "vix_45",
+      "usd": 8001.96,
+      "otm_pct": 0.1,
+      "mult": 1.332,
+      "vix": 52.65,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-02",
+      "kind": "vix_45",
+      "usd": 5337.15,
+      "otm_pct": 0.2,
+      "mult": 1.404,
+      "vix": 52.65,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-02",
+      "kind": "vix_45",
+      "usd": 3308.55,
+      "otm_pct": 0.3,
+      "mult": 1.495,
+      "vix": 52.65,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-03",
+      "kind": "rearm",
+      "usd": 2642.78,
+      "otm_pct": 0.1,
+      "mult": 0.966,
+      "vix": 50.93,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-03",
+      "kind": "rearm",
+      "usd": 1732.32,
+      "otm_pct": 0.2,
+      "mult": 0.954,
+      "vix": 50.93,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-03",
+      "kind": "rearm",
+      "usd": 1051.66,
+      "otm_pct": 0.3,
+      "mult": 0.939,
+      "vix": 50.93,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-03",
+      "kind": "vix_45",
+      "usd": 6606.95,
+      "otm_pct": 0.1,
+      "mult": 0.966,
+      "vix": 50.93,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-03",
+      "kind": "vix_45",
+      "usd": 4330.8,
+      "otm_pct": 0.2,
+      "mult": 0.954,
+      "vix": 50.93,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-03",
+      "kind": "vix_45",
+      "usd": 2629.14,
+      "otm_pct": 0.3,
+      "mult": 0.939,
+      "vix": 50.93,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-04",
+      "kind": "rearm",
+      "usd": 2201.9,
+      "otm_pct": 0.1,
+      "mult": 0.848,
+      "vix": 47.56,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-04",
+      "kind": "rearm",
+      "usd": 1399.98,
+      "otm_pct": 0.2,
+      "mult": 0.822,
+      "vix": 47.56,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-04",
+      "kind": "rearm",
+      "usd": 819.46,
+      "otm_pct": 0.3,
+      "mult": 0.791,
+      "vix": 47.56,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-04",
+      "kind": "vix_45",
+      "usd": 5504.75,
+      "otm_pct": 0.1,
+      "mult": 0.848,
+      "vix": 47.56,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-04",
+      "kind": "vix_45",
+      "usd": 3499.95,
+      "otm_pct": 0.2,
+      "mult": 0.822,
+      "vix": 47.56,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-04",
+      "kind": "vix_45",
+      "usd": 2048.66,
+      "otm_pct": 0.3,
+      "mult": 0.791,
+      "vix": 47.56,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-05",
+      "kind": "rearm",
+      "usd": 2894.04,
+      "otm_pct": 0.1,
+      "mult": 1.197,
+      "vix": 50.17,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-05",
+      "kind": "rearm",
+      "usd": 1896.12,
+      "otm_pct": 0.2,
+      "mult": 1.227,
+      "vix": 50.17,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-05",
+      "kind": "rearm",
+      "usd": 1150.63,
+      "otm_pct": 0.3,
+      "mult": 1.264,
+      "vix": 50.17,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-05",
+      "kind": "vix_45",
+      "usd": 7235.09,
+      "otm_pct": 0.1,
+      "mult": 1.197,
+      "vix": 50.17,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-05",
+      "kind": "vix_45",
+      "usd": 4740.3,
+      "otm_pct": 0.2,
+      "mult": 1.227,
+      "vix": 50.17,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-05",
+      "kind": "vix_45",
+      "usd": 2876.59,
+      "otm_pct": 0.3,
+      "mult": 1.264,
+      "vix": 50.17,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-06",
+      "kind": "rearm",
+      "usd": 2415.49,
+      "otm_pct": 0.1,
+      "mult": 0.969,
+      "vix": 49.33,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-06",
+      "kind": "rearm",
+      "usd": 1562.87,
+      "otm_pct": 0.2,
+      "mult": 0.961,
+      "vix": 49.33,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-06",
+      "kind": "rearm",
+      "usd": 934.16,
+      "otm_pct": 0.3,
+      "mult": 0.951,
+      "vix": 49.33,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-06",
+      "kind": "vix_45",
+      "usd": 6038.73,
+      "otm_pct": 0.1,
+      "mult": 0.969,
+      "vix": 49.33,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-06",
+      "kind": "vix_45",
+      "usd": 3907.19,
+      "otm_pct": 0.2,
+      "mult": 0.961,
+      "vix": 49.33,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-06",
+      "kind": "vix_45",
+      "usd": 2335.4,
+      "otm_pct": 0.3,
+      "mult": 0.951,
+      "vix": 49.33,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-09",
+      "kind": "rearm",
+      "usd": 2527.07,
+      "otm_pct": 0.1,
+      "mult": 1.031,
+      "vix": 49.68,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-09",
+      "kind": "rearm",
+      "usd": 1645.16,
+      "otm_pct": 0.2,
+      "mult": 1.034,
+      "vix": 49.68,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-09",
+      "kind": "rearm",
+      "usd": 990.77,
+      "otm_pct": 0.3,
+      "mult": 1.036,
+      "vix": 49.68,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-09",
+      "kind": "vix_45",
+      "usd": 6317.69,
+      "otm_pct": 0.1,
+      "mult": 1.031,
+      "vix": 49.68,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-09",
+      "kind": "vix_45",
+      "usd": 4112.9,
+      "otm_pct": 0.2,
+      "mult": 1.034,
+      "vix": 49.68,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-09",
+      "kind": "vix_45",
+      "usd": 2476.92,
+      "otm_pct": 0.3,
+      "mult": 1.036,
+      "vix": 49.68,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-20",
+      "kind": "rearm",
+      "usd": 1413.06,
+      "otm_pct": 0.1,
+      "mult": 0.577,
+      "vix": 45.89,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-20",
+      "kind": "rearm",
+      "usd": 856.04,
+      "otm_pct": 0.2,
+      "mult": 0.537,
+      "vix": 45.89,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-20",
+      "kind": "rearm",
+      "usd": 472.24,
+      "otm_pct": 0.3,
+      "mult": 0.491,
+      "vix": 45.89,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-20",
+      "kind": "vix_45",
+      "usd": 3532.66,
+      "otm_pct": 0.1,
+      "mult": 0.577,
+      "vix": 45.89,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-20",
+      "kind": "vix_45",
+      "usd": 2140.1,
+      "otm_pct": 0.2,
+      "mult": 0.537,
+      "vix": 45.89,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-20",
+      "kind": "vix_45",
+      "usd": 1180.61,
+      "otm_pct": 0.3,
+      "mult": 0.491,
+      "vix": 45.89,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-30",
+      "kind": "rearm",
+      "usd": 2220.94,
+      "otm_pct": 0.1,
+      "mult": 0.892,
+      "vix": 45.54,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-30",
+      "kind": "rearm",
+      "usd": 1374.84,
+      "otm_pct": 0.2,
+      "mult": 0.874,
+      "vix": 45.54,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-30",
+      "kind": "rearm",
+      "usd": 779.09,
+      "otm_pct": 0.3,
+      "mult": 0.853,
+      "vix": 45.54,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2009-03-30",
+      "kind": "vix_45",
+      "usd": 5552.35,
+      "otm_pct": 0.1,
+      "mult": 0.892,
+      "vix": 45.54,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-30",
+      "kind": "vix_45",
+      "usd": 3437.09,
+      "otm_pct": 0.2,
+      "mult": 0.874,
+      "vix": 45.54,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-03-30",
+      "kind": "vix_45",
+      "usd": 1947.72,
+      "otm_pct": 0.3,
+      "mult": 0.853,
+      "vix": 45.54,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-07-06",
+      "kind": "scheduled_roll",
+      "usd": 512.83,
+      "otm_pct": 0.1,
+      "mult": 0.081,
+      "vix": 29.0,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-07-06",
+      "kind": "scheduled_roll",
+      "usd": 147.18,
+      "otm_pct": 0.2,
+      "mult": 0.037,
+      "vix": 29.0,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-07-06",
+      "kind": "scheduled_roll",
+      "usd": 32.39,
+      "otm_pct": 0.3,
+      "mult": 0.014,
+      "vix": 29.0,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2009-10-09",
+      "kind": "scheduled_roll",
+      "usd": 302.45,
+      "otm_pct": 0.1,
+      "mult": 0.042,
+      "vix": 23.12,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2009-10-09",
+      "kind": "scheduled_roll",
+      "usd": 122.72,
+      "otm_pct": 0.2,
+      "mult": 0.017,
+      "vix": 23.12,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2009-10-09",
+      "kind": "scheduled_roll",
+      "usd": 40.75,
+      "otm_pct": 0.3,
+      "mult": 0.006,
+      "vix": 23.12,
+      "contracts_sold": 9
+    },
+    {
+      "date": "2010-01-15",
+      "kind": "scheduled_roll",
+      "usd": 916.61,
+      "otm_pct": 0.1,
+      "mult": 0.106,
+      "vix": 17.91,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2010-01-15",
+      "kind": "scheduled_roll",
+      "usd": 310.31,
+      "otm_pct": 0.2,
+      "mult": 0.036,
+      "vix": 17.91,
+      "contracts_sold": 7
+    },
+    {
+      "date": "2010-01-15",
+      "kind": "scheduled_roll",
+      "usd": 85.35,
+      "otm_pct": 0.3,
+      "mult": 0.01,
+      "vix": 17.91,
+      "contracts_sold": 19
+    },
+    {
+      "date": "2010-01-22",
+      "kind": "profit_3x",
+      "usd": 13920.44,
+      "otm_pct": 0.2,
+      "mult": 3.732,
+      "vix": 27.31,
+      "contracts_sold": 6
+    },
+    {
+      "date": "2010-01-22",
+      "kind": "profit_5x",
+      "usd": 30939.23,
+      "otm_pct": 0.3,
+      "mult": 5.306,
+      "vix": 27.31,
+      "contracts_sold": 32
+    },
+    {
+      "date": "2010-01-27",
+      "kind": "giveback",
+      "usd": 17788.7,
+      "otm_pct": 0.2,
+      "mult": 2.385,
+      "vix": 23.14,
+      "contracts_sold": 12
+    },
+    {
+      "date": "2010-01-27",
+      "kind": "giveback",
+      "usd": 16358.0,
+      "otm_pct": 0.3,
+      "mult": 2.896,
+      "vix": 23.14,
+      "contracts_sold": 31
+    },
+    {
+      "date": "2010-01-27",
+      "kind": "rearm",
+      "usd": 7115.48,
+      "otm_pct": 0.2,
+      "mult": 2.385,
+      "vix": 23.14,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2010-01-27",
+      "kind": "rearm",
+      "usd": 6543.2,
+      "otm_pct": 0.3,
+      "mult": 2.896,
+      "vix": 23.14,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2010-04-22",
+      "kind": "scheduled_roll",
+      "usd": 1337.32,
+      "otm_pct": 0.1,
+      "mult": 0.122,
+      "vix": 16.47,
+      "contracts_sold": 6
+    },
+    {
+      "date": "2010-05-03",
+      "kind": "scheduled_roll",
+      "usd": 269.21,
+      "otm_pct": 0.2,
+      "mult": 0.044,
+      "vix": 20.19,
+      "contracts_sold": 5
+    },
+    {
+      "date": "2010-05-03",
+      "kind": "scheduled_roll",
+      "usd": 93.7,
+      "otm_pct": 0.3,
+      "mult": 0.015,
+      "vix": 20.19,
+      "contracts_sold": 14
+    },
+    {
+      "date": "2010-05-06",
+      "kind": "profit_3x",
+      "usd": 22362.88,
+      "otm_pct": 0.1,
+      "mult": 4.692,
+      "vix": 32.8,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2010-05-06",
+      "kind": "profit_3x",
+      "usd": 16031.02,
+      "otm_pct": 0.2,
+      "mult": 4.373,
+      "vix": 32.8,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2010-05-06",
+      "kind": "profit_5x",
+      "usd": 38369.36,
+      "otm_pct": 0.3,
+      "mult": 6.46,
+      "vix": 32.8,
+      "contracts_sold": 20
+    },
+    {
+      "date": "2010-05-07",
+      "kind": "profit_5x",
+      "usd": 20638.48,
+      "otm_pct": 0.1,
+      "mult": 6.496,
+      "vix": 40.95,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2010-05-07",
+      "kind": "profit_5x",
+      "usd": 24951.55,
+      "otm_pct": 0.2,
+      "mult": 6.806,
+      "vix": 40.95,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2010-05-07",
+      "kind": "profit_8x",
+      "usd": 64874.44,
+      "otm_pct": 0.3,
+      "mult": 11.498,
+      "vix": 40.95,
+      "contracts_sold": 19
+    },
+    {
+      "date": "2010-05-07",
+      "kind": "rearm",
+      "usd": 25949.78,
+      "otm_pct": 0.3,
+      "mult": 11.498,
+      "vix": 40.95,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2010-05-10",
+      "kind": "giveback",
+      "usd": 16264.66,
+      "otm_pct": 0.1,
+      "mult": 3.413,
+      "vix": 28.84,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2010-05-10",
+      "kind": "giveback",
+      "usd": 10655.9,
+      "otm_pct": 0.2,
+      "mult": 2.907,
+      "vix": 28.84,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2010-05-10",
+      "kind": "rearm",
+      "usd": 6505.86,
+      "otm_pct": 0.1,
+      "mult": 3.413,
+      "vix": 28.84,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2010-05-10",
+      "kind": "rearm",
+      "usd": 4262.36,
+      "otm_pct": 0.2,
+      "mult": 2.907,
+      "vix": 28.84,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2010-05-20",
+      "kind": "rearm",
+      "usd": 4489.56,
+      "otm_pct": 0.1,
+      "mult": 2.478,
+      "vix": 45.79,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2010-05-20",
+      "kind": "rearm",
+      "usd": 2808.77,
+      "otm_pct": 0.2,
+      "mult": 3.14,
+      "vix": 45.79,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2010-05-20",
+      "kind": "vix_45",
+      "usd": 11223.9,
+      "otm_pct": 0.1,
+      "mult": 2.478,
+      "vix": 45.79,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2010-05-20",
+      "kind": "vix_45",
+      "usd": 7021.91,
+      "otm_pct": 0.2,
+      "mult": 3.14,
+      "vix": 45.79,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2010-05-20",
+      "kind": "vix_45",
+      "usd": 16568.75,
+      "otm_pct": 0.3,
+      "mult": 1.345,
+      "vix": 45.79,
+      "contracts_sold": 5
+    },
+    {
+      "date": "2010-08-10",
+      "kind": "scheduled_roll",
+      "usd": 210.32,
+      "otm_pct": 0.3,
+      "mult": 0.017,
+      "vix": 22.37,
+      "contracts_sold": 5
+    },
+    {
+      "date": "2010-08-23",
+      "kind": "scheduled_roll",
+      "usd": 1790.66,
+      "otm_pct": 0.1,
+      "mult": 0.209,
+      "vix": 25.66,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2010-08-23",
+      "kind": "scheduled_roll",
+      "usd": 489.42,
+      "otm_pct": 0.2,
+      "mult": 0.091,
+      "vix": 25.66,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2010-11-12",
+      "kind": "scheduled_roll",
+      "usd": 270.26,
+      "otm_pct": 0.3,
+      "mult": 0.027,
+      "vix": 20.61,
+      "contracts_sold": 24
+    },
+    {
+      "date": "2010-11-26",
+      "kind": "scheduled_roll",
+      "usd": 694.18,
+      "otm_pct": 0.1,
+      "mult": 0.101,
+      "vix": 22.22,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2010-11-26",
+      "kind": "scheduled_roll",
+      "usd": 418.52,
+      "otm_pct": 0.2,
+      "mult": 0.044,
+      "vix": 22.22,
+      "contracts_sold": 6
+    },
+    {
+      "date": "2011-02-17",
+      "kind": "scheduled_roll",
+      "usd": 36.02,
+      "otm_pct": 0.3,
+      "mult": 0.003,
+      "vix": 16.59,
+      "contracts_sold": 33
+    },
+    {
+      "date": "2011-02-23",
+      "kind": "profit_3x",
+      "usd": 15775.53,
+      "otm_pct": 0.3,
+      "mult": 3.434,
+      "vix": 22.13,
+      "contracts_sold": 30
+    },
+    {
+      "date": "2011-03-03",
+      "kind": "scheduled_roll",
+      "usd": 354.01,
+      "otm_pct": 0.1,
+      "mult": 0.06,
+      "vix": 18.6,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2011-03-03",
+      "kind": "scheduled_roll",
+      "usd": 158.26,
+      "otm_pct": 0.2,
+      "mult": 0.022,
+      "vix": 18.6,
+      "contracts_sold": 6
+    },
+    {
+      "date": "2011-03-16",
+      "kind": "profit_3x",
+      "usd": 16557.37,
+      "otm_pct": 0.2,
+      "mult": 4.161,
+      "vix": 29.4,
+      "contracts_sold": 5
+    },
+    {
+      "date": "2011-03-16",
+      "kind": "profit_8x",
+      "usd": 75060.08,
+      "otm_pct": 0.3,
+      "mult": 8.6,
+      "vix": 29.4,
+      "contracts_sold": 57
+    },
+    {
+      "date": "2011-03-16",
+      "kind": "rearm",
+      "usd": 30024.03,
+      "otm_pct": 0.3,
+      "mult": 8.6,
+      "vix": 29.4,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2011-03-18",
+      "kind": "giveback",
+      "usd": 19467.68,
+      "otm_pct": 0.2,
+      "mult": 2.446,
+      "vix": 24.44,
+      "contracts_sold": 10
+    },
+    {
+      "date": "2011-03-18",
+      "kind": "rearm",
+      "usd": 7787.07,
+      "otm_pct": 0.2,
+      "mult": 2.446,
+      "vix": 24.44,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2011-06-06",
+      "kind": "scheduled_roll",
+      "usd": 7762.89,
+      "otm_pct": 0.1,
+      "mult": 0.682,
+      "vix": 18.49,
+      "contracts_sold": 5
+    },
+    {
+      "date": "2011-06-20",
+      "kind": "scheduled_roll",
+      "usd": 560.9,
+      "otm_pct": 0.3,
+      "mult": 0.019,
+      "vix": 19.99,
+      "contracts_sold": 26
+    },
+    {
+      "date": "2011-06-22",
+      "kind": "scheduled_roll",
+      "usd": 559.6,
+      "otm_pct": 0.2,
+      "mult": 0.084,
+      "vix": 18.52,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2011-08-04",
+      "kind": "profit_3x",
+      "usd": 19674.97,
+      "otm_pct": 0.2,
+      "mult": 4.259,
+      "vix": 31.66,
+      "contracts_sold": 6
+    },
+    {
+      "date": "2011-08-04",
+      "kind": "profit_3x",
+      "usd": 16099.06,
+      "otm_pct": 0.3,
+      "mult": 3.996,
+      "vix": 31.66,
+      "contracts_sold": 13
+    },
+    {
+      "date": "2011-08-08",
+      "kind": "rearm",
+      "usd": 38233.97,
+      "otm_pct": 0.2,
+      "mult": 11.286,
+      "vix": 48.0,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2011-08-08",
+      "kind": "rearm",
+      "usd": 43756.19,
+      "otm_pct": 0.3,
+      "mult": 14.709,
+      "vix": 48.0,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2011-08-08",
+      "kind": "vix_45",
+      "usd": 27516.34,
+      "otm_pct": 0.1,
+      "mult": 6.284,
+      "vix": 48.0,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2011-08-08",
+      "kind": "vix_45",
+      "usd": 95584.93,
+      "otm_pct": 0.2,
+      "mult": 11.286,
+      "vix": 48.0,
+      "contracts_sold": 11
+    },
+    {
+      "date": "2011-08-08",
+      "kind": "vix_45",
+      "usd": 109390.47,
+      "otm_pct": 0.3,
+      "mult": 14.709,
+      "vix": 48.0,
+      "contracts_sold": 24
+    },
+    {
+      "date": "2011-08-09",
+      "kind": "giveback",
+      "usd": 24119.33,
+      "otm_pct": 0.1,
+      "mult": 3.672,
+      "vix": 35.06,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2011-08-09",
+      "kind": "rearm",
+      "usd": 9647.73,
+      "otm_pct": 0.1,
+      "mult": 3.672,
+      "vix": 35.06,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2011-10-03",
+      "kind": "rearm",
+      "usd": 3745.97,
+      "otm_pct": 0.1,
+      "mult": 1.463,
+      "vix": 45.45,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2011-10-03",
+      "kind": "vix_45",
+      "usd": 9364.93,
+      "otm_pct": 0.1,
+      "mult": 1.463,
+      "vix": 45.45,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2011-10-03",
+      "kind": "vix_45",
+      "usd": 12798.11,
+      "otm_pct": 0.2,
+      "mult": 0.682,
+      "vix": 45.45,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2011-10-03",
+      "kind": "vix_45",
+      "usd": 12961.22,
+      "otm_pct": 0.3,
+      "mult": 0.581,
+      "vix": 45.45,
+      "contracts_sold": 6
+    },
+    {
+      "date": "2011-11-14",
+      "kind": "scheduled_roll",
+      "usd": 1038.46,
+      "otm_pct": 0.2,
+      "mult": 0.055,
+      "vix": 31.13,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2011-11-14",
+      "kind": "scheduled_roll",
+      "usd": 428.21,
+      "otm_pct": 0.3,
+      "mult": 0.023,
+      "vix": 31.13,
+      "contracts_sold": 5
+    },
+    {
+      "date": "2012-01-06",
+      "kind": "scheduled_roll",
+      "usd": 152.1,
+      "otm_pct": 0.1,
+      "mult": 0.017,
+      "vix": 20.63,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2012-02-21",
+      "kind": "scheduled_roll",
+      "usd": 105.68,
+      "otm_pct": 0.2,
+      "mult": 0.012,
+      "vix": 18.19,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2012-02-21",
+      "kind": "scheduled_roll",
+      "usd": 20.97,
+      "otm_pct": 0.3,
+      "mult": 0.003,
+      "vix": 18.19,
+      "contracts_sold": 6
+    },
+    {
+      "date": "2012-04-12",
+      "kind": "scheduled_roll",
+      "usd": 861.26,
+      "otm_pct": 0.1,
+      "mult": 0.079,
+      "vix": 17.2,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2012-05-24",
+      "kind": "scheduled_roll",
+      "usd": 7778.65,
+      "otm_pct": 0.2,
+      "mult": 0.601,
+      "vix": 21.54,
+      "contracts_sold": 17
+    },
+    {
+      "date": "2012-05-24",
+      "kind": "scheduled_roll",
+      "usd": 4335.42,
+      "otm_pct": 0.3,
+      "mult": 0.319,
+      "vix": 21.54,
+      "contracts_sold": 61
+    },
+    {
+      "date": "2012-06-01",
+      "kind": "profit_3x",
+      "usd": 12351.96,
+      "otm_pct": 0.1,
+      "mult": 3.076,
+      "vix": 26.66,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2012-07-16",
+      "kind": "scheduled_roll",
+      "usd": 5941.05,
+      "otm_pct": 0.1,
+      "mult": 0.592,
+      "vix": 17.11,
+      "contracts_sold": 5
+    },
+    {
+      "date": "2012-08-30",
+      "kind": "scheduled_roll",
+      "usd": 537.61,
+      "otm_pct": 0.2,
+      "mult": 0.043,
+      "vix": 17.83,
+      "contracts_sold": 10
+    },
+    {
+      "date": "2012-08-30",
+      "kind": "scheduled_roll",
+      "usd": 162.06,
+      "otm_pct": 0.3,
+      "mult": 0.012,
+      "vix": 17.83,
+      "contracts_sold": 30
+    },
+    {
+      "date": "2012-10-22",
+      "kind": "scheduled_roll",
+      "usd": 2070.29,
+      "otm_pct": 0.1,
+      "mult": 0.149,
+      "vix": 16.62,
+      "contracts_sold": 7
+    },
+    {
+      "date": "2012-12-10",
+      "kind": "scheduled_roll",
+      "usd": 1349.25,
+      "otm_pct": 0.2,
+      "mult": 0.086,
+      "vix": 16.05,
+      "contracts_sold": 20
+    },
+    {
+      "date": "2012-12-10",
+      "kind": "scheduled_roll",
+      "usd": 377.37,
+      "otm_pct": 0.3,
+      "mult": 0.024,
+      "vix": 16.05,
+      "contracts_sold": 67
+    },
+    {
+      "date": "2012-12-28",
+      "kind": "profit_3x",
+      "usd": 17259.88,
+      "otm_pct": 0.3,
+      "mult": 3.257,
+      "vix": 22.72,
+      "contracts_sold": 36
+    },
+    {
+      "date": "2013-01-30",
+      "kind": "scheduled_roll",
+      "usd": 1471.73,
+      "otm_pct": 0.1,
+      "mult": 0.105,
+      "vix": 14.32,
+      "contracts_sold": 7
+    },
+    {
+      "date": "2013-03-18",
+      "kind": "scheduled_roll",
+      "usd": 142.73,
+      "otm_pct": 0.2,
+      "mult": 0.009,
+      "vix": 13.36,
+      "contracts_sold": 28
+    },
+    {
+      "date": "2013-03-18",
+      "kind": "scheduled_roll",
+      "usd": 19.4,
+      "otm_pct": 0.3,
+      "mult": 0.002,
+      "vix": 13.36,
+      "contracts_sold": 70
+    },
+    {
+      "date": "2013-05-06",
+      "kind": "scheduled_roll",
+      "usd": 790.46,
+      "otm_pct": 0.1,
+      "mult": 0.05,
+      "vix": 12.66,
+      "contracts_sold": 11
+    },
+    {
+      "date": "2013-06-20",
+      "kind": "scheduled_roll",
+      "usd": 12887.61,
+      "otm_pct": 0.2,
+      "mult": 0.678,
+      "vix": 20.49,
+      "contracts_sold": 61
+    },
+    {
+      "date": "2013-06-20",
+      "kind": "scheduled_roll",
+      "usd": 8136.26,
+      "otm_pct": 0.3,
+      "mult": 0.426,
+      "vix": 20.49,
+      "contracts_sold": 285
+    },
+    {
+      "date": "2013-08-07",
+      "kind": "scheduled_roll",
+      "usd": 2768.53,
+      "otm_pct": 0.1,
+      "mult": 0.145,
+      "vix": 12.98,
+      "contracts_sold": 17
+    },
+    {
+      "date": "2013-09-23",
+      "kind": "scheduled_roll",
+      "usd": 125.86,
+      "otm_pct": 0.2,
+      "mult": 0.011,
+      "vix": 14.31,
+      "contracts_sold": 9
+    },
+    {
+      "date": "2013-09-23",
+      "kind": "scheduled_roll",
+      "usd": 26.61,
+      "otm_pct": 0.3,
+      "mult": 0.002,
+      "vix": 14.31,
+      "contracts_sold": 30
+    },
+    {
+      "date": "2013-10-07",
+      "kind": "profit_3x",
+      "usd": 21796.91,
+      "otm_pct": 0.3,
+      "mult": 3.334,
+      "vix": 19.41,
+      "contracts_sold": 63
+    },
+    {
+      "date": "2013-10-08",
+      "kind": "profit_3x",
+      "usd": 21870.1,
+      "otm_pct": 0.2,
+      "mult": 3.28,
+      "vix": 20.34,
+      "contracts_sold": 15
+    },
+    {
+      "date": "2013-10-15",
+      "kind": "giveback",
+      "usd": 28205.4,
+      "otm_pct": 0.3,
+      "mult": 2.209,
+      "vix": 18.66,
+      "contracts_sold": 123
+    },
+    {
+      "date": "2013-10-15",
+      "kind": "rearm",
+      "usd": 11282.16,
+      "otm_pct": 0.3,
+      "mult": 2.209,
+      "vix": 18.66,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2013-11-12",
+      "kind": "scheduled_roll",
+      "usd": 2417.1,
+      "otm_pct": 0.1,
+      "mult": 0.126,
+      "vix": 12.82,
+      "contracts_sold": 15
+    },
+    {
+      "date": "2013-12-27",
+      "kind": "scheduled_roll",
+      "usd": 129.89,
+      "otm_pct": 0.2,
+      "mult": 0.01,
+      "vix": 12.46,
+      "contracts_sold": 28
+    },
+    {
+      "date": "2014-01-21",
+      "kind": "scheduled_roll",
+      "usd": 8.41,
+      "otm_pct": 0.3,
+      "mult": 0.001,
+      "vix": 12.87,
+      "contracts_sold": 35
+    },
+    {
+      "date": "2014-01-24",
+      "kind": "profit_3x",
+      "usd": 24083.87,
+      "otm_pct": 0.2,
+      "mult": 3.462,
+      "vix": 18.14,
+      "contracts_sold": 24
+    },
+    {
+      "date": "2014-01-24",
+      "kind": "profit_5x",
+      "usd": 59319.05,
+      "otm_pct": 0.3,
+      "mult": 5.503,
+      "vix": 18.14,
+      "contracts_sold": 162
+    },
+    {
+      "date": "2014-01-28",
+      "kind": "giveback",
+      "usd": 28915.28,
+      "otm_pct": 0.2,
+      "mult": 2.123,
+      "vix": 15.8,
+      "contracts_sold": 47
+    },
+    {
+      "date": "2014-01-28",
+      "kind": "giveback",
+      "usd": 32235.35,
+      "otm_pct": 0.3,
+      "mult": 2.972,
+      "vix": 15.8,
+      "contracts_sold": 163
+    },
+    {
+      "date": "2014-01-28",
+      "kind": "rearm",
+      "usd": 11566.11,
+      "otm_pct": 0.2,
+      "mult": 2.123,
+      "vix": 15.8,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2014-01-28",
+      "kind": "rearm",
+      "usd": 12894.14,
+      "otm_pct": 0.3,
+      "mult": 2.972,
+      "vix": 15.8,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2014-02-03",
+      "kind": "profit_3x",
+      "usd": 16790.22,
+      "otm_pct": 0.3,
+      "mult": 3.891,
+      "vix": 21.44,
+      "contracts_sold": 26
+    },
+    {
+      "date": "2014-02-04",
+      "kind": "giveback",
+      "usd": 19916.05,
+      "otm_pct": 0.3,
+      "mult": 2.353,
+      "vix": 19.11,
+      "contracts_sold": 51
+    },
+    {
+      "date": "2014-02-04",
+      "kind": "rearm",
+      "usd": 7966.42,
+      "otm_pct": 0.3,
+      "mult": 2.353,
+      "vix": 19.11,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2014-02-18",
+      "kind": "scheduled_roll",
+      "usd": 3819.65,
+      "otm_pct": 0.1,
+      "mult": 0.195,
+      "vix": 13.87,
+      "contracts_sold": 15
+    },
+    {
+      "date": "2014-05-02",
+      "kind": "scheduled_roll",
+      "usd": 205.79,
+      "otm_pct": 0.2,
+      "mult": 0.019,
+      "vix": 12.91,
+      "contracts_sold": 17
+    },
+    {
+      "date": "2014-05-09",
+      "kind": "scheduled_roll",
+      "usd": 8.83,
+      "otm_pct": 0.3,
+      "mult": 0.001,
+      "vix": 12.92,
+      "contracts_sold": 22
+    },
+    {
+      "date": "2014-05-22",
+      "kind": "scheduled_roll",
+      "usd": 2100.28,
+      "otm_pct": 0.1,
+      "mult": 0.118,
+      "vix": 12.03,
+      "contracts_sold": 11
+    },
+    {
+      "date": "2014-08-05",
+      "kind": "scheduled_roll",
+      "usd": 6570.69,
+      "otm_pct": 0.2,
+      "mult": 0.319,
+      "vix": 16.87,
+      "contracts_sold": 63
+    },
+    {
+      "date": "2014-08-12",
+      "kind": "scheduled_roll",
+      "usd": 624.36,
+      "otm_pct": 0.3,
+      "mult": 0.031,
+      "vix": 14.13,
+      "contracts_sold": 298
+    },
+    {
+      "date": "2014-08-25",
+      "kind": "scheduled_roll",
+      "usd": 1706.4,
+      "otm_pct": 0.1,
+      "mult": 0.082,
+      "vix": 11.7,
+      "contracts_sold": 18
+    },
+    {
+      "date": "2014-10-09",
+      "kind": "profit_3x",
+      "usd": 22344.85,
+      "otm_pct": 0.1,
+      "mult": 3.212,
+      "vix": 18.76,
+      "contracts_sold": 6
+    },
+    {
+      "date": "2014-10-13",
+      "kind": "profit_3x",
+      "usd": 31860.93,
+      "otm_pct": 0.3,
+      "mult": 4.544,
+      "vix": 24.64,
+      "contracts_sold": 63
+    },
+    {
+      "date": "2014-10-13",
+      "kind": "profit_5x",
+      "usd": 43358.24,
+      "otm_pct": 0.1,
+      "mult": 6.233,
+      "vix": 24.64,
+      "contracts_sold": 6
+    },
+    {
+      "date": "2014-10-15",
+      "kind": "profit_5x",
+      "usd": 34651.06,
+      "otm_pct": 0.3,
+      "mult": 5.022,
+      "vix": 25.27,
+      "contracts_sold": 62
+    },
+    {
+      "date": "2014-10-17",
+      "kind": "giveback",
+      "usd": 15885.69,
+      "otm_pct": 0.3,
+      "mult": 2.34,
+      "vix": 21.99,
+      "contracts_sold": 61
+    },
+    {
+      "date": "2014-10-17",
+      "kind": "rearm",
+      "usd": 6354.28,
+      "otm_pct": 0.3,
+      "mult": 2.34,
+      "vix": 21.99,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2014-10-20",
+      "kind": "giveback",
+      "usd": 27271.43,
+      "otm_pct": 0.1,
+      "mult": 3.361,
+      "vix": 18.57,
+      "contracts_sold": 7
+    },
+    {
+      "date": "2014-10-20",
+      "kind": "rearm",
+      "usd": 10908.57,
+      "otm_pct": 0.1,
+      "mult": 3.361,
+      "vix": 18.57,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2014-11-10",
+      "kind": "scheduled_roll",
+      "usd": 151.97,
+      "otm_pct": 0.2,
+      "mult": 0.01,
+      "vix": 12.67,
+      "contracts_sold": 17
+    },
+    {
+      "date": "2014-12-11",
+      "kind": "profit_3x",
+      "usd": 24405.4,
+      "otm_pct": 0.2,
+      "mult": 3.34,
+      "vix": 20.08,
+      "contracts_sold": 21
+    },
+    {
+      "date": "2014-12-16",
+      "kind": "profit_5x",
+      "usd": 47296.78,
+      "otm_pct": 0.2,
+      "mult": 6.473,
+      "vix": 23.57,
+      "contracts_sold": 21
+    },
+    {
+      "date": "2014-12-17",
+      "kind": "giveback",
+      "usd": 22745.48,
+      "otm_pct": 0.2,
+      "mult": 3.113,
+      "vix": 19.44,
+      "contracts_sold": 21
+    },
+    {
+      "date": "2014-12-17",
+      "kind": "rearm",
+      "usd": 9098.19,
+      "otm_pct": 0.2,
+      "mult": 3.113,
+      "vix": 19.44,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2015-01-23",
+      "kind": "scheduled_roll",
+      "usd": 26.12,
+      "otm_pct": 0.3,
+      "mult": 0.004,
+      "vix": 16.66,
+      "contracts_sold": 9
+    },
+    {
+      "date": "2015-01-26",
+      "kind": "scheduled_roll",
+      "usd": 673.85,
+      "otm_pct": 0.1,
+      "mult": 0.068,
+      "vix": 15.52,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2015-03-25",
+      "kind": "scheduled_roll",
+      "usd": 395.47,
+      "otm_pct": 0.2,
+      "mult": 0.046,
+      "vix": 15.44,
+      "contracts_sold": 6
+    },
+    {
+      "date": "2015-04-29",
+      "kind": "scheduled_roll",
+      "usd": 124.85,
+      "otm_pct": 0.3,
+      "mult": 0.006,
+      "vix": 13.39,
+      "contracts_sold": 81
+    },
+    {
+      "date": "2015-04-30",
+      "kind": "scheduled_roll",
+      "usd": 4690.28,
+      "otm_pct": 0.1,
+      "mult": 0.246,
+      "vix": 14.55,
+      "contracts_sold": 8
+    },
+    {
+      "date": "2015-06-29",
+      "kind": "scheduled_roll",
+      "usd": 8218.53,
+      "otm_pct": 0.2,
+      "mult": 0.398,
+      "vix": 18.85,
+      "contracts_sold": 30
+    },
+    {
+      "date": "2015-07-31",
+      "kind": "scheduled_roll",
+      "usd": 307.89,
+      "otm_pct": 0.3,
+      "mult": 0.014,
+      "vix": 12.12,
+      "contracts_sold": 247
+    },
+    {
+      "date": "2015-08-03",
+      "kind": "scheduled_roll",
+      "usd": 4111.29,
+      "otm_pct": 0.1,
+      "mult": 0.2,
+      "vix": 12.56,
+      "contracts_sold": 10
+    },
+    {
+      "date": "2015-08-20",
+      "kind": "profit_3x",
+      "usd": 22342.37,
+      "otm_pct": 0.1,
+      "mult": 3.068,
+      "vix": 19.14,
+      "contracts_sold": 5
+    },
+    {
+      "date": "2015-08-20",
+      "kind": "profit_5x",
+      "usd": 85775.7,
+      "otm_pct": 0.3,
+      "mult": 7.393,
+      "vix": 19.14,
+      "contracts_sold": 199
+    },
+    {
+      "date": "2015-08-21",
+      "kind": "profit_5x",
+      "usd": 60536.86,
+      "otm_pct": 0.1,
+      "mult": 6.927,
+      "vix": 28.03,
+      "contracts_sold": 6
+    },
+    {
+      "date": "2015-08-21",
+      "kind": "profit_8x",
+      "usd": 387369.3,
+      "otm_pct": 0.3,
+      "mult": 33.385,
+      "vix": 28.03,
+      "contracts_sold": 199
+    },
+    {
+      "date": "2015-08-21",
+      "kind": "rearm",
+      "usd": 154947.72,
+      "otm_pct": 0.3,
+      "mult": 33.385,
+      "vix": 28.03,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2015-08-24",
+      "kind": "profit_3x",
+      "usd": 168071.97,
+      "otm_pct": 0.3,
+      "mult": 3.215,
+      "vix": 40.74,
+      "contracts_sold": 33
+    },
+    {
+      "date": "2015-08-24",
+      "kind": "profit_5x",
+      "usd": 49324.53,
+      "otm_pct": 0.2,
+      "mult": 6.333,
+      "vix": 40.74,
+      "contracts_sold": 6
+    },
+    {
+      "date": "2015-08-24",
+      "kind": "profit_8x",
+      "usd": 93968.23,
+      "otm_pct": 0.1,
+      "mult": 12.903,
+      "vix": 40.74,
+      "contracts_sold": 5
+    },
+    {
+      "date": "2015-08-24",
+      "kind": "rearm",
+      "usd": 37587.29,
+      "otm_pct": 0.1,
+      "mult": 12.903,
+      "vix": 40.74,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2015-08-26",
+      "kind": "giveback",
+      "usd": 19721.58,
+      "otm_pct": 0.2,
+      "mult": 3.039,
+      "vix": 30.32,
+      "contracts_sold": 5
+    },
+    {
+      "date": "2015-08-26",
+      "kind": "rearm",
+      "usd": 7888.63,
+      "otm_pct": 0.2,
+      "mult": 3.039,
+      "vix": 30.32,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2015-11-27",
+      "kind": "scheduled_roll",
+      "usd": 137.96,
+      "otm_pct": 0.3,
+      "mult": 0.001,
+      "vix": 15.12,
+      "contracts_sold": 64
+    },
+    {
+      "date": "2015-11-30",
+      "kind": "scheduled_roll",
+      "usd": 396.58,
+      "otm_pct": 0.1,
+      "mult": 0.015,
+      "vix": 16.13,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2015-12-02",
+      "kind": "scheduled_roll",
+      "usd": 33.64,
+      "otm_pct": 0.2,
+      "mult": 0.008,
+      "vix": 15.91,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2015-12-11",
+      "kind": "profit_3x",
+      "usd": 24924.22,
+      "otm_pct": 0.2,
+      "mult": 3.937,
+      "vix": 24.39,
+      "contracts_sold": 8
+    },
+    {
+      "date": "2015-12-11",
+      "kind": "profit_5x",
+      "usd": 67503.44,
+      "otm_pct": 0.3,
+      "mult": 6.957,
+      "vix": 24.39,
+      "contracts_sold": 58
+    },
+    {
+      "date": "2015-12-15",
+      "kind": "giveback",
+      "usd": 29731.87,
+      "otm_pct": 0.2,
+      "mult": 2.348,
+      "vix": 20.95,
+      "contracts_sold": 16
+    },
+    {
+      "date": "2015-12-15",
+      "kind": "giveback",
+      "usd": 33737.67,
+      "otm_pct": 0.3,
+      "mult": 3.538,
+      "vix": 20.95,
+      "contracts_sold": 57
+    },
+    {
+      "date": "2015-12-15",
+      "kind": "rearm",
+      "usd": 11892.75,
+      "otm_pct": 0.2,
+      "mult": 2.348,
+      "vix": 20.95,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2015-12-15",
+      "kind": "rearm",
+      "usd": 13495.07,
+      "otm_pct": 0.3,
+      "mult": 3.538,
+      "vix": 20.95,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2016-01-07",
+      "kind": "profit_3x",
+      "usd": 16501.07,
+      "otm_pct": 0.1,
+      "mult": 3.088,
+      "vix": 24.99,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2016-01-20",
+      "kind": "profit_3x",
+      "usd": 13042.29,
+      "otm_pct": 0.3,
+      "mult": 3.039,
+      "vix": 27.59,
+      "contracts_sold": 7
+    },
+    {
+      "date": "2016-01-22",
+      "kind": "giveback",
+      "usd": 38149.38,
+      "otm_pct": 0.1,
+      "mult": 2.855,
+      "vix": 22.34,
+      "contracts_sold": 5
+    },
+    {
+      "date": "2016-01-22",
+      "kind": "rearm",
+      "usd": 15259.75,
+      "otm_pct": 0.1,
+      "mult": 2.855,
+      "vix": 22.34,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2016-03-22",
+      "kind": "scheduled_roll",
+      "usd": 366.0,
+      "otm_pct": 0.2,
+      "mult": 0.034,
+      "vix": 14.17,
+      "contracts_sold": 6
+    },
+    {
+      "date": "2016-03-22",
+      "kind": "scheduled_roll",
+      "usd": 58.48,
+      "otm_pct": 0.3,
+      "mult": 0.006,
+      "vix": 14.17,
+      "contracts_sold": 15
+    },
+    {
+      "date": "2016-04-27",
+      "kind": "scheduled_roll",
+      "usd": 278.51,
+      "otm_pct": 0.1,
+      "mult": 0.02,
+      "vix": 13.77,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2016-06-24",
+      "kind": "profit_3x",
+      "usd": 17560.24,
+      "otm_pct": 0.1,
+      "mult": 3.243,
+      "vix": 25.76,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2016-06-24",
+      "kind": "scheduled_roll",
+      "usd": 32976.66,
+      "otm_pct": 0.2,
+      "mult": 1.906,
+      "vix": 25.76,
+      "contracts_sold": 34
+    },
+    {
+      "date": "2016-06-24",
+      "kind": "scheduled_roll",
+      "usd": 30103.03,
+      "otm_pct": 0.3,
+      "mult": 1.712,
+      "vix": 25.76,
+      "contracts_sold": 151
+    },
+    {
+      "date": "2016-07-29",
+      "kind": "scheduled_roll",
+      "usd": 1170.95,
+      "otm_pct": 0.1,
+      "mult": 0.093,
+      "vix": 11.87,
+      "contracts_sold": 7
+    },
+    {
+      "date": "2016-09-29",
+      "kind": "scheduled_roll",
+      "usd": 62.88,
+      "otm_pct": 0.2,
+      "mult": 0.007,
+      "vix": 14.02,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2016-09-29",
+      "kind": "scheduled_roll",
+      "usd": 11.53,
+      "otm_pct": 0.3,
+      "mult": 0.001,
+      "vix": 14.02,
+      "contracts_sold": 9
+    },
+    {
+      "date": "2016-11-03",
+      "kind": "profit_3x",
+      "usd": 25674.28,
+      "otm_pct": 0.2,
+      "mult": 3.717,
+      "vix": 22.08,
+      "contracts_sold": 13
+    },
+    {
+      "date": "2016-11-03",
+      "kind": "profit_3x",
+      "usd": 34048.31,
+      "otm_pct": 0.3,
+      "mult": 4.875,
+      "vix": 22.08,
+      "contracts_sold": 57
+    },
+    {
+      "date": "2016-11-04",
+      "kind": "profit_3x",
+      "usd": 20424.91,
+      "otm_pct": 0.1,
+      "mult": 3.115,
+      "vix": 22.51,
+      "contracts_sold": 5
+    },
+    {
+      "date": "2016-11-04",
+      "kind": "profit_5x",
+      "usd": 35032.42,
+      "otm_pct": 0.3,
+      "mult": 5.198,
+      "vix": 22.51,
+      "contracts_sold": 55
+    },
+    {
+      "date": "2016-11-04",
+      "kind": "scheduled_roll",
+      "usd": 40849.82,
+      "otm_pct": 0.1,
+      "mult": 3.115,
+      "vix": 22.51,
+      "contracts_sold": 10
+    },
+    {
+      "date": "2017-01-05",
+      "kind": "scheduled_roll",
+      "usd": 160.19,
+      "otm_pct": 0.2,
+      "mult": 0.012,
+      "vix": 11.67,
+      "contracts_sold": 25
+    },
+    {
+      "date": "2017-01-05",
+      "kind": "scheduled_roll",
+      "usd": 14.46,
+      "otm_pct": 0.3,
+      "mult": 0.002,
+      "vix": 11.67,
+      "contracts_sold": 55
+    },
+    {
+      "date": "2017-02-13",
+      "kind": "scheduled_roll",
+      "usd": 40.78,
+      "otm_pct": 0.1,
+      "mult": 0.004,
+      "vix": 11.07,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2017-04-12",
+      "kind": "scheduled_roll",
+      "usd": 5670.09,
+      "otm_pct": 0.2,
+      "mult": 0.256,
+      "vix": 15.77,
+      "contracts_sold": 80
+    },
+    {
+      "date": "2017-04-12",
+      "kind": "scheduled_roll",
+      "usd": 2421.59,
+      "otm_pct": 0.3,
+      "mult": 0.108,
+      "vix": 15.77,
+      "contracts_sold": 430
+    },
+    {
+      "date": "2017-05-18",
+      "kind": "scheduled_roll",
+      "usd": 13730.8,
+      "otm_pct": 0.1,
+      "mult": 0.576,
+      "vix": 14.66,
+      "contracts_sold": 21
+    },
+    {
+      "date": "2017-07-17",
+      "kind": "scheduled_roll",
+      "usd": 41.28,
+      "otm_pct": 0.2,
+      "mult": 0.003,
+      "vix": 9.82,
+      "contracts_sold": 19
+    },
+    {
+      "date": "2017-07-17",
+      "kind": "scheduled_roll",
+      "usd": 4.71,
+      "otm_pct": 0.3,
+      "mult": 0.0,
+      "vix": 9.82,
+      "contracts_sold": 77
+    },
+    {
+      "date": "2017-08-10",
+      "kind": "profit_5x",
+      "usd": 67474.99,
+      "otm_pct": 0.2,
+      "mult": 5.204,
+      "vix": 16.04,
+      "contracts_sold": 88
+    },
+    {
+      "date": "2017-08-10",
+      "kind": "profit_5x",
+      "usd": 96259.6,
+      "otm_pct": 0.3,
+      "mult": 7.362,
+      "vix": 16.04,
+      "contracts_sold": 566
+    },
+    {
+      "date": "2017-08-18",
+      "kind": "giveback",
+      "usd": 41988.06,
+      "otm_pct": 0.2,
+      "mult": 3.202,
+      "vix": 14.26,
+      "contracts_sold": 89
+    },
+    {
+      "date": "2017-08-18",
+      "kind": "giveback",
+      "usd": 47488.74,
+      "otm_pct": 0.3,
+      "mult": 3.638,
+      "vix": 14.26,
+      "contracts_sold": 565
+    },
+    {
+      "date": "2017-08-18",
+      "kind": "rearm",
+      "usd": 16795.22,
+      "otm_pct": 0.2,
+      "mult": 3.202,
+      "vix": 14.26,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2017-08-18",
+      "kind": "rearm",
+      "usd": 18995.49,
+      "otm_pct": 0.3,
+      "mult": 3.638,
+      "vix": 14.26,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2017-08-21",
+      "kind": "scheduled_roll",
+      "usd": 2591.25,
+      "otm_pct": 0.1,
+      "mult": 0.156,
+      "vix": 13.19,
+      "contracts_sold": 7
+    },
+    {
+      "date": "2017-11-24",
+      "kind": "scheduled_roll",
+      "usd": 28.38,
+      "otm_pct": 0.2,
+      "mult": 0.002,
+      "vix": 9.67,
+      "contracts_sold": 26
+    },
+    {
+      "date": "2017-11-24",
+      "kind": "scheduled_roll",
+      "usd": 3.83,
+      "otm_pct": 0.3,
+      "mult": 0.0,
+      "vix": 9.67,
+      "contracts_sold": 127
+    },
+    {
+      "date": "2017-11-27",
+      "kind": "scheduled_roll",
+      "usd": 436.62,
+      "otm_pct": 0.1,
+      "mult": 0.017,
+      "vix": 9.87,
+      "contracts_sold": 13
+    },
+    {
+      "date": "2018-02-05",
+      "kind": "profit_8x",
+      "usd": 310022.17,
+      "otm_pct": 0.1,
+      "mult": 10.78,
+      "vix": 37.32,
+      "contracts_sold": 31
+    },
+    {
+      "date": "2018-02-05",
+      "kind": "profit_8x",
+      "usd": 905553.85,
+      "otm_pct": 0.2,
+      "mult": 31.284,
+      "vix": 37.32,
+      "contracts_sold": 194
+    },
+    {
+      "date": "2018-02-05",
+      "kind": "profit_8x",
+      "usd": 2333331.58,
+      "otm_pct": 0.3,
+      "mult": 80.446,
+      "vix": 37.32,
+      "contracts_sold": 1244
+    },
+    {
+      "date": "2018-02-05",
+      "kind": "rearm",
+      "usd": 124008.87,
+      "otm_pct": 0.1,
+      "mult": 10.78,
+      "vix": 37.32,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2018-02-05",
+      "kind": "rearm",
+      "usd": 362221.54,
+      "otm_pct": 0.2,
+      "mult": 31.284,
+      "vix": 37.32,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2018-02-05",
+      "kind": "rearm",
+      "usd": 933332.63,
+      "otm_pct": 0.3,
+      "mult": 80.446,
+      "vix": 37.32,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2018-05-10",
+      "kind": "scheduled_roll",
+      "usd": 2850.77,
+      "otm_pct": 0.1,
+      "mult": 0.026,
+      "vix": 13.23,
+      "contracts_sold": 7
+    },
+    {
+      "date": "2018-05-10",
+      "kind": "scheduled_roll",
+      "usd": 1292.63,
+      "otm_pct": 0.2,
+      "mult": 0.004,
+      "vix": 13.23,
+      "contracts_sold": 40
+    },
+    {
+      "date": "2018-05-10",
+      "kind": "scheduled_roll",
+      "usd": 349.4,
+      "otm_pct": 0.3,
+      "mult": 0.0,
+      "vix": 13.23,
+      "contracts_sold": 199
+    },
+    {
+      "date": "2018-08-13",
+      "kind": "scheduled_roll",
+      "usd": 4966.12,
+      "otm_pct": 0.1,
+      "mult": 0.26,
+      "vix": 14.78,
+      "contracts_sold": 9
+    },
+    {
+      "date": "2018-08-13",
+      "kind": "scheduled_roll",
+      "usd": 2114.86,
+      "otm_pct": 0.2,
+      "mult": 0.107,
+      "vix": 14.78,
+      "contracts_sold": 38
+    },
+    {
+      "date": "2018-08-13",
+      "kind": "scheduled_roll",
+      "usd": 707.29,
+      "otm_pct": 0.3,
+      "mult": 0.035,
+      "vix": 14.78,
+      "contracts_sold": 184
+    },
+    {
+      "date": "2018-10-11",
+      "kind": "profit_3x",
+      "usd": 20354.33,
+      "otm_pct": 0.2,
+      "mult": 3.416,
+      "vix": 24.98,
+      "contracts_sold": 7
+    },
+    {
+      "date": "2018-10-11",
+      "kind": "profit_3x",
+      "usd": 26779.81,
+      "otm_pct": 0.3,
+      "mult": 4.13,
+      "vix": 24.98,
+      "contracts_sold": 31
+    },
+    {
+      "date": "2018-10-24",
+      "kind": "profit_3x",
+      "usd": 18476.75,
+      "otm_pct": 0.1,
+      "mult": 3.093,
+      "vix": 25.23,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2018-10-30",
+      "kind": "giveback",
+      "usd": 31417.99,
+      "otm_pct": 0.3,
+      "mult": 2.504,
+      "vix": 23.35,
+      "contracts_sold": 60
+    },
+    {
+      "date": "2018-10-30",
+      "kind": "rearm",
+      "usd": 12567.2,
+      "otm_pct": 0.3,
+      "mult": 2.504,
+      "vix": 23.35,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2018-11-20",
+      "kind": "scheduled_roll",
+      "usd": 27300.14,
+      "otm_pct": 0.1,
+      "mult": 2.285,
+      "vix": 22.48,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2018-11-20",
+      "kind": "scheduled_roll",
+      "usd": 24927.38,
+      "otm_pct": 0.2,
+      "mult": 1.952,
+      "vix": 22.48,
+      "contracts_sold": 15
+    },
+    {
+      "date": "2018-12-24",
+      "kind": "profit_3x",
+      "usd": 21670.66,
+      "otm_pct": 0.1,
+      "mult": 3.158,
+      "vix": 36.07,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2018-12-24",
+      "kind": "profit_3x",
+      "usd": 11758.08,
+      "otm_pct": 0.2,
+      "mult": 4.043,
+      "vix": 36.07,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2018-12-24",
+      "kind": "profit_3x",
+      "usd": 15558.18,
+      "otm_pct": 0.3,
+      "mult": 4.235,
+      "vix": 36.07,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2018-12-24",
+      "kind": "rearm",
+      "usd": 8668.26,
+      "otm_pct": 0.1,
+      "mult": 3.158,
+      "vix": 36.07,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2018-12-26",
+      "kind": "giveback",
+      "usd": 20298.08,
+      "otm_pct": 0.2,
+      "mult": 2.327,
+      "vix": 30.41,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2018-12-26",
+      "kind": "rearm",
+      "usd": 8119.23,
+      "otm_pct": 0.2,
+      "mult": 2.327,
+      "vix": 30.41,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2019-02-07",
+      "kind": "scheduled_roll",
+      "usd": 95.07,
+      "otm_pct": 0.3,
+      "mult": 0.011,
+      "vix": 16.37,
+      "contracts_sold": 7
+    },
+    {
+      "date": "2019-04-01",
+      "kind": "scheduled_roll",
+      "usd": 11.76,
+      "otm_pct": 0.1,
+      "mult": 0.001,
+      "vix": 13.4,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2019-04-02",
+      "kind": "scheduled_roll",
+      "usd": 2.56,
+      "otm_pct": 0.2,
+      "mult": 0.0,
+      "vix": 13.36,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2019-05-13",
+      "kind": "profit_3x",
+      "usd": 21593.06,
+      "otm_pct": 0.2,
+      "mult": 3.127,
+      "vix": 20.55,
+      "contracts_sold": 12
+    },
+    {
+      "date": "2019-05-14",
+      "kind": "scheduled_roll",
+      "usd": 854.29,
+      "otm_pct": 0.3,
+      "mult": 0.05,
+      "vix": 18.06,
+      "contracts_sold": 58
+    },
+    {
+      "date": "2019-07-05",
+      "kind": "scheduled_roll",
+      "usd": 2888.03,
+      "otm_pct": 0.1,
+      "mult": 0.138,
+      "vix": 13.28,
+      "contracts_sold": 9
+    },
+    {
+      "date": "2019-07-05",
+      "kind": "scheduled_roll",
+      "usd": 637.78,
+      "otm_pct": 0.2,
+      "mult": 0.046,
+      "vix": 13.28,
+      "contracts_sold": 24
+    },
+    {
+      "date": "2019-08-05",
+      "kind": "profit_3x",
+      "usd": 31759.69,
+      "otm_pct": 0.1,
+      "mult": 4.46,
+      "vix": 24.59,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2019-08-05",
+      "kind": "profit_5x",
+      "usd": 77486.03,
+      "otm_pct": 0.2,
+      "mult": 7.334,
+      "vix": 24.59,
+      "contracts_sold": 18
+    },
+    {
+      "date": "2019-08-06",
+      "kind": "giveback",
+      "usd": 39143.92,
+      "otm_pct": 0.2,
+      "mult": 3.923,
+      "vix": 20.17,
+      "contracts_sold": 17
+    },
+    {
+      "date": "2019-08-06",
+      "kind": "rearm",
+      "usd": 15657.57,
+      "otm_pct": 0.2,
+      "mult": 3.923,
+      "vix": 20.17,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2019-08-07",
+      "kind": "giveback",
+      "usd": 32044.94,
+      "otm_pct": 0.1,
+      "mult": 2.7,
+      "vix": 19.49,
+      "contracts_sold": 5
+    },
+    {
+      "date": "2019-08-07",
+      "kind": "rearm",
+      "usd": 12817.97,
+      "otm_pct": 0.1,
+      "mult": 2.7,
+      "vix": 19.49,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2019-08-15",
+      "kind": "scheduled_roll",
+      "usd": 2649.15,
+      "otm_pct": 0.3,
+      "mult": 0.184,
+      "vix": 21.18,
+      "contracts_sold": 32
+    },
+    {
+      "date": "2019-11-11",
+      "kind": "scheduled_roll",
+      "usd": 66.89,
+      "otm_pct": 0.2,
+      "mult": 0.005,
+      "vix": 12.69,
+      "contracts_sold": 6
+    },
+    {
+      "date": "2019-11-12",
+      "kind": "scheduled_roll",
+      "usd": 306.32,
+      "otm_pct": 0.1,
+      "mult": 0.028,
+      "vix": 12.68,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2019-11-21",
+      "kind": "scheduled_roll",
+      "usd": 7.7,
+      "otm_pct": 0.3,
+      "mult": 0.001,
+      "vix": 13.13,
+      "contracts_sold": 15
+    },
+    {
+      "date": "2020-02-18",
+      "kind": "scheduled_roll",
+      "usd": 2272.54,
+      "otm_pct": 0.1,
+      "mult": 0.114,
+      "vix": 14.83,
+      "contracts_sold": 9
+    },
+    {
+      "date": "2020-02-18",
+      "kind": "scheduled_roll",
+      "usd": 914.47,
+      "otm_pct": 0.2,
+      "mult": 0.042,
+      "vix": 14.83,
+      "contracts_sold": 41
+    },
+    {
+      "date": "2020-02-24",
+      "kind": "profit_3x",
+      "usd": 25948.13,
+      "otm_pct": 0.1,
+      "mult": 3.7,
+      "vix": 25.03,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2020-02-24",
+      "kind": "profit_5x",
+      "usd": 57907.05,
+      "otm_pct": 0.2,
+      "mult": 5.902,
+      "vix": 25.03,
+      "contracts_sold": 10
+    },
+    {
+      "date": "2020-02-25",
+      "kind": "profit_3x",
+      "usd": 24995.31,
+      "otm_pct": 0.3,
+      "mult": 3.278,
+      "vix": 27.85,
+      "contracts_sold": 57
+    },
+    {
+      "date": "2020-02-25",
+      "kind": "profit_5x",
+      "usd": 35445.1,
+      "otm_pct": 0.1,
+      "mult": 5.054,
+      "vix": 27.85,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2020-02-25",
+      "kind": "profit_8x",
+      "usd": 94265.52,
+      "otm_pct": 0.2,
+      "mult": 8.734,
+      "vix": 27.85,
+      "contracts_sold": 11
+    },
+    {
+      "date": "2020-02-25",
+      "kind": "rearm",
+      "usd": 37706.21,
+      "otm_pct": 0.2,
+      "mult": 8.734,
+      "vix": 27.85,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-02-27",
+      "kind": "profit_8x",
+      "usd": 64571.46,
+      "otm_pct": 0.1,
+      "mult": 9.207,
+      "vix": 39.16,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2020-02-27",
+      "kind": "profit_8x",
+      "usd": 259976.69,
+      "otm_pct": 0.3,
+      "mult": 17.669,
+      "vix": 39.16,
+      "contracts_sold": 110
+    },
+    {
+      "date": "2020-02-27",
+      "kind": "rearm",
+      "usd": 25828.58,
+      "otm_pct": 0.1,
+      "mult": 9.207,
+      "vix": 39.16,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-02-27",
+      "kind": "rearm",
+      "usd": 103990.68,
+      "otm_pct": 0.3,
+      "mult": 17.669,
+      "vix": 39.16,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-09",
+      "kind": "rearm",
+      "usd": 14242.92,
+      "otm_pct": 0.1,
+      "mult": 1.869,
+      "vix": 54.46,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-09",
+      "kind": "vix_45",
+      "usd": 35607.3,
+      "otm_pct": 0.1,
+      "mult": 1.869,
+      "vix": 54.46,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-09",
+      "kind": "vix_45",
+      "usd": 83913.52,
+      "otm_pct": 0.2,
+      "mult": 4.987,
+      "vix": 54.46,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2020-03-09",
+      "kind": "vix_45",
+      "usd": 119198.2,
+      "otm_pct": 0.3,
+      "mult": 2.496,
+      "vix": 54.46,
+      "contracts_sold": 8
+    },
+    {
+      "date": "2020-03-10",
+      "kind": "rearm",
+      "usd": 8130.61,
+      "otm_pct": 0.1,
+      "mult": 0.718,
+      "vix": 47.3,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-10",
+      "kind": "vix_45",
+      "usd": 20326.53,
+      "otm_pct": 0.1,
+      "mult": 0.718,
+      "vix": 47.3,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-11",
+      "kind": "rearm",
+      "usd": 13092.19,
+      "otm_pct": 0.1,
+      "mult": 1.337,
+      "vix": 53.9,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-11",
+      "kind": "vix_45",
+      "usd": 32730.47,
+      "otm_pct": 0.1,
+      "mult": 1.337,
+      "vix": 53.9,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-12",
+      "kind": "rearm",
+      "usd": 19855.2,
+      "otm_pct": 0.1,
+      "mult": 1.781,
+      "vix": 75.47,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-12",
+      "kind": "rearm",
+      "usd": 59117.21,
+      "otm_pct": 0.2,
+      "mult": 8.783,
+      "vix": 75.47,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-12",
+      "kind": "rearm",
+      "usd": 110426.74,
+      "otm_pct": 0.3,
+      "mult": 5.138,
+      "vix": 75.47,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-12",
+      "kind": "vix_65",
+      "usd": 49638.0,
+      "otm_pct": 0.1,
+      "mult": 1.781,
+      "vix": 75.47,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-12",
+      "kind": "vix_65",
+      "usd": 147793.04,
+      "otm_pct": 0.2,
+      "mult": 8.783,
+      "vix": 75.47,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2020-03-12",
+      "kind": "vix_65",
+      "usd": 276066.85,
+      "otm_pct": 0.3,
+      "mult": 5.138,
+      "vix": 75.47,
+      "contracts_sold": 9
+    },
+    {
+      "date": "2020-03-13",
+      "kind": "rearm",
+      "usd": 9087.17,
+      "otm_pct": 0.1,
+      "mult": 0.585,
+      "vix": 57.83,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-13",
+      "kind": "vix_45",
+      "usd": 22717.92,
+      "otm_pct": 0.1,
+      "mult": 0.585,
+      "vix": 57.83,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-13",
+      "kind": "vix_45",
+      "usd": 15430.15,
+      "otm_pct": 0.2,
+      "mult": 0.536,
+      "vix": 57.83,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-13",
+      "kind": "vix_45",
+      "usd": 19540.87,
+      "otm_pct": 0.3,
+      "mult": 0.484,
+      "vix": 57.83,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2020-03-16",
+      "kind": "rearm",
+      "usd": 22531.38,
+      "otm_pct": 0.1,
+      "mult": 1.861,
+      "vix": 82.69,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-16",
+      "kind": "rearm",
+      "usd": 13724.54,
+      "otm_pct": 0.2,
+      "mult": 1.193,
+      "vix": 82.69,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-16",
+      "kind": "rearm",
+      "usd": 29676.29,
+      "otm_pct": 0.3,
+      "mult": 1.224,
+      "vix": 82.69,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-16",
+      "kind": "vix_65",
+      "usd": 56328.45,
+      "otm_pct": 0.1,
+      "mult": 1.861,
+      "vix": 82.69,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-16",
+      "kind": "vix_65",
+      "usd": 34311.36,
+      "otm_pct": 0.2,
+      "mult": 1.193,
+      "vix": 82.69,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-16",
+      "kind": "vix_65",
+      "usd": 74190.74,
+      "otm_pct": 0.3,
+      "mult": 1.224,
+      "vix": 82.69,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2020-03-17",
+      "kind": "rearm",
+      "usd": 13716.3,
+      "otm_pct": 0.1,
+      "mult": 0.821,
+      "vix": 75.91,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-17",
+      "kind": "rearm",
+      "usd": 10104.56,
+      "otm_pct": 0.2,
+      "mult": 0.8,
+      "vix": 75.91,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-17",
+      "kind": "rearm",
+      "usd": 7054.5,
+      "otm_pct": 0.3,
+      "mult": 0.776,
+      "vix": 75.91,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-17",
+      "kind": "vix_65",
+      "usd": 34290.75,
+      "otm_pct": 0.1,
+      "mult": 0.821,
+      "vix": 75.91,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-17",
+      "kind": "vix_65",
+      "usd": 25261.41,
+      "otm_pct": 0.2,
+      "mult": 0.8,
+      "vix": 75.91,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-17",
+      "kind": "vix_65",
+      "usd": 17636.24,
+      "otm_pct": 0.3,
+      "mult": 0.776,
+      "vix": 75.91,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-18",
+      "kind": "rearm",
+      "usd": 17348.84,
+      "otm_pct": 0.1,
+      "mult": 1.087,
+      "vix": 76.45,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-18",
+      "kind": "rearm",
+      "usd": 12920.14,
+      "otm_pct": 0.2,
+      "mult": 1.092,
+      "vix": 76.45,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-18",
+      "kind": "rearm",
+      "usd": 9142.22,
+      "otm_pct": 0.3,
+      "mult": 1.098,
+      "vix": 76.45,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-18",
+      "kind": "vix_65",
+      "usd": 43372.09,
+      "otm_pct": 0.1,
+      "mult": 1.087,
+      "vix": 76.45,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-18",
+      "kind": "vix_65",
+      "usd": 32300.34,
+      "otm_pct": 0.2,
+      "mult": 1.092,
+      "vix": 76.45,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-18",
+      "kind": "vix_65",
+      "usd": 22855.55,
+      "otm_pct": 0.3,
+      "mult": 1.098,
+      "vix": 76.45,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-19",
+      "kind": "rearm",
+      "usd": 14011.08,
+      "otm_pct": 0.1,
+      "mult": 0.918,
+      "vix": 72.0,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-19",
+      "kind": "rearm",
+      "usd": 10233.99,
+      "otm_pct": 0.2,
+      "mult": 0.903,
+      "vix": 72.0,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-19",
+      "kind": "rearm",
+      "usd": 7073.27,
+      "otm_pct": 0.3,
+      "mult": 0.885,
+      "vix": 72.0,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-19",
+      "kind": "vix_65",
+      "usd": 35027.7,
+      "otm_pct": 0.1,
+      "mult": 0.918,
+      "vix": 72.0,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-19",
+      "kind": "vix_65",
+      "usd": 25584.98,
+      "otm_pct": 0.2,
+      "mult": 0.903,
+      "vix": 72.0,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-19",
+      "kind": "vix_65",
+      "usd": 17683.18,
+      "otm_pct": 0.3,
+      "mult": 0.885,
+      "vix": 72.0,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-20",
+      "kind": "rearm",
+      "usd": 13775.29,
+      "otm_pct": 0.1,
+      "mult": 0.967,
+      "vix": 66.04,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-20",
+      "kind": "rearm",
+      "usd": 9880.13,
+      "otm_pct": 0.2,
+      "mult": 0.948,
+      "vix": 66.04,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-20",
+      "kind": "rearm",
+      "usd": 6682.41,
+      "otm_pct": 0.3,
+      "mult": 0.926,
+      "vix": 66.04,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-20",
+      "kind": "vix_65",
+      "usd": 34438.22,
+      "otm_pct": 0.1,
+      "mult": 0.967,
+      "vix": 66.04,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-20",
+      "kind": "vix_65",
+      "usd": 24700.34,
+      "otm_pct": 0.2,
+      "mult": 0.948,
+      "vix": 66.04,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-20",
+      "kind": "vix_65",
+      "usd": 16706.03,
+      "otm_pct": 0.3,
+      "mult": 0.926,
+      "vix": 66.04,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-23",
+      "kind": "rearm",
+      "usd": 11796.66,
+      "otm_pct": 0.1,
+      "mult": 0.965,
+      "vix": 61.59,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-23",
+      "kind": "rearm",
+      "usd": 8283.15,
+      "otm_pct": 0.2,
+      "mult": 0.947,
+      "vix": 61.59,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-23",
+      "kind": "rearm",
+      "usd": 5461.12,
+      "otm_pct": 0.3,
+      "mult": 0.927,
+      "vix": 61.59,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-23",
+      "kind": "vix_45",
+      "usd": 29491.65,
+      "otm_pct": 0.1,
+      "mult": 0.965,
+      "vix": 61.59,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-23",
+      "kind": "vix_45",
+      "usd": 20707.88,
+      "otm_pct": 0.2,
+      "mult": 0.947,
+      "vix": 61.59,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-23",
+      "kind": "vix_45",
+      "usd": 13652.8,
+      "otm_pct": 0.3,
+      "mult": 0.927,
+      "vix": 61.59,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-24",
+      "kind": "rearm",
+      "usd": 9033.12,
+      "otm_pct": 0.1,
+      "mult": 0.832,
+      "vix": 61.67,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-24",
+      "kind": "rearm",
+      "usd": 6262.58,
+      "otm_pct": 0.2,
+      "mult": 0.823,
+      "vix": 61.67,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-24",
+      "kind": "rearm",
+      "usd": 4064.23,
+      "otm_pct": 0.3,
+      "mult": 0.812,
+      "vix": 61.67,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-24",
+      "kind": "vix_45",
+      "usd": 22582.8,
+      "otm_pct": 0.1,
+      "mult": 0.832,
+      "vix": 61.67,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-24",
+      "kind": "vix_45",
+      "usd": 15656.44,
+      "otm_pct": 0.2,
+      "mult": 0.823,
+      "vix": 61.67,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-24",
+      "kind": "vix_45",
+      "usd": 10160.57,
+      "otm_pct": 0.3,
+      "mult": 0.812,
+      "vix": 61.67,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-25",
+      "kind": "rearm",
+      "usd": 12137.18,
+      "otm_pct": 0.1,
+      "mult": 1.021,
+      "vix": 63.95,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-25",
+      "kind": "rearm",
+      "usd": 8579.34,
+      "otm_pct": 0.2,
+      "mult": 1.029,
+      "vix": 63.95,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-25",
+      "kind": "rearm",
+      "usd": 5700.76,
+      "otm_pct": 0.3,
+      "mult": 1.039,
+      "vix": 63.95,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-25",
+      "kind": "vix_45",
+      "usd": 30342.95,
+      "otm_pct": 0.1,
+      "mult": 1.021,
+      "vix": 63.95,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-25",
+      "kind": "vix_45",
+      "usd": 21448.36,
+      "otm_pct": 0.2,
+      "mult": 1.029,
+      "vix": 63.95,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-25",
+      "kind": "vix_45",
+      "usd": 14251.91,
+      "otm_pct": 0.3,
+      "mult": 1.039,
+      "vix": 63.95,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-26",
+      "kind": "rearm",
+      "usd": 10439.96,
+      "otm_pct": 0.1,
+      "mult": 0.828,
+      "vix": 61.0,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-26",
+      "kind": "rearm",
+      "usd": 7237.45,
+      "otm_pct": 0.2,
+      "mult": 0.81,
+      "vix": 61.0,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-26",
+      "kind": "rearm",
+      "usd": 4697.17,
+      "otm_pct": 0.3,
+      "mult": 0.789,
+      "vix": 61.0,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-26",
+      "kind": "vix_45",
+      "usd": 26099.91,
+      "otm_pct": 0.1,
+      "mult": 0.828,
+      "vix": 61.0,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-26",
+      "kind": "vix_45",
+      "usd": 18093.63,
+      "otm_pct": 0.2,
+      "mult": 0.81,
+      "vix": 61.0,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-26",
+      "kind": "vix_45",
+      "usd": 11742.92,
+      "otm_pct": 0.3,
+      "mult": 0.789,
+      "vix": 61.0,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-27",
+      "kind": "rearm",
+      "usd": 14636.71,
+      "otm_pct": 0.1,
+      "mult": 1.162,
+      "vix": 65.54,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-27",
+      "kind": "rearm",
+      "usd": 10466.0,
+      "otm_pct": 0.2,
+      "mult": 1.189,
+      "vix": 65.54,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-27",
+      "kind": "rearm",
+      "usd": 7052.51,
+      "otm_pct": 0.3,
+      "mult": 1.222,
+      "vix": 65.54,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-27",
+      "kind": "vix_65",
+      "usd": 36591.77,
+      "otm_pct": 0.1,
+      "mult": 1.162,
+      "vix": 65.54,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-27",
+      "kind": "vix_65",
+      "usd": 26164.99,
+      "otm_pct": 0.2,
+      "mult": 1.189,
+      "vix": 65.54,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-27",
+      "kind": "vix_65",
+      "usd": 17631.27,
+      "otm_pct": 0.3,
+      "mult": 1.222,
+      "vix": 65.54,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-30",
+      "kind": "rearm",
+      "usd": 10332.3,
+      "otm_pct": 0.1,
+      "mult": 0.774,
+      "vix": 57.08,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-30",
+      "kind": "rearm",
+      "usd": 7035.31,
+      "otm_pct": 0.2,
+      "mult": 0.738,
+      "vix": 57.08,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-30",
+      "kind": "rearm",
+      "usd": 4469.46,
+      "otm_pct": 0.3,
+      "mult": 0.698,
+      "vix": 57.08,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-30",
+      "kind": "vix_45",
+      "usd": 25830.75,
+      "otm_pct": 0.1,
+      "mult": 0.774,
+      "vix": 57.08,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-30",
+      "kind": "vix_45",
+      "usd": 17588.27,
+      "otm_pct": 0.2,
+      "mult": 0.738,
+      "vix": 57.08,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-30",
+      "kind": "vix_45",
+      "usd": 11173.65,
+      "otm_pct": 0.3,
+      "mult": 0.698,
+      "vix": 57.08,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-31",
+      "kind": "rearm",
+      "usd": 10940.13,
+      "otm_pct": 0.1,
+      "mult": 0.949,
+      "vix": 53.54,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-31",
+      "kind": "rearm",
+      "usd": 7334.82,
+      "otm_pct": 0.2,
+      "mult": 0.929,
+      "vix": 53.54,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-31",
+      "kind": "rearm",
+      "usd": 4575.62,
+      "otm_pct": 0.3,
+      "mult": 0.906,
+      "vix": 53.54,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-03-31",
+      "kind": "vix_45",
+      "usd": 27350.33,
+      "otm_pct": 0.1,
+      "mult": 0.949,
+      "vix": 53.54,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-31",
+      "kind": "vix_45",
+      "usd": 18337.06,
+      "otm_pct": 0.2,
+      "mult": 0.929,
+      "vix": 53.54,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-03-31",
+      "kind": "vix_45",
+      "usd": 11439.06,
+      "otm_pct": 0.3,
+      "mult": 0.906,
+      "vix": 53.54,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-01",
+      "kind": "rearm",
+      "usd": 12439.44,
+      "otm_pct": 0.1,
+      "mult": 1.194,
+      "vix": 57.06,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-01",
+      "kind": "rearm",
+      "usd": 8547.01,
+      "otm_pct": 0.2,
+      "mult": 1.224,
+      "vix": 57.06,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-01",
+      "kind": "rearm",
+      "usd": 5491.02,
+      "otm_pct": 0.3,
+      "mult": 1.261,
+      "vix": 57.06,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-01",
+      "kind": "vix_45",
+      "usd": 31098.61,
+      "otm_pct": 0.1,
+      "mult": 1.194,
+      "vix": 57.06,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-01",
+      "kind": "vix_45",
+      "usd": 21367.52,
+      "otm_pct": 0.2,
+      "mult": 1.224,
+      "vix": 57.06,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-01",
+      "kind": "vix_45",
+      "usd": 13727.55,
+      "otm_pct": 0.3,
+      "mult": 1.261,
+      "vix": 57.06,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-02",
+      "kind": "rearm",
+      "usd": 8741.75,
+      "otm_pct": 0.1,
+      "mult": 0.806,
+      "vix": 50.91,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-02",
+      "kind": "rearm",
+      "usd": 5727.9,
+      "otm_pct": 0.2,
+      "mult": 0.772,
+      "vix": 50.91,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-02",
+      "kind": "rearm",
+      "usd": 3475.96,
+      "otm_pct": 0.3,
+      "mult": 0.732,
+      "vix": 50.91,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-02",
+      "kind": "vix_45",
+      "usd": 21854.38,
+      "otm_pct": 0.1,
+      "mult": 0.806,
+      "vix": 50.91,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-02",
+      "kind": "vix_45",
+      "usd": 14319.76,
+      "otm_pct": 0.2,
+      "mult": 0.772,
+      "vix": 50.91,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-02",
+      "kind": "vix_45",
+      "usd": 8689.9,
+      "otm_pct": 0.3,
+      "mult": 0.732,
+      "vix": 50.91,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-03",
+      "kind": "rearm",
+      "usd": 8778.24,
+      "otm_pct": 0.1,
+      "mult": 0.923,
+      "vix": 46.8,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-03",
+      "kind": "rearm",
+      "usd": 5599.85,
+      "otm_pct": 0.2,
+      "mult": 0.895,
+      "vix": 46.8,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-03",
+      "kind": "rearm",
+      "usd": 3292.56,
+      "otm_pct": 0.3,
+      "mult": 0.861,
+      "vix": 46.8,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-03",
+      "kind": "vix_45",
+      "usd": 21945.59,
+      "otm_pct": 0.1,
+      "mult": 0.923,
+      "vix": 46.8,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-03",
+      "kind": "vix_45",
+      "usd": 13999.64,
+      "otm_pct": 0.2,
+      "mult": 0.895,
+      "vix": 46.8,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-03",
+      "kind": "vix_45",
+      "usd": 8231.39,
+      "otm_pct": 0.3,
+      "mult": 0.861,
+      "vix": 46.8,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-06",
+      "kind": "rearm",
+      "usd": 6478.63,
+      "otm_pct": 0.1,
+      "mult": 0.778,
+      "vix": 45.24,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-06",
+      "kind": "rearm",
+      "usd": 4025.3,
+      "otm_pct": 0.2,
+      "mult": 0.758,
+      "vix": 45.24,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-06",
+      "kind": "rearm",
+      "usd": 2292.51,
+      "otm_pct": 0.3,
+      "mult": 0.734,
+      "vix": 45.24,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-06",
+      "kind": "vix_45",
+      "usd": 16196.57,
+      "otm_pct": 0.1,
+      "mult": 0.778,
+      "vix": 45.24,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-06",
+      "kind": "vix_45",
+      "usd": 10063.24,
+      "otm_pct": 0.2,
+      "mult": 0.758,
+      "vix": 45.24,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-06",
+      "kind": "vix_45",
+      "usd": 5731.28,
+      "otm_pct": 0.3,
+      "mult": 0.734,
+      "vix": 45.24,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-07",
+      "kind": "rearm",
+      "usd": 8885.42,
+      "otm_pct": 0.1,
+      "mult": 1.045,
+      "vix": 46.7,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-07",
+      "kind": "rearm",
+      "usd": 5652.18,
+      "otm_pct": 0.2,
+      "mult": 1.057,
+      "vix": 46.7,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-07",
+      "kind": "rearm",
+      "usd": 3311.9,
+      "otm_pct": 0.3,
+      "mult": 1.071,
+      "vix": 46.7,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-07",
+      "kind": "vix_45",
+      "usd": 22213.54,
+      "otm_pct": 0.1,
+      "mult": 1.045,
+      "vix": 46.7,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-07",
+      "kind": "vix_45",
+      "usd": 14130.45,
+      "otm_pct": 0.2,
+      "mult": 1.057,
+      "vix": 46.7,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-07",
+      "kind": "vix_45",
+      "usd": 8279.75,
+      "otm_pct": 0.3,
+      "mult": 1.071,
+      "vix": 46.7,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-21",
+      "kind": "rearm",
+      "usd": 7423.54,
+      "otm_pct": 0.1,
+      "mult": 0.836,
+      "vix": 45.41,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-21",
+      "kind": "rearm",
+      "usd": 4554.46,
+      "otm_pct": 0.2,
+      "mult": 0.805,
+      "vix": 45.41,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-21",
+      "kind": "rearm",
+      "usd": 2552.19,
+      "otm_pct": 0.3,
+      "mult": 0.768,
+      "vix": 45.41,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2020-04-21",
+      "kind": "vix_45",
+      "usd": 18558.85,
+      "otm_pct": 0.1,
+      "mult": 0.836,
+      "vix": 45.41,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-21",
+      "kind": "vix_45",
+      "usd": 11386.16,
+      "otm_pct": 0.2,
+      "mult": 0.805,
+      "vix": 45.41,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-04-21",
+      "kind": "vix_45",
+      "usd": 6380.48,
+      "otm_pct": 0.3,
+      "mult": 0.768,
+      "vix": 45.41,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-07-27",
+      "kind": "scheduled_roll",
+      "usd": 673.35,
+      "otm_pct": 0.1,
+      "mult": 0.031,
+      "vix": 24.74,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-07-27",
+      "kind": "scheduled_roll",
+      "usd": 151.8,
+      "otm_pct": 0.2,
+      "mult": 0.011,
+      "vix": 24.74,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-07-27",
+      "kind": "scheduled_roll",
+      "usd": 25.27,
+      "otm_pct": 0.3,
+      "mult": 0.003,
+      "vix": 24.74,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-11-04",
+      "kind": "scheduled_roll",
+      "usd": 4205.01,
+      "otm_pct": 0.1,
+      "mult": 0.422,
+      "vix": 29.57,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2020-11-04",
+      "kind": "scheduled_roll",
+      "usd": 3905.5,
+      "otm_pct": 0.2,
+      "mult": 0.288,
+      "vix": 29.57,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2020-11-04",
+      "kind": "scheduled_roll",
+      "usd": 2179.62,
+      "otm_pct": 0.3,
+      "mult": 0.173,
+      "vix": 29.57,
+      "contracts_sold": 7
+    },
+    {
+      "date": "2021-02-18",
+      "kind": "scheduled_roll",
+      "usd": 921.41,
+      "otm_pct": 0.1,
+      "mult": 0.062,
+      "vix": 22.49,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2021-02-18",
+      "kind": "scheduled_roll",
+      "usd": 185.78,
+      "otm_pct": 0.2,
+      "mult": 0.024,
+      "vix": 22.49,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2021-02-18",
+      "kind": "scheduled_roll",
+      "usd": 81.61,
+      "otm_pct": 0.3,
+      "mult": 0.008,
+      "vix": 22.49,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2021-06-01",
+      "kind": "scheduled_roll",
+      "usd": 922.82,
+      "otm_pct": 0.1,
+      "mult": 0.091,
+      "vix": 17.9,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2021-06-01",
+      "kind": "scheduled_roll",
+      "usd": 397.26,
+      "otm_pct": 0.2,
+      "mult": 0.031,
+      "vix": 17.9,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2021-06-01",
+      "kind": "scheduled_roll",
+      "usd": 119.51,
+      "otm_pct": 0.3,
+      "mult": 0.008,
+      "vix": 17.9,
+      "contracts_sold": 9
+    },
+    {
+      "date": "2021-09-03",
+      "kind": "scheduled_roll",
+      "usd": 1282.36,
+      "otm_pct": 0.1,
+      "mult": 0.096,
+      "vix": 16.41,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2021-09-03",
+      "kind": "scheduled_roll",
+      "usd": 622.24,
+      "otm_pct": 0.2,
+      "mult": 0.034,
+      "vix": 16.41,
+      "contracts_sold": 8
+    },
+    {
+      "date": "2021-09-03",
+      "kind": "scheduled_roll",
+      "usd": 182.78,
+      "otm_pct": 0.3,
+      "mult": 0.01,
+      "vix": 16.41,
+      "contracts_sold": 28
+    },
+    {
+      "date": "2021-09-20",
+      "kind": "profit_3x",
+      "usd": 30583.67,
+      "otm_pct": 0.2,
+      "mult": 4.062,
+      "vix": 25.71,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2021-09-20",
+      "kind": "profit_5x",
+      "usd": 58759.03,
+      "otm_pct": 0.3,
+      "mult": 5.807,
+      "vix": 25.71,
+      "contracts_sold": 20
+    },
+    {
+      "date": "2021-09-22",
+      "kind": "giveback",
+      "usd": 29276.46,
+      "otm_pct": 0.2,
+      "mult": 2.222,
+      "vix": 20.87,
+      "contracts_sold": 7
+    },
+    {
+      "date": "2021-09-22",
+      "kind": "giveback",
+      "usd": 27354.47,
+      "otm_pct": 0.3,
+      "mult": 2.575,
+      "vix": 20.87,
+      "contracts_sold": 21
+    },
+    {
+      "date": "2021-09-22",
+      "kind": "rearm",
+      "usd": 11710.58,
+      "otm_pct": 0.2,
+      "mult": 2.222,
+      "vix": 20.87,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2021-09-22",
+      "kind": "rearm",
+      "usd": 10941.79,
+      "otm_pct": 0.3,
+      "mult": 2.575,
+      "vix": 20.87,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2021-12-09",
+      "kind": "scheduled_roll",
+      "usd": 10515.2,
+      "otm_pct": 0.1,
+      "mult": 0.583,
+      "vix": 21.58,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2021-12-27",
+      "kind": "scheduled_roll",
+      "usd": 325.78,
+      "otm_pct": 0.2,
+      "mult": 0.029,
+      "vix": 17.68,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2021-12-27",
+      "kind": "scheduled_roll",
+      "usd": 84.07,
+      "otm_pct": 0.3,
+      "mult": 0.008,
+      "vix": 17.68,
+      "contracts_sold": 8
+    },
+    {
+      "date": "2022-01-19",
+      "kind": "profit_3x",
+      "usd": 24436.48,
+      "otm_pct": 0.3,
+      "mult": 3.351,
+      "vix": 23.85,
+      "contracts_sold": 10
+    },
+    {
+      "date": "2022-01-20",
+      "kind": "profit_3x",
+      "usd": 26358.45,
+      "otm_pct": 0.2,
+      "mult": 3.488,
+      "vix": 25.59,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2022-01-21",
+      "kind": "profit_5x",
+      "usd": 51227.55,
+      "otm_pct": 0.3,
+      "mult": 7.025,
+      "vix": 28.85,
+      "contracts_sold": 10
+    },
+    {
+      "date": "2022-01-24",
+      "kind": "profit_5x",
+      "usd": 26128.34,
+      "otm_pct": 0.2,
+      "mult": 5.186,
+      "vix": 29.9,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2022-01-25",
+      "kind": "profit_8x",
+      "usd": 58216.27,
+      "otm_pct": 0.3,
+      "mult": 8.871,
+      "vix": 31.16,
+      "contracts_sold": 9
+    },
+    {
+      "date": "2022-01-25",
+      "kind": "rearm",
+      "usd": 23286.51,
+      "otm_pct": 0.3,
+      "mult": 8.871,
+      "vix": 31.16,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2022-01-31",
+      "kind": "giveback",
+      "usd": 21809.84,
+      "otm_pct": 0.2,
+      "mult": 2.886,
+      "vix": 24.83,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2022-01-31",
+      "kind": "rearm",
+      "usd": 8723.94,
+      "otm_pct": 0.2,
+      "mult": 2.886,
+      "vix": 24.83,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2022-03-16",
+      "kind": "scheduled_roll",
+      "usd": 14927.32,
+      "otm_pct": 0.1,
+      "mult": 1.366,
+      "vix": 26.67,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2022-05-02",
+      "kind": "scheduled_roll",
+      "usd": 6863.52,
+      "otm_pct": 0.3,
+      "mult": 0.362,
+      "vix": 32.34,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2022-05-06",
+      "kind": "scheduled_roll",
+      "usd": 7283.61,
+      "otm_pct": 0.2,
+      "mult": 1.181,
+      "vix": 30.19,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2022-06-21",
+      "kind": "scheduled_roll",
+      "usd": 29399.12,
+      "otm_pct": 0.1,
+      "mult": 1.952,
+      "vix": 30.19,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2022-08-04",
+      "kind": "scheduled_roll",
+      "usd": 281.15,
+      "otm_pct": 0.3,
+      "mult": 0.028,
+      "vix": 21.44,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2022-08-10",
+      "kind": "scheduled_roll",
+      "usd": 488.21,
+      "otm_pct": 0.2,
+      "mult": 0.055,
+      "vix": 19.74,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2022-09-21",
+      "kind": "profit_3x",
+      "usd": 21061.79,
+      "otm_pct": 0.2,
+      "mult": 3.416,
+      "vix": 27.99,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2022-09-22",
+      "kind": "scheduled_roll",
+      "usd": 7050.36,
+      "otm_pct": 0.1,
+      "mult": 0.444,
+      "vix": 27.35,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2022-09-23",
+      "kind": "profit_3x",
+      "usd": 18501.81,
+      "otm_pct": 0.3,
+      "mult": 3.472,
+      "vix": 29.92,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2022-09-26",
+      "kind": "profit_5x",
+      "usd": 32223.88,
+      "otm_pct": 0.2,
+      "mult": 5.226,
+      "vix": 32.26,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2022-10-04",
+      "kind": "giveback",
+      "usd": 20749.02,
+      "otm_pct": 0.2,
+      "mult": 3.365,
+      "vix": 29.07,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2022-10-04",
+      "kind": "giveback",
+      "usd": 28501.75,
+      "otm_pct": 0.3,
+      "mult": 2.377,
+      "vix": 29.07,
+      "contracts_sold": 9
+    },
+    {
+      "date": "2022-10-04",
+      "kind": "rearm",
+      "usd": 8299.61,
+      "otm_pct": 0.2,
+      "mult": 3.365,
+      "vix": 29.07,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2022-10-04",
+      "kind": "rearm",
+      "usd": 11400.7,
+      "otm_pct": 0.3,
+      "mult": 2.377,
+      "vix": 29.07,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2022-12-28",
+      "kind": "scheduled_roll",
+      "usd": 4013.14,
+      "otm_pct": 0.1,
+      "mult": 0.296,
+      "vix": 22.14,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2023-01-09",
+      "kind": "scheduled_roll",
+      "usd": 670.6,
+      "otm_pct": 0.2,
+      "mult": 0.088,
+      "vix": 21.97,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2023-01-09",
+      "kind": "scheduled_roll",
+      "usd": 307.8,
+      "otm_pct": 0.3,
+      "mult": 0.031,
+      "vix": 21.97,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2023-04-05",
+      "kind": "scheduled_roll",
+      "usd": 1027.52,
+      "otm_pct": 0.1,
+      "mult": 0.11,
+      "vix": 19.08,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2023-04-17",
+      "kind": "scheduled_roll",
+      "usd": 427.77,
+      "otm_pct": 0.2,
+      "mult": 0.027,
+      "vix": 16.95,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2023-04-17",
+      "kind": "scheduled_roll",
+      "usd": 115.95,
+      "otm_pct": 0.3,
+      "mult": 0.007,
+      "vix": 16.95,
+      "contracts_sold": 12
+    },
+    {
+      "date": "2023-07-11",
+      "kind": "scheduled_roll",
+      "usd": 726.42,
+      "otm_pct": 0.1,
+      "mult": 0.049,
+      "vix": 14.84,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2023-07-20",
+      "kind": "scheduled_roll",
+      "usd": 214.48,
+      "otm_pct": 0.2,
+      "mult": 0.011,
+      "vix": 13.99,
+      "contracts_sold": 10
+    },
+    {
+      "date": "2023-07-20",
+      "kind": "scheduled_roll",
+      "usd": 50.13,
+      "otm_pct": 0.3,
+      "mult": 0.002,
+      "vix": 13.99,
+      "contracts_sold": 39
+    },
+    {
+      "date": "2023-10-13",
+      "kind": "scheduled_roll",
+      "usd": 20315.85,
+      "otm_pct": 0.1,
+      "mult": 1.098,
+      "vix": 19.32,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2023-10-25",
+      "kind": "scheduled_roll",
+      "usd": 45741.4,
+      "otm_pct": 0.2,
+      "mult": 2.092,
+      "vix": 20.19,
+      "contracts_sold": 20
+    },
+    {
+      "date": "2023-10-25",
+      "kind": "scheduled_roll",
+      "usd": 29059.95,
+      "otm_pct": 0.3,
+      "mult": 1.325,
+      "vix": 20.19,
+      "contracts_sold": 88
+    },
+    {
+      "date": "2024-01-19",
+      "kind": "scheduled_roll",
+      "usd": 244.76,
+      "otm_pct": 0.1,
+      "mult": 0.015,
+      "vix": 13.3,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2024-01-31",
+      "kind": "scheduled_roll",
+      "usd": 41.78,
+      "otm_pct": 0.2,
+      "mult": 0.003,
+      "vix": 14.35,
+      "contracts_sold": 5
+    },
+    {
+      "date": "2024-01-31",
+      "kind": "scheduled_roll",
+      "usd": 8.18,
+      "otm_pct": 0.3,
+      "mult": 0.0,
+      "vix": 14.35,
+      "contracts_sold": 16
+    },
+    {
+      "date": "2024-04-25",
+      "kind": "scheduled_roll",
+      "usd": 6081.59,
+      "otm_pct": 0.1,
+      "mult": 0.26,
+      "vix": 15.37,
+      "contracts_sold": 6
+    },
+    {
+      "date": "2024-05-07",
+      "kind": "scheduled_roll",
+      "usd": 433.17,
+      "otm_pct": 0.2,
+      "mult": 0.02,
+      "vix": 13.23,
+      "contracts_sold": 17
+    },
+    {
+      "date": "2024-05-07",
+      "kind": "scheduled_roll",
+      "usd": 101.21,
+      "otm_pct": 0.3,
+      "mult": 0.005,
+      "vix": 13.23,
+      "contracts_sold": 74
+    },
+    {
+      "date": "2024-07-30",
+      "kind": "scheduled_roll",
+      "usd": 3256.75,
+      "otm_pct": 0.1,
+      "mult": 0.19,
+      "vix": 17.69,
+      "contracts_sold": 3
+    },
+    {
+      "date": "2024-08-05",
+      "kind": "profit_3x",
+      "usd": 39626.4,
+      "otm_pct": 0.1,
+      "mult": 4.633,
+      "vix": 38.57,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2024-08-05",
+      "kind": "profit_8x",
+      "usd": 196166.71,
+      "otm_pct": 0.2,
+      "mult": 8.493,
+      "vix": 38.57,
+      "contracts_sold": 23
+    },
+    {
+      "date": "2024-08-05",
+      "kind": "profit_8x",
+      "usd": 342105.81,
+      "otm_pct": 0.3,
+      "mult": 14.554,
+      "vix": 38.57,
+      "contracts_sold": 110
+    },
+    {
+      "date": "2024-08-05",
+      "kind": "rearm",
+      "usd": 78466.69,
+      "otm_pct": 0.2,
+      "mult": 8.493,
+      "vix": 38.57,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2024-08-05",
+      "kind": "rearm",
+      "usd": 136842.32,
+      "otm_pct": 0.3,
+      "mult": 14.554,
+      "vix": 38.57,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2024-08-06",
+      "kind": "giveback",
+      "usd": 23661.53,
+      "otm_pct": 0.1,
+      "mult": 2.767,
+      "vix": 27.71,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2024-08-06",
+      "kind": "rearm",
+      "usd": 9464.61,
+      "otm_pct": 0.1,
+      "mult": 2.767,
+      "vix": 27.71,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2024-11-11",
+      "kind": "scheduled_roll",
+      "usd": 57.72,
+      "otm_pct": 0.2,
+      "mult": 0.001,
+      "vix": 14.97,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2024-11-11",
+      "kind": "scheduled_roll",
+      "usd": 12.5,
+      "otm_pct": 0.3,
+      "mult": 0.0,
+      "vix": 14.97,
+      "contracts_sold": 13
+    },
+    {
+      "date": "2024-11-12",
+      "kind": "scheduled_roll",
+      "usd": 172.83,
+      "otm_pct": 0.1,
+      "mult": 0.009,
+      "vix": 14.71,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2024-12-18",
+      "kind": "profit_3x",
+      "usd": 20819.9,
+      "otm_pct": 0.1,
+      "mult": 3.325,
+      "vix": 27.62,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2024-12-18",
+      "kind": "profit_3x",
+      "usd": 36792.93,
+      "otm_pct": 0.2,
+      "mult": 4.865,
+      "vix": 27.62,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2024-12-18",
+      "kind": "profit_5x",
+      "usd": 82406.63,
+      "otm_pct": 0.3,
+      "mult": 7.294,
+      "vix": 27.62,
+      "contracts_sold": 24
+    },
+    {
+      "date": "2024-12-19",
+      "kind": "giveback",
+      "usd": 52346.5,
+      "otm_pct": 0.3,
+      "mult": 4.448,
+      "vix": 24.09,
+      "contracts_sold": 25
+    },
+    {
+      "date": "2024-12-19",
+      "kind": "rearm",
+      "usd": 20938.6,
+      "otm_pct": 0.3,
+      "mult": 4.448,
+      "vix": 24.09,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2025-02-18",
+      "kind": "scheduled_roll",
+      "usd": 1592.21,
+      "otm_pct": 0.2,
+      "mult": 0.105,
+      "vix": 15.35,
+      "contracts_sold": 8
+    },
+    {
+      "date": "2025-02-19",
+      "kind": "scheduled_roll",
+      "usd": 3220.88,
+      "otm_pct": 0.1,
+      "mult": 0.257,
+      "vix": 15.27,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2025-02-27",
+      "kind": "profit_3x",
+      "usd": 27338.23,
+      "otm_pct": 0.2,
+      "mult": 3.404,
+      "vix": 21.13,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2025-03-03",
+      "kind": "profit_3x",
+      "usd": 20679.19,
+      "otm_pct": 0.1,
+      "mult": 3.02,
+      "vix": 22.78,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2025-03-06",
+      "kind": "profit_5x",
+      "usd": 44121.7,
+      "otm_pct": 0.2,
+      "mult": 5.493,
+      "vix": 24.87,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2025-03-14",
+      "kind": "giveback",
+      "usd": 34835.91,
+      "otm_pct": 0.2,
+      "mult": 4.337,
+      "vix": 21.77,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2025-03-14",
+      "kind": "rearm",
+      "usd": 13934.36,
+      "otm_pct": 0.2,
+      "mult": 4.337,
+      "vix": 21.77,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2025-03-17",
+      "kind": "giveback",
+      "usd": 41676.41,
+      "otm_pct": 0.1,
+      "mult": 3.043,
+      "vix": 20.51,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2025-03-17",
+      "kind": "rearm",
+      "usd": 16670.56,
+      "otm_pct": 0.1,
+      "mult": 3.043,
+      "vix": 20.51,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2025-03-31",
+      "kind": "scheduled_roll",
+      "usd": 3053.06,
+      "otm_pct": 0.3,
+      "mult": 0.146,
+      "vix": 22.28,
+      "contracts_sold": 7
+    },
+    {
+      "date": "2025-04-03",
+      "kind": "profit_3x",
+      "usd": 12850.51,
+      "otm_pct": 0.3,
+      "mult": 3.106,
+      "vix": 30.02,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2025-04-04",
+      "kind": "rearm",
+      "usd": 23647.95,
+      "otm_pct": 0.1,
+      "mult": 4.917,
+      "vix": 45.31,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2025-04-04",
+      "kind": "rearm",
+      "usd": 43038.73,
+      "otm_pct": 0.3,
+      "mult": 10.403,
+      "vix": 45.31,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2025-04-04",
+      "kind": "vix_45",
+      "usd": 59119.88,
+      "otm_pct": 0.1,
+      "mult": 4.917,
+      "vix": 45.31,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2025-04-04",
+      "kind": "vix_45",
+      "usd": 35381.2,
+      "otm_pct": 0.2,
+      "mult": 6.499,
+      "vix": 45.31,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2025-04-04",
+      "kind": "vix_45",
+      "usd": 107596.81,
+      "otm_pct": 0.3,
+      "mult": 10.403,
+      "vix": 45.31,
+      "contracts_sold": 5
+    },
+    {
+      "date": "2025-04-07",
+      "kind": "rearm",
+      "usd": 17018.66,
+      "otm_pct": 0.1,
+      "mult": 1.054,
+      "vix": 46.98,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2025-04-07",
+      "kind": "vix_45",
+      "usd": 42546.66,
+      "otm_pct": 0.1,
+      "mult": 1.054,
+      "vix": 46.98,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2025-04-07",
+      "kind": "vix_45",
+      "usd": 15872.85,
+      "otm_pct": 0.3,
+      "mult": 1.084,
+      "vix": 46.98,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2025-04-08",
+      "kind": "profit_8x",
+      "usd": 45303.82,
+      "otm_pct": 0.2,
+      "mult": 8.322,
+      "vix": 52.33,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2025-04-08",
+      "kind": "rearm",
+      "usd": 20353.4,
+      "otm_pct": 0.1,
+      "mult": 1.201,
+      "vix": 52.33,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2025-04-08",
+      "kind": "rearm",
+      "usd": 18121.53,
+      "otm_pct": 0.2,
+      "mult": 8.322,
+      "vix": 52.33,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2025-04-08",
+      "kind": "vix_45",
+      "usd": 50883.51,
+      "otm_pct": 0.1,
+      "mult": 1.201,
+      "vix": 52.33,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2025-07-10",
+      "kind": "scheduled_roll",
+      "usd": 0.43,
+      "otm_pct": 0.3,
+      "mult": 0.0,
+      "vix": 15.78,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2025-07-14",
+      "kind": "scheduled_roll",
+      "usd": 76.63,
+      "otm_pct": 0.1,
+      "mult": 0.002,
+      "vix": 17.2,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2025-07-14",
+      "kind": "scheduled_roll",
+      "usd": 9.2,
+      "otm_pct": 0.2,
+      "mult": 0.0,
+      "vix": 17.2,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2025-10-14",
+      "kind": "scheduled_roll",
+      "usd": 3322.67,
+      "otm_pct": 0.3,
+      "mult": 0.137,
+      "vix": 20.81,
+      "contracts_sold": 42
+    },
+    {
+      "date": "2025-10-16",
+      "kind": "scheduled_roll",
+      "usd": 11224.49,
+      "otm_pct": 0.1,
+      "mult": 0.614,
+      "vix": 25.31,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2025-10-16",
+      "kind": "scheduled_roll",
+      "usd": 11416.34,
+      "otm_pct": 0.2,
+      "mult": 0.479,
+      "vix": 25.31,
+      "contracts_sold": 8
+    },
+    {
+      "date": "2026-01-20",
+      "kind": "scheduled_roll",
+      "usd": 1082.01,
+      "otm_pct": 0.3,
+      "mult": 0.056,
+      "vix": 20.09,
+      "contracts_sold": 10
+    },
+    {
+      "date": "2026-01-22",
+      "kind": "scheduled_roll",
+      "usd": 1488.32,
+      "otm_pct": 0.1,
+      "mult": 0.071,
+      "vix": 15.64,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2026-01-22",
+      "kind": "scheduled_roll",
+      "usd": 168.13,
+      "otm_pct": 0.2,
+      "mult": 0.018,
+      "vix": 15.64,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2026-03-06",
+      "kind": "profit_3x",
+      "usd": 23639.7,
+      "otm_pct": 0.1,
+      "mult": 3.256,
+      "vix": 29.49,
+      "contracts_sold": 1
+    },
+    {
+      "date": "2026-03-06",
+      "kind": "profit_3x",
+      "usd": 38774.49,
+      "otm_pct": 0.2,
+      "mult": 4.987,
+      "vix": 29.49,
+      "contracts_sold": 4
+    },
+    {
+      "date": "2026-03-09",
+      "kind": "giveback",
+      "usd": 54580.87,
+      "otm_pct": 0.2,
+      "mult": 3.12,
+      "vix": 25.5,
+      "contracts_sold": 9
+    },
+    {
+      "date": "2026-03-09",
+      "kind": "rearm",
+      "usd": 21832.35,
+      "otm_pct": 0.2,
+      "mult": 3.12,
+      "vix": 25.5,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2026-03-31",
+      "kind": "giveback",
+      "usd": 39700.44,
+      "otm_pct": 0.1,
+      "mult": 2.734,
+      "vix": 25.25,
+      "contracts_sold": 2
+    },
+    {
+      "date": "2026-03-31",
+      "kind": "rearm",
+      "usd": 15880.18,
+      "otm_pct": 0.1,
+      "mult": 2.734,
+      "vix": 25.25,
+      "contracts_sold": 0
+    },
+    {
+      "date": "2026-04-09",
+      "kind": "scheduled_roll",
+      "usd": 1803.93,
+      "otm_pct": 0.3,
+      "mult": 0.09,
+      "vix": 19.49,
+      "contracts_sold": 15
+    },
+    {
+      "date": "2026-05-27",
+      "kind": "scheduled_roll",
+      "usd": 1.96,
+      "otm_pct": 0.2,
+      "mult": 0.0,
+      "vix": 16.29,
+      "contracts_sold": 4
+    }
+  ]
+}

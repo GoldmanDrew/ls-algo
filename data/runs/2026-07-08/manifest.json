@@ -1,0 +1,35 @@
+{
+  "run_date": "2026-07-08",
+  "generated_at_utc": "2026-07-08T08:28:07.482879+00:00",
+  "git_sha": "7253f3b370fe8fe66d02ad0e3f621624774904cb",
+  "workflow_run_id": "28927990843",
+  "nav_usd": 1050000.0,
+  "nav_source": "config:capital_usd",
+  "screener_csv": "data/runs/2026-07-08/etf_screened_today.csv",
+  "checksums": {
+    "accounting/totals.json": "1c8b0f5b771632d74774e1d9cabab9da038d37a96e480fe6062b1da85bd16e32",
+    "accounting/pnl_by_bucket.csv": "ce7e02ceb7ded2f9dac55f1f6f6e77795e76e81b1e1c307377e9453d3b39aaba",
+    "accounting/pnl_bucket_1.csv": "1528e5932d16bfe62de030f1cd2481ca449b6b9b8a7d209e1fc1bbfece2c371e",
+    "accounting/pnl_bucket_2.csv": "de13f505e0717876d23558b612ec11261f993f0a880555fe37993513201ae3f8",
+    "accounting/pnl_bucket_3.csv": "9e89b45c24511d725ca377eab429f7a514432719963d78e1da038e653efb840c",
+    "accounting/pnl_bucket_4.csv": "0cfc542d469277c8b8ceb20c927712ad409d8b3cd03eae63ca260de049e32243",
+    "accounting/pnl_bucket_5.csv": "fcbc7dfa5c7a78651ac2fbf5b5f4afd17d02b98d732c6cb988fdec66e7b741e8",
+    "accounting/pnl_bucket_5_by_pair.csv": "b257099e5ab46ccd4e665020437f26a6fd831c33bff9e9aa322e30561bac348f",
+    "accounting/pnl_bucket_5_by_symbol.csv": "4f2acb3b8a6bc7fb79a14bb1b815d565009695007e2d79e8d0a6f74958df384c",
+    "ibkr_flex/flex_positions.xml": "e68d0bdaf5cf24bfb44b16cb7ef194588c3ac724f42cf67bcdd47f9162e869f8",
+    "etf_screened_today.csv": "a7a8fdc7e33e323ca7fd985255fdbe014d5abad771fb23f58c5a625b2adfc775"
+  },
+  "accounting_files": [
+    "accounting/pnl_bucket_1.csv",
+    "accounting/pnl_bucket_2.csv",
+    "accounting/pnl_bucket_3.csv",
+    "accounting/pnl_bucket_4.csv",
+    "accounting/pnl_bucket_5.csv",
+    "accounting/pnl_bucket_5_by_pair.csv",
+    "accounting/pnl_bucket_5_by_symbol.csv",
+    "accounting/pnl_by_bucket.csv",
+    "accounting/totals.json",
+    "etf_screened_today.csv",
+    "ibkr_flex/flex_positions.xml"
+  ]
+}
