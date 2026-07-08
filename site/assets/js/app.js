@@ -736,8 +736,11 @@
       Math.abs(dayBlock.net_usd - dayBlock.attribution_net_usd) > 0.5
         ? `<span class="dim small"> · ledger ${fmtUsdSigned(dayBlock.attribution_net_usd)}</span>`
         : "";
+    const lagNote = dayBlock.lag_deduped
+      ? `<span class="dim small"> · PIL booked in Flex cash on a prior session (attribution step suppressed)</span>`
+      : "";
     return `<div class="pnl-div-summary-row">${chips}</div>
-      <p class="dim small">${safeText(caption)}${att}</p>`;
+      <p class="dim small">${safeText(caption)}${att}${lagNote}</p>`;
   }
 
   function pnlDividendSparklineHtml(sparkline, state, divPanel) {

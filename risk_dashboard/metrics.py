@@ -5542,6 +5542,37 @@ def _dividend_daily_from_attribution(attribution_csv: Path, run_date: str | None
     return out
 
 
+def _attribution_lags_recent_cash(
+    att: dict[str, float],
+    cash_pil_by_date: dict[str, float],
+    cash_net_by_date: dict[str, float],
+    date: str,
+    *,
+    lookback_days: int = 4,
+) -> bool:
+    """True when an attribution delta likely repeats Flex cash booked recently."""
+    att_pil = float(att.get("pil_dividends") or 0.0)
+    att_net = float(att.get("net_usd") or 0.0)
+    if abs(att_pil) < 0.5 and abs(att_net) < 0.5:
+        return False
+    dt = pd.Timestamp(date)
+    ref = max(abs(att_pil), abs(att_net), 1.0)
+    tol = max(150.0, 0.02 * ref)
+    for offset in range(1, lookback_days + 1):
+        prior = (dt - pd.Timedelta(days=offset)).strftime("%Y-%m-%d")
+        cash_pil = float(cash_pil_by_date.get(prior) or 0.0)
+        cash_net = float(cash_net_by_date.get(prior) or 0.0)
+        if abs(cash_pil) < 0.5 and abs(cash_net) < 0.5:
+            continue
+        if abs(att_pil - cash_pil) <= tol or abs(att_net - cash_net) <= tol:
+            return True
+        if att_pil * cash_pil > 0 and abs(abs(att_pil) - abs(cash_pil)) <= tol:
+            return True
+        if att_net * cash_net > 0 and abs(abs(att_net) - abs(cash_net)) <= tol:
+            return True
+    return False
+
+
 def compute_dividend_panel(
     *,
     dividend_cash_history_csv: Path,
@@ -5594,6 +5625,18 @@ def compute_dividend_panel(
         except Exception as exc:
             return {"available": False, "reason": f"unreadable dividend history: {exc}"}
 
+    cash_pil_by_date: dict[str, float] = {}
+    cash_net_by_date: dict[str, float] = {}
+    for r in cash_rows:
+        d = str(r.get("date") or "")
+        if not d:
+            continue
+        cat = str(r.get("category") or "")
+        amt = float(r.get("amount_usd") or 0.0)
+        cash_net_by_date[d] = cash_net_by_date.get(d, 0.0) + amt
+        if cat == "pil_dividends":
+            cash_pil_by_date[d] = cash_pil_by_date.get(d, 0.0) + amt
+
     by_date: dict[str, Any] = {}
     dates = sorted({r["date"] for r in cash_rows if r.get("date")} | set(att_daily.keys()))
     for d in dates:
@@ -5610,12 +5653,35 @@ def compute_dividend_panel(
         att = att_daily.get(d, {k: 0.0 for k in DIVIDEND_CATEGORY_KEYS})
         att_net = float(att.get("net_usd") or sum(att.get(k, 0.0) for k in DIVIDEND_CATEGORY_KEYS))
         cash_net = sum(by_cat.values())
+        lag_deduped = False
+        source = "none"
+        if day_rows:
+            net_usd = cash_net
+            dividends_usd = by_cat["dividends"]
+            withholding_usd = by_cat["withholding_tax"]
+            pil_usd = by_cat["pil_dividends"]
+            source = "cash"
+        elif _attribution_lags_recent_cash(att, cash_pil_by_date, cash_net_by_date, d):
+            net_usd = 0.0
+            dividends_usd = 0.0
+            withholding_usd = 0.0
+            pil_usd = 0.0
+            lag_deduped = True
+            source = "attribution_suppressed"
+        else:
+            net_usd = att_net
+            dividends_usd = float(att.get("dividends") or 0.0)
+            withholding_usd = float(att.get("withholding_tax") or 0.0)
+            pil_usd = float(att.get("pil_dividends") or 0.0)
+            source = "attribution"
         by_date[d] = {
-            "net_usd": cash_net if day_rows else att_net,
-            "dividends_usd": by_cat["dividends"] if day_rows else float(att.get("dividends") or 0.0),
-            "withholding_usd": by_cat["withholding_tax"] if day_rows else float(att.get("withholding_tax") or 0.0),
-            "pil_usd": by_cat["pil_dividends"] if day_rows else float(att.get("pil_dividends") or 0.0),
+            "net_usd": net_usd,
+            "dividends_usd": dividends_usd,
+            "withholding_usd": withholding_usd,
+            "pil_usd": pil_usd,
             "attribution_net_usd": att_net,
+            "source": source,
+            "lag_deduped": lag_deduped,
             "rows": sorted(day_rows, key=lambda r: abs(float(r.get("amount_usd") or 0.0)), reverse=True),
             "by_bucket": dict(sorted(by_bucket.items(), key=lambda kv: abs(kv[1]), reverse=True)),
         }
