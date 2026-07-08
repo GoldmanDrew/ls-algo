@@ -54,7 +54,7 @@ def _finite_float(val, default: float = 0.0) -> float:
     return default if not np.isfinite(v) else v
 
 
-def build_portfolio(uni, panel, start, min_days, *, min_days_short: int = 60):
+def build_portfolio(uni, panel, start, min_days, *, min_days_short: int = 30):
     """Per-pair returns under the CURRENT production cadence; gross-weighted."""
     blk = knobs_from_yaml()
     knobs = make_knobs(blk)  # production knobs straight from YAML
@@ -129,8 +129,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--run-date", default="2026-06-25")
     ap.add_argument("--start", default="2024-01-01")
-    ap.add_argument("--min-days", type=int, default=60)
-    ap.add_argument("--min-days-short", type=int, default=60, help="Min history for force-included / low-N names")
+    ap.add_argument("--min-days", type=int, default=30)
+    ap.add_argument("--min-days-short", type=int, default=30, help="Min history for force-included / low-N names")
     ap.add_argument("--n-mc", type=int, default=10000)
     ap.add_argument("--block-len", type=int, default=10)
     ap.add_argument("--seed", type=int, default=7)
