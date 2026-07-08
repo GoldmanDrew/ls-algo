@@ -2868,6 +2868,14 @@ def main() -> int:
 
     flex_positions_xml = PROJECT_ROOT / "data" / "runs" / run_date / "ibkr_flex" / "flex_positions.xml"
     att_hist = update_attribution_history(run_date, totals, pnl_symbol_csv, flex_positions_xml)
+    from scripts.dividend_ledger import update_dividend_cash_history
+
+    flex_cash_xml = PROJECT_ROOT / "data" / "runs" / run_date / "ibkr_flex" / "flex_cash.xml"
+    update_dividend_cash_history(
+        run_date,
+        cash_xml=flex_cash_xml,
+        pnl_symbol_csv=pnl_symbol_csv,
+    )
     upsert_bucket_underlying_history(
         run_date,
         PROJECT_ROOT / "data" / "runs" / run_date / "accounting",

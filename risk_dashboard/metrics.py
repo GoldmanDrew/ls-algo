@@ -5508,6 +5508,228 @@ def compute_component_attribution_panel(
     }
 
 
+DIVIDEND_CATEGORY_KEYS: tuple[str, ...] = ("dividends", "withholding_tax", "pil_dividends")
+DIVIDEND_CATEGORY_LABELS: dict[str, str] = {
+    "dividends": "Dividends",
+    "withholding_tax": "Withholding tax",
+    "pil_dividends": "PIL dividends",
+}
+
+
+def _dividend_daily_from_attribution(attribution_csv: Path, run_date: str | None) -> dict[str, dict[str, float]]:
+    """Daily dividend-component deltas keyed by ISO date."""
+    out: dict[str, dict[str, float]] = {}
+    if not attribution_csv.is_file():
+        return out
+    try:
+        df = pd.read_csv(attribution_csv)
+    except Exception:
+        return out
+    if df.empty or "date" not in df.columns:
+        return out
+    df["date"] = df["date"].astype(str)
+    if run_date:
+        df = df[df["date"] <= str(run_date)]
+    df = df.sort_values("date").reset_index(drop=True)
+    for i in range(1, len(df)):
+        row = df.iloc[i]
+        prior = df.iloc[i - 1]
+        slot = {}
+        for col in DIVIDEND_CATEGORY_KEYS:
+            slot[col] = float(row.get(col) or 0.0) - float(prior.get(col) or 0.0)
+        slot["net_usd"] = sum(slot.values())
+        out[str(row["date"])] = slot
+    return out
+
+
+def compute_dividend_panel(
+    *,
+    dividend_cash_history_csv: Path,
+    attribution_history_csv: Path,
+    accounting_dir: Path,
+    runs_root: Path,
+    run_date: str,
+    nav_usd: float,
+    screener_csv: Path | None = None,
+    plan_csv: Path | None = None,
+    horizon_days: int = 7,
+    warn_usd: float = 500.0,
+) -> dict[str, Any]:
+    """Daily dividend / PIL / withholding detail, sparkline, and ex-div warnings."""
+    from ibkr_accounting import (
+        load_yieldboost_etf_syms,
+        parse_change_in_dividend_accruals,
+        parse_open_positions,
+    )
+
+    try:
+        from daily_screener import YIELDBOOST_BUCKET2_PAIRS
+    except Exception:
+        YIELDBOOST_BUCKET2_PAIRS = []
+
+    att_daily = _dividend_daily_from_attribution(attribution_history_csv, run_date)
+
+    cash_rows: list[dict[str, Any]] = []
+    if dividend_cash_history_csv.is_file():
+        try:
+            ddf = pd.read_csv(dividend_cash_history_csv)
+            if not ddf.empty and "date" in ddf.columns:
+                ddf["date"] = ddf["date"].astype(str)
+                ddf = ddf[ddf["date"] <= str(run_date)]
+                for _, r in ddf.iterrows():
+                    cash_rows.append(
+                        {
+                            "date": str(r.get("date") or ""),
+                            "symbol": str(r.get("symbol") or ""),
+                            "underlying": str(r.get("underlying") or ""),
+                            "bucket": str(r.get("bucket") or ""),
+                            "pair": str(r.get("pair") or ""),
+                            "type": str(r.get("type") or ""),
+                            "category": str(r.get("category") or ""),
+                            "amount_usd": float(r.get("amount_usd") or 0.0),
+                            "ex_date": str(r.get("ex_date") or ""),
+                            "description": str(r.get("description") or ""),
+                        }
+                    )
+        except Exception as exc:
+            return {"available": False, "reason": f"unreadable dividend history: {exc}"}
+
+    by_date: dict[str, Any] = {}
+    dates = sorted({r["date"] for r in cash_rows if r.get("date")} | set(att_daily.keys()))
+    for d in dates:
+        day_rows = [r for r in cash_rows if r["date"] == d]
+        by_bucket: dict[str, float] = {}
+        by_cat: dict[str, float] = {k: 0.0 for k in DIVIDEND_CATEGORY_KEYS}
+        for r in day_rows:
+            cat = str(r.get("category") or "")
+            amt = float(r.get("amount_usd") or 0.0)
+            if cat in by_cat:
+                by_cat[cat] += amt
+            b = str(r.get("bucket") or "") or "unassigned"
+            by_bucket[b] = by_bucket.get(b, 0.0) + amt
+        att = att_daily.get(d, {k: 0.0 for k in DIVIDEND_CATEGORY_KEYS})
+        att_net = float(att.get("net_usd") or sum(att.get(k, 0.0) for k in DIVIDEND_CATEGORY_KEYS))
+        cash_net = sum(by_cat.values())
+        by_date[d] = {
+            "net_usd": cash_net if day_rows else att_net,
+            "dividends_usd": by_cat["dividends"] if day_rows else float(att.get("dividends") or 0.0),
+            "withholding_usd": by_cat["withholding_tax"] if day_rows else float(att.get("withholding_tax") or 0.0),
+            "pil_usd": by_cat["pil_dividends"] if day_rows else float(att.get("pil_dividends") or 0.0),
+            "attribution_net_usd": att_net,
+            "rows": sorted(day_rows, key=lambda r: abs(float(r.get("amount_usd") or 0.0)), reverse=True),
+            "by_bucket": dict(sorted(by_bucket.items(), key=lambda kv: abs(kv[1]), reverse=True)),
+        }
+
+    sparkline = [
+        {
+            "date": d,
+            "net_usd": float(by_date[d]["net_usd"]),
+            "pil_usd": float(by_date[d]["pil_usd"]),
+            "dividends_usd": float(by_date[d]["dividends_usd"]),
+        }
+        for d in dates
+    ]
+
+    # Expected PIL / ex-div warnings (short ETF legs)
+    warnings: list[dict[str, Any]] = []
+    run_dt = pd.Timestamp(run_date)
+    horizon_end = run_dt + pd.Timedelta(days=horizon_days)
+    cash_xml = runs_root / run_date / "ibkr_flex" / "flex_cash.xml"
+    flex_pos = runs_root / run_date / "ibkr_flex" / "flex_positions.xml"
+    yb_etfs = set(load_yieldboost_etf_syms(screener_csv or Path(), plan_csv))
+    yb_etfs |= {str(etf) for etf, _ in YIELDBOOST_BUCKET2_PAIRS}
+
+    short_qty: dict[str, float] = {}
+    if flex_pos.is_file():
+        pos = parse_open_positions(flex_pos)
+        if not pos.empty and "symbol" in pos.columns and "position" in pos.columns:
+            for _, p in pos.iterrows():
+                sym = str(p.get("symbol") or "")
+                qty = float(p.get("position") or 0.0)
+                if qty < -1e-9:
+                    short_qty[sym] = min(short_qty.get(sym, 0.0), qty)
+
+    if cash_xml.is_file():
+        accr = parse_change_in_dividend_accruals(cash_xml)
+        if not accr.empty:
+            accr = accr[accr["code"].astype(str).str.upper() == "PO"].copy()
+            for _, a in accr.iterrows():
+                ex_raw = str(a.get("exDate") or "")
+                if len(ex_raw) != 8:
+                    continue
+                ex_dt = pd.Timestamp(f"{ex_raw[:4]}-{ex_raw[4:6]}-{ex_raw[6:8]}")
+                if ex_dt <= run_dt or ex_dt > horizon_end:
+                    continue
+                sym = str(a.get("symbol") or "")
+                sq = float(short_qty.get(sym, 0.0))
+                if sq >= -1e-9:
+                    continue
+                gross_rate = float(a.get("grossRate") or 0.0)
+                fx = float(a.get("fxRateToBase") or 1.0)
+                est_pil = -abs(gross_rate * sq * fx)
+                if abs(est_pil) < 1.0:
+                    continue
+                pay_raw = str(a.get("payDate") or "")
+                pay_iso = (
+                    f"{pay_raw[:4]}-{pay_raw[4:6]}-{pay_raw[6:8]}" if len(pay_raw) == 8 else ""
+                )
+                warnings.append(
+                    {
+                        "symbol": sym,
+                        "underlying": str(a.get("underlyingSymbol") or sym),
+                        "ex_date": ex_dt.strftime("%Y-%m-%d"),
+                        "pay_date": pay_iso,
+                        "short_qty": sq,
+                        "gross_rate": gross_rate,
+                        "estimated_pil_usd": est_pil,
+                        "is_yieldboost": sym in yb_etfs,
+                        "reason": "Short position through ex-div (estimated PIL)",
+                    }
+                )
+
+    warnings.sort(key=lambda w: w["estimated_pil_usd"])
+    week_total = sum(float(w["estimated_pil_usd"]) for w in warnings)
+
+    sym_meta: dict[str, dict[str, str]] = {}
+    pnl_sym = accounting_dir / "pnl_by_symbol.csv"
+    if pnl_sym.is_file():
+        try:
+            sdf = pd.read_csv(pnl_sym)
+            for _, r in sdf.iterrows():
+                sym = str(r.get("symbol") or "")
+                if sym:
+                    sym_meta[sym] = {
+                        "underlying": str(r.get("underlying") or sym),
+                        "bucket": str(r.get("bucket") or ""),
+                        "pair": str(r.get("pair") or ""),
+                    }
+        except Exception:
+            pass
+    for w in warnings:
+        info = sym_meta.get(w["symbol"], {})
+        w["bucket"] = info.get("bucket", "")
+        w["pair"] = info.get("pair", "")
+
+    nav = float(nav_usd) if nav_usd and nav_usd > 0 else 0.0
+    return {
+        "available": True,
+        "source": "dividend_cash_history.csv + pnl_attribution_history.csv",
+        "by_date": by_date,
+        "sparkline": sparkline,
+        "available_dates": dates,
+        "category_labels": DIVIDEND_CATEGORY_LABELS,
+        "expected_pil": {
+            "available": True,
+            "horizon_days": horizon_days,
+            "threshold_usd": warn_usd,
+            "week_total_usd": week_total,
+            "week_total_pct_nav": (week_total / nav) if nav > 0 else None,
+            "warn": abs(week_total) >= warn_usd,
+            "warnings": warnings,
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Top-level snapshot assembler
 
@@ -5538,6 +5760,7 @@ class RiskSnapshot:
     movers_panel: dict[str, Any] = field(default_factory=dict)
     bucket_movers_panel: dict[str, Any] = field(default_factory=dict)
     component_attribution_panel: dict[str, Any] = field(default_factory=dict)
+    dividend_panel: dict[str, Any] = field(default_factory=dict)
     bucket_drawdown_panel: dict[str, Any] = field(default_factory=dict)
     display_sleeve_groups: list[dict[str, Any]] = field(default_factory=list)
     capital_panel: dict[str, Any] = field(default_factory=dict)
@@ -5597,6 +5820,7 @@ class RiskSnapshot:
             "movers_panel": self.movers_panel,
             "bucket_movers_panel": self.bucket_movers_panel,
             "component_attribution_panel": self.component_attribution_panel,
+            "dividend_panel": self.dividend_panel,
             "bucket_drawdown_panel": self.bucket_drawdown_panel,
             "display_sleeve_groups": self.display_sleeve_groups,
             "capital_panel": self.capital_panel,
@@ -5840,6 +6064,16 @@ def build_snapshot(
         nav_usd=nav_usd,
         run_date=run_date,
     )
+    dividend_panel = compute_dividend_panel(
+        dividend_cash_history_csv=repo_root / "data" / "ledger" / "dividend_cash_history.csv",
+        attribution_history_csv=repo_root / "data" / "ledger" / "pnl_attribution_history.csv",
+        accounting_dir=accounting,
+        runs_root=runs_root,
+        run_date=run_date,
+        nav_usd=nav_usd,
+        screener_csv=screener_csv,
+        plan_csv=run_dir / "proposed_trades.csv",
+    )
     bucket_drawdown_panel = compute_bucket_drawdown_panel(
         repo_root / "data" / "ledger" / "pnl_history.csv",
         nav_usd=nav_usd,
@@ -5898,6 +6132,7 @@ def build_snapshot(
         movers_panel=movers_panel,
         bucket_movers_panel=bucket_movers_panel,
         component_attribution_panel=component_attribution_panel,
+        dividend_panel=dividend_panel,
         bucket_drawdown_panel=bucket_drawdown_panel,
         display_sleeve_groups=display_sleeve_groups,
         capital_panel=capital_panel,

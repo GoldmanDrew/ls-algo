@@ -41,6 +41,10 @@
     pnlBucketContribTable: document.getElementById("pnl-bucket-contrib-table"),
     pnlBucketMovers: document.getElementById("pnl-bucket-movers"),
     pnlComponentChart: document.getElementById("pnl-component-chart"),
+    pnlDividendSummary: document.getElementById("pnl-dividend-summary"),
+    pnlDividendSparkline: document.getElementById("pnl-dividend-sparkline"),
+    pnlDividendWarnings: document.getElementById("pnl-dividend-warnings"),
+    pnlDividendDetail: document.getElementById("pnl-dividend-detail"),
     pnlTableTitle: document.getElementById("pnl-table-title"),
     moversControls: document.getElementById("movers-controls"),
     moversWinnersTitle: document.getElementById("movers-winners-title"),
@@ -697,6 +701,148 @@
       .join("");
     return `<div class="pnl-bucket-bars">${rows}</div>
       <p class="dim small">Total ${fmtUsdSigned(periodData.total_usd)} · ${fmtPct(periodData.total_pct_nav, 2)} of NAV</p>`;
+  }
+
+  function pnlActiveDividendDay(divPanel, state) {
+    if (!divPanel || !divPanel.available) return null;
+    const dates = divPanel.available_dates || [];
+    if (!dates.length) return null;
+    if (state.useDateMode && state.asOfDate && (divPanel.by_date || {})[state.asOfDate]) {
+      return { date: state.asOfDate, block: divPanel.by_date[state.asOfDate] };
+    }
+    const last = dates[dates.length - 1];
+    return { date: last, block: (divPanel.by_date || {})[last] };
+  }
+
+  function pnlDividendSummaryHtml(dayBlock, caption) {
+    if (!dayBlock) return `<p class="dim">No dividend data.</p>`;
+    const items = [
+      { label: "Net dividend drag", value: dayBlock.net_usd, key: "net" },
+      { label: "Dividends", value: dayBlock.dividends_usd, key: "dividends" },
+      { label: "Withholding", value: dayBlock.withholding_usd, key: "withholding" },
+      { label: "PIL", value: dayBlock.pil_usd, key: "pil" },
+    ];
+    const chips = items
+      .map((it) => {
+        const cls = signedClass(it.value);
+        return `<div class="stat stat-compact pnl-div-chip" data-div-focus="${it.key}">
+          <div class="label">${it.label}</div>
+          <div class="value ${cls}">${fmtUsdSigned(it.value)}</div>
+        </div>`;
+      })
+      .join("");
+    const att =
+      dayBlock.attribution_net_usd != null &&
+      Math.abs(dayBlock.net_usd - dayBlock.attribution_net_usd) > 0.5
+        ? `<span class="dim small"> · ledger ${fmtUsdSigned(dayBlock.attribution_net_usd)}</span>`
+        : "";
+    return `<div class="pnl-div-summary-row">${chips}</div>
+      <p class="dim small">${safeText(caption)}${att}</p>`;
+  }
+
+  function pnlDividendSparklineHtml(sparkline, state, divPanel) {
+    const rows = (sparkline || []).slice(-40);
+    if (!rows.length) return `<p class="dim">No dividend history yet.</p>`;
+    const selectedDate = state.useDateMode ? state.asOfDate : (rows[rows.length - 1] || {}).date;
+    const barRows = rows.map((r) => ({ date: r.date, daily_usd: r.net_usd }));
+    const chart = pnlBarChartSvg(barRows, { selectedDate, height: 120, width: 720 });
+    const bind = `<span class="dim small">Click a bar to view that day · ${rows.length} sessions with dividend ledger</span>`;
+    return `<div class="pnl-div-spark-wrap">${chart}${bind}</div>`;
+  }
+
+  function pnlDividendDetailHtml(dayBlock, labels) {
+    const rows = (dayBlock && dayBlock.rows) || [];
+    if (!rows.length) {
+      return `<p class="dim">No symbol-level cash rows for this date.</p>`;
+    }
+    const body = rows
+      .map((r) => {
+        const cat = labels[r.category] || r.category || r.type;
+        return `<tr>
+          <td><strong>${safeText(r.symbol)}</strong></td>
+          <td class="dim">${safeText(r.underlying)}</td>
+          <td class="dim">${safeText(r.bucket)}</td>
+          <td class="dim">${safeText(r.pair, "-")}</td>
+          <td class="dim">${safeText(cat)}</td>
+          <td class="num ${signedClass(r.amount_usd)}">${fmtUsdSigned(r.amount_usd)}</td>
+        </tr>`;
+      })
+      .join("");
+    const buckets = Object.entries((dayBlock && dayBlock.by_bucket) || {})
+      .filter(([, v]) => Math.abs(v) > 0.01)
+      .map(([b, v]) => `${safeText(b)} ${fmtUsdSigned(v)}`)
+      .join(" · ");
+    return `<table class="tight pnl-div-detail-table"><thead><tr>
+      <th>Symbol</th><th>Underlying</th><th>Bucket</th><th>Pair</th><th>Type</th><th>Amount</th>
+    </tr></thead><tbody>${body}</tbody></table>
+    ${buckets ? `<p class="dim small">By bucket: ${buckets}</p>` : ""}`;
+  }
+
+  function pnlDividendWarningsHtml(expected) {
+    if (!expected || !expected.available) return "";
+    const warns = expected.warnings || [];
+    if (!warns.length) {
+      return `<p class="dim small">No upcoming ex-div PIL warnings in the next ${expected.horizon_days || 7} sessions.</p>`;
+    }
+    const cls = expected.warn ? "warn" : "ok";
+    const head = `<div class="pnl-div-warn-banner ${cls}">
+      Upcoming ex-div (est. PIL): ${fmtUsdSigned(expected.week_total_usd)}
+      ${expected.week_total_pct_nav != null ? ` · ${fmtPct(expected.week_total_pct_nav, 2)} of NAV` : ""}
+    </div>`;
+    const body = warns
+      .map(
+        (w) => `<tr>
+        <td><strong>${safeText(w.symbol)}</strong>${w.is_yieldboost ? ' <span class="tag">YB</span>' : ""}</td>
+        <td class="dim">${safeText(w.underlying)}</td>
+        <td class="dim">${safeText(w.ex_date)}</td>
+        <td class="dim">${safeText(w.pay_date || "-")}</td>
+        <td class="num">${Math.round(w.short_qty)}</td>
+        <td class="num neg">${fmtUsdSigned(w.estimated_pil_usd)}</td>
+      </tr>`
+      )
+      .join("");
+    return `${head}<table class="tight"><thead><tr>
+      <th>Symbol</th><th>Underlying</th><th>Ex-date</th><th>Pay</th><th>Short qty</th><th>Est. PIL</th>
+    </tr></thead><tbody>${body}</tbody></table>`;
+  }
+
+  function pnlComponentBarsWithDividendsHtml(periodData, divDay) {
+    let html = pnlComponentBarsHtml(periodData);
+    if (!divDay || !divDay.block) return html;
+    const b = divDay.block;
+    const extra = [
+      { label: "Dividends", usd: b.dividends_usd, key: "dividends" },
+      { label: "Withholding tax", usd: b.withholding_usd, key: "withholding" },
+      { label: "PIL dividends", usd: b.pil_usd, key: "pil" },
+    ].filter((c) => Math.abs(c.usd) >= 0.01);
+    if (!extra.length) return html;
+    const existing = new Set(((periodData && periodData.components) || []).map((c) => c.key));
+    const missing = extra.filter((c) => !existing.has(c.key === "pil" ? "pil_dividends" : c.key === "withholding" ? "withholding_tax" : "dividends"));
+    if (!missing.length) return html;
+    const maxAbs = Math.max(...missing.map((c) => Math.abs(c.usd)), 1);
+    const rows = missing
+      .map((c) => {
+        const pct = (Math.abs(c.usd) / maxAbs) * 100;
+        const cls = c.usd >= 0 ? "pos" : "neg";
+        return `<div class="pnl-bucket-row pnl-div-drill" data-div-focus="${c.key}">
+          <div class="pnl-bucket-label">${safeText(c.label)}</div>
+          <div class="pnl-bucket-track"><div class="pnl-bucket-fill ${cls}" style="width:${pct.toFixed(1)}%"></div></div>
+          <div class="pnl-bucket-val num ${cls}">${fmtUsdSigned(c.usd)}</div>
+        </div>`;
+      })
+      .join("");
+    return `${html}<div class="pnl-bucket-bars pnl-div-extra">${rows}</div>`;
+  }
+
+  function pnlBindDividendDrill(root) {
+    if (!root) return;
+    root.querySelectorAll("[data-div-focus]").forEach((el) => {
+      el.style.cursor = "pointer";
+      el.addEventListener("click", () => {
+        const detail = document.getElementById("pnl-dividend-detail");
+        if (detail) detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    });
   }
 
   function moverTableHtml(rows, cls) {
@@ -3371,7 +3517,7 @@
           "P&amp;L history unavailable"
         )}</span>`;
       }
-      ["pnlSummary", "pnlRolling", "pnlControls", "pnlDailyChart", "pnlDailyTable", "pnlWeeklyTable", "pnlReconBanner", "pnlBucketChart", "pnlBucketContribTable", "pnlBucketMovers", "pnlComponentChart"].forEach(
+      ["pnlSummary", "pnlRolling", "pnlControls", "pnlDailyChart", "pnlDailyTable", "pnlWeeklyTable", "pnlReconBanner", "pnlBucketChart", "pnlBucketContribTable", "pnlBucketMovers", "pnlComponentChart", "pnlDividendSummary", "pnlDividendSparkline", "pnlDividendWarnings", "pnlDividendDetail"].forEach(
         (k) => {
           if (els[k]) els[k].innerHTML = "";
         }
@@ -3463,6 +3609,8 @@
       const periodData = pnlActivePeriodData(panel, _pnlPanelState);
       const compPanel = snap.component_attribution_panel || {};
       const compPeriod = pnlActiveComponentData(compPanel, _pnlPanelState);
+      const divPanel = snap.dividend_panel || {};
+      const divDay = pnlActiveDividendDay(divPanel, _pnlPanelState);
       const bucketKeys = Object.keys(bucketLabels);
       const chartBucketKeys = PNL_RECON_KEYS.concat(["stock_sleeves"]);
       const selectedDate = _pnlPanelState.useDateMode ? _pnlPanelState.asOfDate : null;
@@ -3627,11 +3775,45 @@
       if (els.pnlComponentChart) {
         els.pnlComponentChart.innerHTML =
           compPanel.available && compPeriod
-            ? pnlComponentBarsHtml(compPeriod)
+            ? pnlComponentBarsWithDividendsHtml(compPeriod, divDay)
+            : divPanel.available && divDay
+            ? pnlDividendSummaryHtml(divDay.block, pnlAttributionCaption(_pnlPanelState))
             : `<p class="dim">${safeText(
-                compPanel.reason,
+                compPanel.reason || divPanel.reason,
                 _pnlPanelState.useDateMode ? "No component data for this date." : "Component attribution unavailable"
               )}</p>`;
+        pnlBindDividendDrill(els.pnlComponentChart);
+      }
+      if (els.pnlDividendSummary) {
+        els.pnlDividendSummary.innerHTML = divPanel.available
+          ? pnlDividendSummaryHtml(
+              divDay && divDay.block,
+              _pnlPanelState.useDateMode
+                ? `Daily dividend & PIL on ${safeText(_pnlPanelState.asOfDate || divDay?.date)}`
+                : `Latest session (${safeText(divDay?.date || "")})`
+            )
+          : `<p class="dim">${safeText(divPanel.reason, "Dividend panel unavailable")}</p>`;
+        pnlBindDividendDrill(els.pnlDividendSummary);
+      }
+      if (els.pnlDividendSparkline) {
+        els.pnlDividendSparkline.innerHTML = divPanel.available
+          ? pnlDividendSparklineHtml(divPanel.sparkline, _pnlPanelState, divPanel)
+          : "";
+        if (divPanel.available) {
+          pnlBindChartClicks(snap, els.pnlDividendSparkline);
+        }
+      }
+      if (els.pnlDividendWarnings) {
+        els.pnlDividendWarnings.innerHTML =
+          divPanel.available && divPanel.expected_pil
+            ? pnlDividendWarningsHtml(divPanel.expected_pil)
+            : "";
+      }
+      if (els.pnlDividendDetail) {
+        els.pnlDividendDetail.innerHTML =
+          divPanel.available && divDay && divDay.block
+            ? pnlDividendDetailHtml(divDay.block, divPanel.category_labels || {})
+            : `<p class="dim">Select a date to view symbol-level dividend cash.</p>`;
       }
 
       renderBucketMovers(snap);
