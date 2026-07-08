@@ -478,6 +478,7 @@
   function pnlBarChartSvg(rows, opts) {
     const data = (rows || []).filter((r) => r && r.daily_usd != null);
     if (!data.length) return `<p class="dim">No P&amp;L history to chart.</p>`;
+    const selectedDate = opts?.selectedDate || null;
     const width = opts?.width || 720;
     const height = opts?.height || 180;
     const padL = 48;
@@ -498,9 +499,10 @@
         const y = v >= 0 ? zeroY - h : zeroY;
         const fill = v >= 0 ? "#1a7f4b" : "#c0392b";
         const tip = `${r.date}: ${fmtUsdSigned(v)}`;
-        return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(
+        const sel = selectedDate && r.date === selectedDate;
+        return `<rect class="pnl-bar-day" data-pnl-date="${safeText(r.date)}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(
           1
-        )}" height="${h.toFixed(1)}" fill="${fill}" opacity="0.85"><title>${safeText(tip)}</title></rect>`;
+        )}" height="${h.toFixed(1)}" fill="${fill}" opacity="${sel ? "1" : "0.85"}" stroke="${sel ? "#f0f0f0" : "none"}" stroke-width="${sel ? "1.5" : "0"}"><title>${safeText(tip)}</title></rect>`;
       })
       .join("");
     const labels = data
@@ -595,6 +597,7 @@
   function pnlStackedBarChartSvg(rows, bucketKeys, labels, opts) {
     const data = (rows || []).filter((r) => r && r.buckets);
     if (!data.length) return `<p class="dim">No bucket history to chart.</p>`;
+    const selectedDate = opts?.selectedDate || null;
     const width = opts?.width || 720;
     const height = opts?.height || 200;
     const padL = 48;
@@ -633,7 +636,11 @@
           })
           .join("");
         const total = totals[i];
-        return `${segs}<title>${safeText(r.date)} total ${fmtUsdSigned(total)}</title>`;
+        const sel = selectedDate && r.date === selectedDate;
+        const outline = sel
+          ? `<rect class="pnl-bar-day" data-pnl-date="${safeText(r.date)}" x="${x.toFixed(1)}" y="${(zeroY - posStack - 1).toFixed(1)}" width="${barW.toFixed(1)}" height="${(posStack + negStack + 2).toFixed(1)}" fill="none" stroke="#f0f0f0" stroke-width="1.5"/>`
+          : `<rect class="pnl-bar-day" data-pnl-date="${safeText(r.date)}" x="${x.toFixed(1)}" y="${zeroY.toFixed(1)}" width="${barW.toFixed(1)}" height="1" fill="none" opacity="0"/>`;
+        return `${segs}${outline}<title>${safeText(r.date)} total ${fmtUsdSigned(total)}</title>`;
       })
       .join("");
     return `<svg viewBox="0 0 ${width} ${height}" width="100%" class="pnl-bar-chart" preserveAspectRatio="xMidYMid meet">
@@ -2271,16 +2278,25 @@
     try {
       const params = new URLSearchParams(raw);
       const tab = params.get("tab");
-      if (tab && DASH_TAB_IDS.includes(tab)) return { tab };
-      if (params.has("b4sim")) return { tab: "risk" };
+      const base = { tab: "overview", pnlDate: params.get("date"), pnlBucket: params.get("bucket") };
+      if (tab && DASH_TAB_IDS.includes(tab)) return { ...base, tab };
+      if (params.has("b4sim")) return { tab: "risk", pnlDate: null, pnlBucket: null };
     } catch (_e) { /* ignore */ }
-    return { tab: "overview" };
+    return { tab: "overview", pnlDate: null, pnlBucket: null };
   }
 
   function dashWriteHash(tabId, { keepB4 = true } = {}) {
     try {
       const params = new URLSearchParams();
       if (tabId && tabId !== "overview") params.set("tab", tabId);
+      if (tabId === "pnl") {
+        if (_pnlPanelState.useDateMode && _pnlPanelState.asOfDate) {
+          params.set("date", _pnlPanelState.asOfDate);
+        }
+        if (_pnlPanelState.moversBucket) {
+          params.set("bucket", _pnlPanelState.moversBucket);
+        }
+      }
       if (tabId === "risk" && keepB4) {
         const existing = b4ParseHash();
         if (existing) params.set("b4sim", JSON.stringify(existing));
@@ -2375,6 +2391,11 @@
     window.addEventListener("hashchange", () => {
       if (!_lastSnap) return;
       const { tab } = dashParseHash();
+      if (tab === "pnl" && _lastSnap.pnl_panel?.available) {
+        pnlInitStateFromPanel(_lastSnap.pnl_panel);
+        if (_pnlRepaint) _pnlRepaint();
+        if (_pnlRepaintMovers) _pnlRepaintMovers(_lastSnap);
+      }
       switchDashboardTab(tab, { updateHash: false, snap: _lastSnap });
     });
   }
@@ -3150,6 +3171,9 @@
     }
   }
 
+  let _pnlRepaint = null;
+  let _pnlRepaintMovers = null;
+
   let _pnlPanelState = {
     view: "daily",
     lookback: 40,
@@ -3157,6 +3181,8 @@
     chartMode: "stacked_buckets",
     moversScope: "book",
     moversBucket: "bucket_1",
+    useDateMode: false,
+    asOfDate: null,
   };
 
   const PNL_PERIOD_OPTIONS = [
@@ -3176,6 +3202,166 @@
     return null;
   }
 
+  function pnlInitStateFromPanel(panel) {
+    const { pnlDate, pnlBucket } = dashParseHash();
+    const dates = panel?.available_dates || [];
+    if (pnlBucket && (panel?.bucket_labels || {})[pnlBucket]) {
+      _pnlPanelState.moversBucket = pnlBucket;
+    }
+    if (pnlDate && dates.includes(pnlDate)) {
+      _pnlPanelState.useDateMode = true;
+      _pnlPanelState.asOfDate = pnlDate;
+    } else if (!pnlDate) {
+      _pnlPanelState.useDateMode = false;
+      _pnlPanelState.asOfDate = null;
+    }
+  }
+
+  function pnlSelectDate(snap, date, { updateHash = true } = {}) {
+    const panel = snap?.pnl_panel || {};
+    const dates = panel.available_dates || [];
+    if (date && !dates.includes(date)) return;
+    _pnlPanelState.useDateMode = !!date;
+    _pnlPanelState.asOfDate = date || null;
+    if (_pnlRepaint) _pnlRepaint();
+    if (_pnlRepaintMovers) _pnlRepaintMovers(snap);
+    if (updateHash) dashWriteHash("pnl");
+  }
+
+  function pnlShiftDate(snap, delta) {
+    const panel = snap?.pnl_panel || {};
+    const dates = panel.available_dates || [];
+    if (!dates.length) return;
+    const cur = _pnlPanelState.asOfDate || panel.latest_date || dates[dates.length - 1];
+    const idx = dates.indexOf(cur);
+    if (idx < 0) return;
+    pnlSelectDate(snap, dates[Math.max(0, Math.min(dates.length - 1, idx + delta))]);
+  }
+
+  function pnlDateControlsHtml(panel) {
+    const dates = panel.available_dates || [];
+    const latest = panel.latest_date || panel.run_date || dates[dates.length - 1] || "";
+    const cur = _pnlPanelState.useDateMode ? _pnlPanelState.asOfDate : latest;
+    const min = dates[0] || "";
+    const max = dates[dates.length - 1] || "";
+    const disabled = _pnlPanelState.useDateMode ? "" : "disabled";
+    return `
+      <label class="pnl-ctl">Attribution
+        <select id="pnl-attrib-mode">
+          <option value="period" ${_pnlPanelState.useDateMode ? "" : "selected"}>Calendar period</option>
+          <option value="date" ${_pnlPanelState.useDateMode ? "selected" : ""}>Single date</option>
+        </select>
+      </label>
+      <label class="pnl-ctl">As of date
+        <input type="date" id="pnl-asof-date" min="${safeText(min)}" max="${safeText(max)}" value="${safeText(cur)}" ${disabled} />
+      </label>
+      <button type="button" class="pnl-date-btn" id="pnl-date-prev" ${disabled} title="Previous session">←</button>
+      <button type="button" class="pnl-date-btn" id="pnl-date-next" ${disabled} title="Next session">→</button>
+      <button type="button" class="pnl-date-btn" id="pnl-date-latest">Latest</button>`;
+  }
+
+  function pnlBindDateControls(snap, panel) {
+    const modeEl = document.getElementById("pnl-attrib-mode");
+    const dateEl = document.getElementById("pnl-asof-date");
+    const prevEl = document.getElementById("pnl-date-prev");
+    const nextEl = document.getElementById("pnl-date-next");
+    const latestEl = document.getElementById("pnl-date-latest");
+    if (modeEl) {
+      modeEl.addEventListener("change", () => {
+        if (modeEl.value === "date") {
+          const dates = panel.available_dates || [];
+          const d = _pnlPanelState.asOfDate || panel.latest_date || dates[dates.length - 1];
+          pnlSelectDate(snap, d);
+        } else {
+          _pnlPanelState.useDateMode = false;
+          _pnlPanelState.asOfDate = null;
+          if (_pnlRepaint) _pnlRepaint();
+          if (_pnlRepaintMovers) _pnlRepaintMovers(snap);
+          dashWriteHash("pnl");
+        }
+      });
+    }
+    if (dateEl) {
+      dateEl.addEventListener("change", () => {
+        if (dateEl.value) pnlSelectDate(snap, dateEl.value);
+      });
+    }
+    if (prevEl) prevEl.addEventListener("click", () => pnlShiftDate(snap, -1));
+    if (nextEl) nextEl.addEventListener("click", () => pnlShiftDate(snap, 1));
+    if (latestEl) {
+      latestEl.addEventListener("click", () => {
+        _pnlPanelState.useDateMode = false;
+        _pnlPanelState.asOfDate = null;
+        if (_pnlRepaint) _pnlRepaint();
+        if (_pnlRepaintMovers) _pnlRepaintMovers(snap);
+        dashWriteHash("pnl");
+      });
+    }
+  }
+
+  function pnlBindChartClicks(snap, root) {
+    if (!root) return;
+    root.querySelectorAll("[data-pnl-date]").forEach((el) => {
+      el.style.cursor = "pointer";
+      el.addEventListener("click", () => {
+        const d = el.getAttribute("data-pnl-date");
+        if (d) pnlSelectDate(snap, d);
+      });
+    });
+  }
+
+  function pnlBindTableClicks(snap, root) {
+    if (!root) return;
+    root.querySelectorAll("tr[data-pnl-date]").forEach((tr) => {
+      tr.style.cursor = "pointer";
+      tr.addEventListener("click", () => {
+        const d = tr.getAttribute("data-pnl-date");
+        if (d) pnlSelectDate(snap, d);
+      });
+    });
+  }
+
+  function pnlActivePeriodData(panel, state) {
+    if (state.useDateMode && state.asOfDate) {
+      return (panel.periods_by_date || {})[state.asOfDate] || null;
+    }
+    return pnlPeriodData(panel, state.bucketPeriod);
+  }
+
+  function pnlActiveComponentData(compPanel, state) {
+    if (!compPanel || !compPanel.available) return null;
+    if (state.useDateMode && state.asOfDate) {
+      return (compPanel.by_date || {})[state.asOfDate] || null;
+    }
+    return (compPanel.periods || {})[state.bucketPeriod] || (compPanel.periods || {}).today;
+  }
+
+  function pnlActiveMoversContext(bmp, state) {
+    if (state.useDateMode && state.asOfDate) {
+      return {
+        mode: "date",
+        key: state.asOfDate,
+        block: (bmp.by_date || {})[state.asOfDate],
+        book: (bmp.book_by_date || {})[state.asOfDate],
+      };
+    }
+    const period = state.bucketPeriod || "today";
+    return {
+      mode: "period",
+      key: period,
+      block: (bmp.by_period || {})[period],
+      book: null,
+    };
+  }
+
+  function pnlAttributionCaption(state) {
+    if (state.useDateMode && state.asOfDate) {
+      return `Daily move on ${state.asOfDate}`;
+    }
+    const opt = PNL_PERIOD_OPTIONS.find((o) => o.value === state.bucketPeriod);
+    return `${(opt && opt.label) || state.bucketPeriod} bucket moves`;
+  }
+
   function renderPnlPanel(snap) {
     const panel = snap.pnl_panel || {};
     if (!panel.available) {
@@ -3193,16 +3379,26 @@
       return;
     }
 
+    pnlInitStateFromPanel(panel);
+    _pnlRepaintMovers = (s) => renderMovers(s);
+
     const summary = panel.summary || {};
     const bucketLabels = panel.bucket_labels || {};
 
     if (els.pnlMeta) {
+      const dateHint = _pnlPanelState.useDateMode
+        ? ` · viewing ${safeText(_pnlPanelState.asOfDate)}`
+        : "";
       els.pnlMeta.innerHTML = `<span class="dim small">Source: ${safeText(
         panel.source
-      )} · ${panel.n_daily_rows || 0} trading days · vs prior ${safeText(summary.prior_date, "")}</span>`;
+      )} · ${panel.n_daily_rows || 0} trading days · vs prior ${safeText(summary.prior_date, "")}${dateHint}</span>`;
     }
 
     if (els.pnlSummary) {
+      const dayRow =
+        _pnlPanelState.useDateMode && _pnlPanelState.asOfDate
+          ? (panel.periods_by_date || {})[_pnlPanelState.asOfDate]
+          : null;
       const cmpWeek =
         summary.prior_week_usd != null
           ? ` vs prior wk ${fmtUsdSigned(summary.prior_week_usd)}`
@@ -3211,32 +3407,42 @@
         summary.prior_month_usd != null
           ? ` vs prior mo ${fmtUsdSigned(summary.prior_month_usd)}`
           : "";
-      els.pnlSummary.innerHTML = [
-        {
-          label: "Today",
-          value: fmtUsdSigned(summary.daily_usd),
-          sub: `${fmtPct(summary.daily_pct_nav, 2)} of NAV`,
-          cls: signedClass(summary.daily_usd),
-        },
-        {
-          label: "Week to date",
-          value: fmtUsdSigned(summary.wtd_usd),
-          sub: `${fmtPct(summary.wtd_pct_nav, 2)} of NAV${cmpWeek}`,
-          cls: signedClass(summary.wtd_usd),
-        },
-        {
-          label: "Month to date",
-          value: fmtUsdSigned(summary.mtd_usd),
-          sub: `${fmtPct(summary.mtd_pct_nav, 2)} of NAV${cmpMonth}`,
-          cls: signedClass(summary.mtd_usd),
-        },
-        {
-          label: "YTD (cumulative)",
-          value: fmtUsdSigned(summary.ytd_usd),
-          sub: `${fmtPct(summary.ytd_pct_nav, 2)} of NAV`,
-          cls: signedClass(summary.ytd_usd),
-        },
-      ]
+      const items = dayRow
+        ? [
+            {
+              label: `Selected (${safeText(_pnlPanelState.asOfDate)})`,
+              value: fmtUsdSigned(dayRow.book_usd),
+              sub: `${fmtPct(dayRow.book_pct_nav, 2)} of NAV · single-day move`,
+              cls: signedClass(dayRow.book_usd),
+            },
+          ]
+        : [
+            {
+              label: "Today",
+              value: fmtUsdSigned(summary.daily_usd),
+              sub: `${fmtPct(summary.daily_pct_nav, 2)} of NAV`,
+              cls: signedClass(summary.daily_usd),
+            },
+            {
+              label: "Week to date",
+              value: fmtUsdSigned(summary.wtd_usd),
+              sub: `${fmtPct(summary.wtd_pct_nav, 2)} of NAV${cmpWeek}`,
+              cls: signedClass(summary.wtd_usd),
+            },
+            {
+              label: "Month to date",
+              value: fmtUsdSigned(summary.mtd_usd),
+              sub: `${fmtPct(summary.mtd_pct_nav, 2)} of NAV${cmpMonth}`,
+              cls: signedClass(summary.mtd_usd),
+            },
+            {
+              label: "YTD (cumulative)",
+              value: fmtUsdSigned(summary.ytd_usd),
+              sub: `${fmtPct(summary.ytd_pct_nav, 2)} of NAV`,
+              cls: signedClass(summary.ytd_usd),
+            },
+          ];
+      els.pnlSummary.innerHTML = items
         .map(
           (it) => `<div class="stat">
           <div class="label">${it.label}</div>
@@ -3247,23 +3453,20 @@
         .join("");
     }
 
-    function bucketCaption(period) {
-      const opt = PNL_PERIOD_OPTIONS.find((o) => o.value === period);
-      return (opt && opt.label) || period;
-    }
-
     function paint() {
-      const dailyAll = panel.daily || [];
+      const dailyAll = panel.daily_all || panel.daily || [];
       const weeklyAll = panel.weekly || [];
       const lb = _pnlPanelState.lookback;
       const dailySlice =
         lb === "ytd" ? dailyAll : dailyAll.slice(-Math.min(lb, dailyAll.length));
       const period = _pnlPanelState.bucketPeriod;
-      const periodData = pnlPeriodData(panel, period);
+      const periodData = pnlActivePeriodData(panel, _pnlPanelState);
       const compPanel = snap.component_attribution_panel || {};
-      const compPeriod = (compPanel.periods || {})[period] || (compPanel.periods || {}).today;
+      const compPeriod = pnlActiveComponentData(compPanel, _pnlPanelState);
       const bucketKeys = Object.keys(bucketLabels);
       const chartBucketKeys = PNL_RECON_KEYS.concat(["stock_sleeves"]);
+      const selectedDate = _pnlPanelState.useDateMode ? _pnlPanelState.asOfDate : null;
+      const periodDisabled = _pnlPanelState.useDateMode ? "disabled" : "";
 
       if (els.pnlControls) {
         const periodOpts = PNL_PERIOD_OPTIONS.map(
@@ -3279,6 +3482,8 @@
           </label>
           <label class="pnl-ctl">Lookback
             <select id="pnl-lookback">
+              <option value="5" ${_pnlPanelState.lookback === 5 ? "selected" : ""}>5 sessions</option>
+              <option value="10" ${_pnlPanelState.lookback === 10 ? "selected" : ""}>10 sessions</option>
               <option value="20" ${_pnlPanelState.lookback === 20 ? "selected" : ""}>20 sessions</option>
               <option value="40" ${_pnlPanelState.lookback === 40 ? "selected" : ""}>40 sessions</option>
               <option value="ytd" ${_pnlPanelState.lookback === "ytd" ? "selected" : ""}>All in panel</option>
@@ -3291,8 +3496,9 @@
             </select>
           </label>
           <label class="pnl-ctl">Bucket period
-            <select id="pnl-bucket-period">${periodOpts}</select>
-          </label>`;
+            <select id="pnl-bucket-period" ${periodDisabled}>${periodOpts}</select>
+          </label>
+          <span class="dim small">${_pnlPanelState.useDateMode ? `Viewing ${safeText(_pnlPanelState.asOfDate)} · change date in Performance controls above` : "Click a chart bar or table row to pick a date · controls above"}</span>`;
         const viewEl = document.getElementById("pnl-view");
         const lbEl = document.getElementById("pnl-lookback");
         const cmEl = document.getElementById("pnl-chart-mode");
@@ -3310,9 +3516,11 @@
         });
       }
 
-      if (els.pnlRolling && panel.rolling) {
+      if (els.pnlRolling && panel.rolling && !_pnlPanelState.useDateMode) {
         const r = panel.rolling;
         els.pnlRolling.innerHTML = `Lookback stats: ${r.n_days || 0} days · win rate ${fmtPct(r.win_rate, 0)} · best ${fmtUsdSigned(r.best_day_usd)} · worst ${fmtUsdSigned(r.worst_day_usd)} · avg ${fmtUsdSigned(r.avg_daily_usd)}`;
+      } else if (els.pnlRolling && _pnlPanelState.useDateMode) {
+        els.pnlRolling.innerHTML = `Single-date mode · ${safeText(_pnlPanelState.asOfDate)} · click table row or chart bar to change`;
       }
 
       const chartRows =
@@ -3329,10 +3537,12 @@
           els.pnlDailyChart.innerHTML = pnlStackedBarChartSvg(chartRows, chartBucketKeys, bucketLabels, {
             width: 720,
             height: 200,
+            selectedDate,
           });
         } else {
-          els.pnlDailyChart.innerHTML = pnlBarChartSvg(chartRows, { width: 720, height: 200 });
+          els.pnlDailyChart.innerHTML = pnlBarChartSvg(chartRows, { width: 720, height: 200, selectedDate });
         }
+        pnlBindChartClicks(snap, els.pnlDailyChart);
       }
       if (els.pnlTableTitle) {
         els.pnlTableTitle.textContent =
@@ -3340,14 +3550,15 @@
       }
 
       const dailyHead =
-        `<table class="tight"><thead><tr><th>Date</th><th class="num">Daily</th><th class="num">% NAV</th>` +
+        `<table class="tight pnl-daily-table"><thead><tr><th>Date</th><th class="num">Daily</th><th class="num">% NAV</th>` +
         bucketKeys.map((k) => `<th class="num">${safeText(bucketLabels[k] || k)}</th>`).join("") +
         `</tr></thead><tbody>`;
       const dailyBody = [...dailySlice]
         .reverse()
         .map((r) => {
           const bks = r.buckets || {};
-          return `<tr>
+          const sel = selectedDate === r.date ? " pnl-day-selected" : "";
+          return `<tr class="pnl-day-row${sel}" data-pnl-date="${safeText(r.date)}">
             <td>${safeText(r.date)}</td>
             <td class="num ${signedClass(r.daily_usd)}">${fmtUsdSigned(r.daily_usd)}</td>
             <td class="num">${fmtPct(r.daily_pct_nav, 2)}</td>
@@ -3362,6 +3573,7 @@
           dailyBody.length
             ? dailyHead + dailyBody + `</tbody></table>`
             : `<p class="dim">No daily rows.</p>`;
+        pnlBindTableClicks(snap, els.pnlDailyTable);
       }
 
       if (els.pnlWeeklyTable) {
@@ -3392,14 +3604,20 @@
 
       const bpBuckets = (periodData && periodData.buckets) || {};
       if (els.pnlReconBanner) {
-        els.pnlReconBanner.innerHTML = periodData
-          ? pnlReconBannerHtml(periodData, panel.recon_tol_usd)
-          : "";
+        if (_pnlPanelState.useDateMode && !periodData) {
+          els.pnlReconBanner.innerHTML = `<div class="pnl-recon warn">No P&amp;L row for ${safeText(_pnlPanelState.asOfDate)}.</div>`;
+        } else {
+          els.pnlReconBanner.innerHTML = periodData
+            ? pnlReconBannerHtml(periodData, panel.recon_tol_usd)
+            : "";
+        }
       }
       if (els.pnlBucketChart) {
-        els.pnlBucketChart.innerHTML = pnlBucketBarsHtml(bpBuckets, bucketLabels, {
-          caption: `${bucketCaption(period)} bucket moves`,
-        });
+        els.pnlBucketChart.innerHTML = periodData
+          ? pnlBucketBarsHtml(bpBuckets, bucketLabels, {
+              caption: pnlAttributionCaption(_pnlPanelState),
+            })
+          : `<p class="dim">No bucket data for this date.</p>`;
       }
       if (els.pnlBucketContribTable) {
         els.pnlBucketContribTable.innerHTML = periodData
@@ -3410,16 +3628,21 @@
         els.pnlComponentChart.innerHTML =
           compPanel.available && compPeriod
             ? pnlComponentBarsHtml(compPeriod)
-            : `<p class="dim">${safeText(compPanel.reason, "Component attribution unavailable")}</p>`;
+            : `<p class="dim">${safeText(
+                compPanel.reason,
+                _pnlPanelState.useDateMode ? "No component data for this date." : "Component attribution unavailable"
+              )}</p>`;
       }
 
-      renderBucketMovers(snap, period);
+      renderBucketMovers(snap);
+      renderMovers(snap);
     }
 
+    _pnlRepaint = paint;
     paint();
   }
 
-  function renderBucketMovers(snap, period) {
+  function renderBucketMovers(snap) {
     const bmp = snap.bucket_movers_panel || {};
     const labels = (snap.pnl_panel || {}).bucket_labels || {};
     if (!els.pnlBucketMovers) return;
@@ -3427,12 +3650,15 @@
       els.pnlBucketMovers.innerHTML = `<p class="dim">${safeText(bmp.reason, "Bucket movers unavailable")}</p>`;
       return;
     }
-    const periodBlock = (bmp.by_period || {})[period];
-    const usePeriod = bmp.history_available && periodBlock;
-    const blocks = usePeriod ? periodBlock.by_bucket : bmp.snapshot_ytd || {};
-    const title = usePeriod
-      ? `Period P&amp;L by name (${safeText(periodBlock.start_date || "start")} → ${safeText(periodBlock.end_date || "")})`
-      : "YTD cumulative by name (latest snapshot)";
+    const ctx = pnlActiveMoversContext(bmp, _pnlPanelState);
+    const usePeriod = bmp.history_available && ctx.block;
+    const blocks = usePeriod ? ctx.block.by_bucket : bmp.snapshot_ytd || {};
+    let title = "YTD cumulative by name (latest snapshot)";
+    if (_pnlPanelState.useDateMode && ctx.block) {
+      title = `Daily P&amp;L by name on ${safeText(ctx.block.end_date)} (vs ${safeText(ctx.block.start_date || "prior")})`;
+    } else if (usePeriod) {
+      title = `Period P&amp;L by name (${safeText(ctx.block.start_date || "start")} → ${safeText(ctx.block.end_date || "")})`;
+    }
     const sections = Object.keys(blocks)
       .sort()
       .map((bucket) => {
@@ -3453,12 +3679,17 @@
   function renderMovers(snap) {
     const panel = snap.movers_panel || {};
     const bmp = snap.bucket_movers_panel || {};
-    const period = _pnlPanelState.bucketPeriod || "today";
-    const bucketLabels = (snap.pnl_panel || {}).bucket_labels || {};
+    const pnlPanel = snap.pnl_panel || {};
+    const bucketLabels = pnlPanel.bucket_labels || {};
     const bucketKeys = Object.keys(bucketLabels).filter((k) => k.startsWith("bucket_"));
+    const ctx = pnlActiveMoversContext(bmp, _pnlPanelState);
+    const periodLabel = _pnlPanelState.useDateMode
+      ? safeText(_pnlPanelState.asOfDate)
+      : safeText(_pnlPanelState.bucketPeriod || "today");
 
     if (els.moversControls) {
       els.moversControls.innerHTML = `
+        ${pnlDateControlsHtml(pnlPanel)}
         <label class="pnl-ctl">Movers scope
           <select id="movers-scope">
             <option value="book" ${_pnlPanelState.moversScope === "book" ? "selected" : ""}>Book</option>
@@ -3470,24 +3701,40 @@
             ${bucketKeys.map((k) => `<option value="${k}" ${_pnlPanelState.moversBucket === k ? "selected" : ""}>${safeText(bucketLabels[k] || k)}</option>`).join("")}
           </select>
         </label>
-        <span class="dim small">Period follows Bucket period below (${safeText(period)})</span>`;
+        <span class="dim small">${_pnlPanelState.useDateMode ? `Single date: ${periodLabel}` : `Calendar period: ${periodLabel}`}</span>`;
+      pnlBindDateControls(snap, pnlPanel);
       const scopeEl = document.getElementById("movers-scope");
       const bucketEl = document.getElementById("movers-bucket");
-      if (scopeEl) scopeEl.addEventListener("change", () => { _pnlPanelState.moversScope = scopeEl.value; renderMovers(snap); });
-      if (bucketEl) bucketEl.addEventListener("change", () => { _pnlPanelState.moversBucket = bucketEl.value; renderMovers(snap); });
+      if (scopeEl) scopeEl.addEventListener("change", () => {
+        _pnlPanelState.moversScope = scopeEl.value;
+        renderMovers(snap);
+        dashWriteHash("pnl");
+      });
+      if (bucketEl) bucketEl.addEventListener("change", () => {
+        _pnlPanelState.moversBucket = bucketEl.value;
+        renderMovers(snap);
+        dashWriteHash("pnl");
+      });
     }
 
     let winners = (panel && panel.winners) || [];
     let losers = (panel && panel.losers) || [];
     let note = (panel && panel.note) || "";
 
-    if (_pnlPanelState.moversScope === "bucket" && bmp.available) {
-      const periodBlock = (bmp.by_period || {})[period];
+    if (_pnlPanelState.moversScope === "book" && _pnlPanelState.useDateMode && ctx.book) {
+      winners = ctx.book.winners || [];
+      losers = ctx.book.losers || [];
+      note = `Book daily movers on ${periodLabel} (names summed across buckets; shared lines may appear in multiple sleeves).`;
+    } else if (_pnlPanelState.moversScope === "bucket" && bmp.available) {
       const bucket = _pnlPanelState.moversBucket || "bucket_1";
-      if (periodBlock && periodBlock.by_bucket && periodBlock.by_bucket[bucket]) {
-        winners = periodBlock.by_bucket[bucket].winners || [];
-        losers = periodBlock.by_bucket[bucket].losers || [];
-        note = `Period movers for ${bucketLabels[bucket] || bucket} (${period}).`;
+      if (ctx.block && ctx.block.by_bucket && ctx.block.by_bucket[bucket]) {
+        winners = ctx.block.by_bucket[bucket].winners || [];
+        losers = ctx.block.by_bucket[bucket].losers || [];
+        if (_pnlPanelState.useDateMode) {
+          note = `Daily movers for ${bucketLabels[bucket] || bucket} on ${periodLabel}.`;
+        } else {
+          note = `Period movers for ${bucketLabels[bucket] || bucket} (${periodLabel}).`;
+        }
       } else if (bmp.snapshot_ytd && bmp.snapshot_ytd[bucket]) {
         winners = bmp.snapshot_ytd[bucket].winners || [];
         losers = bmp.snapshot_ytd[bucket].losers || [];

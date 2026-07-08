@@ -4609,8 +4609,8 @@ PNL_PANEL_BUCKET_KEYS: list[tuple[str, str]] = [
     ("stock_sleeves", "pnl_stock_sleeves"),
 ]
 
-PNL_PANEL_DAILY_LOOKBACK = 60
-PNL_PANEL_WEEKLY_LOOKBACK = 16
+PNL_PANEL_DAILY_LOOKBACK = 365
+PNL_PANEL_WEEKLY_LOOKBACK = 52
 
 
 def _pnl_panel_bucket_labels() -> dict[str, str]:
@@ -4924,11 +4924,20 @@ def compute_pnl_panel(
         df=df,
     )
     rolling = _pnl_rolling_stats(daily_rows[-daily_lookback:], nav_usd=nav)
+    periods_by_date: dict[str, dict[str, Any]] = {}
+    for row in daily_rows:
+        periods_by_date[str(row["date"])] = _pnl_period_payload(
+            float(row.get("daily_usd") or 0.0),
+            dict(row.get("buckets") or {}),
+            nav_usd=nav,
+        )
 
     return {
         "available": True,
         "source": "pnl_history.csv",
         "run_date": str(run_date or last_daily["date"]),
+        "latest_date": str(last_daily["date"]),
+        "available_dates": [str(r["date"]) for r in daily_rows],
         "bucket_labels": _pnl_panel_bucket_labels(),
         "recon_bucket_keys": list(PNL_RECON_BUCKET_KEYS),
         "recon_tol_usd": PNL_RECON_TOL_USD,
@@ -4948,7 +4957,9 @@ def compute_pnl_panel(
             "prior_month_pct_nav": (prior_mtd_usd / nav) if nav > 0 else None,
         },
         "periods": periods,
+        "periods_by_date": periods_by_date,
         "rolling": rolling,
+        "daily_all": daily_rows,
         "daily": daily_rows[-daily_lookback:],
         "weekly": weekly_rows[-weekly_lookback:],
         "n_daily_rows": len(daily_rows),
@@ -5177,6 +5188,35 @@ def _movers_from_cum_history(
     return winners[:top_n], losers[:top_n]
 
 
+def _aggregate_book_daily_movers(
+    by_bucket: dict[str, Any],
+    *,
+    top_n: int,
+) -> dict[str, list[dict[str, Any]]]:
+    """Sum per-underlying daily PnL across buckets (shared lines may double-count)."""
+    by_u: dict[str, dict[str, Any]] = {}
+    for slot in by_bucket.values():
+        for r in (slot.get("winners") or []) + (slot.get("losers") or []):
+            u = _clean_str(r.get("underlying"))
+            if not u:
+                continue
+            cur = by_u.setdefault(
+                u,
+                {
+                    "underlying": u,
+                    "symbols": _clean_str(r.get("symbols")),
+                    "total_pnl": 0.0,
+                },
+            )
+            cur["total_pnl"] = float(cur["total_pnl"]) + float(r.get("total_pnl") or 0.0)
+            if not cur.get("symbols") and r.get("symbols"):
+                cur["symbols"] = _clean_str(r.get("symbols"))
+    rows = list(by_u.values())
+    winners = sorted([r for r in rows if r["total_pnl"] > 0], key=lambda r: r["total_pnl"], reverse=True)
+    losers = sorted([r for r in rows if r["total_pnl"] < 0], key=lambda r: r["total_pnl"])
+    return {"winners": winners[:top_n], "losers": losers[:top_n]}
+
+
 def _resolve_period_dates(
     daily_rows: list[dict[str, Any]],
     run_date: str,
@@ -5295,8 +5335,10 @@ def compute_bucket_movers_panel(
             weekly_lookback=520,
         )
         if pnl_tmp.get("available"):
-            daily_rows = pnl_tmp.get("daily") or []
+            daily_rows = pnl_tmp.get("daily_all") or pnl_tmp.get("daily") or []
 
+    by_date: dict[str, dict[str, Any]] = {}
+    book_by_date: dict[str, dict[str, Any]] = {}
     if hist_available and daily_rows:
         hist = pd.read_csv(bucket_underlying_history_csv)
         hist["date"] = hist["date"].astype(str)
@@ -5318,12 +5360,34 @@ def compute_bucket_movers_panel(
                 "start_date": start_date,
                 "by_bucket": period_buckets,
             }
+        for row in daily_rows:
+            d = str(row["date"])
+            start_date = row.get("prior_date")
+            period_buckets = {}
+            for bucket in BUCKET_KEYS:
+                sub = hist[hist["bucket"] == bucket]
+                if sub.empty:
+                    period_buckets[bucket] = {"winners": [], "losers": []}
+                    continue
+                w, l = _movers_from_cum_history(
+                    sub, end_date=d, start_date=start_date, top_n=top_n
+                )
+                period_buckets[bucket] = {"winners": w, "losers": l}
+            by_date[d] = {
+                "end_date": d,
+                "start_date": start_date,
+                "by_bucket": period_buckets,
+            }
+            book_by_date[d] = _aggregate_book_daily_movers(period_buckets, top_n=top_n)
 
     return {
         "available": True,
         "snapshot_ytd": snapshot,
         "by_period": by_period,
-        "history_available": bool(by_period),
+        "by_date": by_date,
+        "book_by_date": book_by_date,
+        "history_available": bool(by_period or by_date),
+        "available_dates": [str(r["date"]) for r in daily_rows],
         "note": (
             "Period movers from pnl_bucket_underlying_history.csv diffs; "
             "snapshot_ytd from latest pnl_<bucket>.csv."
@@ -5427,10 +5491,19 @@ def compute_component_attribution_panel(
         if pred is None:
             continue
         out_periods[key] = _payload(_sum_period(pred))
+
+    by_date: dict[str, Any] = {}
+    for row in daily_rows:
+        totals = {col: float(row.get(col) or 0.0) for col, _ in COMPONENT_ATTRIBUTION_COLS}
+        totals["strategy_total_pnl"] = float(row.get("strategy_total_pnl") or 0.0)
+        by_date[str(row["date"])] = _payload(totals)
+
     return {
         "available": True,
         "source": "pnl_attribution_history.csv",
         "periods": out_periods,
+        "by_date": by_date,
+        "available_dates": [str(r["date"]) for r in daily_rows],
         "component_labels": {col: label for col, label in COMPONENT_ATTRIBUTION_COLS},
     }
 

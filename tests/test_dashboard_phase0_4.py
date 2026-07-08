@@ -18,6 +18,7 @@ from risk_dashboard.metrics import (
     SLEEVE_TARGET_WEIGHTS,
     compute_borrow_shock_panel,
     compute_bucket_drawdown_panel,
+    compute_bucket_movers_panel,
     compute_component_attribution_panel,
     compute_drawdown_panel,
     compute_movers_panel,
@@ -153,6 +154,9 @@ def test_pnl_panel_daily_and_weekly_deltas(tmp_path):
     assert panel["periods"]["today"]["book_usd"] == pytest.approx(-1000)
     assert panel["periods"]["wtd"]["book_usd"] == pytest.approx(-1000)
     assert "recon_ok" in panel["periods"]["today"]
+    assert panel["available_dates"] == ["2026-06-03", "2026-06-04", "2026-06-09"]
+    assert panel["periods_by_date"]["2026-06-09"]["book_usd"] == pytest.approx(-1000)
+    assert len(panel["daily_all"]) == 3
 
 
 def test_component_attribution_panel_periods(tmp_path):
@@ -168,6 +172,48 @@ def test_component_attribution_panel_periods(tmp_path):
     panel = compute_component_attribution_panel(csv, nav_usd=1_000_000, run_date="2026-06-03")
     assert panel["available"] is True
     assert panel["periods"]["today"]["total_usd"] == pytest.approx(290)
+    assert panel["by_date"]["2026-06-03"]["total_usd"] == pytest.approx(290)
+
+
+def test_bucket_movers_by_date(tmp_path):
+    hist_csv = tmp_path / "pnl_bucket_underlying_history.csv"
+    hist_csv.write_text(
+        "date,bucket,underlying,symbols,cum_pnl_usd\n"
+        "2026-06-02,bucket_1,AAA,AAA,0\n"
+        "2026-06-03,bucket_1,AAA,AAA,500\n"
+        "2026-06-04,bucket_1,AAA,AAA,200\n",
+        encoding="utf-8",
+    )
+    pnl_hist = tmp_path / "pnl_history.csv"
+    pnl_hist.write_text(
+        "date,total_pnl,pnl_bucket_1,pnl_bucket_2,pnl_bucket_3,pnl_bucket_4,pnl_bucket_5,pnl_stock_sleeves\n"
+        "2026-06-02,0,0,0,0,0,0,0\n"
+        "2026-06-03,500,500,0,0,0,0,500\n"
+        "2026-06-04,200,200,0,0,0,0,200\n",
+        encoding="utf-8",
+    )
+    acct = tmp_path / "accounting"
+    acct.mkdir()
+    for b in ("bucket_1", "bucket_2", "bucket_3", "bucket_4", "bucket_5"):
+        (acct / f"pnl_{b}.csv").write_text(
+            "underlying,symbols,total_pnl\nAAA,AAA,200\n",
+            encoding="utf-8",
+        )
+        (acct / f"net_exposure_{b}.csv").write_text(
+            "underlying,symbols,n_legs,net_notional_usd,gross_notional_usd\n",
+            encoding="utf-8",
+        )
+    panel = compute_bucket_movers_panel(
+        acct,
+        bucket_underlying_history_csv=hist_csv,
+        pnl_history_csv=pnl_hist,
+        run_date="2026-06-04",
+        top_n=5,
+    )
+    assert panel["available"] is True
+    day = panel["by_date"]["2026-06-04"]
+    assert day["by_bucket"]["bucket_1"]["losers"][0]["total_pnl"] == pytest.approx(-300)
+    assert panel["book_by_date"]["2026-06-04"]["losers"][0]["underlying"] == "AAA"
 
 
 def test_bucket_drawdown_panel(tmp_path):
