@@ -690,6 +690,9 @@ def build_full_universe(skip_scrape: bool = False, skip_inverse: bool = False) -
         # final distribution on/about 2026-05-11 (SEC 497, 2026-04-21).
         "SOLX",   # GSOL — liquidated 2026-05-11
         "XRPK",   # XRPZ — liquidated 2026-05-11
+        # T-REX 2X Long PAAS — plan of liquidation announced 2026-06-29;
+        # last trade 2026-07-10, final distribution on/about 2026-07-20.
+        "PAAU",   # PAAS — delisted
     }
     bad_mask = all_df["ETF"].isin(_BAD_TICKERS) | all_df["Underlying"].isin(_BAD_TICKERS)
     if bad_mask.any():
