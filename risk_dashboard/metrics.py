@@ -5549,6 +5549,8 @@ def _attribution_lags_recent_cash(
     date: str,
     *,
     lookback_days: int = 4,
+    session_lookback_days: int = 2,
+    material_cash_pil_usd: float = 500.0,
 ) -> bool:
     """True when an attribution delta likely repeats Flex cash booked recently."""
     att_pil = float(att.get("pil_dividends") or 0.0)
@@ -5570,6 +5572,14 @@ def _attribution_lags_recent_cash(
             return True
         if att_net * cash_net > 0 and abs(abs(att_net) - abs(cash_net)) <= tol:
             return True
+    # Same ex-div cycle: material Flex cash PIL 1–2 sessions ago, attribution steps later
+    # with a different magnitude (accounting vs report-date cash).
+    if att_pil < -0.5:
+        for offset in range(1, session_lookback_days + 1):
+            prior = (dt - pd.Timedelta(days=offset)).strftime("%Y-%m-%d")
+            cash_pil = float(cash_pil_by_date.get(prior) or 0.0)
+            if cash_pil <= -material_cash_pil_usd:
+                return True
     return False
 
 
