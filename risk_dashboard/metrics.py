@@ -174,6 +174,86 @@ class RiskLimitsContext:
     borrow_apr_pct_by_bucket: dict[str, dict[str, float]]
     underlying_gross_frac_by_bucket: dict[str, dict[str, float]]
     liquidity_cap_fracs: dict[str, float]
+    sleeve_target_weights: dict[str, float | None] = field(default_factory=dict)
+    book_target_gross_usd: float = 0.0
+    sleeve_target_source: str = "fallback"
+
+
+def _clamp01(x: float) -> float:
+    return max(0.0, min(1.0, float(x)))
+
+
+def _normalize_two_nonnegative_weights(a: float, b: float) -> tuple[float, float]:
+    aa = max(0.0, float(a))
+    bb = max(0.0, float(b))
+    s = aa + bb
+    if s <= 1e-18:
+        return 1.0, 0.0
+    return aa / s, bb / s
+
+
+def compute_sleeve_target_weights(cfg: dict[str, Any]) -> tuple[dict[str, float | None], float]:
+    """Mirror ``generate_trade_plan.py`` sleeve budget shares (fractions of total gross).
+
+    Returns (bucket -> target weight, book_target_gross_usd).
+    """
+    strategy = cfg.get("strategy") or {}
+    sleeves = (cfg.get("portfolio") or {}).get("sleeves") or {}
+    capital_usd = float(strategy.get("capital_usd", 0.0) or 0.0)
+    gross_leverage = float(strategy.get("gross_leverage", 0.0) or 0.0)
+    book_target_gross_usd = capital_usd * gross_leverage
+
+    core = sleeves.get("core_leveraged") or {}
+    b4 = sleeves.get("inverse_decay_bucket4") or {}
+    yb = sleeves.get("yieldboost") or {}
+
+    b4_w = float(b4.get("target_weight", 0.0) or 0.0)
+    b4_enabled = bool(b4.get("enabled", True))
+    yb_enabled = bool(yb.get("enabled", True))
+    core_stock_frac, yb_stock_frac = _normalize_two_nonnegative_weights(
+        float(core.get("target_weight", 1.0) or 0.0),
+        float(yb.get("target_weight", 0.0) or 0.0) if yb_enabled else 0.0,
+    )
+    stock_nominal_w = max(0.0, min(1.0, 1.0 - b4_w)) if b4_enabled else 1.0
+
+    b4_rules = b4.get("rules") or {}
+    vol_cfg = (
+        b4_rules.get("volatility_etp_bucket5")
+        or b4_rules.get("volatility_etp_bucket4")
+        or {}
+    )
+    vol_enabled = bool(vol_cfg.get("enabled", False))
+    if "target_weight" in vol_cfg:
+        vol_etp_book_weight = _clamp01(float(vol_cfg.get("target_weight", 0.0) or 0.0))
+    else:
+        vol_etp_book_weight = _clamp01(b4_w * float(vol_cfg.get("share_of_b4_budget", 0.0) or 0.0))
+
+    b4_core_weight = max(0.0, b4_w - vol_etp_book_weight) if (b4_enabled and b4_w > 0) else 0.0
+    vol_weight = vol_etp_book_weight if (b4_enabled and vol_enabled and vol_etp_book_weight > 0) else None
+
+    weights: dict[str, float | None] = {
+        "bucket_1": stock_nominal_w * core_stock_frac if stock_nominal_w > 0 else core_stock_frac,
+        "bucket_2": stock_nominal_w * yb_stock_frac if (stock_nominal_w > 0 and yb_enabled) else 0.0,
+        "bucket_3": None,
+        "bucket_4": b4_core_weight if b4_core_weight > 0 else (b4_w if b4_enabled and b4_w > 0 else None),
+        "bucket_5": vol_weight,
+    }
+    if not yb_enabled:
+        weights["bucket_2"] = 0.0
+    return weights, book_target_gross_usd
+
+
+# Legacy fallback if strategy_config.yml is missing or unreadable.
+FALLBACK_SLEEVE_TARGET_WEIGHTS: dict[str, float | None] = {
+    "bucket_1": 0.55,
+    "bucket_2": 0.20,
+    "bucket_3": None,
+    "bucket_4": 0.25,
+    "bucket_5": None,
+}
+
+# Back-compat alias used by tests and snapshot metadata until YAML load runs.
+SLEEVE_TARGET_WEIGHTS = FALLBACK_SLEEVE_TARGET_WEIGHTS
 
 
 def _decimal_borrow_to_pct_limits(entry_cap: float, keep_cap: float) -> dict[str, float]:
@@ -198,6 +278,7 @@ def load_risk_limits(config_yml: Path | None = None) -> RiskLimitsContext:
     liquidity = {"shares_outstanding_use_frac": 0.35, "median_daily_volume_use_pct": 0.30}
 
     path = config_yml or Path("config/strategy_config.yml")
+    cfg: dict[str, Any] = {}
     if path.is_file():
         try:
             cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -235,15 +316,23 @@ def load_risk_limits(config_yml: Path | None = None) -> RiskLimitsContext:
         borrow_apr_pct_by_bucket=borrow_by_bucket,
         underlying_gross_frac_by_bucket=underlying_by_bucket,
         liquidity_cap_fracs=liquidity,
+        **(_sleeve_target_fields_from_cfg(cfg)),
     )
 
-SLEEVE_TARGET_WEIGHTS = {
-    "bucket_1": 0.55,
-    "bucket_2": 0.20,
-    "bucket_3": None,
-    "bucket_4": 0.25,
-    "bucket_5": None,
-}
+
+def _sleeve_target_fields_from_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
+    if not cfg:
+        return {
+            "sleeve_target_weights": dict(FALLBACK_SLEEVE_TARGET_WEIGHTS),
+            "book_target_gross_usd": 0.0,
+            "sleeve_target_source": "fallback",
+        }
+    weights, book_gross = compute_sleeve_target_weights(cfg)
+    return {
+        "sleeve_target_weights": weights,
+        "book_target_gross_usd": book_gross,
+        "sleeve_target_source": "config:strategy_config.yml",
+    }
 
 BREACH_CATEGORY_LABELS: dict[str, str] = {
     "book_exposure": "Book exposure & leverage",
@@ -935,12 +1024,18 @@ def compute_book_summary(
     nav_usd: float,
     target_weights: dict[str, float | None] | None = None,
     limits: dict[str, dict[str, Any]] | None = None,
+    book_target_gross_usd: float | None = None,
 ) -> BookSummary:
     limits = limits or DEFAULT_LIMITS
     target_weights = target_weights or SLEEVE_TARGET_WEIGHTS
 
     gross = float(totals.get("gross_exposure_total", 0.0) or 0.0)
     net = float(totals.get("net_exposure_total", 0.0) or 0.0)
+    weight_denominator = (
+        float(book_target_gross_usd)
+        if book_target_gross_usd is not None and book_target_gross_usd > 0
+        else gross
+    )
 
     gross_pct = gross / nav_usd if nav_usd > 0 else 0.0
     net_pct = net / nav_usd if nav_usd > 0 else 0.0
@@ -956,12 +1051,14 @@ def compute_book_summary(
         gross_b_raw = float(totals.get(f"gross_exposure_{bucket}", 0.0) or 0.0)
         net_b_raw = float(totals.get(f"net_exposure_{bucket}", 0.0) or 0.0)
         target_w = target_weights.get(bucket)
-        target_gross_usd = (target_w * gross) if (target_w is not None and gross > 0) else None
+        target_gross_usd = (
+            (target_w * weight_denominator) if (target_w is not None and weight_denominator > 0) else None
+        )
         bucket_label = BUCKET_LABELS.get(bucket, bucket.replace("_", " ").title())
         if sleeve_available:
             gross_b = gross_b_raw
             net_b = net_b_raw
-            actual_w = (gross_b / gross) if gross > 0 else 0.0
+            actual_w = (gross_b / weight_denominator) if weight_denominator > 0 else 0.0
             drift_pp = ((actual_w - target_w) * 100.0) if target_w is not None else None
             drift_status = (
                 _classify(abs(drift_pp), limits["sleeve_drift_pp"])
@@ -5906,7 +6003,11 @@ class RiskSnapshot:
                 self, "_underlying_gross_frac_by_bucket", {}
             ),
             "liquidity_cap_fracs": getattr(self, "_liquidity_cap_fracs", {}),
-            "sleeve_target_weights": SLEEVE_TARGET_WEIGHTS,
+            "sleeve_target_weights": getattr(
+                self, "_sleeve_target_weights", SLEEVE_TARGET_WEIGHTS
+            ),
+            "book_target_gross_usd": getattr(self, "_book_target_gross_usd", None),
+            "sleeve_target_source": getattr(self, "_sleeve_target_source", "fallback"),
         }
 
 
@@ -5948,7 +6049,14 @@ def build_snapshot(
         flex_dir=flex if flex.is_dir() else None,
         cli_source=nav_source_hint,
     )
-    book = compute_book_summary(totals, pnl_by_bucket, nav_usd=nav_usd, limits=limits)
+    book = compute_book_summary(
+        totals,
+        pnl_by_bucket,
+        nav_usd=nav_usd,
+        limits=limits,
+        target_weights=limits_ctx.sleeve_target_weights,
+        book_target_gross_usd=limits_ctx.book_target_gross_usd or None,
+    )
     capital_panel = compute_capital_panel(
         totals,
         nav_usd=nav_usd,
@@ -6217,4 +6325,7 @@ def build_snapshot(
     snap._borrow_limits_by_bucket = limits_ctx.borrow_apr_pct_by_bucket
     snap._underlying_gross_frac_by_bucket = limits_ctx.underlying_gross_frac_by_bucket
     snap._liquidity_cap_fracs = limits_ctx.liquidity_cap_fracs
+    snap._sleeve_target_weights = limits_ctx.sleeve_target_weights
+    snap._book_target_gross_usd = limits_ctx.book_target_gross_usd
+    snap._sleeve_target_source = limits_ctx.sleeve_target_source
     return snap

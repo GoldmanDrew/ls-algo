@@ -30,6 +30,11 @@ git SHA, and workflow run id. Snapshots embed this under `manifest` + `data_qual
   session row in `pnl_history.csv` (fallback: prior snapshot delta).
 - **Gross exposure (book)** — B1 + B2 + B4 ratio-split gross + documented overlays;
   `gross_exposure_total` in totals **excludes B5** (vol ETP sleeve).
+- **Sleeve target % (dashboard)** — derived from `config/strategy_config.yml`
+  using the same budget waterfall as `generate_trade_plan.py`
+  (`portfolio.sleeves.*.target_weight`, B4 vol-ETP carve-out). Denominator for
+  drift is `capital_usd × gross_leverage` (book target gross), not deployed
+  reconcile gross. Bucket 3 (flow overlay) has no % target.
 - **Bucket 5** — shown in UI and email groups; not in B1+B2+B4 reconcile gate.
 - **NAV % metrics** — `metric / nav_usd` where `nav_usd` is broker-derived when available
   (`flex_positions:percentOfNAV_median` or equity Flex tags).

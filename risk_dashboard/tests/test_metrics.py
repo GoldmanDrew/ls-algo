@@ -11,6 +11,7 @@ import pytest
 from risk_dashboard.factor_map import lookup_underlying
 from risk_dashboard.metrics import (
     DEFAULT_LIMITS,
+    FALLBACK_SLEEVE_TARGET_WEIGHTS,
     SLEEVE_TARGET_WEIGHTS,
     compute_action_queue,
     compute_book_summary,
@@ -25,7 +26,9 @@ from risk_dashboard.metrics import (
     compute_factor_by_bucket,
     compute_scenario_panel,
     compute_slide_risk_panel,
+    compute_sleeve_target_weights,
     compute_vol_shock_panel,
+    load_risk_limits,
 )
 
 
@@ -67,6 +70,14 @@ def test_book_summary_pct_nav(fake_totals):
         totals=fake_totals,
         pnl_by_bucket=pd.DataFrame(),
         nav_usd=800_000.0,
+        target_weights={
+            "bucket_1": 0.51,
+            "bucket_2": 0.46,
+            "bucket_3": None,
+            "bucket_4": 0.0275,
+            "bucket_5": 0.0025,
+        },
+        book_target_gross_usd=4_632_211.96,
     )
     expected_gross = fake_totals["gross_exposure_total"]
     assert book.gross_notional_usd == pytest.approx(expected_gross)
@@ -74,11 +85,11 @@ def test_book_summary_pct_nav(fake_totals):
     assert book.pnl_today_pct_nav == pytest.approx(48626.58 / 800_000.0)
     assert len(book.sleeve_table) == 5
     b4 = next(r for r in book.sleeve_table if r["bucket"] == "bucket_4")
-    assert b4["target_weight"] == 0.25
-    assert b4["actual_weight"] == pytest.approx(437084.68 / expected_gross)
+    assert b4["target_weight"] == pytest.approx(0.0275)
+    assert b4["actual_weight"] == pytest.approx(437084.68 / 4_632_211.96)
     b5 = next(r for r in book.sleeve_table if r["bucket"] == "bucket_5")
     assert b5["gross_usd"] == pytest.approx(0.0)
-    assert b5["target_weight"] is None
+    assert b5["target_weight"] == pytest.approx(0.0025)
 
 
 def test_book_summary_breach_when_gross_exceeds(fake_totals):
@@ -526,10 +537,36 @@ def test_live_snapshot_reconciles_bucket_to_book():
 def test_default_limits_are_sane():
     for k, v in DEFAULT_LIMITS.items():
         assert "warn" in v and "hard" in v, k
-    # Sleeve targets must sum (within rounding) to roughly 1.0 when bucket_3
-    # is excluded (b3 is layered, not a fixed slice).
+
+
+def test_sleeve_target_weights_from_strategy_config():
+    repo_root = Path(__file__).resolve().parents[2]
+    cfg_path = repo_root / "config" / "strategy_config.yml"
+    assert cfg_path.is_file()
+    import yaml
+
+    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    weights, book_gross = compute_sleeve_target_weights(cfg)
+    assert book_gross == pytest.approx(1_050_000 * 4)
+    assert weights["bucket_1"] == pytest.approx(0.51)
+    assert weights["bucket_2"] == pytest.approx(0.46)
+    assert weights["bucket_3"] is None
+    assert weights["bucket_4"] == pytest.approx(0.0275)
+    assert weights["bucket_5"] == pytest.approx(0.0025)
+    fixed = sum(v for k, v in weights.items() if v is not None and k != "bucket_3")
+    assert fixed == pytest.approx(1.0, rel=1e-6)
+
+
+def test_load_risk_limits_uses_yaml_sleeve_targets():
+    repo_root = Path(__file__).resolve().parents[2]
+    ctx = load_risk_limits(repo_root / "config" / "strategy_config.yml")
+    assert ctx.sleeve_target_source == "config:strategy_config.yml"
+    assert ctx.book_target_gross_usd == pytest.approx(4_200_000.0)
+    assert ctx.sleeve_target_weights["bucket_1"] == pytest.approx(0.51)
+    assert ctx.sleeve_target_weights["bucket_4"] == pytest.approx(0.0275)
+    # Legacy fallback kept for missing-config paths only.
     fixed = sum(
-        v for k, v in SLEEVE_TARGET_WEIGHTS.items() if v is not None and k != "bucket_3"
+        v for k, v in FALLBACK_SLEEVE_TARGET_WEIGHTS.items() if v is not None and k != "bucket_3"
     )
     assert 0.95 <= fixed <= 1.05
 
