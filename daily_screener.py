@@ -245,6 +245,10 @@ new_pairs = [
     ("LITU", "LITE"),  # T-REX 2X Long LITE (REX / Tuttle; distinct from Tradr LITX)
     # 2026-05-27 Defiance 2X long (One Stop Systems)
     ("OSSL", "OSS"),   # Defiance Daily Target 2X Long OSS
+    # 2026-07-10 Defiance 2X long (UMAC, PURR, BITA drone index)
+    ("UMAL", "UMAC"),  # Defiance Daily Target 2X Long UMAC
+    ("PUR", "PURR"),   # Defiance Daily Target 2X Long PURR (Hyperliquid Strategies)
+    ("DRNL", "DRNZ"),  # Defiance 2X Long BITA drone index; DRNZ = REX Drone ETF proxy
     # 2026-05-28 Direxion 2X daily bull — swap-based spot ETP refs (IBIT, ETHA, GLD, SLV)
     ("BTCU", "IBIT"), ("EVMU", "ETHA"), ("UGLD", "GLD"), ("USLV", "SLV"),
     # 2026-05-28 Tradr 2X long semiconductor singles (MCHP, NXPI, ON)
