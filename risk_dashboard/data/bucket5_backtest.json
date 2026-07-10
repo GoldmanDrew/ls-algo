@@ -1,6 +1,6 @@
 {
   "schema": "bucket5_backtest_panel.v1",
-  "generated_at_utc": "2026-07-10T12:24:07.062102+00:00",
+  "generated_at_utc": "2026-07-10T12:40:16.535001+00:00",
   "run_date": "2026-07-10",
   "variants": {
     "B_live": {
@@ -285,12 +285,12 @@
       "monetize_summary": {
         "event_count": 102,
         "kinds": [
-          "profit_3x",
           "profit_8x",
           "vix_45",
-          "giveback",
           "profit_5x",
           "scheduled_roll",
+          "profit_3x",
+          "giveback",
           "rearm"
         ],
         "total_usd": 1689283.0
@@ -13426,12 +13426,12 @@
       "monetize_summary": {
         "event_count": 94,
         "kinds": [
-          "profit_3x",
           "profit_8x",
           "vix_45",
-          "giveback",
           "profit_5x",
           "scheduled_roll",
+          "profit_3x",
+          "giveback",
           "rearm"
         ],
         "total_usd": 2649536.0
@@ -26567,13 +26567,13 @@
       "monetize_summary": {
         "event_count": 990,
         "kinds": [
-          "profit_3x",
           "profit_8x",
-          "vix_45",
-          "giveback",
           "vix_65",
+          "vix_45",
           "profit_5x",
           "scheduled_roll",
+          "profit_3x",
+          "giveback",
           "rearm"
         ],
         "total_usd": 17691869.0
@@ -34837,13 +34837,13 @@
       "monetize_summary": {
         "event_count": 1005,
         "kinds": [
-          "profit_3x",
           "profit_8x",
-          "vix_45",
-          "giveback",
           "vix_65",
+          "vix_45",
           "profit_5x",
           "scheduled_roll",
+          "profit_3x",
+          "giveback",
           "rearm"
         ],
         "total_usd": 26449905.0
@@ -42855,7 +42855,7 @@
   "repo": "ls-algo",
   "sensitivity_grid": {
     "schema": "bucket5_sensitivity.v1",
-    "generated_at_utc": "2026-07-10T12:24:07.575938+00:00",
+    "generated_at_utc": "2026-07-10T12:40:17.079672+00:00",
     "preset_base": "F_dynamic_deep30",
     "era": "extended",
     "axes": {

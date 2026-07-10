@@ -1,8 +1,8 @@
 {
   "run_date": "2026-07-10",
-  "generated_at_utc": "2026-07-10T12:24:01.469645+00:00",
-  "git_sha": "f43fcf981ecf51b0d425a6a5d5b0a59e7e2ec67d",
-  "workflow_run_id": "29091672018",
+  "generated_at_utc": "2026-07-10T12:40:10.818063+00:00",
+  "git_sha": "6e3b687ade5a9ac9bbca60ea894b26daaa71ec46",
+  "workflow_run_id": "29092931346",
   "nav_usd": 1050000.0,
   "nav_source": "config:capital_usd",
   "screener_csv": "data/runs/2026-07-10/etf_screened_today.csv",
