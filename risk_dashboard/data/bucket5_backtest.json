@@ -1,6 +1,6 @@
 {
   "schema": "bucket5_backtest_panel.v1",
-  "generated_at_utc": "2026-07-10T09:39:16.399810+00:00",
+  "generated_at_utc": "2026-07-10T12:24:07.062102+00:00",
   "run_date": "2026-07-10",
   "variants": {
     "B_live": {
@@ -287,10 +287,10 @@
         "kinds": [
           "profit_3x",
           "profit_8x",
-          "scheduled_roll",
-          "giveback",
           "vix_45",
+          "giveback",
           "profit_5x",
+          "scheduled_roll",
           "rearm"
         ],
         "total_usd": 1689283.0
@@ -13428,10 +13428,10 @@
         "kinds": [
           "profit_3x",
           "profit_8x",
-          "scheduled_roll",
-          "giveback",
           "vix_45",
+          "giveback",
           "profit_5x",
+          "scheduled_roll",
           "rearm"
         ],
         "total_usd": 2649536.0
@@ -26569,11 +26569,11 @@
         "kinds": [
           "profit_3x",
           "profit_8x",
-          "scheduled_roll",
-          "giveback",
           "vix_45",
-          "profit_5x",
+          "giveback",
           "vix_65",
+          "profit_5x",
+          "scheduled_roll",
           "rearm"
         ],
         "total_usd": 17691869.0
@@ -34839,11 +34839,11 @@
         "kinds": [
           "profit_3x",
           "profit_8x",
-          "scheduled_roll",
-          "giveback",
           "vix_45",
-          "profit_5x",
+          "giveback",
           "vix_65",
+          "profit_5x",
+          "scheduled_roll",
           "rearm"
         ],
         "total_usd": 26449905.0
@@ -42842,7 +42842,7 @@
         "proposed_gross_usd": 10500.0,
         "optimal_gross_usd": 10500.0,
         "borrow_annual": 0.0564989999999999,
-        "shares_available": 2000000.0,
+        "shares_available": 800000.0,
         "locate_ok": true
       }
     ]
@@ -42855,7 +42855,7 @@
   "repo": "ls-algo",
   "sensitivity_grid": {
     "schema": "bucket5_sensitivity.v1",
-    "generated_at_utc": "2026-07-10T09:39:16.905986+00:00",
+    "generated_at_utc": "2026-07-10T12:24:07.575938+00:00",
     "preset_base": "F_dynamic_deep30",
     "era": "extended",
     "axes": {
