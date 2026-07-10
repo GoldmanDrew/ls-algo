@@ -1,0 +1,3 @@
+underlying,symbol,leg_type,net_notional_usd,gross_notional_usd
+SVIX,SVIX,underlying,-22091.64,22091.64
+SVIX,UVIX,etf,20856.782690818,20856.782690818

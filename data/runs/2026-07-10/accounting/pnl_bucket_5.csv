@@ -1,0 +1,2 @@
+underlying,symbols,realized_pnl,unrealized_pnl,dividends,withholding_tax,pil_dividends,borrow_fees,short_credit_interest,other_fees,bond_interest,total_pnl
+SVIX,"SVIX, UVIX",0.0,275.3478440000001,0.0,0.0,0.0,-224.19,203.0860347434961,0.0,0.0,254.24387874349645

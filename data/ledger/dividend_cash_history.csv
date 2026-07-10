@@ -531,3 +531,5 @@ date,symbol,underlying,bucket,pair,type,category,amount_usd,ex_date,description
 2026-07-08,BITU,IBIT,bucket_1,IBIT | BITU,Payment In Lieu Of Dividends,pil_dividends,-0.44,2026-07-01,BITU(US74349Y7040) PAYMENT IN LIEU OF DIVIDEND (Ordinary Dividend)
 2026-07-08,ETHT,ETHA,bucket_1,ETHA | ETHT,Payment In Lieu Of Dividends,pil_dividends,-3.36,2026-07-01,ETHT(US74349Y5713) PAYMENT IN LIEU OF DIVIDEND (Ordinary Dividend)
 2026-07-08,LRCX,LRCX,bucket_1,LRCX (spot),Dividends,dividends,1.82,2026-06-17,LRCX(US5128073062) CASH DIVIDEND USD 0.26 PER SHARE (Ordinary Dividend)
+2026-07-09,FBYY,META,bucket_2,META | FBYY,Dividends,dividends,-247.28,2026-07-02,FBYY(US38747R3140) CASH DIVIDEND USD 0.07017 PER SHARE (Ordinary Dividend)
+2026-07-09,FBYY,META,bucket_2,META | FBYY,Payment In Lieu Of Dividends,pil_dividends,-95.15,2026-07-02,FBYY(US38747R3140) PAYMENT IN LIEU OF DIVIDEND (Ordinary Dividend)
