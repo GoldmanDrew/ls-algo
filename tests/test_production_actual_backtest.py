@@ -205,6 +205,7 @@ def test_replay_preserves_four_x_gross_and_next_close_timing():
         slippage_bps=0.0,
         commission_per_share=0.0,
         margin_rate_annual=0.0,
+        short_proceeds_credit_annual=0.0,
         min_trade_usd=0.0,
     )
     # Plan stamped at the first close executes at the second close.  It cannot
@@ -245,6 +246,33 @@ def test_replay_does_not_use_latest_plan_leg_mix_in_history():
     )
     early = daily[(daily["date"] >= cal[2]) & (daily["date"] < cal[15])]
     assert (early["daily_price_pnl"] < 0).all()
+
+
+def test_short_proceeds_credit_at_3p8_reconciles():
+    """IBKR-style 3.8% credit on short sale proceeds (Actual/360)."""
+    cal = pd.bdate_range("2025-01-01", periods=25)
+    panel = {"AAA": pd.DataFrame({"a_px": 100.0, "b_px": 50.0}, index=cal)}
+    nav, _, meta, _, daily = simulate_book_from_plan_timeline(
+        {cal[0]: _simple_plan(cal[0], long_usd=200.0, short_usd=-200.0)},
+        panel,
+        budgets={"core_leveraged": 400.0},
+        capital_usd=100.0,
+        start=cal[0],
+        slippage_bps=0.0,
+        commission_per_share=0.0,
+        margin_rate_annual=0.0,
+        short_proceeds_credit_annual=0.038,
+        financing_daycount=360.0,
+        min_trade_usd=0.0,
+        retarget_on_plan_change=True,
+    )
+    assert not daily.empty
+    assert float(daily["pnl_recon_residual"].abs().max()) < 1e-9
+    # Flat prices → credit only: 200 * 0.038 / 360 per day after open
+    after = daily[daily["date"] > cal[1]]
+    assert (after["daily_short_credit"] > 0).all()
+    assert float(after["daily_short_credit"].iloc[0]) == pytest.approx(200.0 * 0.038 / 360.0, rel=1e-6)
+    assert float(meta["short_proceeds_credit_annual"]) == pytest.approx(0.038)
 
 
 def test_replay_charges_opening_cost_and_reconciles_daily_pnl():

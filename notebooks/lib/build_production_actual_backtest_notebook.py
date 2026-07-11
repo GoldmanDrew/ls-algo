@@ -120,8 +120,9 @@ read as production-accurate until the missing artifact is archived.
     ["Slippage", "Broker/fill dependent", "20 bp on every traded dollar, including opening trades", "Proxy"],
     ["Commission", "Clear Street low-touch", "$0.0035/share by leg", "Implemented"],
     ["Borrow", "Point-in-time by short symbol", "Plan borrow_avg (sizing) carried until the next plan", "Proxy"],
+    ["Short credit", "IBKR interest on short proceeds", "3.8% annual on short notional / Actual-360", "Implemented"],
     ["Margin debit", "OBFR + 45 bp, Actual/360", "4.00% benchmark fallback + 45 bp, Actual/360", "Proxy"],
-    ["Short credit", "Disabled in Diamond Creek v15", "Disabled", "Implemented"],
+    ["Short credit (legacy note)", "Was disabled in Diamond Creek v15", "Enabled at 3.8% for this GTP backtest", "Implemented"],
     ["Prices", "Total-return / split-safe marks", "Adjusted-close panel + Flex/override/heuristic split repair", "Implemented"],
     ["Missing bars", "Carry last mark; cannot trade", "Zero-return stale mark; blocked close/entry is audited", "Implemented"],
     ["Share rounding", "Whole shares / broker lots", "Dollar-notional targets", "Gap"],
@@ -274,6 +275,7 @@ costs.
     d = daily_diag.set_index("date")
     gross_cum = d["daily_price_pnl"].cumsum()
     borrow_cum = d["daily_borrow_cost"].cumsum()
+    credit_cum = d["daily_short_credit"].cumsum() if "daily_short_credit" in d.columns else 0.0
     margin_cum = d["daily_margin_cost"].cumsum()
     txn_cum = d["daily_txn_cost"].cumsum()
     net_cum = d["daily_net_pnl"].cumsum()
@@ -283,6 +285,8 @@ costs.
     ax.plot(d.index, gross_cum, label="gross price P&L", lw=1.8)
     ax.plot(d.index, net_cum, label="net P&L", lw=2.0, color="black")
     ax.plot(d.index, -borrow_cum, label="− borrow", ls="--")
+    if "daily_short_credit" in d.columns:
+        ax.plot(d.index, credit_cum, label="+ short credit 3.8%", ls="--", color="#55a868")
     ax.plot(d.index, -margin_cum, label="− margin", ls="--")
     ax.plot(d.index, -txn_cum, label="− transaction", ls="--")
     ax.axhline(0, color="black", lw=0.7)
@@ -294,6 +298,7 @@ costs.
     totals = pd.Series({
         "gross price": d["daily_price_pnl"].sum(),
         "borrow": -d["daily_borrow_cost"].sum(),
+        "short credit": float(d["daily_short_credit"].sum()) if "daily_short_credit" in d.columns else 0.0,
         "margin": -d["daily_margin_cost"].sum(),
         "transaction": -d["daily_txn_cost"].sum(),
         "net": d["daily_net_pnl"].sum(),
@@ -329,6 +334,7 @@ Holds the executed path fixed and restates only cost dollars.
     current_margin_rate = float(knobs.get("margin_rate_annual", 0.0445))
     current_margin = float(d["daily_margin_cost"].sum())
     current_borrow = float(d["daily_borrow_cost"].sum())
+    current_credit = float(d["daily_short_credit"].sum()) if "daily_short_credit" in d.columns else 0.0
 
     slip_grid = np.array([5, 10, 20, 30], dtype=float)
     slip_ends = end_nav + current_slip - turnover * slip_grid / 1e4
@@ -357,13 +363,16 @@ Holds the executed path fixed and restates only cost dollars.
     plt.show()
 
     print(f"turnover=${turnover:,.0f}; implied slippage=${current_slip:,.0f}; "
-          f"commission=${commission:,.0f}; margin=${current_margin:,.0f}; borrow=${current_borrow:,.0f}")
+          f"commission=${commission:,.0f}; margin=${current_margin:,.0f}; "
+          f"borrow=${current_borrow:,.0f}; short_credit=${current_credit:,.0f}")
 """
     ),
     md(
-        """## Plan deployment, churn, and blocked execution
+        """## Plan deployment, churn, and open pair count
 
-Target-vs-deployed gross reveals missing panels and blocked close marks.
+Middle panel now shows **open pairs** (`n_positions` from the daily ledger), not
+just resize counts. High turnover previously came from retargeting on every
+screened-day plan change; GTP now trades weekly (Friday) with the latest plan.
 """
     ),
     code(
@@ -382,9 +391,12 @@ Target-vs-deployed gross reveals missing panels and blocked close marks.
     width = 1.5
     axes[1].bar(r.index, r.get("n_added", 0), width=width, label="adds", color="#55a868")
     axes[1].bar(r.index, -r.get("n_exited", 0), width=width, label="exits", color="#c44e52")
-    axes[1].plot(r.index, r.get("n_resized", 0), label="resizes", color="#4c72b0")
+    if not daily_diag.empty and "n_positions" in daily_diag.columns:
+        pos = daily_diag.set_index("date")["n_positions"]
+        axes[1].plot(pos.index, pos.values, label="open pairs", color="black", lw=1.6)
+    axes[1].plot(r.index, r.get("n_resized", 0), label="resizes", color="#4c72b0", alpha=0.7)
     axes[1].set_ylabel("Pair count")
-    axes[1].legend(loc="best", ncol=3)
+    axes[1].legend(loc="best", ncol=4, fontsize=8)
     axes[1].grid(True, alpha=0.25)
 
     axes[2].bar(r.index, r["turnover_usd"], width=width, color="#8172b2", label="turnover")

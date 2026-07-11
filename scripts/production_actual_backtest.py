@@ -117,12 +117,19 @@ def rebalance_knobs(cfg: dict) -> dict:
         # includes a sensitivity panel so this approximation stays visible.
         "margin_rate_annual": 0.0445,
         "financing_daycount": 360.0,
+        # IBKR short-sale proceeds credit (interest on cash from shorts).
+        # Modelled as a flat 3.8% annual on absolute short notional / daycount.
+        # Borrow fee is still charged separately from IBKR feerate / screened borrow.
+        "short_proceeds_credit_annual": 0.038,
         # A plan written on day T is assumed known after that close and is
         # executed at the next available close.  Its P&L starts on T+2 close.
         "execution_lag_sessions": 1,
         # Preserve the plan's gross/equity multiple as NAV changes, matching
         # Diamond Creek's dynamic target-gross convention.
         "target_notional_mode": "equity_scaled",
+        # GTP mode: size every screened day, but trade on the weekly clock so
+        # daily score reshuffles do not pay 20 bp on the whole book.
+        "retarget_on_plan_change": False,
     }
 
 
@@ -1029,6 +1036,7 @@ def simulate_book_from_plan_timeline(
     commission_per_share: float = 0.0035,
     margin_rate_annual: float = 0.0445,
     financing_daycount: float = 360.0,
+    short_proceeds_credit_annual: float = 0.038,
     execution_lag_sessions: int = 1,
     target_notional_mode: str = "equity_scaled",
     enter_band_pct: float = 0.12,
@@ -1036,6 +1044,7 @@ def simulate_book_from_plan_timeline(
     min_trade_usd: float = 250.0,
     use_resize_bands: bool = True,
     check_freq: str = "W-FRI",
+    retarget_on_plan_change: bool = True,
     pre_archive_policy: str = "cash",
 ) -> tuple[pd.Series, pd.DataFrame, dict[str, Any], pd.DataFrame, pd.DataFrame]:
     """Close-to-close, share-hold simulation with point-in-time plans.
@@ -1099,6 +1108,7 @@ def simulate_book_from_plan_timeline(
                 "sleeve": str(row.get("sleeve", "") if row is not None else ""),
                 "price_pnl_usd": 0.0,
                 "borrow_cost_usd": 0.0,
+                "short_credit_usd": 0.0,
                 "margin_cost_usd": 0.0,
                 "txn_cost_usd": 0.0,
             }
@@ -1113,11 +1123,12 @@ def simulate_book_from_plan_timeline(
         if gross_start <= 1e-9:
             cash_days += 1
         sleeve_comp = {
-            s: {"price": 0.0, "borrow": 0.0, "margin": 0.0, "txn": 0.0}
+            s: {"price": 0.0, "borrow": 0.0, "credit": 0.0, "margin": 0.0, "txn": 0.0}
             for s in ALL_SLEEVES
         }
         price_pnl = 0.0
         borrow_cost = 0.0
+        short_credit = 0.0
         margin_cost = 0.0
         txn_cost = 0.0
         turnover_day = 0.0
@@ -1152,33 +1163,43 @@ def simulate_book_from_plan_timeline(
                 if sl in sleeve_comp:
                     sleeve_comp[sl]["price"] += pnl_e
 
-            # 2) Borrow on marked short notionals, using the rate attached to
-            # the active archived plan. borrow_current belongs to the ETF;
-            # borrow_underlying / underlying_borrow_annual belongs to the
-            # underlying leg.
+            # 2) Borrow fee on short notionals (IBKR feerate / screened borrow)
+            # and short-sale proceeds credit (flat interest on short cash).
+            daycount = max(float(financing_daycount), 1.0)
+            credit_rate = max(float(short_proceeds_credit_annual), 0.0)
             for etf, row in cur.iterrows():
                 sl = str(row.get("sleeve", ""))
                 rate_a = float(pd.to_numeric(row.get("borrow_current"), errors="coerce") or 0.0)
                 rate_b = float(pd.to_numeric(row.get("borrow_underlying"), errors="coerce") or 0.0)
                 cost = 0.0
-                if float(row["etf_usd"]) < 0:
-                    cost += abs(float(row["etf_usd"])) * max(rate_a, 0.0) / TRADING_DAYS
-                if float(row["underlying_usd"]) < 0:
-                    cost += abs(float(row["underlying_usd"])) * max(rate_b, 0.0) / TRADING_DAYS
+                credit = 0.0
+                etf_usd = float(row["etf_usd"])
+                und_usd = float(row["underlying_usd"])
+                if etf_usd < 0:
+                    short_abs = abs(etf_usd)
+                    cost += short_abs * max(rate_a, 0.0) / TRADING_DAYS
+                    credit += short_abs * credit_rate / daycount
+                if und_usd < 0:
+                    short_abs = abs(und_usd)
+                    cost += short_abs * max(rate_b, 0.0) / TRADING_DAYS
+                    credit += short_abs * credit_rate / daycount
                 borrow_cost += cost
-                _ensure_contrib(etf, row)["borrow_cost_usd"] += cost
+                short_credit += credit
+                c = _ensure_contrib(etf, row)
+                c["borrow_cost_usd"] += cost
+                c["short_credit_usd"] += credit
                 if sl in sleeve_comp:
                     sleeve_comp[sl]["borrow"] += cost
+                    sleeve_comp[sl]["credit"] += credit
 
-            # Diamond Creek v15 convention: debit on positive long market
-            # value less NAV; short proceeds do not offset the base.
+            # Margin debit on positive long market value less NAV.
             long_by_pair = {
                 etf: max(float(row["etf_usd"]), 0.0) + max(float(row["underlying_usd"]), 0.0)
                 for etf, row in cur.iterrows()
             }
             long_total = float(sum(long_by_pair.values()))
-            debit_base = max(0.0, long_total - (equity + price_pnl - borrow_cost))
-            margin_cost = debit_base * max(float(margin_rate_annual), 0.0) / max(float(financing_daycount), 1.0)
+            debit_base = max(0.0, long_total - (equity + price_pnl - borrow_cost + short_credit))
+            margin_cost = debit_base * max(float(margin_rate_annual), 0.0) / daycount
             if margin_cost > 0 and long_total > 0:
                 for etf, basis in long_by_pair.items():
                     alloc = margin_cost * basis / long_total
@@ -1188,15 +1209,19 @@ def simulate_book_from_plan_timeline(
                     if sl in sleeve_comp:
                         sleeve_comp[sl]["margin"] += alloc
 
-        equity += price_pnl - borrow_cost - margin_cost
+        equity += price_pnl - borrow_cost - margin_cost + short_credit
 
         # 3) At the close, activate any plan whose information lag has elapsed,
-        # then retarget weekly.  New positions earn returns starting tomorrow.
+        # then retarget on the weekly clock (and on first open / optional plan change).
         plan_changed = d in effective
         if plan_changed:
             active_plan_date, active_plan = effective[d]
             plans_used.add(active_plan_date)
-        need_rebal = active_plan is not None and (plan_changed or d in check_days)
+        need_rebal = active_plan is not None and (
+            d in check_days
+            or (plan_changed and bool(retarget_on_plan_change))
+            or (plan_changed and cur.empty)
+        )
         target = pd.DataFrame(columns=pos_cols[:-1])
         target_planned_gross = 0.0
         target_tradeable_gross = 0.0
@@ -1324,7 +1349,7 @@ def simulate_book_from_plan_timeline(
             top5_gross_share = float(shares.head(5).sum())
             gross_hhi = float((shares**2).sum())
         net_pnl = float(equity - equity_start)
-        recon = net_pnl - (price_pnl - borrow_cost - margin_cost - txn_cost)
+        recon = net_pnl - (price_pnl - borrow_cost - margin_cost - txn_cost + short_credit)
         running_peak = max(running_peak, float(equity))
         row_out: dict[str, Any] = {
             "date": d,
@@ -1332,6 +1357,7 @@ def simulate_book_from_plan_timeline(
             "book_equity": equity,
             "daily_price_pnl": price_pnl,
             "daily_borrow_cost": borrow_cost,
+            "daily_short_credit": short_credit,
             "daily_margin_cost": margin_cost,
             "daily_txn_cost": txn_cost,
             "daily_net_pnl": net_pnl,
@@ -1355,9 +1381,10 @@ def simulate_book_from_plan_timeline(
         }
         for s in ALL_SLEEVES:
             sc = sleeve_comp[s]
-            row_out[s] = sc["price"] - sc["borrow"] - sc["margin"] - sc["txn"]
+            row_out[s] = sc["price"] - sc["borrow"] - sc["margin"] - sc["txn"] + sc["credit"]
             row_out[f"{s}__price_pnl"] = sc["price"]
             row_out[f"{s}__borrow_cost"] = sc["borrow"]
+            row_out[f"{s}__short_credit"] = sc["credit"]
             row_out[f"{s}__margin_cost"] = sc["margin"]
             row_out[f"{s}__txn_cost"] = sc["txn"]
         sleeve_daily_rows.append(row_out)
@@ -1370,8 +1397,11 @@ def simulate_book_from_plan_timeline(
             if e in cur.index else 0.0
         )
         net_pair = (
-            float(c["price_pnl_usd"]) - float(c["borrow_cost_usd"])
-            - float(c["margin_cost_usd"]) - float(c["txn_cost_usd"])
+            float(c["price_pnl_usd"])
+            - float(c["borrow_cost_usd"])
+            + float(c.get("short_credit_usd", 0.0))
+            - float(c["margin_cost_usd"])
+            - float(c["txn_cost_usd"])
         )
         pair_rows.append({**c, "pnl_usd": net_pair, "end_weight": gross_end / equity if equity > 0 else np.nan})
     pair_stats = pd.DataFrame(pair_rows)
@@ -1397,6 +1427,8 @@ def simulate_book_from_plan_timeline(
         "commission_per_share": float(commission_per_share),
         "margin_rate_annual": float(margin_rate_annual),
         "financing_daycount": float(financing_daycount),
+        "short_proceeds_credit_annual": float(short_proceeds_credit_annual),
+        "retarget_on_plan_change": bool(retarget_on_plan_change),
         "use_resize_bands": bool(use_resize_bands),
         "enter_band_pct": float(enter_band_pct),
         "exit_band_pct": float(exit_band_pct),
@@ -1882,12 +1914,14 @@ def run_replay_backtest(
         commission_per_share=rknobs["commission_per_share"],
         margin_rate_annual=rknobs["margin_rate_annual"],
         financing_daycount=rknobs["financing_daycount"],
+        short_proceeds_credit_annual=rknobs["short_proceeds_credit_annual"],
         execution_lag_sessions=rknobs["execution_lag_sessions"],
         target_notional_mode=rknobs["target_notional_mode"],
         enter_band_pct=rknobs["enter_band_pct"],
         exit_band_pct=rknobs["exit_band_pct"],
         min_trade_usd=rknobs["min_trade_usd"],
         check_freq="W-FRI",
+        retarget_on_plan_change=True,  # archived plans already sparse; apply on arrival
         pre_archive_policy=pre_archive_policy,
     )
 
@@ -2000,12 +2034,16 @@ def run_gtp_approx_backtest(
         commission_per_share=rknobs["commission_per_share"],
         margin_rate_annual=rknobs["margin_rate_annual"],
         financing_daycount=rknobs["financing_daycount"],
+        short_proceeds_credit_annual=rknobs["short_proceeds_credit_annual"],
         execution_lag_sessions=rknobs["execution_lag_sessions"],
         target_notional_mode=rknobs["target_notional_mode"],
         enter_band_pct=rknobs["enter_band_pct"],
         exit_band_pct=rknobs["exit_band_pct"],
         min_trade_usd=rknobs["min_trade_usd"],
         check_freq="W-FRI",
+        # Size daily from screened; trade on Friday with the latest plan so
+        # daily score reshuffles do not churn the whole book at 20 bp.
+        retarget_on_plan_change=bool(rknobs.get("retarget_on_plan_change", False)),
         pre_archive_policy=pre_archive_policy,
     )
 
@@ -2052,13 +2090,17 @@ def run_gtp_approx_backtest(
         },
         "limitations": [
             "Daily targets from mirror_generate_trade_plan_sizing on archived etf_screened_today.csv.",
-            "Borrow input: borrow_avg_annual when finite, else borrow_current (spot).",
+            "Borrow input: borrow_avg_annual when finite, else borrow_current (spot / IBKR feerate).",
             "Sizing signal: net_edge_p50_annual (YAML sizing_edge_column) minus borrow_aversion × borrow.",
-            "Does not consume archived proposed_trades.csv.",
+            "Does not consume archived proposed_trades.csv; B5 is not sized by the mirror.",
+            "Average borrow is often higher than spot → tighter entry caps → fewer pairs than replay.",
+            "Plans sized every screened day; book retargets weekly (W-FRI) with the latest plan.",
+            "IBKR short-sale proceeds credit modelled at 3.8% annual on short notional (Actual/360); "
+            "borrow fee still charged from screened/IBKR rates.",
             "Mirror decay-score path only — no live B4 opt2 / crash-budget / post-cap smooth / ratchet.",
             "B1 hysteresis carried across days in an isolated temp file (prod state untouched).",
             "Point-in-time legs use next-close execution, share-hold marking, 20 bp slippage, "
-            "$0.0035/share commissions, borrow, and 4.45% margin debit / Actual-360.",
+            "$0.0035/share commissions, and 4.45% margin debit / Actual-360.",
             "B3 flow excluded.",
         ],
     }
@@ -2132,12 +2174,14 @@ def run_recompute_backtest(
         commission_per_share=rknobs["commission_per_share"],
         margin_rate_annual=rknobs["margin_rate_annual"],
         financing_daycount=rknobs["financing_daycount"],
+        short_proceeds_credit_annual=rknobs["short_proceeds_credit_annual"],
         execution_lag_sessions=rknobs["execution_lag_sessions"],
         target_notional_mode=rknobs["target_notional_mode"],
         enter_band_pct=rknobs["enter_band_pct"],
         exit_band_pct=rknobs["exit_band_pct"],
         min_trade_usd=rknobs["min_trade_usd"],
         check_freq="W-FRI",
+        retarget_on_plan_change=True,
         pre_archive_policy=pre_archive_policy,
     )
 
