@@ -533,3 +533,7 @@ date,symbol,underlying,bucket,pair,type,category,amount_usd,ex_date,description
 2026-07-08,LRCX,LRCX,bucket_1,LRCX (spot),Dividends,dividends,1.82,2026-06-17,LRCX(US5128073062) CASH DIVIDEND USD 0.26 PER SHARE (Ordinary Dividend)
 2026-07-09,FBYY,META,bucket_2,META | FBYY,Dividends,dividends,-247.28,2026-07-02,FBYY(US38747R3140) CASH DIVIDEND USD 0.07017 PER SHARE (Ordinary Dividend)
 2026-07-09,FBYY,META,bucket_2,META | FBYY,Payment In Lieu Of Dividends,pil_dividends,-95.15,2026-07-02,FBYY(US38747R3140) PAYMENT IN LIEU OF DIVIDEND (Ordinary Dividend)
+2026-07-10,BRKC,BRKC,,,Payment In Lieu Of Dividends,pil_dividends,-17.69,2026-07-09,BRKC(US88634T8320) PAYMENT IN LIEU OF DIVIDEND (Ordinary Dividend)
+2026-07-10,QQQ,QQQ,bucket_1,QQQ (spot),Dividends,dividends,1.63,2026-06-22,QQQ(US46090E1038) CASH DIVIDEND USD 0.81349 PER SHARE (Ordinary Dividend)
+2026-07-10,TSM,TSM,bucket_1,TSM (spot),Dividends,dividends,41.33,2026-06-11,TSM(US8740391003) CASH DIVIDEND USD 0.939325 PER SHARE (Ordinary Div - NRA Withholding Exempt)
+2026-07-10,TSM,TSM,bucket_1,TSM (spot),Withholding Tax,withholding_tax,-8.68,,TSM(US8740391003) CASH DIVIDEND USD 0.939325 PER SHARE - TW TAX
