@@ -12,9 +12,31 @@ from scripts.production_actual_backtest import (
     _stock_sleeve_nav,
     _targets_from_plan,
     normalize_plan,
+    prepare_screened_for_gtp_approx,
     simulate_book_from_plan_timeline,
 )
 from scripts.sizing_tilt_cadence_bt import load_price_panel, pair_daily_returns
+
+
+def test_prepare_screened_uses_borrow_avg_when_finite():
+    df = pd.DataFrame(
+        {
+            "ETF": ["AAA", "BBB", "CCC"],
+            "borrow_current": [0.10, 0.20, 0.30],
+            "borrow_avg_annual": [0.05, np.nan, 0.40],
+            "net_edge_p50_annual": [0.5, 0.6, 0.7],
+        }
+    )
+    out = prepare_screened_for_gtp_approx(df)
+    assert float(out.loc[0, "borrow_current"]) == pytest.approx(0.05)
+    assert float(out.loc[1, "borrow_current"]) == pytest.approx(0.20)
+    assert float(out.loc[2, "borrow_current"]) == pytest.approx(0.40)
+    assert list(out["borrow_used_for_sizing"]) == [
+        "borrow_avg_annual",
+        "borrow_current",
+        "borrow_avg_annual",
+    ]
+    assert float(out.loc[0, "net_edge_p50_annual"]) == pytest.approx(0.5)
 
 
 def test_pair_eq_not_wiped_on_nan_friday():
