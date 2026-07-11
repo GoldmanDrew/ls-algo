@@ -1,33 +1,26 @@
 """Production-actual book backtest (May 2025 -> present).
 
-Modes
------
-``frozen``
-    Single anchor ``proposed_trades.csv`` (legacy). Answers: given *today's*
-    book (full B4 stack when GTP wrote it), what would NAV have done from
-    ``--start``?
+Primary mode
+------------
+``gtp`` (default)
+    Each archived ``etf_screened_today.csv`` is sized with a generate-trade-plan
+    approximation: ``mirror_generate_trade_plan_sizing`` using that day's listed
+    universe, ``borrow_avg_annual`` (fallback ``borrow_current``) for the borrow
+    penalty / caps, and ``net_edge_p50_annual`` as the sizing signal. Does **not**
+    consume archived ``proposed_trades.csv``. Plans execute via the unified
+    share-hold ledger (next-close, Phase-2b bands, borrow/margin/slippage).
 
-``replay`` (Phase A)
-    Point-in-time signed legs from archived ``data/runs/*/proposed_trades.csv``.
-    Plans execute at the next close; shares are held between weekly / plan
-    events; Phase-2b resize bands, borrow, margin, commissions, and slippage are
-    explicit. Archives start ~2025-12-28; before that the book holds cash.
+Legacy modes (CLI only; notebook no longer runs them)
+-----------------------------------------------------
+``frozen`` / ``replay`` / ``recompute`` — see git history or ``--help``.
 
-``recompute`` (Phase B)
-    Where ``etf_screened_today.csv`` exists, re-size via
-    ``mirror_generate_trade_plan_sizing`` (B1/B2/B4 decay-score path; no live
-    B4 opt2 / crash / smooth / ratchet). Falls back to archived proposed_trades
-    when screened is missing or mirror fails. Carries B1 hysteresis state
-    across days.
-
-Outputs under ``notebooks/output/production_actual_bt/`` (or ``*_replay`` /
-``*_recompute`` subdirs when those modes are selected).
+Outputs under ``notebooks/output/production_actual_bt/`` (``gtp`` writes at the
+root; legacy modes still use subdirs).
 
 Run
 ---
     python -m scripts.production_actual_backtest
-    python -m scripts.production_actual_backtest --mode replay --start 2025-05-01
-    python -m scripts.production_actual_backtest --mode recompute --start 2025-12-28
+    python -m scripts.production_actual_backtest --mode gtp --start 2025-12-28
 """
 
 from __future__ import annotations
@@ -124,12 +117,19 @@ def rebalance_knobs(cfg: dict) -> dict:
         # includes a sensitivity panel so this approximation stays visible.
         "margin_rate_annual": 0.0445,
         "financing_daycount": 360.0,
+        # IBKR short-sale proceeds credit (interest on cash from shorts).
+        # Modelled as a flat 3.8% annual on absolute short notional / daycount.
+        # Borrow fee is still charged separately from IBKR feerate / screened borrow.
+        "short_proceeds_credit_annual": 0.038,
         # A plan written on day T is assumed known after that close and is
         # executed at the next available close.  Its P&L starts on T+2 close.
         "execution_lag_sessions": 1,
         # Preserve the plan's gross/equity multiple as NAV changes, matching
         # Diamond Creek's dynamic target-gross convention.
         "target_notional_mode": "equity_scaled",
+        # GTP mode: size every screened day, but trade on the weekly clock so
+        # daily score reshuffles do not pay 20 bp on the whole book.
+        "retarget_on_plan_change": False,
     }
 
 
@@ -1036,6 +1036,7 @@ def simulate_book_from_plan_timeline(
     commission_per_share: float = 0.0035,
     margin_rate_annual: float = 0.0445,
     financing_daycount: float = 360.0,
+    short_proceeds_credit_annual: float = 0.038,
     execution_lag_sessions: int = 1,
     target_notional_mode: str = "equity_scaled",
     enter_band_pct: float = 0.12,
@@ -1043,6 +1044,7 @@ def simulate_book_from_plan_timeline(
     min_trade_usd: float = 250.0,
     use_resize_bands: bool = True,
     check_freq: str = "W-FRI",
+    retarget_on_plan_change: bool = True,
     pre_archive_policy: str = "cash",
 ) -> tuple[pd.Series, pd.DataFrame, dict[str, Any], pd.DataFrame, pd.DataFrame]:
     """Close-to-close, share-hold simulation with point-in-time plans.
@@ -1106,6 +1108,7 @@ def simulate_book_from_plan_timeline(
                 "sleeve": str(row.get("sleeve", "") if row is not None else ""),
                 "price_pnl_usd": 0.0,
                 "borrow_cost_usd": 0.0,
+                "short_credit_usd": 0.0,
                 "margin_cost_usd": 0.0,
                 "txn_cost_usd": 0.0,
             }
@@ -1120,11 +1123,12 @@ def simulate_book_from_plan_timeline(
         if gross_start <= 1e-9:
             cash_days += 1
         sleeve_comp = {
-            s: {"price": 0.0, "borrow": 0.0, "margin": 0.0, "txn": 0.0}
+            s: {"price": 0.0, "borrow": 0.0, "credit": 0.0, "margin": 0.0, "txn": 0.0}
             for s in ALL_SLEEVES
         }
         price_pnl = 0.0
         borrow_cost = 0.0
+        short_credit = 0.0
         margin_cost = 0.0
         txn_cost = 0.0
         turnover_day = 0.0
@@ -1159,33 +1163,43 @@ def simulate_book_from_plan_timeline(
                 if sl in sleeve_comp:
                     sleeve_comp[sl]["price"] += pnl_e
 
-            # 2) Borrow on marked short notionals, using the rate attached to
-            # the active archived plan. borrow_current belongs to the ETF;
-            # borrow_underlying / underlying_borrow_annual belongs to the
-            # underlying leg.
+            # 2) Borrow fee on short notionals (IBKR feerate / screened borrow)
+            # and short-sale proceeds credit (flat interest on short cash).
+            daycount = max(float(financing_daycount), 1.0)
+            credit_rate = max(float(short_proceeds_credit_annual), 0.0)
             for etf, row in cur.iterrows():
                 sl = str(row.get("sleeve", ""))
                 rate_a = float(pd.to_numeric(row.get("borrow_current"), errors="coerce") or 0.0)
                 rate_b = float(pd.to_numeric(row.get("borrow_underlying"), errors="coerce") or 0.0)
                 cost = 0.0
-                if float(row["etf_usd"]) < 0:
-                    cost += abs(float(row["etf_usd"])) * max(rate_a, 0.0) / TRADING_DAYS
-                if float(row["underlying_usd"]) < 0:
-                    cost += abs(float(row["underlying_usd"])) * max(rate_b, 0.0) / TRADING_DAYS
+                credit = 0.0
+                etf_usd = float(row["etf_usd"])
+                und_usd = float(row["underlying_usd"])
+                if etf_usd < 0:
+                    short_abs = abs(etf_usd)
+                    cost += short_abs * max(rate_a, 0.0) / TRADING_DAYS
+                    credit += short_abs * credit_rate / daycount
+                if und_usd < 0:
+                    short_abs = abs(und_usd)
+                    cost += short_abs * max(rate_b, 0.0) / TRADING_DAYS
+                    credit += short_abs * credit_rate / daycount
                 borrow_cost += cost
-                _ensure_contrib(etf, row)["borrow_cost_usd"] += cost
+                short_credit += credit
+                c = _ensure_contrib(etf, row)
+                c["borrow_cost_usd"] += cost
+                c["short_credit_usd"] += credit
                 if sl in sleeve_comp:
                     sleeve_comp[sl]["borrow"] += cost
+                    sleeve_comp[sl]["credit"] += credit
 
-            # Diamond Creek v15 convention: debit on positive long market
-            # value less NAV; short proceeds do not offset the base.
+            # Margin debit on positive long market value less NAV.
             long_by_pair = {
                 etf: max(float(row["etf_usd"]), 0.0) + max(float(row["underlying_usd"]), 0.0)
                 for etf, row in cur.iterrows()
             }
             long_total = float(sum(long_by_pair.values()))
-            debit_base = max(0.0, long_total - (equity + price_pnl - borrow_cost))
-            margin_cost = debit_base * max(float(margin_rate_annual), 0.0) / max(float(financing_daycount), 1.0)
+            debit_base = max(0.0, long_total - (equity + price_pnl - borrow_cost + short_credit))
+            margin_cost = debit_base * max(float(margin_rate_annual), 0.0) / daycount
             if margin_cost > 0 and long_total > 0:
                 for etf, basis in long_by_pair.items():
                     alloc = margin_cost * basis / long_total
@@ -1195,15 +1209,19 @@ def simulate_book_from_plan_timeline(
                     if sl in sleeve_comp:
                         sleeve_comp[sl]["margin"] += alloc
 
-        equity += price_pnl - borrow_cost - margin_cost
+        equity += price_pnl - borrow_cost - margin_cost + short_credit
 
         # 3) At the close, activate any plan whose information lag has elapsed,
-        # then retarget weekly.  New positions earn returns starting tomorrow.
+        # then retarget on the weekly clock (and on first open / optional plan change).
         plan_changed = d in effective
         if plan_changed:
             active_plan_date, active_plan = effective[d]
             plans_used.add(active_plan_date)
-        need_rebal = active_plan is not None and (plan_changed or d in check_days)
+        need_rebal = active_plan is not None and (
+            d in check_days
+            or (plan_changed and bool(retarget_on_plan_change))
+            or (plan_changed and cur.empty)
+        )
         target = pd.DataFrame(columns=pos_cols[:-1])
         target_planned_gross = 0.0
         target_tradeable_gross = 0.0
@@ -1331,7 +1349,7 @@ def simulate_book_from_plan_timeline(
             top5_gross_share = float(shares.head(5).sum())
             gross_hhi = float((shares**2).sum())
         net_pnl = float(equity - equity_start)
-        recon = net_pnl - (price_pnl - borrow_cost - margin_cost - txn_cost)
+        recon = net_pnl - (price_pnl - borrow_cost - margin_cost - txn_cost + short_credit)
         running_peak = max(running_peak, float(equity))
         row_out: dict[str, Any] = {
             "date": d,
@@ -1339,6 +1357,7 @@ def simulate_book_from_plan_timeline(
             "book_equity": equity,
             "daily_price_pnl": price_pnl,
             "daily_borrow_cost": borrow_cost,
+            "daily_short_credit": short_credit,
             "daily_margin_cost": margin_cost,
             "daily_txn_cost": txn_cost,
             "daily_net_pnl": net_pnl,
@@ -1362,9 +1381,10 @@ def simulate_book_from_plan_timeline(
         }
         for s in ALL_SLEEVES:
             sc = sleeve_comp[s]
-            row_out[s] = sc["price"] - sc["borrow"] - sc["margin"] - sc["txn"]
+            row_out[s] = sc["price"] - sc["borrow"] - sc["margin"] - sc["txn"] + sc["credit"]
             row_out[f"{s}__price_pnl"] = sc["price"]
             row_out[f"{s}__borrow_cost"] = sc["borrow"]
+            row_out[f"{s}__short_credit"] = sc["credit"]
             row_out[f"{s}__margin_cost"] = sc["margin"]
             row_out[f"{s}__txn_cost"] = sc["txn"]
         sleeve_daily_rows.append(row_out)
@@ -1377,8 +1397,11 @@ def simulate_book_from_plan_timeline(
             if e in cur.index else 0.0
         )
         net_pair = (
-            float(c["price_pnl_usd"]) - float(c["borrow_cost_usd"])
-            - float(c["margin_cost_usd"]) - float(c["txn_cost_usd"])
+            float(c["price_pnl_usd"])
+            - float(c["borrow_cost_usd"])
+            + float(c.get("short_credit_usd", 0.0))
+            - float(c["margin_cost_usd"])
+            - float(c["txn_cost_usd"])
         )
         pair_rows.append({**c, "pnl_usd": net_pair, "end_weight": gross_end / equity if equity > 0 else np.nan})
     pair_stats = pd.DataFrame(pair_rows)
@@ -1404,6 +1427,8 @@ def simulate_book_from_plan_timeline(
         "commission_per_share": float(commission_per_share),
         "margin_rate_annual": float(margin_rate_annual),
         "financing_daycount": float(financing_daycount),
+        "short_proceeds_credit_annual": float(short_proceeds_credit_annual),
+        "retarget_on_plan_change": bool(retarget_on_plan_change),
         "use_resize_bands": bool(use_resize_bands),
         "enter_band_pct": float(enter_band_pct),
         "exit_band_pct": float(exit_band_pct),
@@ -1414,8 +1439,122 @@ def simulate_book_from_plan_timeline(
 
 
 # ---------------------------------------------------------------------------
-# Phase B: recompute plans via mirror
+# GTP-approx daily sizing (primary) + legacy recompute
 # ---------------------------------------------------------------------------
+def prepare_screened_for_gtp_approx(screened: pd.DataFrame) -> pd.DataFrame:
+    """Point-in-time GTP inputs: average borrow + current net-edge scores.
+
+    Overwrites ``borrow_current`` with ``borrow_avg_annual`` where the average is
+    finite so ``mirror_generate_trade_plan_sizing`` / ``_decay_score_weights``
+    use the same borrow figure for eligibility caps and the
+    ``net_edge − aversion × borrow`` score. Leaves ``net_edge_p50_annual`` (and
+    siblings) untouched — those are already the as-of screener edge scores.
+    """
+    out = screened.copy()
+    if "borrow_avg_annual" in out.columns:
+        avg = pd.to_numeric(out["borrow_avg_annual"], errors="coerce")
+        if "borrow_current" not in out.columns:
+            out["borrow_current"] = np.nan
+        spot = pd.to_numeric(out["borrow_current"], errors="coerce")
+        out["borrow_current"] = avg.where(np.isfinite(avg), spot)
+        out["borrow_used_for_sizing"] = np.where(
+            np.isfinite(avg),
+            "borrow_avg_annual",
+            "borrow_current",
+        )
+    elif "borrow_used_for_sizing" not in out.columns:
+        out["borrow_used_for_sizing"] = "borrow_current"
+    return out
+
+
+def gtp_approx_plan_timeline(
+    *,
+    cfg: dict,
+    start: pd.Timestamp,
+    end: pd.Timestamp | None = None,
+) -> tuple[dict[pd.Timestamp, pd.DataFrame], pd.DataFrame]:
+    """Daily plans from screened archives only (no proposed_trades).
+
+    Sizes each ``etf_screened_today.csv`` with average-borrow + net-edge GTP
+    mirror. B1 hysteresis is carried in an isolated temp state file.
+    """
+    from scripts.gtp_sizing_mirror import mirror_generate_trade_plan_sizing
+
+    screened_dates = [d for d in list_archived_screened_dates() if d >= start]
+    if end is not None:
+        screened_dates = [d for d in screened_dates if d <= end]
+
+    paths = cfg.get("paths") or {}
+    real_decay = Path(
+        str(paths.get("core_leveraged_decay_state_json", REPO / "data/core_leveraged_decay_state.json"))
+    )
+    tmp_dir = Path(tempfile.mkdtemp(prefix="gtp_approx_state_"))
+    tmp_decay = tmp_dir / "core_leveraged_decay_state.json"
+    if real_decay.exists():
+        shutil.copy2(real_decay, tmp_decay)
+    else:
+        tmp_decay.write_text("{}", encoding="utf-8")
+    cfg_iso = dict(cfg)
+    cfg_iso_paths = dict(paths)
+    cfg_iso_paths["core_leveraged_decay_state_json"] = str(tmp_decay)
+    cfg_iso["paths"] = cfg_iso_paths
+
+    timeline: dict[pd.Timestamp, pd.DataFrame] = {}
+    diag_rows: list[dict] = []
+
+    try:
+        for d in screened_dates:
+            path = RUNS_DIR / d.strftime("%Y-%m-%d") / "etf_screened_today.csv"
+            try:
+                screened = prepare_screened_for_gtp_approx(pd.read_csv(path))
+                n_avg = (
+                    int((screened.get("borrow_used_for_sizing") == "borrow_avg_annual").sum())
+                    if "borrow_used_for_sizing" in screened.columns
+                    else 0
+                )
+                sized, _sdiag = mirror_generate_trade_plan_sizing(
+                    screened,
+                    cfg_iso,
+                    run_date=d.strftime("%Y-%m-%d"),
+                    paths=cfg_iso_paths,
+                    hysteresis_touch_disk=True,
+                )
+                plan = normalize_plan(sized, source_date=d.strftime("%Y-%m-%d"))
+                plan = plan.loc[plan["gross_target_usd"].abs() > 1e-6].copy()
+                if plan.empty:
+                    raise ValueError("mirror returned empty plan")
+                timeline[d] = plan
+                diag_rows.append(
+                    {
+                        "date": d,
+                        "source": "gtp_approx",
+                        "n_pairs": len(plan),
+                        "gross_sum": float(plan["gross_target_usd"].sum()),
+                        "n_borrow_avg": n_avg,
+                        "n_screened": int(len(screened)),
+                        "ok": True,
+                        "error": "",
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                diag_rows.append(
+                    {
+                        "date": d,
+                        "source": "gtp_approx_failed",
+                        "n_pairs": 0,
+                        "gross_sum": 0.0,
+                        "n_borrow_avg": 0,
+                        "n_screened": 0,
+                        "ok": False,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return timeline, pd.DataFrame(diag_rows).sort_values("date") if diag_rows else pd.DataFrame()
+
+
 def recompute_plan_timeline(
     *,
     cfg: dict,
@@ -1423,7 +1562,7 @@ def recompute_plan_timeline(
     end: pd.Timestamp | None = None,
     fallback_to_archived: bool = True,
 ) -> tuple[dict[pd.Timestamp, pd.DataFrame], pd.DataFrame]:
-    """Build plan timeline: mirror on screened dates, else archived proposed."""
+    """Legacy: mirror on screened dates, optionally fall back to archived proposed."""
     from scripts.gtp_sizing_mirror import mirror_generate_trade_plan_sizing
 
     screened_dates = [d for d in list_archived_screened_dates() if d >= start]
@@ -1449,7 +1588,7 @@ def recompute_plan_timeline(
         for d in screened_dates:
             path = RUNS_DIR / d.strftime("%Y-%m-%d") / "etf_screened_today.csv"
             try:
-                screened = pd.read_csv(path)
+                screened = prepare_screened_for_gtp_approx(pd.read_csv(path))
                 sized, sdiag = mirror_generate_trade_plan_sizing(
                     screened,
                     cfg_iso,
@@ -1775,12 +1914,14 @@ def run_replay_backtest(
         commission_per_share=rknobs["commission_per_share"],
         margin_rate_annual=rknobs["margin_rate_annual"],
         financing_daycount=rknobs["financing_daycount"],
+        short_proceeds_credit_annual=rknobs["short_proceeds_credit_annual"],
         execution_lag_sessions=rknobs["execution_lag_sessions"],
         target_notional_mode=rknobs["target_notional_mode"],
         enter_band_pct=rknobs["enter_band_pct"],
         exit_band_pct=rknobs["exit_band_pct"],
         min_trade_usd=rknobs["min_trade_usd"],
         check_freq="W-FRI",
+        retarget_on_plan_change=True,  # archived plans already sparse; apply on arrival
         pre_archive_policy=pre_archive_policy,
     )
 
@@ -1851,6 +1992,149 @@ def run_replay_backtest(
     return report
 
 
+def run_gtp_approx_backtest(
+    *,
+    run_date: str,
+    start: str,
+    outdir: Path,
+    pre_archive_policy: str = "cash",
+) -> dict:
+    """Primary path: daily GTP-approx sizing from screened (avg borrow + net edge)."""
+    cfg = load_config(REPO / "config" / "strategy_config.yml")
+    capital = float(cfg["strategy"]["capital_usd"])
+    lev = float(cfg["strategy"]["gross_leverage"])
+    budgets = sleeve_budgets_usd(cfg)
+    rknobs = rebalance_knobs(cfg)
+    start_ts = pd.Timestamp(start)
+
+    cov = archive_coverage_summary(start)
+    print("[prod-bt:gtp] archive coverage:")
+    print(cov.to_string(index=False))
+
+    print("[prod-bt:gtp] building plan timeline via GTP approx (avg borrow + net edge) ...")
+    timeline, diag = gtp_approx_plan_timeline(cfg=cfg, start=start_ts)
+    if not timeline:
+        raise RuntimeError(
+            "gtp approx produced empty timeline — need archived etf_screened_today.csv "
+            "(no proposed_trades fallback)"
+        )
+
+    n_ok = int((diag["source"] == "gtp_approx").sum()) if not diag.empty else 0
+    n_fail = int((diag["source"] == "gtp_approx_failed").sum()) if not diag.empty else 0
+    print(f"[prod-bt:gtp] timeline={len(timeline)} sized_ok={n_ok} sized_fail={n_fail}")
+
+    panel = load_price_panel(run_date)
+    nav, audit, meta, pair_stats, sleeve_daily = simulate_book_from_plan_timeline(
+        timeline,
+        panel,
+        budgets=budgets,
+        capital_usd=capital,
+        start=start_ts,
+        slippage_bps=rknobs["slippage_bps"],
+        commission_per_share=rknobs["commission_per_share"],
+        margin_rate_annual=rknobs["margin_rate_annual"],
+        financing_daycount=rknobs["financing_daycount"],
+        short_proceeds_credit_annual=rknobs["short_proceeds_credit_annual"],
+        execution_lag_sessions=rknobs["execution_lag_sessions"],
+        target_notional_mode=rknobs["target_notional_mode"],
+        enter_band_pct=rknobs["enter_band_pct"],
+        exit_band_pct=rknobs["exit_band_pct"],
+        min_trade_usd=rknobs["min_trade_usd"],
+        check_freq="W-FRI",
+        # Size daily from screened; trade on Friday with the latest plan so
+        # daily score reshuffles do not churn the whole book at 20 bp.
+        retarget_on_plan_change=bool(rknobs.get("retarget_on_plan_change", False)),
+        pre_archive_policy=pre_archive_policy,
+    )
+
+    book_meta = {"sleeve": "BOOK", "mode": "gtp", **meta}
+    summary = pd.DataFrame([book_meta])
+    series = pd.DataFrame({"BOOK_NAV": nav})
+    if not sleeve_daily.empty:
+        for s in ALL_SLEEVES:
+            col = f"{s}_cum_pnl"
+            if col in sleeve_daily.columns:
+                series[s] = (
+                    capital + sleeve_daily.set_index("date")[col]
+                ).reindex(series.index).ffill()
+
+    report = {
+        "mode": "gtp",
+        "run_date": run_date,
+        "start": start,
+        "end": str(nav.index[-1].date()) if len(nav) else None,
+        "capital_usd": capital,
+        "gross_leverage": lev,
+        "budgets_usd": budgets,
+        "rebalance_knobs": rknobs,
+        "archive_coverage": cov.to_dict(orient="records"),
+        "gtp_stats": {
+            "n_timeline": len(timeline),
+            "n_sized_ok": n_ok,
+            "n_sized_fail": n_fail,
+            "n_borrow_avg_rows": int(diag["n_borrow_avg"].sum()) if not diag.empty and "n_borrow_avg" in diag.columns else 0,
+        },
+        "book": {
+            k: book_meta.get(k)
+            for k in (
+                "cagr",
+                "vol",
+                "sharpe",
+                "maxdd",
+                "start_usd",
+                "end_usd",
+                "n_plans_used",
+                "first_plan",
+                "cash_days",
+            )
+        },
+        "limitations": [
+            "Daily targets from mirror_generate_trade_plan_sizing on archived etf_screened_today.csv.",
+            "Borrow input: borrow_avg_annual when finite, else borrow_current (spot / IBKR feerate).",
+            "Sizing signal: net_edge_p50_annual (YAML sizing_edge_column) minus borrow_aversion × borrow.",
+            "Does not consume archived proposed_trades.csv; B5 is not sized by the mirror.",
+            "Average borrow is often higher than spot → tighter entry caps → fewer pairs than replay.",
+            "Plans sized every screened day; book retargets weekly (W-FRI) with the latest plan.",
+            "IBKR short-sale proceeds credit modelled at 3.8% annual on short notional (Actual/360); "
+            "borrow fee still charged from screened/IBKR rates.",
+            "Mirror decay-score path only — no live B4 opt2 / crash-budget / post-cap smooth / ratchet.",
+            "B1 hysteresis carried across days in an isolated temp file (prod state untouched).",
+            "Point-in-time legs use next-close execution, share-hold marking, 20 bp slippage, "
+            "$0.0035/share commissions, and 4.45% margin debit / Actual-360.",
+            "B3 flow excluded.",
+        ],
+    }
+    extra: dict[str, pd.DataFrame] = {}
+    if not audit.empty:
+        extra["rebalance_audit.csv"] = audit
+    if not diag.empty:
+        extra["gtp_sizing_diag.csv"] = diag
+    if not pair_stats.empty:
+        extra["pair_stats.csv"] = pair_stats
+        extra["sleeve_pnl.csv"] = (
+            pair_stats.groupby("sleeve", as_index=False)
+            .agg(n_pairs=("ETF", "count"), pnl_usd=("pnl_usd", "sum"))
+            .sort_values("pnl_usd")
+        )
+    if not sleeve_daily.empty:
+        extra["sleeve_daily_pnl.csv"] = sleeve_daily
+        extra["daily_diagnostics.csv"] = sleeve_daily
+    _write_outputs(
+        outdir=outdir,
+        mode="gtp",
+        report=report,
+        summary=summary,
+        series=series,
+        extra_csvs=extra or None,
+    )
+    print(f"[prod-bt:gtp] wrote {outdir}")
+    print(
+        f"[prod-bt:gtp] BOOK CAGR={book_meta.get('cagr')} MaxDD={book_meta.get('maxdd')} "
+        f"end=${book_meta.get('end_usd'):,.0f}"
+    )
+    return report
+
+
 def run_recompute_backtest(
     *,
     run_date: str,
@@ -1890,12 +2174,14 @@ def run_recompute_backtest(
         commission_per_share=rknobs["commission_per_share"],
         margin_rate_annual=rknobs["margin_rate_annual"],
         financing_daycount=rknobs["financing_daycount"],
+        short_proceeds_credit_annual=rknobs["short_proceeds_credit_annual"],
         execution_lag_sessions=rknobs["execution_lag_sessions"],
         target_notional_mode=rknobs["target_notional_mode"],
         enter_band_pct=rknobs["enter_band_pct"],
         exit_band_pct=rknobs["exit_band_pct"],
         min_trade_usd=rknobs["min_trade_usd"],
         check_freq="W-FRI",
+        retarget_on_plan_change=True,
         pre_archive_policy=pre_archive_policy,
     )
 
@@ -1977,10 +2263,17 @@ def run_production_actual_backtest(
     run_date: str,
     start: str,
     outdir: Path,
-    mode: str = "frozen",
+    mode: str = "gtp",
     pre_archive_policy: str = "cash",
 ) -> dict:
-    mode = str(mode or "frozen").strip().lower()
+    mode = str(mode or "gtp").strip().lower()
+    if mode == "gtp":
+        return run_gtp_approx_backtest(
+            run_date=run_date,
+            start=start,
+            outdir=outdir,
+            pre_archive_policy=pre_archive_policy,
+        )
     if mode == "frozen":
         return run_frozen_backtest(run_date=run_date, start=start, outdir=outdir)
     if mode == "replay":
@@ -1997,36 +2290,36 @@ def run_production_actual_backtest(
             outdir=outdir,
             pre_archive_policy=pre_archive_policy,
         )
-    raise ValueError(f"Unknown mode={mode!r}; use frozen|replay|recompute")
+    raise ValueError(f"Unknown mode={mode!r}; use gtp|frozen|replay|recompute")
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--run-date", default="2026-07-08", help="Price-panel / frozen-anchor run date")
+    ap.add_argument("--run-date", default="2026-07-10", help="Price-panel run date")
     ap.add_argument("--start", default="2025-05-01")
     ap.add_argument(
         "--mode",
-        default="frozen",
-        choices=("frozen", "replay", "recompute"),
-        help="frozen=single plan; replay=archived plans; recompute=mirror+archived",
+        default="gtp",
+        choices=("gtp", "frozen", "replay", "recompute"),
+        help="gtp=daily GTP approx from screened (default); others are legacy",
     )
     ap.add_argument(
         "--pre-archive-policy",
         default="cash",
         choices=("cash", "skip"),
-        help="Before first archived plan: hold cash or start calendar at first plan",
+        help="Before first sized plan: hold cash or start calendar at first plan",
     )
     ap.add_argument(
         "--outdir",
         type=Path,
         default=None,
-        help="Output dir (default: notebooks/output/production_actual_bt[/_{mode}])",
+        help="Output dir (default: notebooks/output/production_actual_bt[/mode])",
     )
     args = ap.parse_args(argv)
     outdir = args.outdir
     if outdir is None:
         base = REPO / "notebooks" / "output" / "production_actual_bt"
-        outdir = base if args.mode == "frozen" else base / args.mode
+        outdir = base if args.mode in ("gtp", "frozen") else base / args.mode
     run_production_actual_backtest(
         run_date=args.run_date,
         start=args.start,
