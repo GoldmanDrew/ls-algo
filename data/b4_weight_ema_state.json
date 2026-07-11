@@ -13,5 +13,18 @@
     "SSPC|SPCX": 0.0790786,
     "MUZ|MU": 0.08781385
   },
+  "own_risk_by_pair": {
+    "LITZ|LITE": 0.01425748,
+    "SNDQ|SNDK": 0.01205696,
+    "MSTZ|MSTR": 0.011367,
+    "QBTZ|QBTS": 0.01506219,
+    "RKLZ|RKLB": 0.01890869,
+    "NBIZ|NBIS": 0.01278223,
+    "CORD|CRWV": 0.01133917,
+    "DAMD|AMD": 0.01988616,
+    "CONI|COIN": 0.01319016,
+    "SSPC|SPCX": 0.01223045,
+    "MUZ|MU": 0.01358094
+  },
   "stage": "post_cap_scale"
 }

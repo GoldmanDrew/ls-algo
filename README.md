@@ -200,9 +200,10 @@ Bucket 4 shorts inverse ETFs and hedges with underlying shorts to harvest struct
 2. Crash-cap      gross_i ≤ rho × sleeve_budget / L_i (L uses an asymmetric
                   EMA: risk-up immediate, risk-down smoothed), then
                   (if scale_to_budget) scale pro-rata so sleeve gross = target
-3. Smooth         trim-only weight EMA on the FINAL capped weights (risk cuts
-                  immediate; adds fade in; new entries ramp from zero; moves
-                  inside the no-trade band are held)
+3. Smooth         trim-only weight EMA on the FINAL capped weights:
+                  raises fade in; dilution from new entrants fades out;
+                  new entries ramp slowly; dropped names soft-exit;
+                  true own-risk cuts still land immediately
 4. Leg split      inv = gross / (1 + h·β),  und = h·β·inv
                   (+ grow-only inverse ratchet / continuous trim)
 ```
@@ -215,9 +216,12 @@ Bucket 4 shorts inverse ETFs and hedges with underlying shorts to harvest struct
 | `crash_budget.scale_to_budget` | `true` = refill sleeve after trim; `false` = leave freed cash undeployed |
 | `crash_budget.l_ema_alpha` | Risk-down smoothing on per-name L (risk-up binds immediately) |
 | `borrow_ramp_lo` / `borrow_ramp_hi` | Continuous high-borrow fade (no binary exclusion cliff) |
-| `weight_smoothing.alpha` | How fast size *increases* converge (cuts are immediate) |
-| `weight_smoothing.ramp_new_entries` | New names ramp in at `alpha` per run instead of full size |
-| `weight_smoothing.no_trade_band_rel/_abs` | Hold weights when the move is inside the band (no churn) |
+| `weight_smoothing.alpha` | How fast size *increases* converge |
+| `weight_smoothing.entry_alpha` | New-name ramp (default slower than alpha) |
+| `weight_smoothing.dilution_alpha` | How fast incumbents yield to new entrants |
+| `weight_smoothing.soft_exit_alpha` | How fast dropped names fade out |
+| `weight_smoothing.hard_cut_rel` | Own-risk drop above this → immediate cut |
+| `weight_smoothing.no_trade_band_rel/_abs` | Hold weights when the move is inside the band |
 | `hedge_cadence_policy` | Dynamic `h` + rebalance cadence (`docs/b4_engine_notes.md`) |
 
 Per-run telemetry:

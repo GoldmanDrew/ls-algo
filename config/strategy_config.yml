@@ -392,16 +392,20 @@ portfolio:
           # Uses the same posterior borrow as the aversion terms (no cliffs).
           borrow_ramp_lo: 0.80
           borrow_ramp_hi: 1.20
-          # Trim-only weight EMA at plan time, applied AFTER the crash budget
-          # (so scale_to_budget cross-coupling is damped too). Risk cuts apply
-          # immediately; increases move alpha of the way to the capped target;
-          # new entries ramp in from zero at alpha per run; moves smaller than
-          # max(no_trade_band_abs, no_trade_band_rel * w_prev) are held (no
-          # churn). State: data/b4_weight_ema_state.json (stage-tagged).
+          # Trim-only weight EMA at plan time, applied AFTER the crash budget.
+          # Raises move at alpha; new entries ramp slower (entry_alpha); when a
+          # new name's scale-to-budget compresses incumbents, those dilution
+          # cuts also fade at dilution_alpha (not instant). True own-risk cuts
+          # (pre-scale capacity down > hard_cut_rel) still land immediately.
+          # Dropped names soft-exit at soft_exit_alpha. State is stage-tagged.
           weight_smoothing:
             enabled: true
             alpha: 0.5
             ramp_new_entries: true
+            entry_alpha: 0.25           # new names: ~4 weeks to ~68% of target
+            dilution_alpha: 0.25        # incumbents yielding to new entries
+            soft_exit_alpha: 0.35       # dropped names fade out (~3 weeks)
+            hard_cut_rel: 0.10          # own-risk drop >10% => immediate cut
             no_trade_band_rel: 0.15    # hold if move < 15% of current weight
             no_trade_band_abs: 0.0025  # ... or < 25bp of the sleeve
             state_json: data/b4_weight_ema_state.json

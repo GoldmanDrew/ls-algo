@@ -290,10 +290,14 @@ class TestWeightSmoothing:
         f = self._smooth()
         prev = {("A", "X"): 0.5, ("B", "Y"): 0.5}
         solved = {("A", "X"): 0.2, ("B", "Y"): 0.8}   # A cut, B increase
-        out = f(solved, prev, alpha=0.5)
-        # NOT renormalized (downstream normalizes): A -> 0.2 immediate,
-        # B -> 0.5 + 0.5*0.3 = 0.65. Renormalizing here would scale the cut
-        # name back up (redeploy) and prevent the EMA from ever converging.
+        # Own-risk collapse on A => hard cut; B raises EMA.
+        out = f(
+            solved,
+            prev,
+            alpha=0.5,
+            own_risk_weights={("A", "X"): 0.02, ("B", "Y"): 0.05},
+            prev_own_risk_weights={("A", "X"): 0.05, ("B", "Y"): 0.05},
+        )
         assert out[("A", "X")] == pytest.approx(0.2)
         assert out[("B", "Y")] == pytest.approx(0.65)
 
@@ -322,10 +326,65 @@ class TestWeightSmoothing:
         f = self._smooth()
         prev = {("A", "X"): 0.5}
         solved = {("A", "X"): 0.5, ("NEW", "N"): 0.24}
-        out = f(solved, prev, alpha=0.5, ramp_new_entries=True)
-        # The PLTZ lesson: a new name arrives at alpha * solved, not full size.
-        assert out[("NEW", "N")] == pytest.approx(0.12)
+        out = f(solved, prev, alpha=0.5, ramp_new_entries=True, entry_alpha=0.25)
+        # First week is entry_alpha * solved, not full size.
+        assert out[("NEW", "N")] == pytest.approx(0.06)
         assert out[("A", "X")] == pytest.approx(0.5)
+
+    def test_dilution_cut_is_smoothed_not_instant(self):
+        f = self._smooth()
+        # Incumbent A: own risk capacity unchanged, but post-scale target fell
+        # because a new name claimed book share.
+        prev = {("A", "X"): 0.40, ("B", "Y"): 0.40}
+        target = {("A", "X"): 0.30, ("B", "Y"): 0.30, ("NEW", "N"): 0.40}
+        own = {("A", "X"): 0.05, ("B", "Y"): 0.05, ("NEW", "N"): 0.05}
+        own_prev = {("A", "X"): 0.05, ("B", "Y"): 0.05}
+        out = f(
+            target,
+            prev,
+            alpha=0.5,
+            ramp_new_entries=True,
+            entry_alpha=0.25,
+            dilution_alpha=0.25,
+            own_risk_weights=own,
+            prev_own_risk_weights=own_prev,
+        )
+        # Dilution: A moves 25% of the way from 0.40 toward 0.30 = 0.375
+        assert out[("A", "X")] == pytest.approx(0.375)
+        assert out[("NEW", "N")] == pytest.approx(0.10)  # 0.25 * 0.40
+
+    def test_hard_own_risk_cut_is_immediate(self):
+        f = self._smooth()
+        prev = {("A", "X"): 0.40}
+        target = {("A", "X"): 0.20}
+        # Own pre-scale capacity halved -> hard cut.
+        out = f(
+            target,
+            prev,
+            alpha=0.5,
+            dilution_alpha=0.25,
+            own_risk_weights={("A", "X"): 0.02},
+            prev_own_risk_weights={("A", "X"): 0.05},
+            hard_cut_rel=0.10,
+        )
+        assert out[("A", "X")] == pytest.approx(0.20)
+
+    def test_soft_exit_fades_dropped_name(self):
+        f = self._smooth()
+        prev = {("A", "X"): 0.40, ("GONE", "Z"): 0.20}
+        out = f(
+            {("A", "X"): 0.40},
+            prev,
+            alpha=0.5,
+            soft_exit_alpha=0.35,
+            own_risk_weights={("A", "X"): 0.05},
+            prev_own_risk_weights={("A", "X"): 0.05, ("GONE", "Z"): 0.03},
+        )
+        assert ("GONE", "Z") in out
+        assert out[("GONE", "Z")] == pytest.approx(0.20 * 0.65)
+        # Hard exit when soft_exit_alpha is None (legacy).
+        hard = f({("A", "X"): 0.40}, prev, alpha=0.5, soft_exit_alpha=None)
+        assert ("GONE", "Z") not in hard
 
     def test_ramp_skipped_on_first_ever_run(self):
         f = self._smooth()
@@ -338,8 +397,15 @@ class TestWeightSmoothing:
         f = self._smooth()
         prev = {("A", "X"): 0.10, ("B", "Y"): 0.10}
         solved = {("A", "X"): 0.104, ("B", "Y"): 0.05}
-        out = f(solved, prev, alpha=1.0, no_trade_band_rel=0.15)
-        # A's +4% move is inside the 15% band -> held; B's -50% cut passes.
+        out = f(
+            solved,
+            prev,
+            alpha=1.0,
+            no_trade_band_rel=0.15,
+            own_risk_weights={("A", "X"): 0.02, ("B", "Y"): 0.01},
+            prev_own_risk_weights={("A", "X"): 0.02, ("B", "Y"): 0.02},
+        )
+        # A's +4% move is inside the 15% band -> held; B's own-risk cut passes.
         assert out[("A", "X")] == pytest.approx(0.10)
         assert out[("B", "Y")] == pytest.approx(0.05)
 

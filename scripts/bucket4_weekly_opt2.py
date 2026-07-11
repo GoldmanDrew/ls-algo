@@ -1122,57 +1122,98 @@ def smooth_pair_weights_trim_only(
     *,
     alpha: float,
     ramp_new_entries: bool = False,
+    entry_alpha: float | None = None,
+    dilution_alpha: float | None = None,
+    soft_exit_alpha: float | None = None,
     no_trade_band_rel: float = 0.0,
     no_trade_band_abs: float = 0.0,
+    own_risk_weights: Mapping[tuple[str, str], float] | None = None,
+    prev_own_risk_weights: Mapping[tuple[str, str], float] | None = None,
+    hard_cut_rel: float = 0.10,
 ) -> dict[tuple[str, str], float]:
-    """Temporal weight smoothing with a TRIM-ONLY override (B4 Phase 5).
+    """Temporal weight smoothing with risk-aware trim (B4 Phase 5+).
 
-    Per pair: risk cuts apply immediately (``w_solved < w_prev`` -> take
-    ``w_solved``); size increases smooth in (``w_prev + alpha*(w_solved -
-    w_prev)``). Pairs that dropped out of the solve get no weight (an exit is
-    a risk cut).
+    Per surviving pair:
+      * Raise (w > w_prev): EMA in at ``alpha``.
+      * Hard risk cut (own pre-scale risk capacity fell by more than
+        ``hard_cut_rel``): take ``w`` immediately.
+      * Dilution cut (post-scale target fell but own risk capacity did
+        not): EMA down at ``dilution_alpha``. A new entrant's
+        scale-to-budget compression of incumbents must not look like a
+        risk cut.
+      * New entry: ramp from 0 at ``entry_alpha`` (defaults slower than
+        ``alpha``) when ``ramp_new_entries`` and prior book state exists.
+      * Soft exit: names that dropped out of the solve fade at
+        ``soft_exit_alpha`` toward 0. ``None`` keeps the legacy hard exit.
 
-    ``ramp_new_entries``: names with no history are seeded at ``w_prev = 0``
-    so they ramp in at ``alpha`` per run instead of arriving at full size
-    (the 2025-08-08 PLTZ +24%-of-sleeve week). When ``prev_weights`` is
-    entirely empty (first ever run, no state) the ramp is skipped so
-    enabling this live stays a no-op on day one.
+    ``own_risk_weights`` / ``prev_own_risk_weights`` are the pre-scale
+    crash-capped weights (``weight_capped`` in crash-budget telemetry).
+    When either map is missing, decreases default to dilution smoothing.
 
-    ``no_trade_band_rel`` / ``no_trade_band_abs``: hold the previous weight
-    when the post-EMA move is smaller than
-    ``max(no_trade_band_abs, no_trade_band_rel * w_prev)`` — kills persistent
-    sub-percent churn from weekly borrow/decay re-estimates. Never applied to
-    new entries; large risk cuts pass through untouched.
-
-    The result is NOT renormalized: downstream consumers
-    (``cap_pair_weights``, ``compute_bucket4_targets``) normalize internally,
-    and renormalizing here would scale cut names back ABOVE their solved
-    weight (redeploying trimmed weight — the drawdown_63 lesson) and leave the
-    EMA oscillating around its fixed point forever instead of converging.
-    Persist THIS output as the next run's ``prev_weights`` so identical solves
-    are a no-op.
+    The result is NOT renormalized. Persist THIS output as the next run's
+    ``prev_weights`` so identical solves are a no-op.
     """
-    a = float(np.clip(alpha, 0.0, 1.0))
+    a_up = float(np.clip(alpha, 0.0, 1.0))
+    a_entry = float(np.clip(entry_alpha if entry_alpha is not None else min(a_up, 0.25), 0.0, 1.0))
+    a_down = float(np.clip(dilution_alpha if dilution_alpha is not None else a_entry, 0.0, 1.0))
+    a_exit = (
+        float(np.clip(soft_exit_alpha, 0.0, 1.0))
+        if soft_exit_alpha is not None
+        else None
+    )
     band_rel = max(0.0, float(no_trade_band_rel))
     band_abs = max(0.0, float(no_trade_band_abs))
+    cut_rel = max(0.0, float(hard_cut_rel))
     has_history = any(
         v is not None and np.isfinite(float(v)) for v in prev_weights.values()
     )
+    own = own_risk_weights or {}
+    own_prev = prev_own_risk_weights or {}
+
+    def _hard_risk_cut(key: tuple[str, str]) -> bool:
+        o = own.get(key)
+        op = own_prev.get(key)
+        if o is None or op is None or not np.isfinite(float(o)) or not np.isfinite(float(op)):
+            return False
+        op_f = float(op)
+        if op_f <= 1e-12:
+            return False
+        return float(o) < op_f * (1.0 - cut_rel)
+
     out: dict[tuple[str, str], float] = {}
     for k, w in pair_weights.items():
         w = max(0.0, float(w))
         wp = prev_weights.get(k)
         if wp is None or not np.isfinite(float(wp)):
-            if ramp_new_entries and has_history:
-                out[k] = a * w  # ramp in from zero
-            else:
-                out[k] = w
+            out[k] = a_entry * w if (ramp_new_entries and has_history) else w
             continue
         wp = float(wp)
-        cand = w if w < wp else wp + a * (w - wp)
+        if w >= wp:
+            cand = wp + a_up * (w - wp)
+            hard = False
+        elif _hard_risk_cut(k):
+            cand = w
+            hard = True
+        else:
+            cand = wp + a_down * (w - wp)
+            hard = False
         band = max(band_abs, band_rel * wp)
-        out[k] = wp if abs(cand - wp) < band else cand
+        out[k] = cand if (hard or abs(cand - wp) >= band) else wp
+
+    if a_exit is not None and has_history:
+        for k, wp in prev_weights.items():
+            if k in out:
+                continue
+            if wp is None or not np.isfinite(float(wp)):
+                continue
+            wp = float(wp)
+            if wp <= 1e-12:
+                continue
+            faded = wp * (1.0 - a_exit)
+            if faded > max(band_abs, 1e-6):
+                out[k] = faded
     return out
+
 
 
 def _continuous_ratchet_trim_rate(

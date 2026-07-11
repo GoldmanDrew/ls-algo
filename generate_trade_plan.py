@@ -126,8 +126,30 @@ def _b4_load_weight_ema_state(path: Path, *, stage: str | None = None) -> dict[s
     return {}
 
 
+def _b4_load_own_risk_state(path: Path, *, stage: str | None = None) -> dict[str, float]:
+    """Load persisted pre-scale own-risk weights from the EMA state file."""
+    try:
+        if path.is_file():
+            raw = json.loads(path.read_text())
+            if not isinstance(raw, dict):
+                return {}
+            if stage is not None and str(raw.get("stage") or "") != stage:
+                return {}
+            d = raw.get("own_risk_by_pair") or {}
+            return {str(k): float(v) for k, v in d.items()
+                    if v is not None and np.isfinite(float(v))}
+    except Exception:
+        pass
+    return {}
+
+
 def _b4_write_weight_ema_state(
-    path: Path, state: dict[str, float], run_date: str, *, stage: str | None = None
+    path: Path,
+    state: dict[str, float],
+    run_date: str,
+    *,
+    stage: str | None = None,
+    own_risk: dict[str, float] | None = None,
 ) -> None:
     """Atomically persist per-pair smoothed values (weights or L estimates)."""
     try:
@@ -136,6 +158,10 @@ def _b4_write_weight_ema_state(
             "run_date": str(run_date),
             "weight_by_pair": {k: round(float(v), 8) for k, v in state.items()},
         }
+        if own_risk is not None:
+            payload["own_risk_by_pair"] = {
+                k: round(float(v), 8) for k, v in own_risk.items()
+            }
         if stage is not None:
             payload["stage"] = stage
         tmp = path.with_suffix(path.suffix + ".tmp")
@@ -2874,6 +2900,7 @@ def main() -> None:
                     _cb_clamp_by_key: dict[tuple[str, str], float] = {}
                     _cb_default_cap = float("nan")
                     _cb_scale_mult = 1.0
+                    _cb_own_risk: dict[tuple[str, str], float] = {}
                     if bool(_cb_cfg.get("enabled")):
                         from scripts.b4_crash_budget import (
                             CrashBudgetParams,
@@ -2922,6 +2949,13 @@ def main() -> None:
                             scale_to_budget=bool(_cb_params.scale_to_budget),
                         )
                         if not _cb_tel.empty:
+                            _cb_own_risk = {
+                                (_norm_sym(str(_cr["ETF"])), _norm_sym(str(_cr["Underlying"]))): float(
+                                    _cr["weight_capped"]
+                                )
+                                for _, _cr in _cb_tel.iterrows()
+                                if pd.notna(_cr.get("weight_capped"))
+                            }
                             _cb_dir = run_dir(args.run_date)
                             _cb_dir.mkdir(parents=True, exist_ok=True)
                             _cb_path = _cb_dir / "b4_crash_budget.csv"
@@ -2974,15 +3008,11 @@ def main() -> None:
                         _b4_wf_ctx["scale_mult"] = float(_cb_scale_mult)
                     _b4_wf_ctx["weight_capped"] = {k: float(v) for k, v in pw.items()}
 
-                    # ---- Temporal weight smoothing (Phase 5, post-cap): trim-only
-                    # EMA on the FINAL capped/scaled weights. Running it AFTER the
-                    # crash budget also damps scale_to_budget's cross-coupling
-                    # (one name's cap change re-pricing every other name). Risk
-                    # cuts still apply immediately; increases smooth in at alpha;
-                    # new entries ramp from zero instead of arriving at full
-                    # size; a no-trade band kills sub-percent churn. The EMA only
-                    # holds or shrinks a weight vs its capped target, and the
-                    # final crash clamp still enforces the hard cap regardless.
+                    # ---- Temporal weight smoothing (Phase 5, post-cap):
+                    # Raises EMA in; hard own-risk cuts land immediately;
+                    # dilution from new entrants EMA *down*; new names ramp
+                    # slowly (entry_alpha); dropped names soft-exit. The final
+                    # crash clamp still enforces the hard dollar cap.
                     _ws_cfg = b4_opt2.get("weight_smoothing") or {}
                     if bool(_ws_cfg.get("enabled")):
                         from scripts.bucket4_weekly_opt2 import smooth_pair_weights_trim_only
@@ -2992,23 +3022,38 @@ def main() -> None:
                         if not bool(_cb_cfg.get("enabled")):
                             _wsum = sum(max(0.0, float(v)) for v in pw.values()) or 1.0
                             pw = {k: max(0.0, float(v)) / _wsum for k, v in pw.items()}
+                            _cb_own_risk = {k: float(v) for k, v in pw.items()}
                         _ws_path = Path(str(_ws_cfg.get("state_json") or "data/b4_weight_ema_state.json"))
-                        # Stage-tagged state: pre-cap-era files are discarded
-                        # (units changed), so the first post-cap run is a no-op.
-                        _ws_prev_raw = _b4_load_weight_ema_state(_ws_path, stage="post_cap_scale")
+                        _ws_stage = "post_cap_scale"
+                        _ws_prev_raw = _b4_load_weight_ema_state(_ws_path, stage=_ws_stage)
                         _ws_prev = {}
                         for _k, _v in _ws_prev_raw.items():
                             if "|" in _k:
                                 _e, _u = _k.split("|", 1)
                                 _ws_prev[(_norm_sym(_e), _norm_sym(_u))] = float(_v)
+                        _ws_own_prev_raw = _b4_load_own_risk_state(_ws_path, stage=_ws_stage)
+                        _ws_own_prev = {}
+                        for _k, _v in _ws_own_prev_raw.items():
+                            if "|" in _k:
+                                _e, _u = _k.split("|", 1)
+                                _ws_own_prev[(_norm_sym(_e), _norm_sym(_u))] = float(_v)
                         _ws_alpha = float(_ws_cfg.get("alpha", 0.5))
+                        _ws_entry = _ws_cfg.get("entry_alpha")
+                        _ws_dilution = _ws_cfg.get("dilution_alpha")
+                        _ws_soft_exit = _ws_cfg.get("soft_exit_alpha")
                         pw_smoothed = smooth_pair_weights_trim_only(
                             pw,
                             _ws_prev,
                             alpha=_ws_alpha,
                             ramp_new_entries=bool(_ws_cfg.get("ramp_new_entries", True)),
+                            entry_alpha=float(_ws_entry) if _ws_entry is not None else None,
+                            dilution_alpha=float(_ws_dilution) if _ws_dilution is not None else None,
+                            soft_exit_alpha=float(_ws_soft_exit) if _ws_soft_exit is not None else None,
                             no_trade_band_rel=float(_ws_cfg.get("no_trade_band_rel", 0.0)),
                             no_trade_band_abs=float(_ws_cfg.get("no_trade_band_abs", 0.0)),
+                            own_risk_weights=_cb_own_risk or None,
+                            prev_own_risk_weights=_ws_own_prev or None,
+                            hard_cut_rel=float(_ws_cfg.get("hard_cut_rel", 0.10)),
                         )
                         # 1e-6 tolerance: the persisted state is rounded to 8dp,
                         # so sub-rounding residue must not read as a real move.
@@ -3021,10 +3066,13 @@ def main() -> None:
                             if _k in _ws_prev and pw_smoothed[_k] > _ws_prev[_k] + 1e-6
                         )
                         _n_new = sum(1 for _k in pw_smoothed if _k not in _ws_prev)
+                        _n_exit = sum(1 for _k in _ws_prev if _k not in pw)
                         print(
-                            f"[INFO] B4 weight EMA (post-cap trim-only, alpha={_ws_alpha:.2f}): "
-                            f"{_n_cut} immediate cut(s), {_n_smooth} smoothed increase(s), "
-                            f"{_n_new} new (ramped), "
+                            f"[INFO] B4 weight EMA (post-cap, alpha={_ws_alpha:.2f}, "
+                            f"entry={float(_ws_entry) if _ws_entry is not None else min(_ws_alpha, 0.25):.2f}, "
+                            f"dilution={float(_ws_dilution) if _ws_dilution is not None else min(_ws_alpha, 0.25):.2f}): "
+                            f"{_n_cut} decrease(s), {_n_smooth} increase(s), "
+                            f"{_n_new} new (ramped), {_n_exit} exit(s), "
                             f"{len(pw_smoothed) - _n_cut - _n_smooth - _n_new} held/banded -> {_ws_path.name}"
                         )
                         pw = pw_smoothed
@@ -3032,12 +3080,14 @@ def main() -> None:
                             _ws_path,
                             {f"{k[0]}|{k[1]}": float(v) for k, v in pw.items()},
                             args.run_date,
-                            stage="post_cap_scale",
+                            stage=_ws_stage,
+                            own_risk={
+                                f"{k[0]}|{k[1]}": float(v) for k, v in _cb_own_risk.items()
+                            },
                         )
-                        # Under-deployment while entries ramp in is intentional
-                        # and self-correcting; shrink the effective budget so the
-                        # target solver's internal renorm cannot re-inflate the
-                        # smoothed weights back to the full sleeve. Capped at the
+                        # Under-deployment while entries ramp / exits fade is
+                        # intentional; shrink effective budget so the target
+                        # solver cannot re-inflate smoothed weights. Cap at
                         # sleeve cash (band-held names can sum slightly above 1).
                         _b4_budget_eff = min(
                             float(b4_core_cash),
