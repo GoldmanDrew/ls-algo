@@ -10,14 +10,15 @@ Python toolkit for a **systematic long/short** book around leveraged and inverse
 2. [Repository layout](#repository-layout)
 3. [End-to-end pipeline](#end-to-end-pipeline)
 4. [Configuration (`config/strategy_config.yml`)](#configuration-configstrategy_configyml)
-5. [Corporate-action splits — see [`SPLITS.md`](SPLITS.md)](#corporate-action-splits)
-6. [Sleeves vs accounting “buckets”](#sleeves-vs-accounting-buckets)
-7. [Research & backtests](#research--backtests)
-8. [Automation (GitHub Actions)](#automation-github-actions)
-9. [Data layout](#data-layout)
-10. [Phase 2b setup — tax-aware resize & loss-harvest substitution](#phase-2b-setup--tax-aware-resize--loss-harvest-substitution)
-11. [Requirements & IBKR](#requirements--ibkr)
-12. [Disclaimer](#disclaimer)
+5. [Bucket 4 sizing](#bucket-4-sizing)
+6. [Corporate-action splits — see [`SPLITS.md`](SPLITS.md)](#corporate-action-splits)
+7. [Sleeves vs accounting “buckets”](#sleeves-vs-accounting-buckets)
+8. [Research & backtests](#research--backtests)
+9. [Automation (GitHub Actions)](#automation-github-actions)
+10. [Data layout](#data-layout)
+11. [Phase 2b setup — tax-aware resize & loss-harvest substitution](#phase-2b-setup--tax-aware-resize--loss-harvest-substitution)
+12. [Requirements & IBKR](#requirements--ibkr)
+13. [Disclaimer](#disclaimer)
 
 ---
 
@@ -53,6 +54,9 @@ Python toolkit for a **systematic long/short** book around leveraged and inverse
 | **`ibkr_accounting.py`** | Flex + screened universe → accounting CSVs + `totals.json`. |
 | **`run_eod_pnl_email.py`** | EOD orchestration: flex + accounting + ledger history + optional SMTP. |
 | **`strategy_config.py`** | Shared YAML loader with **path resolution** relative to repo root (used by email script and others). |
+| **`scripts/b4_crash_budget.py`** | Conditional-crash sizing caps for B4 (post-opt2). |
+| **`scripts/v6_b4_pf_weights.py`** | B4 decay/borrow weight engine (continuous borrow ramp). |
+| **`scripts/bucket4_weekly_opt2.py`** | B4 state build, targets, hedge/cadence, weight EMA. |
 | **`notebooks/`** | Research: Bucket‑4 hedge experiments (`Bucket_4_Backtest.ipynb`, `Buckets1-4*.ipynb`), Diamond Creek / IBKR large-AUM studies, etc. Backtest artifacts under `notebooks/data/backtest/` are git-ignored. |
 | **`data/`** | Working CSVs, caches, **`ledger/`**, **`runs/<date>/`** run artifacts. |
 | **`.github/workflows/eod_pnl_email.yml`** | **`Daily: Screener + EOD + Dashboard`** — scheduled weekday screener, EOD, snapshot, deploy, and recovery. |
@@ -178,10 +182,46 @@ Everything operational reads from this file. **Do not treat the table below as a
 | **`portfolio.rebalance.*`** | Minimum trade and net-exposure triggers used by `rebalance_strategy` and `harvest_underexposed_shorts`. |
 | **`portfolio.sleeves.core_leveraged`** | Core (levered long ETFs): `target_weight`, `min_delta_used`, optional **`min_net_decay_annual`**, **`net_decay_hysteresis`**, `weighting` (decay_score vs equal, caps, blend). |
 | **`portfolio.sleeves.yieldboost`** | YieldBoost / bucket‑2 sleeve: **`is_yieldboost`** names from the screener only, `rules.min_net_edge_annual`, `weighting`; budget vs core from **`target_weight`**. |
-| **`portfolio.sleeves.inverse_decay_bucket4`** | Inverse decay pairs: **`enabled`** master switch, borrow / vol / edge rules, shares-outstanding cap, weighting. |
+| **`portfolio.sleeves.inverse_decay_bucket4`** | Inverse decay pairs: **`enabled`**, **`target_weight`** (budget *ceiling*), opt2 + crash-budget rules, ratchet, weighting. See [Bucket 4 sizing](#bucket-4-sizing). |
+| **`portfolio.sleeves.volatility_etp_bucket5`** | Vol ETPs (UVIX/SVIX, …): separate small sleeve under B4 rules block; **`target_weight`** of total gross. |
 | **`portfolio.sleeves.flow_program`** | Flow shorts universe, schedule, **`fixed_usd_per_week`** (or deployment base from YAML), **fixed weights** summing to **1.0**. |
 
 `generate_trade_plan.py` documents sleeve behaviour in its module docstring; keep YAML and that docstring aligned when you change rules.
+
+---
+
+## Bucket 4 sizing
+
+Bucket 4 shorts inverse ETFs and hedges with underlying shorts to harvest structural decay. Production sizing (2026-07-10+) is a four-step stack — not a single weight formula:
+
+```text
+1. Score          decay / borrow aversion + continuous borrow ramp
+                  → relative pair weights (sum ≈ 1)
+2. Smooth         trim-only weight EMA (risk cuts immediate; adds fade in)
+3. Crash-cap      gross_i ≤ rho × sleeve_budget / L_i, then (if scale_to_budget)
+                  scale pro-rata so sleeve gross = target
+4. Leg split      inv = gross / (1 + h·β),  und = h·β·inv
+                  (+ grow-only inverse ratchet / continuous trim)
+```
+
+**`target_weight: 0.03` is the deploy target.** Crash sizing first trims each name to `rho × budget / L`, then (with `scale_to_budget: true`) scales that book pro-rata so the sleeve fills the target. `rho` sets *relative* crash risk; the effective per-name crash loss is approximately `rho × scale_mult` (logged each run).
+
+| Knob | Role |
+|------|------|
+| `crash_budget.rho` | Relative crash-loss scale (riskier names → less weight) |
+| `crash_budget.scale_to_budget` | `true` = refill sleeve after trim; `false` = leave freed cash undeployed |
+| `borrow_ramp_lo` / `borrow_ramp_hi` | Continuous high-borrow fade (no binary exclusion cliff) |
+| `weight_smoothing.alpha` | How fast size *increases* converge (cuts are immediate) |
+| `hedge_cadence_policy` | Dynamic `h` + rebalance cadence (`docs/b4_engine_notes.md`) |
+
+Per-run telemetry:
+
+- `data/runs/<date>/b4_crash_budget.csv` — per-pair C, L, cap, trim
+- `data/runs/<date>/b4_sizing_waterfall.csv` — every stage from weight → final gross, plus `rho_effective`
+- `data/runs/<date>/b4_hedge_cadence/` — hedge-ratio / days-to-rebalance explain
+
+Plain-English walkthrough with a worked example: [`docs/b4_sizing_method.pdf`](docs/b4_sizing_method.pdf).  
+Smoothness / fail-closed design note: [`docs/b4_sizing_smoothness_implemented_2026-07-10.md`](docs/b4_sizing_smoothness_implemented_2026-07-10.md).
 
 ---
 

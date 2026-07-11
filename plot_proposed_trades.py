@@ -3,17 +3,15 @@
 plot_proposed_trades.py — Visualise bucket-level proposed trades for a run date.
 
 Also appends **screened** ETFs with IBKR ``shares_available``≈0 (or ``exclude_no_shares``) that
-do not appear in the sized plan (often no-locate): they get a **proxy** hatched optimal bar
-(green/red 'xxx', median structural gross in the bucket × edge rank) so you can see where the
-sleeve would like to be if inventory existed — see plot footnote †. Proxy rows are gated on
-the same config eligibility rules as ``generate_trade_plan`` (entry borrow caps, min net
-edge, B4/B5 underlying-vol floor, B4 excluded_etfs). Disable with ``--skip-no-ibkr-proxy``.
+do not appear in the sized plan (often no-locate). For Bucket 4 these bars use production
+opt2 + crash-budget sizing with the borrow gate relaxed (what the pair would actually be if
+borrow/locate were available). Other buckets still use a median×edge-rank visualization proxy.
+Disable with ``--skip-no-ibkr-proxy``.
 
 Additionally appends **purgatory candidates** for every bucket (amber '...' hatch): screened
-names zeroed out of the sized book by elevated borrow (per-bucket keep band). Borrow is
-relaxed for their eligibility (it is the purgatory reason itself); edge / vol / excluded
-gates still apply. This keeps strong-edge names that are one borrow-normalization away from
-re-entering visible on the chart.
+names zeroed out of the sized book by elevated borrow (per-bucket keep band). B4 again uses
+real counterfactual sizing; other buckets keep the median proxy. Borrow is relaxed for their
+eligibility (it is the purgatory reason itself); edge / vol / excluded gates still apply.
 
 Outputs:
   - proposed_trades_bucket_1_plot.png   (core_leveraged sleeve)
@@ -541,19 +539,191 @@ def _legs_from_gross_b4(*, gross: float, beta: float, partial: float = B4_PARTIA
     return float(lg), float(sh)
 
 
+def _norm_pair(etf: object, und: object) -> tuple[str, str]:
+    return _norm_sym(etf), _norm_sym(und)
+
+
+def _b4_live_pairs(bucket_df: pd.DataFrame) -> list[tuple[str, str]]:
+    """Executable / already-sized B4 pairs (exclude plot-only proxy rows)."""
+    if bucket_df is None or bucket_df.empty:
+        return []
+    out: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for _, r in bucket_df.iterrows():
+        if bool(r.get("_purgatory_proxy", False)) or bool(r.get("_no_ibkr_shares_proxy", False)):
+            continue
+        key = _norm_pair(r.get("ETF"), r.get("Underlying"))
+        if not key[0] or not key[1] or key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
+
+
+def compute_b4_counterfactual_sizes(
+    run_date: str,
+    live_pairs: list[tuple[str, str]],
+    candidate_pairs: list[tuple[str, str]],
+) -> dict[tuple[str, str], dict[str, float]]:
+    """Size B4 pairs as if borrow/locate gates did not block them.
+
+    Uses production opt2 weights + crash-budget caps + dynamic hedge legs, with the
+    high-borrow exclusion relaxed so names like CORD/RGTZ enter the solve. Applies the
+    same post-book haircut observed on this run's live crash-capped names so proxy bars
+    are comparable to executable bars on the chart.
+    """
+    cands = [_norm_pair(e, u) for e, u in candidate_pairs]
+    cands = [(e, u) for e, u in cands if e and u]
+    if not cands:
+        return {}
+    live = [_norm_pair(e, u) for e, u in live_pairs]
+    live = [(e, u) for e, u in live if e and u]
+    pairs = list(dict.fromkeys([*live, *cands]))  # stable unique
+
+    try:
+        from strategy_config import load_config
+        from scripts.b4_crash_budget import CrashBudgetParams, cap_pair_weights, compute_crash_caps
+        from scripts.bucket4_weekly_opt2 import (
+            Bucket4WeeklyConfig,
+            build_bucket4_state,
+            compute_bucket4_targets,
+            compute_bucket4_weights,
+        )
+        from scripts.v6_b4_pf_weights import V6PfParams
+    except Exception as exc:
+        print(f"[WARN] B4 counterfactual sizing unavailable ({exc}); falling back to median proxy")
+        return {}
+
+    try:
+        cfg = load_config()
+        b4_rules = (
+            (cfg.get("portfolio") or {}).get("sleeves", {}).get("inverse_decay_bucket4", {}).get("rules")
+            or {}
+        )
+        opt2 = b4_rules.get("bucket4_weekly_opt2") or {}
+        strategy = cfg.get("strategy") or {}
+        capital = float(strategy.get("capital_usd", 0.0) or 0.0)
+        lev = float(strategy.get("gross_leverage", 0.0) or 0.0)
+        b4_w = float(
+            ((cfg.get("portfolio") or {}).get("sleeves", {}).get("inverse_decay_bucket4") or {}).get(
+                "target_weight", 0.03
+            )
+            or 0.03
+        )
+        budget = max(1.0, capital * lev * b4_w)
+
+        screened_csv = str((cfg.get("paths") or {}).get("screened_csv", "data/etf_screened_today.csv"))
+        run_screened = RUNS_DIR / run_date / "etf_screened_today.csv"
+        if run_screened.is_file():
+            screened_csv = str(run_screened)
+
+        params = V6PfParams.from_opt2_dict(opt2, min_pairs=min(5, max(1, len(pairs))))
+        # Counterfactual: admit names the live opt2 downweights for high borrow —
+        # push the continuous ramp far out of range so every candidate keeps
+        # full score (then crash-budget still caps).
+        params.borrow_ramp_lo = 98.0
+        params.borrow_ramp_hi = 99.0
+
+        cfg_b4 = Bucket4WeeklyConfig(
+            screened_csv=screened_csv,
+            start=str(opt2.get("history_start", "2018-01-01")),
+            end=str(run_date),
+            pf_params=params,
+            hedge_source=str((opt2.get("hedge_cadence_policy") or {}).get("source", "tr_vcr")),
+            hedge_cadence_policy=opt2.get("hedge_cadence_policy") or {},
+            min_underlying_vol=float(opt2.get("min_underlying_vol", b4_rules.get("min_underlying_vol_entry", 0.5))),
+            min_net_decay=float(opt2.get("min_net_decay", b4_rules.get("min_net_edge_annual", 0.0))),
+        )
+        st = build_bucket4_state(cfg_b4, bucket4_pairs=pairs)
+        pw, _, _meta = compute_bucket4_weights(st)
+
+        cb_cfg = opt2.get("crash_budget") or {}
+        if bool(cb_cfg.get("enabled", True)):
+            cb_params = CrashBudgetParams.from_config(cb_cfg)
+            caps = compute_crash_caps(
+                pair_cache=st.pair_cache,
+                hedge_by_underlying=st.hedge_by_underlying,
+                closes_broad=st.closes_broad,
+                hedge_base=st.hedge_base,
+                run_date=run_date,
+                budget_usd=float(budget),
+                params=cb_params,
+                norm_sym=_norm_sym,
+            )
+            pw, budget_eff, _tel = cap_pair_weights(
+                pw,
+                caps,
+                float(budget),
+                norm_sym=_norm_sym,
+                scale_to_budget=bool(cb_params.scale_to_budget),
+            )
+        else:
+            budget_eff = float(budget)
+
+        tgt_df, _ = compute_bucket4_targets(st, pw, run_date, float(budget_eff))
+    except Exception as exc:
+        print(f"[WARN] B4 counterfactual sizing failed ({exc}); falling back to median proxy")
+        return {}
+
+    # Match live post-book haircut so proxy bars sit on the same scale as executable bars.
+    scale = 1.0
+    try:
+        proposed = load_proposed(run_date)
+        cb_path = RUNS_DIR / run_date / "b4_crash_budget.csv"
+        if not proposed.empty and cb_path.is_file() and "sleeve" in proposed.columns:
+            live_b4 = proposed[proposed["sleeve"].astype(str) == B4_CORE_SLEEVE]
+            cb = pd.read_csv(cb_path)
+            m = cb.merge(
+                live_b4[["ETF", "Underlying", "gross_target_usd"]],
+                on=["ETF", "Underlying"],
+                how="inner",
+            )
+            if not m.empty:
+                # Prefer post-scale gross when scale_to_budget wrote it.
+                base_col = "gross_final_usd" if "gross_final_usd" in m.columns else "gross_capped_usd"
+                capped = pd.to_numeric(m[base_col], errors="coerce")
+                final = pd.to_numeric(m["gross_target_usd"], errors="coerce")
+                ratios = (final / capped).replace([np.inf, -np.inf], np.nan).dropna()
+                ratios = ratios[(ratios > 0.05) & (ratios <= 1.05)]
+                if len(ratios):
+                    scale = float(ratios.median())
+    except Exception:
+        scale = 1.0
+
+    out: dict[tuple[str, str], dict[str, float]] = {}
+    for _, r in tgt_df.iterrows():
+        key = _norm_pair(r.get("ETF"), r.get("Underlying"))
+        if key not in set(cands) and key not in set(live):
+            continue
+        g = float(r.get("gross_target_usd", 0.0) or 0.0) * scale
+        inv = float(r.get("inverse_etf_short_usd", 0.0) or 0.0) * scale
+        und = float(r.get("underlying_short_usd", 0.0) or 0.0) * scale
+        h = float(r.get("hedge_ratio", np.nan) or np.nan)
+        out[key] = {
+            "gross": g,
+            "inv": inv,
+            "und": und,
+            "h": h,
+            "scale": scale,
+        }
+    return out
+
+
 def append_no_ibkr_share_screened_rows(
     bucket_df: pd.DataFrame,
     screened: pd.DataFrame | None,
     *,
     bucket: str,
+    run_date: str | None = None,
+    b4_size_map: dict[tuple[str, str], dict[str, float]] | None = None,
 ) -> pd.DataFrame:
     """Append screened names with IBKR ``shares_available``≈0 that are missing from the bucket.
 
     Those rows are often **purgatory** or otherwise absent from the sized book, so
-    ``proposed_trades.csv`` carries no structural ``optimal_*`` dollars. We still plot a
-    **proxy** optimal (hatched bar): median structural gross in this bucket × (edge signal /
-    median edge among appended rows), capped at 2× the bucket median — strictly a visualization
-    aid until ``generate_trade_plan`` emits true optimal targets for no-locate names.
+    ``proposed_trades.csv`` carries no structural ``optimal_*`` dollars. For B4 we size
+    them with the production opt2 + crash-budget engine (borrow gate relaxed) so the bar
+    shows what the pair **would actually be** if locate/borrow were available. Other
+    buckets still use a median×edge-rank visualization proxy.
 
     Proxy rows must also pass the bucket's config entry gates (borrow cap, min net
     edge, B4 underlying-vol floor, B4 excluded_etfs) — a name that would be rejected
@@ -603,6 +773,20 @@ def append_no_ibkr_share_screened_rows(
     if not bucket_df.empty and "ETF" in bucket_df.columns and "Underlying" in bucket_df.columns:
         for _, r in bucket_df.iterrows():
             have.add((str(r["ETF"]).strip(), str(r["Underlying"]).strip()))
+    have_norm = {_norm_pair(*h) for h in have}
+
+    cand_keys: list[tuple[str, str]] = []
+    for idx in sc.index[no_loc]:
+        row = sc.loc[idx]
+        key = _norm_pair(row["ETF"], row["Underlying"])
+        raw = (str(row["ETF"]).strip(), str(row["Underlying"]).strip())
+        if raw in have or key in have_norm:
+            continue
+        cand_keys.append(key)
+
+    size_map = b4_size_map
+    if bucket == "b4" and size_map is None and run_date and cand_keys:
+        size_map = compute_b4_counterfactual_sizes(run_date, _b4_live_pairs(bucket_df), cand_keys)
 
     med_g = _bucket_median_structural_gross(bucket_df)
     extras: list[dict[str, object]] = []
@@ -612,23 +796,38 @@ def append_no_ibkr_share_screened_rows(
 
     for idx in sc.index[no_loc]:
         row = sc.loc[idx]
-        key = (str(row["ETF"]).strip(), str(row["Underlying"]).strip())
-        if key in have:
+        key = _norm_pair(row["ETF"], row["Underlying"])
+        raw = (str(row["ETF"]).strip(), str(row["Underlying"]).strip())
+        if raw in have or key in have_norm:
             continue
-        edge = _edge_signal(row)
-        proxy_gross = med_g * (edge / med_edge)
-        proxy_gross = float(np.clip(proxy_gross, 5_000.0, 2.0 * med_g))
         b = float(row["Delta"])
-        if bucket in ("b4", "b5"):
-            olg, osg = _legs_from_gross_b4(gross=proxy_gross, beta=b)
-            sleeve = B5_SLEEVE if bucket == "b5" else B4_CORE_SLEEVE
+        sized = (size_map or {}).get(key) if bucket == "b4" else None
+        if sized and float(sized.get("gross", 0.0) or 0.0) > 0:
+            proxy_gross = float(sized["gross"])
+            olg = -abs(float(sized.get("und", 0.0) or 0.0))
+            osg = -abs(float(sized.get("inv", 0.0) or 0.0))
+            real_size = True
         else:
-            olg, osg = _legs_from_gross_stock(gross=proxy_gross, beta=b)
-            sleeve = "yieldboost" if bucket == "b2" else "core_leveraged"
+            edge = _edge_signal(row)
+            proxy_gross = med_g * (edge / med_edge)
+            lo = 500.0 if bucket == "b4" else 5_000.0
+            proxy_gross = float(np.clip(proxy_gross, lo, 2.0 * max(med_g, lo)))
+            if bucket in ("b4", "b5"):
+                olg, osg = _legs_from_gross_b4(gross=proxy_gross, beta=b)
+            else:
+                olg, osg = _legs_from_gross_stock(gross=proxy_gross, beta=b)
+            real_size = False
+        sleeve = (
+            B5_SLEEVE
+            if bucket == "b5"
+            else B4_CORE_SLEEVE
+            if bucket == "b4"
+            else ("yieldboost" if bucket == "b2" else "core_leveraged")
+        )
         extras.append(
             {
-                "ETF": key[0],
-                "Underlying": key[1],
+                "ETF": raw[0],
+                "Underlying": raw[1],
                 "Delta": b,
                 "sleeve": sleeve,
                 "long_usd": 0.0,
@@ -641,9 +840,11 @@ def append_no_ibkr_share_screened_rows(
                 "executable_pct_of_optimal": 0.0,
                 "shares_available": float(pd.to_numeric(row.get("shares_available"), errors="coerce") or 0.0),
                 "_no_ibkr_shares_proxy": True,
+                "_b4_counterfactual_size": bool(real_size),
             }
         )
-        have.add(key)
+        have.add(raw)
+        have_norm.add(key)
 
     if not extras:
         return bucket_df
@@ -665,13 +866,16 @@ def append_purgatory_screened_rows(
     screened: pd.DataFrame | None,
     *,
     bucket: str,
+    run_date: str | None = None,
+    b4_size_map: dict[tuple[str, str], dict[str, float]] | None = None,
 ) -> pd.DataFrame:
     """Append screened **purgatory** candidates for the bucket as distinct proxy bars.
 
     Purgatory names (typically elevated borrow inside the per-bucket keep band) are zeroed
     out of the sized book, so they never appear in ``proposed_trades.csv`` with structural
-    dollars. We still surface them so the operator can see strong-edge names that are one
-    borrow-normalization away from re-entering. They render as a separate hatched style
+    dollars. For B4, bars use production opt2 + crash-budget sizing with the borrow gate
+    relaxed — i.e. what the pair would actually be if borrow were acceptable. Other buckets
+    keep a median×edge-rank visualization proxy. They render as a separate hatched style
     (``_purgatory_proxy``) and are gated on edge / vol / excluded rules (borrow relaxed,
     since elevated borrow is the purgatory reason itself).
     """
@@ -717,6 +921,20 @@ def append_purgatory_screened_rows(
     if not bucket_df.empty and "ETF" in bucket_df.columns and "Underlying" in bucket_df.columns:
         for _, r in bucket_df.iterrows():
             have.add((str(r["ETF"]).strip(), str(r["Underlying"]).strip()))
+    have_norm = {_norm_pair(*h) for h in have}
+
+    cand_keys: list[tuple[str, str]] = []
+    for idx in sc.index[sel]:
+        row = sc.loc[idx]
+        key = _norm_pair(row["ETF"], row["Underlying"])
+        raw = (str(row["ETF"]).strip(), str(row["Underlying"]).strip())
+        if raw in have or key in have_norm:
+            continue
+        cand_keys.append(key)
+
+    size_map = b4_size_map
+    if bucket == "b4" and size_map is None and run_date and cand_keys:
+        size_map = compute_b4_counterfactual_sizes(run_date, _b4_live_pairs(bucket_df), cand_keys)
 
     med_g = _bucket_median_structural_gross(bucket_df)
     edge_list = [_edge_signal(sc.loc[i]) for i in sc.index[sel]]
@@ -725,22 +943,37 @@ def append_purgatory_screened_rows(
     extras: list[dict[str, object]] = []
     for idx in sc.index[sel]:
         row = sc.loc[idx]
-        key = (str(row["ETF"]).strip(), str(row["Underlying"]).strip())
-        if key in have:
+        key = _norm_pair(row["ETF"], row["Underlying"])
+        raw = (str(row["ETF"]).strip(), str(row["Underlying"]).strip())
+        if raw in have or key in have_norm:
             continue
-        edge = _edge_signal(row)
-        proxy_gross = float(np.clip(med_g * (edge / med_edge), 5_000.0, 2.0 * med_g))
         b = float(row["Delta"])
-        if bucket in ("b4", "b5"):
-            olg, osg = _legs_from_gross_b4(gross=proxy_gross, beta=b)
-            sleeve = B5_SLEEVE if bucket == "b5" else B4_CORE_SLEEVE
+        sized = (size_map or {}).get(key) if bucket == "b4" else None
+        if sized and float(sized.get("gross", 0.0) or 0.0) > 0:
+            proxy_gross = float(sized["gross"])
+            olg = -abs(float(sized.get("und", 0.0) or 0.0))
+            osg = -abs(float(sized.get("inv", 0.0) or 0.0))
+            real_size = True
         else:
-            olg, osg = _legs_from_gross_stock(gross=proxy_gross, beta=b)
-            sleeve = "yieldboost" if bucket == "b2" else "core_leveraged"
+            edge = _edge_signal(row)
+            lo = 500.0 if bucket == "b4" else 5_000.0
+            proxy_gross = float(np.clip(med_g * (edge / med_edge), lo, 2.0 * max(med_g, lo)))
+            if bucket in ("b4", "b5"):
+                olg, osg = _legs_from_gross_b4(gross=proxy_gross, beta=b)
+            else:
+                olg, osg = _legs_from_gross_stock(gross=proxy_gross, beta=b)
+            real_size = False
+        sleeve = (
+            B5_SLEEVE
+            if bucket == "b5"
+            else B4_CORE_SLEEVE
+            if bucket == "b4"
+            else ("yieldboost" if bucket == "b2" else "core_leveraged")
+        )
         extras.append(
             {
-                "ETF": key[0],
-                "Underlying": key[1],
+                "ETF": raw[0],
+                "Underlying": raw[1],
                 "Delta": b,
                 "sleeve": sleeve,
                 "long_usd": 0.0,
@@ -754,9 +987,11 @@ def append_purgatory_screened_rows(
                 "shares_available": float(pd.to_numeric(row.get("shares_available"), errors="coerce") or 0.0),
                 "borrow_current": float(pd.to_numeric(row.get("borrow_current"), errors="coerce") or np.nan),
                 "_purgatory_proxy": True,
+                "_b4_counterfactual_size": bool(real_size),
             }
         )
-        have.add(key)
+        have.add(raw)
+        have_norm.add(key)
 
     if not extras:
         return bucket_df
@@ -950,10 +1185,16 @@ def plot_allocation(ax: plt.Axes, df: pd.DataFrame, title: str, *, bucket4: bool
             og = float(r.get("optimal_gross_target_usd", 0.0) or 0.0)
             bc = float(pd.to_numeric(r.get("borrow_current"), errors="coerce") or np.nan)
             bc_txt = f"borrow {bc*100:,.0f}%" if np.isfinite(bc) else "borrow n/a"
-            base += f"  [purgatory: {bc_txt}; proxy opt ${og/1000:,.0f}k*]"
+            if bool(r.get("_b4_counterfactual_size", False)):
+                base += f"  [purgatory: {bc_txt}; if borrow OK ${og:,.0f}]"
+            else:
+                base += f"  [purgatory: {bc_txt}; proxy opt ${og/1000:,.0f}k*]"
         elif bool(r.get("_no_ibkr_shares_proxy", False)):
             og = float(r.get("optimal_gross_target_usd", 0.0) or 0.0)
-            base += f"  [IBKR avail≈0; proxy opt ${og/1000:,.0f}k*]"
+            if bool(r.get("_b4_counterfactual_size", False)):
+                base += f"  [IBKR avail≈0; if borrow OK ${og:,.0f}]"
+            else:
+                base += f"  [IBKR avail≈0; proxy opt ${og/1000:,.0f}k*]"
         elif show_optimal and abs(gap) > 1000:
             base += f"  [gap ${gap/1000:,.0f}k]"
         labels.append(base)
@@ -979,7 +1220,7 @@ def plot_allocation(ax: plt.Axes, df: pd.DataFrame, title: str, *, bucket4: bool
                 facecolor="none",
                 edgecolor="#1b5e20",
                 hatch="xxx",
-                label="Locate≈0 proxy†",
+                label="Locate≈0 (if borrow OK)" if bucket4 else "Locate≈0 proxy†",
             )
         )
     if n_purg > 0:
@@ -988,7 +1229,7 @@ def plot_allocation(ax: plt.Axes, df: pd.DataFrame, title: str, *, bucket4: bool
                 facecolor="none",
                 edgecolor="#e65100",
                 hatch="...",
-                label="Purgatory proxy†",
+                label="Purgatory (if borrow OK)" if bucket4 else "Purgatory proxy†",
             )
         )
     ax.legend(handles=handles, fontsize=8, loc="lower right")
@@ -998,10 +1239,17 @@ def plot_allocation(ax: plt.Axes, df: pd.DataFrame, title: str, *, bucket4: bool
         opt_total = float(df["_plot_opt_long"].abs().sum() + df["_plot_opt_short"].abs().sum())
         pct = 100.0 * exe_total / max(opt_total, 1e-9)
         parts = [f"Exe ${exe_total/1e3:,.0f}k / Opt ${opt_total/1e3:,.0f}k ({pct:.0f}%)"]
+        n_cf = int(df.get("_b4_counterfactual_size", pd.Series(False, index=df.index)).fillna(False).astype(bool).sum()) if "_b4_counterfactual_size" in df.columns else 0
         if n_proxy > 0:
-            parts.append(f"† {n_proxy} locate≈0 proxy (xxx; not sized)")
+            if bucket4 and n_cf > 0:
+                parts.append(f"{n_proxy} locate≈0 sized via opt2+crash budget (if borrow OK)")
+            else:
+                parts.append(f"† {n_proxy} locate≈0 proxy (xxx; not sized)")
         if n_purg > 0:
-            parts.append(f"{n_purg} purgatory (...; elevated borrow)")
+            if bucket4 and n_cf > 0:
+                parts.append(f"{n_purg} purgatory sized via opt2+crash budget (if borrow OK)")
+            else:
+                parts.append(f"{n_purg} purgatory (...; elevated borrow)")
         ax.text(
             0.005,
             -0.08,
@@ -1110,15 +1358,58 @@ def make_bucket_plots(run_date: str, *, include_no_ibkr_proxy: bool = True) -> l
     b1, b2, b4, b5 = split_buckets(act)
     screened = load_screened(run_date) if include_no_ibkr_proxy else None
     if include_no_ibkr_proxy:
-        b1 = append_no_ibkr_share_screened_rows(b1, screened, bucket="b1")
-        b2 = append_no_ibkr_share_screened_rows(b2, screened, bucket="b2")
-        b4 = append_no_ibkr_share_screened_rows(b4, screened, bucket="b4")
-        b5 = append_no_ibkr_share_screened_rows(b5, screened, bucket="b5")
-        # Purgatory candidates (elevated borrow keep-band) shown as distinct proxy bars.
-        b1 = append_purgatory_screened_rows(b1, screened, bucket="b1")
-        b2 = append_purgatory_screened_rows(b2, screened, bucket="b2")
-        b4 = append_purgatory_screened_rows(b4, screened, bucket="b4")
-        b5 = append_purgatory_screened_rows(b5, screened, bucket="b5")
+        # Precompute B4 counterfactual sizes once for both locate≈0 and purgatory appends.
+        b4_size_map: dict[tuple[str, str], dict[str, float]] | None = None
+        if screened is not None and not screened.empty:
+            try:
+                sc = screened.copy()
+                sc["ETF"] = sc["ETF"].astype(str).str.strip()
+                sc["Underlying"] = sc["Underlying"].astype(str).str.strip()
+                beta = pd.to_numeric(sc["Delta"], errors="coerce")
+                inv_ok = (
+                    sc["inverse_shortable"].fillna(False).astype(bool)
+                    if "inverse_shortable" in sc.columns
+                    else (beta < 0)
+                )
+                yb = sc.get("is_yieldboost", False)
+                if hasattr(yb, "fillna"):
+                    yb = yb.fillna(False).astype(bool)
+                else:
+                    yb = pd.Series(False, index=sc.index)
+                b4_mask = (~yb) & (beta < 0) & inv_ok
+                gates = _load_proxy_eligibility_gates()
+                no_loc = _no_ibkr_shares_mask(sc) & b4_mask & _proxy_eligible_mask(sc, "b4", gates)
+                is_purg = (
+                    _to_bool_series(sc["purgatory"])
+                    if "purgatory" in sc.columns
+                    else pd.Series(False, index=sc.index)
+                )
+                purg = is_purg & b4_mask & _proxy_eligible_mask(sc, "b4", gates, borrow_relax=True)
+                live = set(_b4_live_pairs(b4))
+                cands: list[tuple[str, str]] = []
+                for idx in sc.index[no_loc | purg]:
+                    key = _norm_pair(sc.at[idx, "ETF"], sc.at[idx, "Underlying"])
+                    if key not in live:
+                        cands.append(key)
+                if cands:
+                    print(f"[INFO] B4 counterfactual sizing for {len(cands)} borrow/locate-blocked pair(s)...")
+                    b4_size_map = compute_b4_counterfactual_sizes(run_date, list(live), cands)
+            except Exception as exc:
+                print(f"[WARN] B4 counterfactual precompute failed ({exc})")
+                b4_size_map = None
+
+        b1 = append_no_ibkr_share_screened_rows(b1, screened, bucket="b1", run_date=run_date)
+        b2 = append_no_ibkr_share_screened_rows(b2, screened, bucket="b2", run_date=run_date)
+        b4 = append_no_ibkr_share_screened_rows(
+            b4, screened, bucket="b4", run_date=run_date, b4_size_map=b4_size_map
+        )
+        b5 = append_no_ibkr_share_screened_rows(b5, screened, bucket="b5", run_date=run_date)
+        b1 = append_purgatory_screened_rows(b1, screened, bucket="b1", run_date=run_date)
+        b2 = append_purgatory_screened_rows(b2, screened, bucket="b2", run_date=run_date)
+        b4 = append_purgatory_screened_rows(
+            b4, screened, bucket="b4", run_date=run_date, b4_size_map=b4_size_map
+        )
+        b5 = append_purgatory_screened_rows(b5, screened, bucket="b5", run_date=run_date)
 
     out_dir = RUNS_DIR / run_date
     out_dir.mkdir(parents=True, exist_ok=True)

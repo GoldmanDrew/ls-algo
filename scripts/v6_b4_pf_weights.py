@@ -10,8 +10,9 @@ Crash risk is **not** sized here. The unconditional tail penalty
 exposure is capped by ``scripts/b4_crash_budget.py`` after the opt2 solve
 (see ``bucket4_weekly_opt2.crash_budget`` in strategy_config.yml).
 
-Returns a dict ``{(ETF, Underlying): weight}`` summing to 1 over live B4 pairs
-(after the high-borrow filter). Pass the result to
+Returns a dict ``{(ETF, Underlying): weight}`` summing to 1 over live B4 pairs.
+High borrow is handled continuously (linear score ramp ``borrow_ramp_lo`` →
+``borrow_ramp_hi``, posterior-borrow based). Pass the result to
 ``mirror_generate_trade_plan_sizing(..., b4_weight_override_by_pair=...)``
 so book-wide ``apply_gross_sizing_book_caps`` and ``apply_covariance_balance``
 still run in the mirror.
@@ -34,7 +35,12 @@ class V6PfParams:
     #: Extra downweight beyond ``decay / (1 + decay_borrow_quad * borrow^2)``: divide by ``(1 + λ * borrow)``.
     #: ``0.0`` matches legacy notebook behavior (quadratic-only borrow term).
     borrow_linear_aversion: float = 0.0
-    exclude_if_borrow_annual_gt: float = 0.90
+    #: Continuous high-borrow downweight: score × 1.0 below ``borrow_ramp_lo``,
+    #: linear to 0.0 at ``borrow_ramp_hi``. A pair whose ramp reaches 0 is
+    #: dropped from the solve (weight already approached zero); the caller's
+    #: crash-budget clamp still caps any fallback path that sizes it.
+    borrow_ramp_lo: float = 0.80
+    borrow_ramp_hi: float = 1.20
     min_expected_decay_annual: float = 0.01
     min_pairs: int = 5
     decay_exponent: float = 1.0
@@ -59,9 +65,9 @@ class V6PfParams:
     def from_opt2_dict(cls, opt2: dict, *, min_pairs: int | None = None) -> "V6PfParams":
         """Build params from ``bucket4_weekly_opt2`` config; ignores unknown keys.
 
-        Unknown / retired keys (e.g. the old ``dd_risk_lambda`` / ``risk_denom_*``
-        / ``tail_as_of`` tail-penalty knobs) are silently dropped so stale YAML
-        does not break the engine.
+        Unknown / retired keys (e.g. ``dd_risk_lambda`` / ``risk_denom_*`` /
+        ``tail_as_of`` / ``exclude_if_borrow_annual_gt``) are silently dropped
+        so stale YAML does not break the engine.
         """
         fields = cls.__dataclass_fields__
         kwargs = {k: v for k, v in dict(opt2 or {}).items() if k in fields}
@@ -260,20 +266,51 @@ def compute_v6_b4_pf_weight_dict(
             continue
         pairs_candidate.append((etf_sym, und_sym))
 
+    def _pair_borrow(etf_sym: str, und_sym: str) -> tuple[float, float]:
+        """(borrow_annual, posterior_var) from the SAME estimate the score uses.
+
+        One estimate per quantity: the ramp and the aversion terms must not see
+        different borrow numbers for the same name (spot vs posterior routing is
+        how CORD escaped sizing entirely).
+        """
+        kw0 = pair_cache[(etf_sym, und_sym)]["kw"]
+        post = posterior_borrow.get((norm_sym(etf_sym), norm_sym(und_sym))) or {}
+        if borrow_src == "posterior" and post.get("annual") is not None:
+            return float(post["annual"]), float(post.get("var", 0.0) or 0.0)
+        return _etf_borrow_annual_actual(etf_sym, kw0), 0.0
+
+    def _borrow_ramp_mult(b: float) -> float:
+        """Continuous high-borrow downweight: 1.0 below ``borrow_ramp_lo``,
+        linear to 0.0 at ``borrow_ramp_hi``. No cliffs: a 2-point borrow move
+        can never flip a name between sizing regimes."""
+        lo, hi = float(p.borrow_ramp_lo), float(p.borrow_ramp_hi)
+        if not (np.isfinite(lo) and np.isfinite(hi)) or hi <= lo:
+            return 1.0
+        return float(np.clip((hi - float(b)) / (hi - lo), 0.0, 1.0))
+
     excluded_borrow: list[dict[str, Any]] = []
     pairs_live: list[tuple[str, str]] = []
+    ramp_by_pair: dict[tuple[str, str], float] = {}
     for etf_sym, und_sym in pairs_candidate:
-        kw0 = pair_cache[(etf_sym, und_sym)]["kw"]
-        b = _etf_borrow_annual_actual(etf_sym, kw0)
-        if b > p.exclude_if_borrow_annual_gt:
-            excluded_borrow.append({"pair": f"{etf_sym}/{und_sym}", "borrow_etf_annual": b})
+        b, _ = _pair_borrow(etf_sym, und_sym)
+        m = _borrow_ramp_mult(b)
+        if m <= 0.0:
+            # Weight already ramped to ~0 approaching the boundary, so dropping
+            # the pair is continuous. Fail-closed: the caller's crash-budget
+            # clamp still binds on any fallback path that sizes this name.
+            excluded_borrow.append({
+                "pair": f"{etf_sym}/{und_sym}",
+                "borrow_etf_annual": b,
+                "reason": f"borrow ramp reached 0 (>= {p.borrow_ramp_hi:.0%})",
+            })
             continue
         pairs_live.append((etf_sym, und_sym))
+        ramp_by_pair[(etf_sym, und_sym)] = m
 
     if len(pairs_live) < p.min_pairs:
         raise RuntimeError(
-            f"Need at least {p.min_pairs} tradable pairs after borrow filter; got {len(pairs_live)} "
-            f"(excluded {len(excluded_borrow)} for borrow > {p.exclude_if_borrow_annual_gt:.0%})."
+            f"Need at least {p.min_pairs} tradable pairs after borrow ramp; got {len(pairs_live)} "
+            f"(excluded {len(excluded_borrow)} with borrow >= {p.borrow_ramp_hi:.0%})."
         )
 
     ix_list = [pair_cache[k]["prices"].index for k in pairs_live]
@@ -281,18 +318,10 @@ def compute_v6_b4_pf_weight_dict(
 
     rows_w: list[dict[str, Any]] = []
     for etf_sym, und_sym in pairs_live:
-        kw0 = pair_cache[(etf_sym, und_sym)]["kw"]
         pair_lbl = f"{etf_sym}/{und_sym}"
         decay_u = float(decay_map.get((norm_sym(etf_sym), norm_sym(und_sym)), p.min_expected_decay_annual))
         decay_eff = max(p.min_expected_decay_annual, decay_u)
-        pair_key = (norm_sym(etf_sym), norm_sym(und_sym))
-        post = posterior_borrow.get(pair_key) or {}
-        if borrow_src == "posterior" and post.get("annual") is not None:
-            borrow_a = float(post["annual"])
-            borrow_var = float(post.get("var", 0.0) or 0.0)
-        else:
-            borrow_a = _etf_borrow_annual_actual(etf_sym, kw0)
-            borrow_var = 0.0
+        borrow_a, borrow_var = _pair_borrow(etf_sym, und_sym)
         quad = 1.0 + float(p.decay_borrow_quad) * (borrow_a**2)
         lin = 1.0 + float(p.borrow_linear_aversion) * borrow_a
         if lin <= 0.0:
@@ -301,6 +330,8 @@ def compute_v6_b4_pf_weight_dict(
         unc_pen = float(p.borrow_uncertainty_penalty)
         if unc_pen > 0.0 and borrow_var > 0.0:
             base_score = base_score / (1.0 + unc_pen * borrow_var)
+        ramp_m = float(ramp_by_pair.get((etf_sym, und_sym), 1.0))
+        base_score = base_score * ramp_m
         rows_w.append(
             {
                 "pair": pair_lbl,
@@ -309,6 +340,7 @@ def compute_v6_b4_pf_weight_dict(
                 "expected_decay_annual": decay_u,
                 "decay_eff": decay_eff,
                 "borrow_etf_annual": borrow_a,
+                "borrow_ramp_mult": ramp_m,
                 "base_score": base_score,
             }
         )
@@ -459,6 +491,7 @@ def compute_v6_b4_pf_weight_dict(
         "start_sim": start_sim,
         "n_pairs_live": len(pairs_live),
         "excluded_high_borrow": excluded_borrow,
+        "borrow_ramp": {"lo": float(p.borrow_ramp_lo), "hi": float(p.borrow_ramp_hi)},
         "uvix_borrow_ftp_annual": uvix_borrow_annual_base,
         "vol_etp_weight_penalty": float(p.vol_etp_weight_penalty),
         "n_vol_etp_pairs": int(wdf["is_vol_etp"].sum()),

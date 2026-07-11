@@ -1116,6 +1116,42 @@ def compute_bucket4_weights(
     return w, wdf, meta
 
 
+def smooth_pair_weights_trim_only(
+    pair_weights: Mapping[tuple[str, str], float],
+    prev_weights: Mapping[tuple[str, str], float],
+    *,
+    alpha: float,
+) -> dict[tuple[str, str], float]:
+    """Temporal weight smoothing with a TRIM-ONLY override (B4 Phase 5).
+
+    Per pair: risk cuts apply immediately (``w_solved < w_prev`` -> take
+    ``w_solved``); size increases smooth in (``w_prev + alpha*(w_solved -
+    w_prev)``). Pairs with no history (new entries, first run) take the solved
+    weight unchanged, so enabling this live is a no-op on day one. Pairs that
+    dropped out of the solve get no weight (an exit is a risk cut).
+
+    The result is NOT renormalized: downstream consumers
+    (``cap_pair_weights``, ``compute_bucket4_targets``) normalize internally,
+    and renormalizing here would scale cut names back ABOVE their solved
+    weight (redeploying trimmed weight — the drawdown_63 lesson) and leave the
+    EMA oscillating around its fixed point forever instead of converging.
+    Persist THIS output as the next run's ``prev_weights`` so identical solves
+    are a no-op.
+    """
+    a = float(np.clip(alpha, 0.0, 1.0))
+    out: dict[tuple[str, str], float] = {}
+    for k, w in pair_weights.items():
+        w = max(0.0, float(w))
+        wp = prev_weights.get(k)
+        if wp is None or not np.isfinite(float(wp)):
+            out[k] = w
+        elif w < float(wp):
+            out[k] = w
+        else:
+            out[k] = float(wp) + a * (w - float(wp))
+    return out
+
+
 def _continuous_ratchet_trim_rate(
     fwd_edge: float,
     borrow: float,

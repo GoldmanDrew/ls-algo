@@ -123,6 +123,10 @@ execution:
   cleanup_max_workers: 25
   establish_max_workers: 25
   hedge_max_workers: 25
+  # Phase 2b resize: trades run in two parallel waves (all SELLs, then all
+  # BUYs) across this many per-worker IB connections (clientId +500..).
+  # Set to 1 to restore the legacy fully-serial coordinator loop.
+  resize_max_workers: 8
   # Pacing: ``worker_connect_stagger_sec`` spaces out IB connection setup
   # in ``_make_worker_pool`` (cleanup); ``worker_submit_stagger_sec`` spaces
   # out *order submission* in establish/hedge pools so 25 orders don't all
@@ -362,13 +366,12 @@ portfolio:
       # MINUS ``flow_program.universe.shorts`` (those are sized in the weekly flow sleeve).
       rules:
         # ------------------------------------------------------------------
-        # Bucket 4 dynamic hedge + cadence engine (scripts/bucket4_hedge_cadence.py)
-        # Disabled by default -> sizing falls back to decay_score weighting and the
-        # legacy v6 hedge panel. Flip ``enabled: true`` to roll out (gradual ramp:
-        # raise target_weight / max_name_weight as comfort grows).
+        # Bucket 4 opt2 engine (scripts/bucket4_weekly_opt2.py): decay/borrow
+        # weights → crash-budget caps → dynamic hedge + cadence. When
+        # enabled=false, sizing falls back to decay_score weights only.
         # ------------------------------------------------------------------
         bucket4_weekly_opt2:
-          enabled: true                   # v9 engine LIVE (2026-06-11): v7 closed form + k_z xsec tilt
+          enabled: true
           history_start: "2018-01-01"
           weekly_rebalance_freq: "W-FRI"   # used only when hedge_cadence_policy.source = v6_panel
           warmup_bdays: 65
@@ -376,21 +379,40 @@ portfolio:
           slippage_bps: 20.0               # realistic IBKR fill assumption from the A7 backtest
           borrow_multiplier: 1.0
           pf_min_pairs: 5
-          # Flat sizing haircut on volatility-ETP pairs (VIX complex). Final weight
-          # *= (1 - penalty), renormalized. Rationale: docs/b4_engine_notes.md.
-          # ZEROED 2026-06-30: vol ETPs now sized in their own volatility_etp_bucket5
-          # sleeve with a dedicated budget, so the in-B4 haircut is redundant.
-          vol_etp_weight_penalty: 0.0
-          # Borrow estimate feeding the sizing borrow-aversion term + high-borrow
-          # exclusion. "posterior" = half-life-weighted borrow_posterior_annual
-          # (same measure that nets net_edge_p50_annual). Quadratic level penalty
-          # is off (net edge already nets expected borrow); a small linear margin
-          # plus uncertainty penalty on borrow_posterior_var_annual downweights
-          # pairs with unstable / spike-prone borrow history.
+          # Borrow estimate for the sizing aversion term. "posterior" =
+          # half-life-weighted borrow_posterior_annual (same measure that nets
+          # net_edge_p50_annual). Quadratic level penalty is off (net edge
+          # already nets expected borrow); linear + uncertainty penalties
+          # downweight expensive / unstable borrow.
           borrow_aversion_source: posterior
           decay_borrow_quad: 0
           borrow_linear_aversion: 1.5
           borrow_uncertainty_penalty: 3.0
+          # Continuous high-borrow ramp: score × 1.0 below lo, linear to 0 at hi.
+          # Uses the same posterior borrow as the aversion terms (no cliffs).
+          borrow_ramp_lo: 0.80
+          borrow_ramp_hi: 1.20
+          # Trim-only weight EMA at plan time. Risk cuts apply immediately;
+          # size increases move alpha of the way to the new solve per run.
+          # Applied BEFORE the crash budget. State: data/b4_weight_ema_state.json.
+          weight_smoothing:
+            enabled: true
+            alpha: 0.5
+            state_json: data/b4_weight_ema_state.json
+          # Conditional-crash sizing: trim each name to rho*budget/L, then
+          # (with scale_to_budget) refill the sleeve pro-rata so target_weight
+          # actually deploys. rho sets relative crash risk; effective per-name
+          # crash loss ≈ rho * scale_mult. Telemetry: b4_crash_budget.csv +
+          # b4_sizing_waterfall.csv. See docs/b4_sizing_method.pdf.
+          crash_budget:
+            enabled: true
+            rho: 0.0075            # relative crash-loss scale (fraction of sleeve budget)
+            scale_to_budget: true  # after trim, scale pro-rata to refill the 3% target
+            theta: 0.5             # fraction of run-up assumed retraceable
+            phi: 0.5               # convexity bump for multi-day crash compounding
+            l_floor: 0.02          # min L in the cap denominator (bounds any single cap)
+            missing_policy: book_quantile   # short-history names get the book's q75 L
+            missing_l_quantile: 0.75
           # Hedge ratio (h) + rebalance cadence (days) engine. Every output is
           # reverse-engineerable from the printed inputs (TR, VCR, VCR_med).
           # Backtest rationale for every knob below: docs/b4_engine_notes.md.
@@ -536,8 +558,8 @@ portfolio:
         # Volatility ETPs (UVIX/SVIX, etc.) often have beta >= 0 so they miss ``negative_beta`` B4.
         # Bucket-5 sleeve: same B4 gates except beta < 0; target_weight is total gross book share.
         volatility_etp_bucket5:
-          # Current mode uses target_weight below; legacy share_of_b4_budget is still
-          # understood by generate_trade_plan.py when target_weight is absent.
+          # Dedicated sleeve budget (fraction of total gross). When target_weight
+          # is absent, generate_trade_plan falls back to share_of_b4_budget.
           enabled: true
           target_weight: 0.0025       # 0.25% of total gross book when vol rows exist
       weighting:

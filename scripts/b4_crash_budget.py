@@ -1,39 +1,25 @@
-"""B4 conditional-crash budget: per-name sizing cap (tail risk x run-up).
+"""B4 conditional-crash budget: per-name sizing from tail risk x run-up.
 
-THE RULE (one sentence): if a name's conditional crash hits tomorrow, the pair
-may lose at most ``rho`` of the B4 sleeve budget.
+THE RULE (relative): size so that, on each name's conditional crash, expected
+pair loss ranks with ``1/L`` (riskier names get less gross).
 
-This replaces the old unconditional tail penalty inside the opt2 score
-(``dd_risk_lambda`` / ``risk_denom_coeff`` set to 0 in config, so the opt2
-score is decay/borrow only). Sizing risk now lives in exactly one place.
-
-Per pair, as of the run date (all price inputs = underlying closes):
-
-    runup   = max(0, P / median(close, 252d) - 1)     how stretched vs its anchor
-    retrace = theta * runup / (1 + runup)             assume theta of the run-up can retrace
-    tail    = worst trailing 20d drop over ~3y        realized crash size
-              + 0.45 * annualized downside vol (126d)
-    C       = max(tail, retrace)                      conditional crash (return units)
-    L       = (1-h) * beta / (1+h*beta) * C * (1+phi*C)   pair loss per gross dollar
+    runup   = max(0, P / median(close, 252d) - 1)
+    retrace = theta * runup / (1 + runup)
+    tail    = worst trailing 20d drop over ~3y + 0.45 * downside vol
+    C       = max(tail, retrace)
+    L       = (1-h) * beta / (1+h*beta) * C * (1+phi*C)
     cap_usd = rho * budget / max(L, l_floor)
-    gross_i = min(solved_gross_i, cap_usd_i)          TRIM-ONLY
+    gross_i = min(solved_gross_i, cap_usd_i)          TRIM
 
-Derivation of L: on an underlying crash of size C the short inverse ETF loses
-``inv * beta * C``; the short-underlying hedge recovers ``h * beta * inv * C``.
-With ``inv = gross / (1 + h*beta)`` the net loss per gross dollar is
-``beta * C * (1-h) / (1 + h*beta)`` (~= (1-h)*C at beta=2). ``(1 + phi*C)``
-bumps for daily-rebalance compounding of the inverse on a multi-day crash.
+Two deploy modes (``scale_to_budget``):
 
-Freed gross is NOT redeployed (validated by the G2/G6 battery,
-scripts/b4_crash_sizing_suite.py): redistribution concentrates the book and
-neutralizes the overlay. Mechanically that means:
-
-  1. ``cap_pair_weights`` caps the opt2 weights AND returns a shrunken
-     effective budget, so ``compute_bucket4_targets``'s internal weight
-     renormalization cannot re-deploy the freed dollars;
-  2. the caller shrinks the B4 sleeve-rescale target by the freed amount;
-  3. ``clamp_sized_to_crash_budget`` re-clamps after the book cap stack,
-     whose redistribution could otherwise push rows back above their cap.
+  * ``false`` (research default): freed dollars stay in cash. Absolute rule
+    ``gross_i * L_i <= rho * budget`` holds on the final book.
+  * ``true`` (production fill-to-target): after the trim, scale the capped
+    book pro-rata so sleeve gross = budget. ``rho`` then sets *relative*
+    crash risk only; effective per-name crash loss is
+    ``rho * budget / sum(capped)``. Use this when ``target_weight`` should
+    actually deploy.
 
 See docs/b4_sizing_tail_runup_proposal_2026-07-10.md for research history.
 """
@@ -51,7 +37,7 @@ B4_SLEEVE = "inverse_decay_bucket4"
 
 @dataclass
 class CrashBudgetParams:
-    rho: float = 0.0075                 # max crash loss per name, fraction of sleeve budget
+    rho: float = 0.0075                 # crash-loss scale (absolute if scale_to_budget=false)
     theta: float = 0.5                  # fraction of the run-up assumed retraceable
     phi: float = 0.5                    # convexity bump on the conditional crash
     l_floor: float = 0.02               # floor on L in the cap denominator (bounds the cap)
@@ -67,6 +53,9 @@ class CrashBudgetParams:
     #: "neutral" leaves them uncapped.
     missing_policy: str = "book_quantile"
     missing_l_quantile: float = 0.75
+    #: After trim-only caps, scale the book pro-rata to refill ``budget_usd``.
+    #: ``rho`` becomes a relative-risk knob; see module docstring.
+    scale_to_budget: bool = False
 
     @classmethod
     def from_config(cls, cfg: Mapping[str, Any] | None) -> "CrashBudgetParams":
@@ -185,21 +174,44 @@ def compute_crash_caps(
     return caps
 
 
+def book_default_cap_usd(caps: pd.DataFrame, budget_usd: float, params: CrashBudgetParams) -> float:
+    """Conservative cap for a B4 row that has NO row in the caps table at all
+    (e.g. its pair failed the opt2 price-cache build, so ``compute_crash_caps``
+    never saw it). Uses the book-quantile L — the same validated G6 mechanism
+    used for short-history names — so no sizing path can bypass the budget.
+
+    Returns NaN when the book has no usable L (caller should then treat the
+    row as uncapped-but-flagged).
+    """
+    if caps is None or caps.empty or "L" not in caps.columns:
+        return float("nan")
+    l = pd.to_numeric(caps["L"], errors="coerce").dropna()
+    if l.empty:
+        return float("nan")
+    l_q = float(l.clip(lower=params.l_floor).quantile(params.missing_l_quantile))
+    return float(params.rho) * float(budget_usd) / max(l_q, float(params.l_floor))
+
+
 def cap_pair_weights(
     pair_weights: Mapping[tuple[str, str], float],
     caps: pd.DataFrame,
     budget_usd: float,
     *,
     norm_sym: Callable[[str], str],
+    scale_to_budget: bool = False,
 ) -> tuple[dict[tuple[str, str], float], float, pd.DataFrame]:
     """Trim-only cap on the opt2 weights: ``w' = min(w, cap_usd / budget)``.
 
-    Returns ``(capped_weights, effective_budget, telemetry_table)``.
+    Returns ``(weights, effective_budget, telemetry_table)``.
 
-    ``effective_budget = budget * sum(w') / sum(w)`` — pass it (not the full
-    budget) to ``compute_bucket4_targets`` so its internal renormalization
-    yields exactly ``gross_i = min(w_i * budget, cap_usd_i)`` and the freed
-    dollars stay in cash instead of being redeployed pro-rata.
+    Default (``scale_to_budget=False``): ``effective_budget = budget * sum(w')``
+    so ``compute_bucket4_targets`` yields ``gross_i = min(solved, cap)`` and
+    freed dollars stay in cash.
+
+    With ``scale_to_budget=True``: renormalize ``w'`` to sum 1 and return the
+    full ``budget``. Final grosses keep the crash-cap *proportions* but refill
+    the sleeve target. ``rho`` is then relative only; telemetry records
+    ``scale_mult`` and ``rho_effective = rho * scale_mult``.
     """
     if not pair_weights:
         return dict(pair_weights), float(budget_usd), pd.DataFrame()
@@ -235,13 +247,27 @@ def cap_pair_weights(
             "crash_l_source": str(r["crash_l_source"]) if r is not None else "no_cap",
         })
 
-    # After the per-key normalization above, sum(w0) == 1, so the effective
-    # budget is simply budget * sum(capped weights): exactly the solved gross
-    # minus the freed dollars. compute_bucket4_targets renormalizes capped
-    # weights to sum 1 and multiplies by this budget, reproducing
-    # gross_i = min(solved_i, cap_usd_i) without redeploying the freed gross.
-    budget_eff = b * sum(capped.values())
-    return capped, float(budget_eff), pd.DataFrame(rows)
+    capped_sum = sum(capped.values())
+    scale_mult = 1.0
+    if scale_to_budget and capped_sum > 1e-18:
+        # Pro-rata refill: keep relative crash-capped sizes, deploy full budget.
+        scale_mult = 1.0 / capped_sum
+        capped = {k: v * scale_mult for k, v in capped.items()}
+        budget_eff = b
+    else:
+        # Freed dollars stay in cash (pass shrunken budget so the target
+        # solver's internal renorm cannot redeploy them).
+        budget_eff = b * capped_sum
+
+    tel = pd.DataFrame(rows)
+    if not tel.empty:
+        tel["scale_to_budget"] = bool(scale_to_budget)
+        tel["scale_mult"] = float(scale_mult)
+        # Post-scale gross = weight_capped * scale_mult * budget
+        # (weight_capped column is still the pre-scale trim weight).
+        tel["gross_final_usd"] = tel["gross_capped_usd"] * float(scale_mult)
+        tel["weight_final"] = tel["weight_capped"] * float(scale_mult)
+    return capped, float(budget_eff), tel
 
 
 def clamp_sized_to_crash_budget(frame: pd.DataFrame) -> pd.DataFrame:

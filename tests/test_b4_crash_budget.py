@@ -7,6 +7,7 @@ import pytest
 
 from scripts.b4_crash_budget import (
     CrashBudgetParams,
+    book_default_cap_usd,
     cap_pair_weights,
     clamp_sized_to_crash_budget,
     compute_crash_caps,
@@ -172,6 +173,32 @@ class TestCapPairWeights:
         assert capped == pytest.approx(pw)
         assert budget_eff == pytest.approx(50_000.0)
 
+    def test_scale_to_budget_refills_and_keeps_proportions(self):
+        cache = _pair_cache()
+        budget = 100_000.0
+        caps = compute_crash_caps(
+            pair_cache=cache, hedge_by_underlying=_hedges(cache), closes_broad=None,
+            hedge_base=0.45, run_date="2026-07-08", budget_usd=budget,
+            params=P, norm_sym=_norm,
+        )
+        pw = {("AMDS", "AMD"): 0.5, ("METD", "META"): 0.3, ("NEWS", "NEW"): 0.2}
+        trimmed, budget_cash, tel_cash = cap_pair_weights(
+            pw, caps, budget, norm_sym=_norm, scale_to_budget=False
+        )
+        scaled, budget_full, tel_sc = cap_pair_weights(
+            pw, caps, budget, norm_sym=_norm, scale_to_budget=True
+        )
+        assert budget_cash < budget
+        assert budget_full == pytest.approx(budget)
+        assert sum(scaled.values()) == pytest.approx(1.0)
+        assert float(tel_sc["scale_mult"].iloc[0]) == pytest.approx(1.0 / sum(trimmed.values()))
+        # Proportions of the trimmed book are preserved after scale.
+        tsum = sum(trimmed.values())
+        for k in pw:
+            assert scaled[k] == pytest.approx(trimmed[k] / tsum)
+        # Final dollars sum to the full budget.
+        assert float(tel_sc["gross_final_usd"].sum()) == pytest.approx(budget)
+
 
 # ---------------------------------------------------------------- final clamp
 class TestClampSized:
@@ -204,6 +231,27 @@ class TestClampSized:
         f = self._frame().drop(columns=["crash_budget_clamp_usd"])
         out = clamp_sized_to_crash_budget(f)
         assert out["gross_target_usd"].tolist() == f["gross_target_usd"].tolist()
+
+
+# ---------------------------------------------------------------- default cap
+class TestBookDefaultCap:
+    def test_matches_book_quantile_formula(self):
+        cache = _pair_cache()
+        budget = 100_000.0
+        caps = compute_crash_caps(
+            pair_cache=cache, hedge_by_underlying=_hedges(cache), closes_broad=None,
+            hedge_base=0.45, run_date="2026-07-08", budget_usd=budget,
+            params=P, norm_sym=_norm,
+        )
+        cap = book_default_cap_usd(caps, budget, P)
+        l_q = float(pd.to_numeric(caps["L"], errors="coerce").dropna()
+                    .clip(lower=P.l_floor).quantile(P.missing_l_quantile))
+        assert cap == pytest.approx(P.rho * budget / l_q)
+        # Conservative: never looser than the loosest signal cap in the book
+        assert cap <= float(pd.to_numeric(caps["cap_usd"], errors="coerce").max()) + 1e-6
+
+    def test_empty_caps_returns_nan(self):
+        assert np.isnan(book_default_cap_usd(pd.DataFrame(), 100_000.0, P))
 
 
 # ---------------------------------------------------------------- params

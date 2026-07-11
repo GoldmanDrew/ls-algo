@@ -103,6 +103,34 @@ def _b4_write_ratchet_state(path: Path, state: dict, run_date: str) -> None:
         print(f"[WARN] could not persist b4 ratchet state ({e})")
 
 
+def _b4_load_weight_ema_state(path: Path) -> dict[str, float]:
+    """Load persisted per-pair smoothed weights ({'ETF|UND': weight})."""
+    try:
+        if path.is_file():
+            raw = json.loads(path.read_text())
+            d = raw.get("weight_by_pair", raw) if isinstance(raw, dict) else {}
+            return {str(k): float(v) for k, v in (d or {}).items()
+                    if v is not None and np.isfinite(float(v))}
+    except Exception:
+        pass
+    return {}
+
+
+def _b4_write_weight_ema_state(path: Path, state: dict[str, float], run_date: str) -> None:
+    """Atomically persist the post-smoothing B4 pair weights."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "run_date": str(run_date),
+            "weight_by_pair": {k: round(float(v), 8) for k, v in state.items()},
+        }
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(payload, indent=2))
+        tmp.replace(path)
+    except Exception as e:
+        print(f"[WARN] could not persist b4 weight EMA state ({e})")
+
+
 def _plot_b4_cadence(cad_df: "pd.DataFrame", state, out_dir: Path) -> None:
     try:
         import matplotlib
@@ -2733,6 +2761,11 @@ def main() -> None:
         # Allocate BUCKET 4 (core inverse β<0 + optional volatility-ETP slice)
         # -----------------------------
         b4_parts: list[pd.DataFrame] = []
+        # Per-stage sizing telemetry for b4_sizing_waterfall.csv (Phase 0): every
+        # multiplicative stage between raw score weight and final gross must be
+        # visible in one artifact. Filled inside the opt2 block, written after
+        # the final crash-budget clamp.
+        _b4_wf_ctx: dict[str, Any] = {}
 
         if not b4_core_names.empty and b4_core_cash > 1e-9:
             b4c = b4_core_names.copy()
@@ -2808,7 +2841,151 @@ def main() -> None:
                         hedge_cadence_policy=_hcp,
                     )
                     st_b4 = build_bucket4_state(cfg_b4, bucket4_pairs=pairs_subset)
-                    pw, _, _ = compute_bucket4_weights(st_b4)
+                    pw, _, _opt2_meta = compute_bucket4_weights(st_b4)
+                    _b4_wf_ctx["weight_solved"] = {k: float(v) for k, v in pw.items()}
+                    for _ex in (_opt2_meta.get("excluded_high_borrow") or []):
+                        print(
+                            f"[INFO] B4 borrow ramp dropped {_ex.get('pair')}: "
+                            f"borrow={float(_ex.get('borrow_etf_annual', float('nan'))):.0%} "
+                            f"({_ex.get('reason', 'ramp 0')})"
+                        )
+
+                    # ---- Temporal weight smoothing (Phase 5): trim-only EMA at
+                    # plan time. Risk cuts apply immediately; size increases
+                    # smooth in with alpha. State persists across runs so weekly
+                    # weight jumps (borrow/decay noise) do not slam position
+                    # targets. Crash caps are applied AFTER smoothing, so the
+                    # EMA can never lift a name above its crash cap.
+                    _ws_cfg = b4_opt2.get("weight_smoothing") or {}
+                    if bool(_ws_cfg.get("enabled")):
+                        from scripts.bucket4_weekly_opt2 import smooth_pair_weights_trim_only
+
+                        _ws_path = Path(str(_ws_cfg.get("state_json") or "data/b4_weight_ema_state.json"))
+                        _ws_prev_raw = _b4_load_weight_ema_state(_ws_path)
+                        _ws_prev = {}
+                        for _k, _v in _ws_prev_raw.items():
+                            if "|" in _k:
+                                _e, _u = _k.split("|", 1)
+                                _ws_prev[(_norm_sym(_e), _norm_sym(_u))] = float(_v)
+                        _ws_alpha = float(_ws_cfg.get("alpha", 0.5))
+                        pw_smoothed = smooth_pair_weights_trim_only(pw, _ws_prev, alpha=_ws_alpha)
+                        # 1e-6 tolerance: the persisted state is rounded to 8dp,
+                        # so sub-rounding residue must not read as a real move.
+                        _n_cut = sum(
+                            1 for _k in pw_smoothed
+                            if _k in _ws_prev and pw_smoothed[_k] < _ws_prev[_k] - 1e-6
+                        )
+                        _n_smooth = sum(
+                            1 for _k in pw_smoothed
+                            if _k in _ws_prev and pw_smoothed[_k] > _ws_prev[_k] + 1e-6
+                        )
+                        print(
+                            f"[INFO] B4 weight EMA (trim-only, alpha={_ws_alpha:.2f}): "
+                            f"{_n_cut} immediate cut(s), {_n_smooth} smoothed increase(s), "
+                            f"{len(pw_smoothed) - _n_cut - _n_smooth} unchanged/new -> {_ws_path.name}"
+                        )
+                        pw = pw_smoothed
+                        _b4_write_weight_ema_state(
+                            _ws_path,
+                            {f"{k[0]}|{k[1]}": float(v) for k, v in pw.items()},
+                            args.run_date,
+                        )
+                    _b4_wf_ctx["weight_smoothed"] = {k: float(v) for k, v in pw.items()}
+
+                    # ---- Conditional-crash budget. Trim each name to
+                    # gross_i <= rho*budget/L_i. With scale_to_budget=false,
+                    # freed dollars stay in cash; with true, the capped book
+                    # is scaled pro-rata to refill the sleeve target (rho
+                    # sets relative crash risk only).
+                    _cb_cfg = b4_opt2.get("crash_budget") or {}
+                    _b4_budget_eff = float(b4_core_cash)
+                    _cb_clamp_by_key: dict[tuple[str, str], float] = {}
+                    _cb_default_cap = float("nan")
+                    _cb_scale_mult = 1.0
+                    if bool(_cb_cfg.get("enabled")):
+                        from scripts.b4_crash_budget import (
+                            CrashBudgetParams,
+                            book_default_cap_usd,
+                            cap_pair_weights,
+                            compute_crash_caps,
+                        )
+
+                        _cb_params = CrashBudgetParams.from_config(_cb_cfg)
+                        _cb_caps = compute_crash_caps(
+                            pair_cache=st_b4.pair_cache,
+                            hedge_by_underlying=st_b4.hedge_by_underlying,
+                            closes_broad=st_b4.closes_broad,
+                            hedge_base=st_b4.hedge_base,
+                            run_date=args.run_date,
+                            budget_usd=float(b4_core_cash),
+                            params=_cb_params,
+                            norm_sym=_norm_sym,
+                        )
+                        pw, _b4_budget_eff, _cb_tel = cap_pair_weights(
+                            pw,
+                            _cb_caps,
+                            float(b4_core_cash),
+                            norm_sym=_norm_sym,
+                            scale_to_budget=bool(_cb_params.scale_to_budget),
+                        )
+                        if not _cb_tel.empty:
+                            _cb_dir = run_dir(args.run_date)
+                            _cb_dir.mkdir(parents=True, exist_ok=True)
+                            _cb_path = _cb_dir / "b4_crash_budget.csv"
+                            _cb_tel.sort_values("crash_budget_mult").to_csv(_cb_path, index=False)
+                            _n_cb = int((_cb_tel["crash_budget_mult"] < 0.999).sum())
+                            _cb_scale_mult = float(_cb_tel["scale_mult"].iloc[0]) if "scale_mult" in _cb_tel.columns else 1.0
+                            _freed_pre = float(b4_core_cash) - float(
+                                pd.to_numeric(_cb_tel["gross_capped_usd"], errors="coerce").fillna(0.0).sum()
+                            )
+                            if bool(_cb_params.scale_to_budget):
+                                _rho_eff = float(_cb_params.rho) * _cb_scale_mult
+                                print(
+                                    f"[INFO] B4 crash_budget: rho={_cb_params.rho:.2%} of "
+                                    f"${b4_core_cash:,.0f}; capped {_n_cb}/{len(_cb_tel)} pairs "
+                                    f"(pre-scale freed ${_freed_pre:,.0f}), then scale×{_cb_scale_mult:.2f} "
+                                    f"to refill budget (rho_effective≈{_rho_eff:.2%}) -> {_cb_path.name}"
+                                )
+                            else:
+                                _freed = float(b4_core_cash) - float(_b4_budget_eff)
+                                print(
+                                    f"[INFO] B4 crash_budget: rho={_cb_params.rho:.2%} of "
+                                    f"${b4_core_cash:,.0f}; capped {_n_cb}/{len(_cb_tel)} pairs, "
+                                    f"freed ${_freed:,.0f} (stays in cash) -> {_cb_path.name}"
+                                )
+                            for _, _cr in _cb_tel[_cb_tel["crash_budget_mult"] < 0.999].iterrows():
+                                _g_final = float(_cr.get("gross_final_usd", _cr["gross_capped_usd"]))
+                                print(
+                                    f"[INFO]   {_cr['ETF']}/{_cr['Underlying']}: "
+                                    f"${_cr['gross_solved_usd']:,.0f} -> ${_cr['gross_capped_usd']:,.0f}"
+                                    + (f" -> scaled ${_g_final:,.0f}" if bool(_cb_params.scale_to_budget) else "")
+                                    + f" (L={_cr['L']:.3f}, C={_cr['C']:.3f}, runup={_cr['runup']:.2f}, "
+                                    f"tail={_cr['tail']:.2f}, src={_cr['crash_l_source']})"
+                                )
+                        # ONE RISK LAW, ZERO BYPASSES (Phase 1): clamp map from
+                        # the FULL caps table. When scale_to_budget, raise the
+                        # clamp by the same scale so the final re-clamp does
+                        # not undo the refill.
+                        if _cb_caps is not None and not _cb_caps.empty:
+                            _cb_clamp_by_key = {
+                                (str(_cr["ETF"]), str(_cr["Underlying"])): float(_cr["cap_usd"]) * _cb_scale_mult
+                                for _, _cr in _cb_caps.iterrows()
+                                if np.isfinite(float(_cr["cap_usd"]))
+                            }
+                            _cb_default_cap = book_default_cap_usd(
+                                _cb_caps, float(b4_core_cash), _cb_params
+                            )
+                            if np.isfinite(_cb_default_cap):
+                                _cb_default_cap = float(_cb_default_cap) * _cb_scale_mult
+                        _b4_wf_ctx["caps"] = _cb_caps
+                        _b4_wf_ctx["budget_eff"] = float(_b4_budget_eff)
+                        _b4_wf_ctx["scale_mult"] = float(_cb_scale_mult)
+                        # Only shrink the sleeve reserve when freed cash is kept
+                        # (scale_to_budget=false). With scale-to-target, budget_eff
+                        # already equals the full sleeve cash.
+                        b4_core_reserved = max(
+                            0.0, b4_core_reserved - (float(b4_core_cash) - float(_b4_budget_eff))
+                        )
                     # Grow-only ratchet: floor the inverse leg at the MAX of the
                     # persisted per-pair state and the COMMITTED held inverse short
                     # (from the latest accounting snapshot). Sourcing the held leg
@@ -2881,7 +3058,7 @@ def main() -> None:
                         st_b4,
                         pw,
                         args.run_date,
-                        float(b4_core_cash),
+                        float(_b4_budget_eff),
                         fee_bps=float(b4_opt2.get("fee_bps", 1.0)),
                         slippage_bps=float(b4_opt2.get("slippage_bps", 20.0)),
                         delta_floor=delta_floor,
@@ -2951,13 +3128,47 @@ def main() -> None:
                         b4c["ratchet_trim_lambda"] = 0.0
                     if "ratchet_trim_usd" not in b4c.columns:
                         b4c["ratchet_trim_usd"] = 0.0
+                    # Crash-budget clamp carried on the row so the sized book
+                    # can be re-clamped after the cap stack (see
+                    # clamp_sized_to_crash_budget).
+                    if "crash_budget_clamp_usd" not in b4c.columns:
+                        b4c["crash_budget_clamp_usd"] = np.nan
+                    _b4_wf_sources: dict[tuple[str, str], str] = {}
+                    _b4_wf_gross_solved: dict[tuple[str, str], float] = {}
                     for idx in b4c.index:
                         k = (
                             _norm_sym(str(b4c.at[idx, "ETF"])),
                             _norm_sym(str(b4c.at[idx, "Underlying"])),
                         )
+                        # Every B4 row gets a crash clamp: from the caps table when
+                        # present, else the conservative book-quantile default.
+                        # Fail-closed — no sizing path escapes the risk law.
+                        _clamp = _cb_clamp_by_key.get(k, _cb_default_cap)
+                        if np.isfinite(_clamp):
+                            b4c.at[idx, "crash_budget_clamp_usd"] = float(_clamp)
+                        _b4_wf_gross_solved[k] = float(
+                            pd.to_numeric(b4c.at[idx, "gross_target_usd"], errors="coerce") or 0.0
+                        )
                         if k in gross_by_key:
+                            _b4_wf_sources[k] = "opt2"
                             b4c.at[idx, "gross_target_usd"] = gross_by_key[k]
+                        else:
+                            # Fallback row (rejected by the solve): clamp the
+                            # legacy decay-score gross to the crash cap NOW, not
+                            # only at the end — an unclamped oversized row would
+                            # otherwise eat the sleeve budget in the rescale and
+                            # dilute every properly-capped pair (the hidden
+                            # ~0.5x haircut of the CORD incident).
+                            _b4_wf_sources[k] = "fallback"
+                            _g0 = float(
+                                pd.to_numeric(b4c.at[idx, "gross_target_usd"], errors="coerce") or 0.0
+                            )
+                            if np.isfinite(_clamp) and _g0 > float(_clamp):
+                                b4c.at[idx, "gross_target_usd"] = float(_clamp)
+                                print(
+                                    f"[INFO] B4 fallback row {k[0]}/{k[1]} crash-clamped at plan "
+                                    f"time: ${_g0:,.0f} -> ${float(_clamp):,.0f}"
+                                )
                         if k in inv_short_by_key:
                             b4c.at[idx, "b4_opt2_inverse_etf_short_usd"] = inv_short_by_key[k]
                         if k in und_short_by_key:
@@ -2970,7 +3181,26 @@ def main() -> None:
                             b4c.at[idx, "ratchet_trim_lambda"] = float(trim_lambda_by_key[k])
                         if k in trim_usd_by_key:
                             b4c.at[idx, "ratchet_trim_usd"] = float(trim_usd_by_key[k])
-                    print(f"[INFO] bucket4_weekly_opt2: tail-risk weights + dynamic hedge targets (n={len(tgt_df)})")
+                    _b4_wf_ctx["source_by_key"] = _b4_wf_sources
+                    _b4_wf_ctx["gross_solved_by_key"] = _b4_wf_gross_solved
+                    _b4_wf_ctx["gross_plan_by_key"] = {
+                        (
+                            _norm_sym(str(b4c.at[idx, "ETF"])),
+                            _norm_sym(str(b4c.at[idx, "Underlying"])),
+                        ): float(pd.to_numeric(b4c.at[idx, "gross_target_usd"], errors="coerce") or 0.0)
+                        for idx in b4c.index
+                    }
+                    _b4_wf_ctx["budget_usd"] = float(b4_core_cash)
+                    # Sleeve-rescale target := what the risk law actually allows
+                    # (crash-capped opt2 targets + clamped fallback rows), so the
+                    # book-cap rescale is ~1.0x on B4 instead of a hidden uniform
+                    # haircut below the crash caps (Phase 4, intent A: rho is the
+                    # final number; book caps only trim).
+                    b4_core_reserved = min(
+                        float(b4_core_cash),
+                        float(pd.to_numeric(b4c["gross_target_usd"], errors="coerce").fillna(0.0).sum()),
+                    )
+                    print(f"[INFO] bucket4_weekly_opt2: decay/borrow weights + crash-budget caps + dynamic hedge (n={len(tgt_df)})")
                 except Exception as e:
                     print(f"[ERROR] bucket4_weekly_opt2 failed ({e}); decay_score fallback disabled while enabled=true")
                     raise
@@ -3392,6 +3622,16 @@ def main() -> None:
             if opt_summary:
                 print("[INFO] sleeve optimal vs executable: " + "; ".join(opt_summary))
 
+        # Crash-budget re-clamp: the notional-cap redistribution / covariance /
+        # sleeve-rescale passes above can push a B4 row back over its
+        # conditional-crash cap; re-apply the trim-only clamp (usually a no-op).
+        try:
+            from scripts.b4_crash_budget import clamp_sized_to_crash_budget
+            sized = clamp_sized_to_crash_budget(sized)
+            optimal_sized = clamp_sized_to_crash_budget(optimal_sized)
+        except Exception as _cb_ex:
+            print(f"[WARN] crash_budget final clamp failed ({_cb_ex}); continuing unclamped")
+
         # Refresh sleeve subsets from sized so weight diagnostics reflect caps + covariance.
         if not core_names_fit.empty:
             core_names_fit["gross_target_usd"] = sized.loc[core_names_fit.index, "gross_target_usd"].to_numpy()
@@ -3420,9 +3660,31 @@ def main() -> None:
                 opt2_rows = pd.Series(False, index=frame.index)
             o2m = b4m & opt2_rows
             b4dm = b4m & ~o2m
-            frame.loc[b4dm, "short_usd"] = -frame.loc[b4dm, "gross_target_usd"]
-            frame.loc[b4dm, "long_usd"] = -(
-                frame.loc[b4dm, "beta_used_abs"] * frame.loc[b4dm, "gross_target_usd"]
+            # ONE leg-split convention (Phase 3): B4 rows without opt2 legs get
+            # the SAME split the opt2 solver uses — inv = gross/(1+h*beta),
+            # und = h*beta*inv with the config h_mid as the hedge fallback — so
+            # gross means the same thing on every row. The legacy split
+            # (inv = gross AND und = beta*gross, i.e. total exposure
+            # gross*(1+beta)) is retained only for the volatility-ETP B5 sleeve,
+            # which is sized under its own budget.
+            b4dm_core = b4dm & (frame["sleeve"].astype(str) == "inverse_decay_bucket4")
+            b4dm_vol = b4dm & ~b4dm_core
+            if bool(b4dm_core.any()):
+                _h_fb = float(
+                    ((b4_rules.get("bucket4_weekly_opt2") or {}).get("hedge_cadence_policy") or {})
+                    .get("h_mid", 0.45)
+                )
+                _beta_fb = frame.loc[b4dm_core, "beta_used_abs"].astype(float)
+                _gross_fb = pd.to_numeric(
+                    frame.loc[b4dm_core, "gross_target_usd"], errors="coerce"
+                ).fillna(0.0)
+                _inv_fb = _gross_fb / (1.0 + _h_fb * _beta_fb)
+                frame.loc[b4dm_core, "short_usd"] = -_inv_fb
+                frame.loc[b4dm_core, "long_usd"] = -(_h_fb * _beta_fb * _inv_fb)
+                frame.loc[b4dm_core, "hedge_ratio"] = _h_fb
+            frame.loc[b4dm_vol, "short_usd"] = -frame.loc[b4dm_vol, "gross_target_usd"]
+            frame.loc[b4dm_vol, "long_usd"] = -(
+                frame.loc[b4dm_vol, "beta_used_abs"] * frame.loc[b4dm_vol, "gross_target_usd"]
             )
             if bool(o2m.any()):
                 opt2_gross = (
@@ -3475,6 +3737,87 @@ def main() -> None:
 
         sized = _populate_long_short_columns(sized)
         optimal_sized = _populate_long_short_columns(optimal_sized)
+
+        # ---- B4 sizing waterfall + invariant telemetry (Phase 0) ------------
+        # One artifact showing every stage between raw score weight and final
+        # gross, plus the effective per-name crash loss actually running
+        # (rho_effective = gross_final * L / budget). A future CORD shows up as
+        # a row whose crash_cap_usd is blank / whose rho_effective is an
+        # outlier — before it becomes the largest position in the sleeve.
+        try:
+            if _b4_wf_ctx:
+                _wf_caps = _b4_wf_ctx.get("caps")
+                _wf_caps_lut: dict[tuple[str, str], pd.Series] = {}
+                if _wf_caps is not None and not _wf_caps.empty:
+                    for _, _r in _wf_caps.iterrows():
+                        _wf_caps_lut[(str(_r["ETF"]), str(_r["Underlying"]))] = _r
+                _wf_budget = float(_b4_wf_ctx.get("budget_usd", 0.0) or 0.0)
+                _wf_rows: list[dict] = []
+                _b4_final = sized[sized["sleeve"].astype(str) == "inverse_decay_bucket4"]
+                for _idx in _b4_final.index:
+                    _k = (
+                        _norm_sym(str(_b4_final.at[_idx, "ETF"])),
+                        _norm_sym(str(_b4_final.at[_idx, "Underlying"])),
+                    )
+                    _gf = float(pd.to_numeric(_b4_final.at[_idx, "gross_target_usd"], errors="coerce") or 0.0)
+                    _cl = pd.to_numeric(_b4_final.at[_idx, "crash_budget_clamp_usd"], errors="coerce") \
+                        if "crash_budget_clamp_usd" in _b4_final.columns else float("nan")
+                    _cr = _wf_caps_lut.get(_k)
+                    _L = float(_cr["L"]) if _cr is not None and pd.notna(_cr.get("L")) else float("nan")
+                    _wf_rows.append({
+                        "ETF": _k[0], "Underlying": _k[1],
+                        "source": _b4_wf_ctx.get("source_by_key", {}).get(_k, "unknown"),
+                        "weight_solved": _b4_wf_ctx.get("weight_solved", {}).get(_k, float("nan")),
+                        "weight_smoothed": _b4_wf_ctx.get("weight_smoothed", {}).get(_k, float("nan")),
+                        # Legacy decay-score allocation (the pre-opt2 stage every
+                        # row starts from; the fallback path's solved gross).
+                        "gross_decay_score_usd": _b4_wf_ctx.get("gross_solved_by_key", {}).get(_k, float("nan")),
+                        # What the opt2 solve wanted BEFORE the crash budget:
+                        # smoothed weight x full sleeve budget.
+                        "gross_opt2_solved_usd": (
+                            float(_b4_wf_ctx.get("weight_smoothed", {}).get(_k)) * _wf_budget
+                            if _k in _b4_wf_ctx.get("weight_smoothed", {}) and _wf_budget > 0
+                            else float("nan")
+                        ),
+                        "crash_cap_usd": float(_cl) if pd.notna(_cl) else float("nan"),
+                        "gross_after_crash_usd": _b4_wf_ctx.get("gross_plan_by_key", {}).get(_k, float("nan")),
+                        "gross_final_usd": _gf,
+                        "inverse_short_final_usd": float(pd.to_numeric(_b4_final.at[_idx, "short_usd"], errors="coerce") or 0.0),
+                        "underlying_short_final_usd": float(pd.to_numeric(_b4_final.at[_idx, "long_usd"], errors="coerce") or 0.0),
+                        "L": _L,
+                        "C": float(_cr["C"]) if _cr is not None and pd.notna(_cr.get("C")) else float("nan"),
+                        "crash_l_source": str(_cr["crash_l_source"]) if _cr is not None else "missing",
+                        "rho_effective": (_gf * _L / _wf_budget) if (np.isfinite(_L) and _wf_budget > 0) else float("nan"),
+                        "book_cap_mult": (
+                            _gf / float(_b4_wf_ctx.get("gross_plan_by_key", {}).get(_k))
+                            if float(_b4_wf_ctx.get("gross_plan_by_key", {}).get(_k, 0.0) or 0.0) > 0
+                            else float("nan")
+                        ),
+                    })
+                    # INVARIANT (fail-closed check): every sized B4 row must
+                    # carry a finite crash clamp. Loud warn, not crash, per the
+                    # shadow-first rollout discipline.
+                    if _gf > 0 and not pd.notna(_cl):
+                        print(
+                            f"[WARN] B4 INVARIANT VIOLATION: {_k[0]}/{_k[1]} sized "
+                            f"${_gf:,.0f} with NO crash-budget clamp — a sizing "
+                            f"path bypassed the risk law (CORD-class bug)."
+                        )
+                if _wf_rows:
+                    _wf_df = pd.DataFrame(_wf_rows).sort_values("gross_final_usd", ascending=False)
+                    _wf_dir = run_dir(args.run_date)
+                    _wf_dir.mkdir(parents=True, exist_ok=True)
+                    _wf_path = _wf_dir / "b4_sizing_waterfall.csv"
+                    _wf_df.to_csv(_wf_path, index=False)
+                    _rho_max = pd.to_numeric(_wf_df["rho_effective"], errors="coerce").max()
+                    _rho_sum = pd.to_numeric(_wf_df["rho_effective"], errors="coerce").sum()
+                    print(
+                        f"[INFO] B4 sizing waterfall -> {_wf_path.name} | effective crash "
+                        f"loss after ALL caps: max {_rho_max:.3%} / name, {_rho_sum:.3%} book "
+                        f"(config rho={float((_cb_cfg or {}).get('rho', 0.0075)):.2%})"
+                    )
+        except Exception as _wf_ex:
+            print(f"[WARN] b4_sizing_waterfall failed ({_wf_ex}); continuing")
 
         # Write sized notionals back into KEEP (purgatory remains 0)
         if "gross_target_usd" not in keep.columns:

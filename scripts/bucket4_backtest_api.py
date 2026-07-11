@@ -135,9 +135,11 @@ def size_b4_book_asof(
 ) -> SizedBook:
     """Production B4 sizing for one as-of date.
 
-    Order matches live GTP: opt2 → trim-only weight_smoothing → crash-budget.
-    Returns capped weights that generally sum to **less than 1** (freed gross
-    stays in cash). ``budget_eff = budget * sum(w_capped)``.
+    Order matches live GTP: opt2 → trim-only weight_smoothing → crash-budget
+    (optional ``scale_to_budget`` refill). With ``scale_to_budget=false``,
+    capped weights sum to less than 1 (freed gross stays in cash) and
+    ``budget_eff = budget * sum(w_capped)``. With ``scale_to_budget=true``,
+    weights are renormalized to sum 1 and ``budget_eff = budget``.
     """
     ns = norm_sym or _norm_sym
     opt2 = dict(opt2_cfg or {})
@@ -214,6 +216,7 @@ def size_b4_book_asof(
 
     cb_cfg = opt2.get("crash_budget") or {}
     if cb_cfg.get("enabled", True):
+        cb_params = CrashBudgetParams.from_config(cb_cfg)
         caps = compute_crash_caps(
             pair_cache=cache,
             hedge_by_underlying=h_map,
@@ -221,10 +224,16 @@ def size_b4_book_asof(
             hedge_base=h_base,
             run_date=as_of,
             budget_usd=budget,
-            params=CrashBudgetParams.from_config(cb_cfg),
+            params=cb_params,
             norm_sym=ns,
         )
-        capped, budget_eff, tel = cap_pair_weights(pw, caps, budget, norm_sym=ns)
+        capped, budget_eff, tel = cap_pair_weights(
+            pw,
+            caps,
+            budget,
+            norm_sym=ns,
+            scale_to_budget=bool(cb_params.scale_to_budget),
+        )
         telemetry = tel.to_dict(orient="records") if tel is not None and not tel.empty else []
     else:
         # Normalize opt2 to sum 1; full budget deployed.
