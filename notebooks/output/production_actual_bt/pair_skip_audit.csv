@@ -1,0 +1,15 @@
+sleeve,ETF,reason
+core_leveraged,TXXH,not_in_panel
+core_leveraged,AMKL,not_in_panel
+core_leveraged,AXTU,not_in_panel
+core_leveraged,XNDX,not_in_panel
+core_leveraged,DRNL,not_in_panel
+core_leveraged,AAOG,not_in_panel
+core_leveraged,CATG,not_in_panel
+core_leveraged,COHH,not_in_panel
+core_leveraged,SNDG,not_in_panel
+core_leveraged,STXU,not_in_panel
+yieldboost,CRY,not_in_panel
+yieldboost,CWY,not_in_panel
+inverse_decay_bucket4,MUZ,not_in_panel
+inverse_decay_bucket4,SSPC,not_in_panel

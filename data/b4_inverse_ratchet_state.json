@@ -1,0 +1,17 @@
+{
+  "run_date": "2026-07-10",
+  "inverse_short_usd_by_pair": {
+    "LITZ|LITE": 49146.02,
+    "MSTZ|MSTR": 16273.71,
+    "SNDQ|SNDK": 40761.39,
+    "RKLZ|RKLB": 15859.4,
+    "DAMD|AMD": 7842.26,
+    "QBTZ|QBTS": 47992.82,
+    "NBIZ|NBIS": 36164.06,
+    "CONI|COIN": 9861.84,
+    "SPCG|SPCX": 3630.97,
+    "SSPC|SPCX": 3653.43,
+    "CORD|CRWV": 60650.38,
+    "MUZ|MU": 6220.48
+  }
+}

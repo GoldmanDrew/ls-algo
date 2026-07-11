@@ -298,7 +298,8 @@ def build_pair_returns(uni, panel, start, min_days):
     """Per-pair daily returns (prod cadence hedge) + gross weights for live B4."""
     blk = knobs_from_yaml()
     prod_knobs = make_knobs(blk)
-    df = uni[uni["sleeve"].isin(["inverse_decay_bucket4", "volatility_etp_bucket5"])].copy()
+    # B5 uses bucket5_carry_bt, not B4 dynamic-h — cadence risk opt is B4-only.
+    df = uni[uni["sleeve"].isin(["inverse_decay_bucket4"])].copy()
     df = df[df["ETF"].isin(panel.keys())].reset_index(drop=True)
 
     ctx, weights = [], {}

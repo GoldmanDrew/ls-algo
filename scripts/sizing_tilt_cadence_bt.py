@@ -99,24 +99,10 @@ def load_universe(run_date: str) -> pd.DataFrame:
 
 
 def load_price_panel(run_date: str) -> dict[str, pd.DataFrame]:
-    """Per-ETF aligned (etf_adj_close, underlying_adj_close) from the parquet."""
-    pq = REPO / f"data/runs/{run_date}/model_inputs/etf_metrics_daily.parquet"
-    md = pd.read_parquet(pq, columns=["date", "ticker", "etf_adj_close", "underlying_adj_close"])
-    md["ticker"] = md["ticker"].map(_norm)
-    md["date"] = pd.to_datetime(md["date"], errors="coerce").dt.normalize()
-    md = md.dropna(subset=["date"]).sort_values(["ticker", "date"])
-    out: dict[str, pd.DataFrame] = {}
-    for etf, g in md.groupby("ticker"):
-        g = g.dropna(subset=["etf_adj_close", "underlying_adj_close"])
-        if len(g) < MIN_PRICE_PANEL_DAYS:
-            continue
-        df = pd.DataFrame({
-            "a_px": g["etf_adj_close"].to_numpy(dtype=float),
-            "b_px": g["underlying_adj_close"].to_numpy(dtype=float),
-        }, index=pd.DatetimeIndex(g["date"]))
-        df = df[~df.index.duplicated(keep="last")]
-        out[etf] = df
-    return out
+    """Per-ETF aligned prices from the run parquet (flex split-adjusted)."""
+    from scripts.pair_price_panel import load_run_price_panel
+
+    return load_run_price_panel(run_date, min_days=MIN_PRICE_PANEL_DAYS)
 
 
 def tr_est_series(prices_b: pd.Series, window: int = 60) -> pd.Series:
@@ -136,18 +122,35 @@ def tr_est_series(prices_b: pd.Series, window: int = 60) -> pd.Series:
 # ---------------------------------------------------------------------------
 # Per-pair daily return per gross dollar (legs at current plan fractions)
 # ---------------------------------------------------------------------------
-def pair_daily_returns(row: pd.Series, px: pd.DataFrame, borrow_on_etf: bool) -> pd.Series:
+def pair_daily_returns(
+    row: pd.Series,
+    px: pd.DataFrame,
+    borrow_on_etf: bool,
+    *,
+    borrow_on_underlying: bool = False,
+) -> pd.Series:
     gross = abs(float(row["long_usd"])) + abs(float(row["short_usd"]))
     if gross <= 0:
         return pd.Series(dtype=float)
-    w_a = float(row["long_usd"]) / gross   # ETF leg fraction (signed)
-    w_b = float(row["short_usd"]) / gross  # underlying leg fraction (signed)
+    # proposed_trades contract: panel a is ETF and uses
+    # short_usd/etf_target_usd; panel b is underlying and uses
+    # long_usd/underlying_target_usd.  The previous mapping was reversed.
+    etf_target = pd.to_numeric(row.get("etf_target_usd"), errors="coerce")
+    und_target = pd.to_numeric(row.get("underlying_target_usd"), errors="coerce")
+    if not np.isfinite(etf_target):
+        etf_target = float(row["short_usd"])
+    if not np.isfinite(und_target):
+        und_target = float(row["long_usd"])
+    w_a = float(etf_target) / gross       # ETF leg fraction (signed)
+    w_b = float(und_target) / gross       # underlying leg fraction (signed)
     r_a = px["a_px"].pct_change()
     r_b = px["b_px"].pct_change()
     ret = (w_a * r_a + w_b * r_b).fillna(0.0)
-    if borrow_on_etf:
-        borrow = float(pd.to_numeric(row.get("borrow_current"), errors="coerce") or 0.0)
+    borrow = float(pd.to_numeric(row.get("borrow_current"), errors="coerce") or 0.0)
+    if borrow_on_etf and borrow > 0:
         ret = ret - borrow * abs(w_a) / TRADING_DAYS  # short-ETF borrow drag
+    if borrow_on_underlying and borrow > 0:
+        ret = ret - borrow * abs(w_b) / TRADING_DAYS  # short-underlying borrow drag
     return ret
 
 
@@ -225,9 +228,23 @@ def portfolio_tilt_sim(etfs, R, TR, base_w, cal, rebal_days):
                         sub = pd.DataFrame({"und_trend_ratio_fwd_60d": [TR.at[d, e] for e in active]})
                         _p, mult = _trend_percentile_signal(sub, {"trend_percentile_multiplier": vcfg})
                         bw = bw * mult
-                    w = bw / bw.sum() if bw.sum() > 0 else np.ones(len(active)) / len(active)
+                    # Absolute plan targets among live names; residual stays cash
+                    # (do not renormalize inactive → wipe like the old NaN-Friday bug).
                     new_w = pd.Series(0.0, index=etfs)
-                    new_w.loc[active] = w
+                    tw = pd.Series(bw, index=active)
+                    if float(base_w.sum()) > 0:
+                        scale = (
+                            float(base_w.reindex(active).sum()) / float(tw.sum())
+                            if float(tw.sum()) > 0
+                            else 1.0
+                        )
+                        new_w.loc[active] = (tw * scale).to_numpy()
+                    else:
+                        new_w.loc[active] = (
+                            (tw / tw.sum()).to_numpy() if float(tw.sum()) > 0 else 0.0
+                        )
+                    if float(new_w.sum()) > 1.0:
+                        new_w = new_w / float(new_w.sum())
                     turnover += float(np.abs(new_w - cur_w).sum())
                     cur_w = new_w
                     n_rebal += 1
@@ -254,7 +271,13 @@ def run_tilt_backtest(
     if df.empty:
         return pd.DataFrame(), {}
 
-    borrow_on_etf = sleeve in ("inverse_decay_bucket4", "volatility_etp_bucket5")
+    # proposed_trades' short_usd is the ETF leg; borrow_current is the ETF
+    # borrow rate for B1/B2/B4/B5.  Underlying borrow is a separate field and
+    # is handled by engines that carry both rates explicitly.
+    borrow_on_etf = sleeve in (
+        "core_leveraged", "yieldboost", "inverse_decay_bucket4", "volatility_etp_bucket5"
+    )
+    borrow_on_und = False
 
     # Per-pair daily returns + point-in-time tr_est, aligned to a common calendar.
     daily_ret: dict[str, pd.Series] = {}
@@ -262,7 +285,7 @@ def run_tilt_backtest(
     for _, row in df.iterrows():
         etf = row["ETF"]
         px = panel[etf]
-        dr = pair_daily_returns(row, px, borrow_on_etf)
+        dr = pair_daily_returns(row, px, borrow_on_etf, borrow_on_underlying=borrow_on_und)
         if dr.empty:
             continue
         daily_ret[etf] = dr
@@ -304,7 +327,8 @@ def run_tilt_backtest_b4_dynamic(uni, panel, start, rebalance="W-FRI"):
     """
     blk = knobs_from_yaml()
     prod_knobs = make_knobs(blk)
-    df = uni[uni["sleeve"].isin(["inverse_decay_bucket4", "volatility_etp_bucket5"])].copy()
+    # B5 must NOT use B4 dynamic-h (wrong betas/rho). Carry engine is separate.
+    df = uni[uni["sleeve"].isin(["inverse_decay_bucket4"])].copy()
     df = df[df["ETF"].isin(panel.keys())].reset_index(drop=True)
     if df.empty:
         return pd.DataFrame(), {}
@@ -381,7 +405,8 @@ CADENCE_VARIANTS = {
 def run_cadence_backtest(uni: pd.DataFrame, panel: dict[str, pd.DataFrame], start: str
                          ) -> tuple[pd.DataFrame, dict[str, pd.Series]]:
     blk = knobs_from_yaml()
-    df = uni[uni["sleeve"].isin(["inverse_decay_bucket4", "volatility_etp_bucket5"])].copy()
+    # B5 must NOT use B4 dynamic-h (wrong betas/rho). Carry engine is separate.
+    df = uni[uni["sleeve"].isin(["inverse_decay_bucket4"])].copy()
     df = df[df["ETF"].isin(panel.keys())].reset_index(drop=True)
     if df.empty:
         return pd.DataFrame(), {}

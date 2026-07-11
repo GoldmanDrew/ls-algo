@@ -1213,6 +1213,16 @@ def build_model_pair_results(
     for _, r in active_pairs.iterrows():
         pair = str(r["pair"])
         first_dt, last_dt = metric_ranges.get(pair, (None, None))
+        # B5 short-UVIX/SVIX must use bucket5_carry_bt — B4 dynamic-h is wrong economics.
+        if str(r.get("sleeve", "")).strip().lower() == B5_SLEEVE:
+            out[pair] = _status_result(
+                r,
+                "b5_use_carry_engine",
+                "volatility_etp_bucket5 uses bucket5_carry_bt, not B4 dynamic-h",
+                first=first_dt,
+                last=last_dt,
+            )
+            continue
         prices = price_by_pair.get(pair)
         if prices is None or prices.empty:
             reason, nrows = price_status.get(pair, ("missing_price_data", 0))

@@ -85,7 +85,8 @@ def main():
     panel = load_price_panel(run_date)
     blk = knobs_from_yaml()
 
-    df = uni[uni["sleeve"].isin(["inverse_decay_bucket4", "volatility_etp_bucket5"])].copy()
+    # B5 uses bucket5_carry_bt, not B4 dynamic-h — cadence by ticker is B4-only.
+    df = uni[uni["sleeve"].isin(["inverse_decay_bucket4"])].copy()
     df = df[df["ETF"].isin(panel.keys())].reset_index(drop=True)
 
     print(f"B4 eligible universe ({run_date}): {len(df)} pairs\n")

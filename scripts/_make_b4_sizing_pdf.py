@@ -1,4 +1,8 @@
-"""One-off: write docs/b4_sizing_method.pdf (simple guide + worked example)."""
+"""Write docs/b4_sizing_method.pdf (plain-English guide + worked example).
+
+Regenerate:
+    python scripts/_make_b4_sizing_pdf.py
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -145,12 +149,12 @@ def main() -> None:
     )
 
     story: list = []
-    story.append(Spacer(1, 0.3 * inch))
+    story.append(Spacer(1, 0.25 * inch))
     story.append(Paragraph("Bucket 4 Sizing Method", title))
     story.append(
         Paragraph(
             "Inverse-decay pairs · How we decide how big each position should be<br/>"
-            "Simple guide with a worked example · Production as of July 2026",
+            "Simple guide with a worked example · Production as of 11 July 2026",
             subtitle,
         )
     )
@@ -160,14 +164,16 @@ def main() -> None:
         Paragraph(
             "Bucket 4 shorts inverse ETFs (products that lose value when a stock or sector "
             "rises) and hedges them by also shorting the underlying. The goal is to harvest "
-            "structural decay while keeping crash risk under a hard dollar budget.",
+            "structural decay while keeping relative crash risk under control and deploying "
+            "the sleeve's target budget.",
             body,
         )
     )
     story.append(
         Paragraph(
-            "One rule to remember: if a name's conditional crash hits, that pair may lose "
-            "at most 0.75% of the Bucket 4 sleeve budget.",
+            "One rule to remember: ρ sets relative crash risk across names. "
+            "With scale_to_budget on, the sleeve still fills its ~3% target — "
+            "effective per-name crash loss ≈ ρ × scale_mult.",
             callout,
         )
     )
@@ -175,27 +181,35 @@ def main() -> None:
     story.append(Paragraph("1. The big picture (four steps)", h1))
     story.append(
         Paragraph(
-            "Sizing runs in a fixed order. Later steps can only shrink positions — they never "
-            "inflate a risky name by redistributing freed dollars.",
+            "Sizing runs in a fixed order. Crash capping sets relative risk; "
+            "scale-to-budget then refills the sleeve pro-rata so the YAML target "
+            "actually deploys; smoothing damps week-to-week churn without undoing "
+            "true own-risk cuts.",
             body,
         )
     )
     for t, d in [
         (
-            "Step A — Score the book",
-            "Rank pairs by expected decay after borrow costs. Convert scores into weights that sum to 100%.",
+            "Step 1 — Score the book",
+            "Rank pairs by expected decay after borrow costs (continuous high-borrow ramp). "
+            "Convert scores into relative weights that sum to ~100%.",
         ),
         (
-            "Step B — Cap crash risk",
-            "Estimate how much each pair would lose in a crash. Cap gross so that loss ≤ 0.75% of the sleeve.",
+            "Step 2 — Crash-cap, then scale to budget",
+            "Trim each name so its conditional crash loss ≤ ρ of the sleeve, then "
+            "(with scale_to_budget: true) scale the whole capped book pro-rata up to "
+            "the sleeve target. Riskier names stay smaller than quieter ones.",
         ),
         (
-            "Step C — Split into two shorts",
-            "Turn each pair's gross into an inverse-ETF short and an underlying short using the hedge ratio h.",
+            "Step 3 — Post-cap weight smoothing",
+            "Trim-only EMA on the final capped weights: raises and new entries fade in; "
+            "dilution from new entrants fades out; dropped names soft-exit; true own-risk "
+            "cuts still land immediately.",
         ),
         (
-            "Step D — Ratchet (inventory guard)",
-            "Never blindly cover hard-to-relocate inverse inventory; trim gradually when gross has crept up.",
+            "Step 4 — Leg split + ratchet",
+            "Turn each pair's gross into an inverse-ETF short and an underlying short "
+            "using hedge ratio h. Grow-only inverse ratchet guards hard-to-relocate inventory.",
         ),
     ]:
         story.append(Paragraph(t, step_title))
@@ -205,22 +219,24 @@ def main() -> None:
     story.append(
         Paragraph(
             "Bucket 4 gets a fixed share of book target gross (config: "
-            "<font face='Courier'>inverse_decay_bucket4.target_weight</font>, typically ~3%). "
-            "All pair sizes are fractions of that sleeve budget.",
+            "<font face='Courier'>inverse_decay_bucket4.target_weight</font>, typically 3%). "
+            "That target is the <b>deploy</b> target — after crash trim + scale_to_budget, "
+            "sleeve gross aims at it. Temporary under-deployment (while new names ramp in) "
+            "stays in cash and self-corrects.",
             body,
         )
     )
     story.append(
         Paragraph(
-            "Example sleeve used below: <b>$115,500</b> (illustrative).",
+            "Example sleeve used below: <b>$115,500</b> (illustrative, shaped like a live July 2026 run).",
             body,
         )
     )
 
-    story.append(Paragraph("3. Step A — Decay / borrow weights", h1))
+    story.append(Paragraph("3. Step 1 — Decay / borrow weights", h1))
     story.append(
         Paragraph(
-            "Crash risk is <b>not</b> in this score anymore. The score only answers: "
+            "Crash risk is <b>not</b> in this score. The score only answers: "
             "“How attractive is the decay after expected borrow?”",
             body,
         )
@@ -233,22 +249,28 @@ def main() -> None:
     )
     story.append(
         Paragraph(
-            "Then weights = base_score / sum(scores), clipped to a min/max per name "
-            "(default 0.5%–35%), then lightly tilted for covariance concentration so "
-            "highly correlated pairs do not all get large weights at once.",
+            "High-borrow names are faded continuously (not a binary cliff): "
+            "score × 1.0 below borrow_ramp_lo (80%), linear down to 0 at borrow_ramp_hi (120%), "
+            "using the same posterior borrow estimate as the aversion terms.",
             body,
         )
     )
     story.append(
         Paragraph(
-            "Production knobs (live): borrow_linear_aversion = 1.5, "
-            "borrow_uncertainty_penalty = 3.0, decay_borrow_quad = 0 "
-            "(quadratic off because net edge already nets expected borrow).",
+            "Then weights = base_score / sum(scores), clipped to a min/max per name "
+            "(default 0.5%–35%), then lightly tilted for covariance concentration.",
+            body,
+        )
+    )
+    story.append(
+        Paragraph(
+            "Production knobs: borrow_linear_aversion = 1.5, borrow_uncertainty_penalty = 3.0, "
+            "decay_borrow_quad = 0, borrow_ramp_lo/hi = 0.80 / 1.20.",
             small,
         )
     )
 
-    story.append(Paragraph("4. Step B — Conditional crash budget (the risk rule)", h1))
+    story.append(Paragraph("4. Step 2 — Conditional crash budget + scale", h1))
     story.append(Paragraph("For each underlying, as of the run date:", body))
     story.append(
         Paragraph(
@@ -276,34 +298,69 @@ def main() -> None:
     )
     story.append(
         Paragraph(
-            "Why this shape: on a crash of size C, the short inverse loses roughly β·C on its "
-            "notional; the short-underlying hedge recovers fraction h of that. With "
-            "inv = gross / (1 + h·β), net loss per gross dollar is the formula above. "
-            "The (1 + φ·C) term bumps for multi-day compounding on daily-rebalanced inverses.",
+            "L is EMA-smoothed across runs (asymmetric): risk-up binds immediately; "
+            "risk-down fades at l_ema_alpha = 0.4 so a single rolling-window print does not "
+            "step the whole book.",
             body,
         )
     )
-    story.append(Paragraph("Cap (trim-only, freed dollars stay in cash):", body))
+    story.append(Paragraph("Per-name trim, then sleeve refill:", body))
     story.append(
         Paragraph(
-            "cap_usd = ρ · sleeve_budget / max(L, L_floor)<br/>"
-            "gross   = min(solved_gross, cap_usd)<br/>"
+            "cap_usd      = ρ · sleeve_budget / max(L, L_floor)<br/>"
+            "gross_trim  = min(solved_gross, cap_usd)<br/>"
+            "scale_mult  = sleeve_budget / sum(gross_trim)     (if scale_to_budget)<br/>"
+            "gross_scaled = gross_trim × scale_mult<br/>"
             "ρ = 0.75%,   L_floor = 2%",
             formula,
         )
     )
     story.append(
         Paragraph(
-            "Important: we do <b>not</b> redistribute freed weight into other pairs. "
-            "Redeploying would concentrate the book and cancel the safety rule.",
+            "ρ is a <b>relative</b> crash-risk scale. After the pro-rata refill, every "
+            "full-size name still contributes roughly the same worst-case dollar loss, "
+            "but that loss is ≈ ρ × scale_mult of the sleeve (logged each run as "
+            "rho_effective). We do <b>not</b> hand freed dollars preferentially to "
+            "uncapped names — the refill preserves the post-cap risk ordering.",
             body,
         )
     )
 
-    story.append(Paragraph("5. Step C — Split gross into two legs", h1))
+    story.append(Paragraph("5. Step 3 — Post-cap dilution-aware smoothing", h1))
     story.append(
         Paragraph(
-            "gross = pair_weight × sleeve_budget<br/>"
+            "Smoothing runs <b>after</b> crash-cap + scale so the refill's cross-coupling "
+            "(one name's cap change re-pricing every other name) is damped too. "
+            "State lives in <font face='Courier'>data/b4_weight_ema_state.json</font> "
+            "(stage-tagged, with pre-scale own-risk for hard-cut detection).",
+            body,
+        )
+    )
+    story.append(
+        Paragraph(
+            "raises          → EMA toward target at alpha (0.50)<br/>"
+            "new entries     → ramp at entry_alpha (0.25)<br/>"
+            "dilution cuts   → fade at dilution_alpha (0.25) when scale compresses "
+            "incumbents but their own pre-scale capacity is unchanged<br/>"
+            "soft exits      → fade dropped names at soft_exit_alpha (0.35)<br/>"
+            "hard cuts       → immediate if own pre-scale capacity drops &gt; hard_cut_rel (10%)<br/>"
+            "no-trade band   → hold if move &lt; 15% rel or 25 bp abs",
+            formula,
+        )
+    )
+    story.append(
+        Paragraph(
+            "Deliberately not renormalized inside the smoother: renormalizing would push "
+            "cut names back above their solved weight. Downstream normalizes. Under-deployment "
+            "while entries ramp stays in cash.",
+            body,
+        )
+    )
+
+    story.append(Paragraph("6. Step 4 — Split gross into two legs + ratchet", h1))
+    story.append(
+        Paragraph(
+            "gross = smoothed_weight × sleeve_budget<br/>"
             "inv_short  = gross / (1 + h · β)<br/>"
             "und_short  = h · β · inv_short",
             formula,
@@ -317,8 +374,6 @@ def main() -> None:
             body,
         )
     )
-
-    story.append(Paragraph("6. Step D — Inverse ratchet (brief)", h1))
     story.append(
         Paragraph(
             "The inverse-ETF short is grow-only by default: we floor it at "
@@ -333,8 +388,10 @@ def main() -> None:
     story.append(Paragraph("7. Worked example — DAMD / AMD", h1))
     story.append(
         Paragraph(
-            "Numbers below are stylized from a live July 2026 run shape so the arithmetic is easy "
-            "to follow. Sleeve budget = <b>$115,500</b>. Pair = short DAMD (inverse AMD) + short AMD.",
+            "Numbers below are stylized from the 10 July 2026 live shape so the arithmetic is "
+            "easy to follow. Sleeve budget = <b>$115,500</b>. Pair = short DAMD (−2× AMD) + short AMD. "
+            "Assume the rest of the book is also crash-trimmed so the sleeve-wide "
+            "scale_mult ≈ <b>6.47</b>.",
             body,
         )
     )
@@ -349,37 +406,37 @@ def main() -> None:
         [
             Paragraph("Sleeve budget", small),
             Paragraph("$115,500", small),
-            Paragraph("B4 target gross", small),
+            Paragraph("B4 deploy target", small),
         ],
         [
-            Paragraph("Opt2 weight (Step A)", small),
-            Paragraph("10.9%", small),
+            Paragraph("Opt2 weight (Step 1)", small),
+            Paragraph("9.4%", small),
             Paragraph("Decay/borrow share of sleeve", small),
         ],
         [
-            Paragraph("AMD price vs 252d median", small),
-            Paragraph("+140% run-up", small),
-            Paragraph("Stretched vs anchor", small),
-        ],
-        [
-            Paragraph("Historical tail", small),
+            Paragraph("AMD conditional crash C", small),
             Paragraph("51%", small),
-            Paragraph("Worst 20d drop + downside vol", small),
+            Paragraph("max(tail, retrace)", small),
         ],
         [
-            Paragraph("Hedge ratio h", small),
-            Paragraph("0.45", small),
+            Paragraph("Hedge ratio h / beta β", small),
+            Paragraph("0.45 / 2.0", small),
             Paragraph("Underlying hedge intensity", small),
         ],
         [
-            Paragraph("Inverse beta β", small),
-            Paragraph("2.0", small),
-            Paragraph("|beta| of −2× inverse", small),
+            Paragraph("Pair loss L", small),
+            Paragraph("0.377", small),
+            Paragraph("$ lost per $1 gross if C hits", small),
         ],
         [
-            Paragraph("ρ / θ / φ", small),
-            Paragraph("0.75% / 0.5 / 0.5", small),
-            Paragraph("Live crash-budget knobs", small),
+            Paragraph("ρ / scale_to_budget", small),
+            Paragraph("0.75% / true", small),
+            Paragraph("Relative risk + refill", small),
+        ],
+        [
+            Paragraph("Book scale_mult", small),
+            Paragraph("6.47", small),
+            Paragraph("budget / sum(post-cap)", small),
         ],
     ]
     t = Table(given_data, colWidths=[1.7 * inch, 1.4 * inch, 3.4 * inch])
@@ -401,91 +458,81 @@ def main() -> None:
     story.append(t)
     story.append(Spacer(1, 10))
 
-    story.append(Paragraph("Step A — Solved gross (before crash cap)", h2))
-    story.append(Paragraph("solved_gross = 10.9% × $115,500 = <b>$12,590</b>", ex_num))
+    story.append(Paragraph("Step 1 — Solved gross (before crash cap)", h2))
+    story.append(Paragraph("solved_gross = 9.4% × $115,500 ≈ <b>$10,860</b>", ex_num))
 
-    story.append(Paragraph("Step B — Conditional crash C", h2))
-    story.append(Paragraph("runup = 1.40", ex_num))
+    story.append(Paragraph("Step 2a — Per-name crash trim", h2))
     story.append(
         Paragraph(
-            "retrace = 0.5 × 1.40 / (1 + 1.40) = 0.5 × 0.583 = <b>0.292</b> (29%)",
+            "Allowed crash loss (pre-scale) = ρ · budget = 0.0075 × $115,500 = <b>$866</b>",
             ex_num,
         )
     )
-    story.append(Paragraph("tail = 0.51 (51%)", ex_num))
-    story.append(
-        Paragraph("C = max(0.51, 0.292) = <b>0.51</b>  → historical tail binds", ex_num)
-    )
+    story.append(Paragraph("cap_usd = $866 / 0.377 ≈ <b>$2,297</b>", ex_num))
     story.append(
         Paragraph(
-            "(If AMD had a quiet crash history but the same run-up, retrace would bind instead — "
-            "that is the “AMD at highs” protection.)",
-            small,
+            "gross_trim = min($10,860, $2,297) = <b>$2,297</b>  → cut to ~21% of the opt2 size",
+            ex_num,
         )
     )
 
-    story.append(Paragraph("Step B — Pair loss L and the dollar cap", h2))
+    story.append(Paragraph("Step 2b — Scale to budget (sleeve refill)", h2))
     story.append(
         Paragraph(
-            "unhedged fraction factor = (1 − 0.45) · 2.0 / (1 + 0.45·2.0)",
+            "scale_mult ≈ 6.47  (whole capped book was ~15% of the $115,500 target)",
             ex_num,
         )
     )
     story.append(
         Paragraph(
-            "                     = 0.55 · 2.0 / 1.90 = 1.10 / 1.90 = <b>0.579</b>",
+            "gross_scaled = $2,297 × 6.47 ≈ <b>$14,851</b>",
             ex_num,
         )
     )
     story.append(
         Paragraph(
-            "L = 0.579 · 0.51 · (1 + 0.5·0.51) = 0.579 · 0.51 · 1.255 ≈ <b>0.370</b>",
-            ex_num,
-        )
-    )
-    story.append(
-        Paragraph(
-            "Meaning: each $1 of pair gross loses about <b>$0.37</b> if AMD crashes 51%.",
+            "rho_effective ≈ ρ × scale_mult = 0.75% × 6.47 ≈ <b>4.85%</b> of the sleeve "
+            "if AMD crashes 51%. Relative ordering is preserved: lower-L names still get "
+            "more gross than higher-L names.",
             body,
         )
     )
     story.append(
         Paragraph(
-            "Allowed crash loss = ρ · budget = 0.0075 × $115,500 = <b>$866</b>",
-            ex_num,
-        )
-    )
-    story.append(Paragraph("cap_usd = $866 / 0.370 ≈ <b>$2,340</b>", ex_num))
-    story.append(
-        Paragraph(
-            "gross_final = min($12,590, $2,340) = <b>$2,340</b>  → cut to ~19% of the opt2 size",
-            ex_num,
-        )
-    )
-    story.append(
-        Paragraph(
-            "The other ~$10,250 stays in cash inside the sleeve. It is not handed to quieter names.",
+            "Weight after scale ≈ $14,851 / $115,500 ≈ <b>12.9%</b> "
+            "(up from the 9.4% opt2 weight because DAMD has the lowest L in the book).",
             body,
         )
     )
 
-    story.append(Paragraph("Step C — Two short legs", h2))
+    story.append(Paragraph("Step 3 — Smoothing (steady-state here)", h2))
     story.append(
         Paragraph(
-            "inv_short (DAMD) = $2,340 / (1 + 0.45·2.0) = $2,340 / 1.90 ≈ <b>$1,232</b>",
+            "On a quiet week with no new entries / exits, smoothed ≈ capped "
+            "(~$14,851). If a new name entered, DAMD's scale compression would fade at "
+            "dilution_alpha = 0.25 instead of jumping; a true own-risk cut "
+            "(pre-scale capacity down &gt; 10%) would still land immediately.",
+            body,
+        )
+    )
+
+    story.append(Paragraph("Step 4 — Two short legs", h2))
+    story.append(
+        Paragraph(
+            "inv_short (DAMD) = $14,851 / (1 + 0.45·2.0) = $14,851 / 1.90 ≈ <b>$7,816</b>",
             ex_num,
         )
     )
     story.append(
         Paragraph(
-            "und_short (AMD)  = 0.45 · 2.0 · $1,232 ≈ <b>$1,109</b>",
+            "und_short (AMD)  = 0.45 · 2.0 · $7,816 ≈ <b>$7,034</b>",
             ex_num,
         )
     )
     story.append(
         Paragraph(
-            "Check: $1,232 + $1,109 = $2,341 ≈ gross. Check crash loss: "
-            "0.370 × $2,340 ≈ $866 = exactly the ρ budget.",
+            "Check: $7,816 + $7,034 = $14,850 ≈ gross. Check crash loss: "
+            "0.377 × $14,851 ≈ $5,600 ≈ 4.85% of the sleeve.",
             body,
         )
     )
@@ -494,31 +541,30 @@ def main() -> None:
     sum_data = [
         [
             Paragraph("<b>Quantity</b>", small),
-            Paragraph("<b>Before crash cap</b>", small),
-            Paragraph("<b>After crash cap</b>", small),
+            Paragraph("<b>Opt2 solved</b>", small),
+            Paragraph("<b>After trim</b>", small),
+            Paragraph("<b>After scale</b>", small),
         ],
         [
             Paragraph("Pair gross", small),
-            Paragraph("$12,590", small),
-            Paragraph("$2,340", small),
+            Paragraph("$10,860", small),
+            Paragraph("$2,297", small),
+            Paragraph("$14,851", small),
         ],
         [
-            Paragraph("DAMD short", small),
-            Paragraph("~$6,626", small),
-            Paragraph("$1,232", small),
-        ],
-        [
-            Paragraph("AMD short", small),
-            Paragraph("~$5,964", small),
-            Paragraph("$1,109", small),
+            Paragraph("Sleeve weight", small),
+            Paragraph("9.4%", small),
+            Paragraph("2.0%", small),
+            Paragraph("12.9%", small),
         ],
         [
             Paragraph("Loss if AMD −51%", small),
-            Paragraph("~$4,660", small),
-            Paragraph("$866 (0.75% of sleeve)", small),
+            Paragraph("~$4,090", small),
+            Paragraph("$866 (0.75%)", small),
+            Paragraph("~$5,600 (4.85%)", small),
         ],
     ]
-    t2 = Table(sum_data, colWidths=[1.8 * inch, 2.0 * inch, 2.7 * inch])
+    t2 = Table(sum_data, colWidths=[1.5 * inch, 1.5 * inch, 1.6 * inch, 1.9 * inch])
     t2.setStyle(
         TableStyle(
             [
@@ -539,11 +585,14 @@ def main() -> None:
     story.append(Spacer(1, 12))
     story.append(Paragraph("8. Why this design", h1))
     for line in [
-        "• Decay score picks who deserves capital; crash budget decides how much is safe.",
-        "• Cap is per-name and dollar-interpretable: “this name may not lose more than ρ of the sleeve.”",
-        "• Trim-only + no redeploy prevents the optimizer from sneaking risk back into the book.",
-        "• Hedge ratio h enters L, so a tightly hedged pair is allowed more gross than a loose one "
-        "with the same crash C.",
+        "• Decay score picks who deserves capital; crash budget sets relative risk; "
+        "scale_to_budget fills the deploy target without breaking that ordering.",
+        "• Cap is per-name and dollar-interpretable before scale; after scale, "
+        "rho_effective ≈ ρ × scale_mult is the number that actually runs.",
+        "• Post-cap smoothing stops entry/exit churn and scale-dilution jumps from "
+        "looking like overnight risk cuts — without delaying true capacity drops.",
+        "• Hedge ratio h enters L, so a tightly hedged pair is allowed more gross "
+        "than a loose one with the same crash C.",
     ]:
         story.append(Paragraph(line, bullet))
 
@@ -551,21 +600,26 @@ def main() -> None:
     story.append(
         Paragraph(
             "• Weights: <font face='Courier'>scripts/v6_b4_pf_weights.py</font><br/>"
-            "• Crash cap: <font face='Courier'>scripts/b4_crash_budget.py</font><br/>"
-            "• Legs + ratchet: <font face='Courier'>scripts/bucket4_weekly_opt2.py</font><br/>"
+            "• Crash cap + scale + L EMA: <font face='Courier'>scripts/b4_crash_budget.py</font><br/>"
+            "• Post-cap smooth + legs + ratchet: "
+            "<font face='Courier'>scripts/bucket4_weekly_opt2.py</font><br/>"
+            "• Walk-forward API: <font face='Courier'>scripts/bucket4_backtest_api.py</font><br/>"
             "• Hedge/cadence: <font face='Courier'>scripts/bucket4_hedge_cadence.py</font><br/>"
             "• Knobs: <font face='Courier'>config/strategy_config.yml</font> → "
             "<font face='Courier'>inverse_decay_bucket4.rules.bucket4_weekly_opt2</font><br/>"
-            "• Telemetry: <font face='Courier'>data/runs/&lt;date&gt;/b4_crash_budget.csv</font>",
+            "  (<font face='Courier'>crash_budget.*</font>, "
+            "<font face='Courier'>weight_smoothing.*</font>)<br/>"
+            "• Telemetry: <font face='Courier'>data/runs/&lt;date&gt;/b4_crash_budget.csv</font>, "
+            "<font face='Courier'>b4_sizing_waterfall.csv</font>",
             body,
         )
     )
 
-    story.append(Spacer(1, 16))
+    story.append(Spacer(1, 14))
     story.append(HRFlowable(width="100%", thickness=1, color=SOFT, spaceAfter=8))
     story.append(
         Paragraph(
-            "Production reference · ls-algo · Bucket 4 sizing · July 2026",
+            "Production reference · ls-algo · Bucket 4 sizing · 11 July 2026",
             small,
         )
     )

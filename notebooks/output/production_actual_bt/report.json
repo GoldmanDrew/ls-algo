@@ -1,0 +1,70 @@
+{
+  "mode": "frozen",
+  "run_date": "2026-07-10",
+  "start": "2025-05-01",
+  "end": "2026-07-10",
+  "capital_usd": 1050000.0,
+  "gross_leverage": 4.0,
+  "budgets_usd": {
+    "core_leveraged": 2142000.0,
+    "yieldboost": 1932000.0,
+    "inverse_decay_bucket4": 115500.0,
+    "volatility_etp_bucket5": 10500.0
+  },
+  "rebalance_knobs": {
+    "target_basis": "hybrid",
+    "enter_band_pct": 0.12,
+    "exit_band_pct": 0.04,
+    "min_trade_usd": 250.0,
+    "stock_rebalance": "W-FRI",
+    "slippage_bps": 20.0,
+    "commission_per_share": 0.0035,
+    "margin_rate_annual": 0.0445,
+    "financing_daycount": 360.0,
+    "execution_lag_sessions": 1,
+    "target_notional_mode": "equity_scaled"
+  },
+  "archive_coverage": [
+    {
+      "artifact": "proposed_trades.csv",
+      "n_dates": 83,
+      "first": "2025-12-28",
+      "last": "2026-07-11",
+      "n_on_or_after_start": 83,
+      "gap_before_first_plan_days": 241
+    },
+    {
+      "artifact": "etf_screened_today.csv",
+      "n_dates": 51,
+      "first": "2025-12-28",
+      "last": "2026-07-11",
+      "n_on_or_after_start": 51,
+      "gap_before_first_plan_days": 241
+    }
+  ],
+  "book": {
+    "cagr": 0.09667700469482932,
+    "vol": 0.06451021469225339,
+    "sharpe": 1.4732036862205293,
+    "maxdd": -0.05510730313518086,
+    "start_usd": 1050000.0,
+    "end_usd": 1171983.9819841343
+  },
+  "crash_budget_csv": "C:\\Users\\drewg\\Projects\\quant\\ls-algo\\data\\runs\\2026-07-10\\b4_crash_budget.csv",
+  "flow_program_note": {
+    "included_in_nav": false,
+    "fixed_usd_per_week": 1300,
+    "reason": "B3 is a parallel weekly deployer; not in proposed_trades gross path"
+  },
+  "limitations": [
+    "Universe/weights frozen to run_date proposed_trades (full B4 stack when GTP wrote them).",
+    "B1/B2: plan leg fractions + weekly retarget; inactive names held as cash (no pair_eq wipe on NaN Fridays).",
+    "Prices split-adjusted via data/splits_from_flex.csv before returns.",
+    "B4: production cadence + v7 dynamic hedge; per-pair sim_start; skipped gross stays cash.",
+    "B4 sizing: opt2 \u2192 crash-cap + scale_to_budget \u2192 post-cap dilution-aware smooth \u2192 legs/ratchet.",
+    "B5: bucket5_carry_bt short-UVIX/short-SVIX at plan rho (not B4 dynamic-h).",
+    "B1/B2 ETF shorts pay borrow_current; explicit underlying borrow is charged when that leg is short.",
+    "B3 flow ($1,300/wk) excluded from NAV.",
+    "Frozen is counterfactual (today's book from --start); prefer --mode replay for PIT history."
+  ]
+}

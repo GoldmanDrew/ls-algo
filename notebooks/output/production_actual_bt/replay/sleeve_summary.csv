@@ -1,0 +1,2 @@
+sleeve,mode,n_rebal,turnover_l1,turnover_usd,cash_days,first_plan,n_plans_used,start_usd,end_usd,execution_lag_sessions,target_notional_mode,commission_per_share,margin_rate_annual,financing_daycount,use_resize_bands,enter_band_pct,exit_band_pct,min_trade_usd,cagr,vol,sharpe,maxdd
+BOOK,replay,74,38.870002886919764,39546906.30469019,167,2025-12-28,61,1050000.0,985525.2651618898,1,equity_scaled,0.0035,0.0445,360.0,True,0.12,0.04,250.0,-0.05193491290650376,0.09518779153340871,-0.5169171902903447,-0.07972360782930354

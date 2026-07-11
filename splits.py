@@ -86,6 +86,13 @@ _ZSCORE_THRESHOLD: float = 4.0      # split jump must be > 4σ vs local vol
 # larger splits (1:10, 1:20) leave a much bigger ratio if unadjusted, so this
 # bound stays well clear of the actual split signal.
 _SELF_HEAL_RATIO_BAND: float = 3.0
+# Lookahead bars used when the first post-ex print is a garbage crater
+# (NBIZ/BEZ-style reverse-split windows with 1–3 bad mid prices).
+_SELF_HEAL_LOOKAHEAD: int = 5
+# Multi-day V-shaped holes: drop then recover near the pre-drop level.
+_CRATER_MAX_WIDTH: int = 5
+_CRATER_DROP_FLOOR: float = 0.50  # require ≥50% drop to open a crater
+_CRATER_RECOVER_BAND: float = 3.0
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -697,6 +704,115 @@ def merge_split_events(
 # ─────────────────────────────────────────────────────────────────────
 # Apply events to a price series (with self-healing)
 # ─────────────────────────────────────────────────────────────────────
+def repair_split_craters(
+    series: pd.Series,
+    *,
+    max_width: int = _CRATER_MAX_WIDTH,
+    drop_floor: float = _CRATER_DROP_FLOOR,
+    recover_band: float = _CRATER_RECOVER_BAND,
+    sym_label: str | None = None,
+) -> pd.Series:
+    """Fill multi-day V-shaped price holes left by bad reverse-split prints.
+
+    Vendor ``etf_adj_close`` sometimes inserts 1–3 garbage bars around a
+    reverse split (e.g. NBIZ 2026-06-03: $9 → $0.98 → $0.91 → $11) while the
+    surrounding series is already continuous. Flex ×N then makes the cliff
+    worse. Detect drop-then-recover-to-anchor and log-interpolate the hole.
+
+    Guards against real crash/recovery paths: the opening drop must look
+    split-like (near ``1/N`` or ``<20%`` of prior), every mid-bar must stay
+    in the hole, and the exit jump back must also be large.
+    """
+    if series is None or len(series) < 3:
+        return series.copy() if series is not None else series
+
+    sym = _norm_sym(sym_label) if sym_label else ""
+    out = pd.to_numeric(series, errors="coerce").astype(float).copy()
+    out = out[~out.index.duplicated(keep="last")].sort_index()
+    if not isinstance(out.index, pd.DatetimeIndex):
+        out.index = pd.to_datetime(out.index)
+
+    def _splitish_drop(ratio: float) -> bool:
+        if ratio <= 0.20:  # ≥5× collapse
+            return True
+        for f in _INTEGER_SPLIT_FACTORS:
+            inv = 1.0 / float(f)
+            if abs(ratio - inv) / inv < 0.25:
+                return True
+        return False
+
+    vals = out.to_numpy(dtype=float, copy=True)
+    idx = out.index
+    i = 1
+    while i < len(vals):
+        prev = float(vals[i - 1])
+        cur = float(vals[i])
+        if not (np.isfinite(prev) and prev > 0 and np.isfinite(cur) and cur > 0):
+            i += 1
+            continue
+        drop_ratio = cur / prev
+        if drop_ratio > (1.0 - float(drop_floor)) or not _splitish_drop(drop_ratio):
+            i += 1
+            continue
+
+        recovered_j: int | None = None
+        hole_ceiling = prev / float(recover_band)
+        for j in range(i + 1, min(i + int(max_width) + 1, len(vals))):
+            pj = float(vals[j])
+            if not (np.isfinite(pj) and pj > 0):
+                break
+            # All bars from the drop through j-1 must stay in the hole.
+            if any(float(vals[k]) >= hole_ceiling for k in range(i, j)):
+                break
+            ratio_to_anchor = pj / prev
+            if not ((1.0 / float(recover_band)) < ratio_to_anchor < float(recover_band)):
+                continue
+            prev_hole = float(vals[j - 1])
+            if prev_hole > 0 and (pj / prev_hole) >= 2.0:
+                recovered_j = j
+                break
+        if recovered_j is None:
+            i += 1
+            continue
+
+        p0 = prev
+        p1 = float(vals[recovered_j])
+        span = recovered_j - (i - 1)
+        for k in range(i, recovered_j):
+            t = (k - (i - 1)) / span
+            vals[k] = float(np.exp((1.0 - t) * np.log(p0) + t * np.log(p1)))
+        if sym:
+            print(
+                f"[SPLIT][crater] {sym} repaired "
+                f"{idx[i].date()}..{idx[recovered_j - 1].date()} "
+                f"(anchor=${p0:.4f} → recover=${p1:.4f} on {idx[recovered_j].date()})"
+            )
+        i = recovered_j
+
+    return pd.Series(vals, index=idx, name=getattr(series, "name", None))
+
+
+def _stable_boundary_post(
+    series: pd.Series,
+    apply_ts: pd.Timestamp,
+    pre_raw: float,
+    *,
+    lookahead: int = _SELF_HEAL_LOOKAHEAD,
+    band: float = _SELF_HEAL_RATIO_BAND,
+) -> float:
+    """Pick a stable post-ex price, skipping 1–N crater prints when possible."""
+    post_bars = series.loc[series.index >= apply_ts].iloc[: max(1, int(lookahead))]
+    if post_bars.empty or pre_raw <= 0:
+        return float("nan")
+    posts = [float(x) for x in post_bars.to_numpy(dtype=float) if np.isfinite(x) and float(x) > 0]
+    if not posts:
+        return float("nan")
+    near = [p for p in posts if (1.0 / band) < (p / pre_raw) < band]
+    if near:
+        return float(np.median(near))
+    return float(posts[0])
+
+
 def _self_healed(
     series: pd.Series,
     apply_ts: pd.Timestamp,
@@ -706,25 +822,21 @@ def _self_healed(
     """Decide whether to skip applying ``factor`` because the source already
     adjusted history.
 
-    The cumulative pre-factor we'd apply by going through with this event is
-    ``cumulative_pre_factor * factor``. Compare last raw pre-bar to first raw
-    post-bar across the boundary:
-
-      ratio_raw = post_bar / pre_bar
-
-    If ``ratio_raw`` is already inside [1/_SELF_HEAL_RATIO_BAND,
-    _SELF_HEAL_RATIO_BAND], the source already adjusted; skip. We also skip
-    when ``ratio_raw / (cumulative_pre_factor * factor)`` is far from 1 in the
-    direction that would *over*-correct (i.e. cumulative adjustment would push
-    the boundary into a 3×+ raw mismatch).
+    Compare last pre-bar to a *stable* post-ex price (lookahead median of
+    bars near the pre level). First-print craters after reverse splits must
+    not force a double-adjust.
     """
     pre_bars = series.loc[series.index < apply_ts]
     post_bars = series.loc[series.index >= apply_ts]
     if pre_bars.empty or post_bars.empty:
         return False
     pre_raw = float(pre_bars.iloc[-1])
-    post_raw = float(post_bars.iloc[0])
-    if pre_raw <= 0 or post_raw <= 0:
+    if pre_raw <= 0:
+        return False
+    post_raw = _stable_boundary_post(series, apply_ts, pre_raw)
+    if not (np.isfinite(post_raw) and post_raw > 0):
+        post_raw = float(post_bars.iloc[0])
+    if post_raw <= 0:
         return False
     raw_ratio = post_raw / pre_raw
     band = _SELF_HEAL_RATIO_BAND
@@ -732,6 +844,7 @@ def _self_healed(
     # ``series`` (in-memory). So ``pre_raw`` here is already adjusted by
     # ``cumulative_pre_factor``. Comparing post / pre directly tells us the
     # raw boundary jump in the (already-prior-adjusted) series.
+    del factor, cumulative_pre_factor  # retained for call-site compatibility
     if 1.0 / band < raw_ratio < band:
         return True
     return False
@@ -767,6 +880,9 @@ def apply_split_events(
     out = series.sort_index().copy()
     if not isinstance(out.index, pd.DatetimeIndex):
         out.index = pd.to_datetime(out.index)
+    # Quarantine multi-day reverse-split garbage prints before deciding
+    # whether Flex/Yahoo factors still need to be applied.
+    out = repair_split_craters(out, sym_label=sym or None)
     idx_tz = out.index.tz
 
     # Sort by ex_date ascending; we apply oldest first so that cumulative
@@ -839,6 +955,7 @@ def apply_split_events(
                 + (f" — {ev.note}" if ev.note else "")
             )
 
+    out = repair_split_craters(out, sym_label=sym or None)
     return out, applied
 
 
@@ -926,6 +1043,7 @@ def clean_split_artifacts(
         }
     )
 
+    # Crater repair runs inside apply_split_events (pre + post).
     corrected, applied = apply_split_events(prices, merged, sym_label=sym)
     if return_log:
         return corrected, applied

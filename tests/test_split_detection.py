@@ -38,6 +38,7 @@ from splits import (  # noqa: E402
     merge_split_events,
     parse_flex_corporate_action_splits,
     parse_yahoo_split_events,
+    repair_split_craters,
 )
 
 
@@ -394,3 +395,47 @@ def test_apply_split_events_idempotent_via_self_heal() -> None:
     assert len(applied1) == 1
     assert len(applied2) == 0
     assert np.allclose(once.values, twice.values, rtol=1e-12)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# (12) Multi-day reverse-split crater (NBIZ-style)
+# ──────────────────────────────────────────────────────────────────────
+def test_repair_split_craters_nbiz_style() -> None:
+    """Bad mid-prints around a reverse split must be stitched, not ×10'd."""
+    # Smooth pre → crater → recover near pre (vendor already continuous).
+    prices = (
+        [10.0, 10.2, 9.8, 9.5, 9.1]  # pre
+        + [0.976, 0.912]  # garbage
+        + [11.35, 12.0, 12.5]  # recover
+    )
+    s = _build_series(prices, start="2026-05-20")
+    fixed = repair_split_craters(s, sym_label="NBIZ")
+    r = fixed.pct_change().dropna()
+    assert float(r.abs().max()) < 0.5
+    # Crater bars should sit between anchor and recovery.
+    crater = fixed.iloc[5:7]
+    assert float(crater.min()) > 5.0
+    assert float(crater.max()) < 12.0
+
+
+def test_flex_reverse_split_skips_when_crater_repaired() -> None:
+    prices = (
+        [10.0, 10.2, 9.8, 9.5, 9.1]
+        + [0.976, 0.912]
+        + [11.35, 12.0, 12.5]
+    )
+    s = _build_series(prices, start="2026-05-20")
+    ex = s.index[5]  # first crater day
+    ev = SplitEvent(
+        symbol="NBIZ",
+        ex_date=ex,
+        factor=10.0,
+        source="flex",
+        note="1-for-10 reverse",
+    )
+    cleaned, applied = apply_split_events(s, [ev], sym_label="NBIZ")
+    assert applied == []  # self-heal after crater stitch
+    r = cleaned.pct_change().dropna()
+    assert float(r.abs().max()) < 0.5
+    # Must not blow pre-history up by 10×.
+    assert float(cleaned.iloc[0]) < 50.0

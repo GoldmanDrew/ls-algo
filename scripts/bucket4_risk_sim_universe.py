@@ -20,7 +20,10 @@ if str(REPO) not in sys.path:
 
 from trade_plan_targets import maybe_merge_optimal_targets  # noqa: E402
 
-B4_SLEEVES = frozenset({"inverse_decay_bucket4", "volatility_etp_bucket5"})
+# Risk-sim / cadence engines use B4 dynamic-h only. B5 (vol ETP) is a separate
+# carry book — do not pull it into this universe for dynamic-h consumers.
+B4_ENGINE_SLEEVES = frozenset({"inverse_decay_bucket4"})
+B4_SLEEVES = B4_ENGINE_SLEEVES  # alias for callers/tests
 FORCE_INCLUDE_ETFS = frozenset({"SMZ", "CBRZ", "APLZ"})
 PAIR_OVERRIDES_PATH = REPO / "config" / "pair_overrides.yml"
 
@@ -253,13 +256,17 @@ def load_risk_sim_universe(run_date: str, *, runs_root: Path | None = None) -> p
         for idx, r in sc[add_m].iterrows():
             d = r.to_dict()
             d["_gtp_eligible"] = bool(gtp_m.loc[idx])
+            bucket = str(r.get("bucket", "")).lower()
+            is_b5 = (
+                "bucket_5" in bucket
+                or str(r.get("product_class", "")).lower() == "volatility_etp"
+                or str(d.get("sleeve", "")).strip().lower() == "volatility_etp_bucket5"
+            )
+            if is_b5:
+                # Never feed B5 names into the B4 dynamic-h risk universe.
+                continue
             if "sleeve" not in d or not str(d.get("sleeve", "")).strip():
-                bucket = str(r.get("bucket", "")).lower()
-                d["sleeve"] = (
-                    "volatility_etp_bucket5"
-                    if "bucket_5" in bucket or str(r.get("product_class", "")).lower() == "volatility_etp"
-                    else "inverse_decay_bucket4"
-                )
+                d["sleeve"] = "inverse_decay_bucket4"
             _upsert(d, source="screener")
 
     for etf, und, spec in override_keys:

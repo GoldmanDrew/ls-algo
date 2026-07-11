@@ -4,7 +4,7 @@
       "sticky_in": true
     },
     "AAOG": {
-      "sticky_in": false
+      "sticky_in": true
     },
     "AAOX": {
       "sticky_in": true
@@ -34,6 +34,9 @@
       "sticky_in": true
     },
     "AMA": {
+      "sticky_in": true
+    },
+    "AMAU": {
       "sticky_in": false
     },
     "AMDG": {
@@ -43,10 +46,10 @@
       "sticky_in": true
     },
     "AMKL": {
-      "sticky_in": false
+      "sticky_in": true
     },
     "AMPU": {
-      "sticky_in": false
+      "sticky_in": true
     },
     "AMUU": {
       "sticky_in": true
@@ -81,6 +84,12 @@
     "ASTX": {
       "sticky_in": true
     },
+    "ASTY": {
+      "sticky_in": false
+    },
+    "ASUP": {
+      "sticky_in": false
+    },
     "AVGG": {
       "sticky_in": true
     },
@@ -97,7 +106,7 @@
       "sticky_in": true
     },
     "AXTU": {
-      "sticky_in": false
+      "sticky_in": true
     },
     "AXTX": {
       "sticky_in": true
@@ -109,6 +118,9 @@
       "sticky_in": true
     },
     "BAIG": {
+      "sticky_in": true
+    },
+    "BEG": {
       "sticky_in": true
     },
     "BEX": {
@@ -141,6 +153,9 @@
     "BTCL": {
       "sticky_in": true
     },
+    "BTCU": {
+      "sticky_in": false
+    },
     "BTFL": {
       "sticky_in": true
     },
@@ -154,7 +169,7 @@
       "sticky_in": true
     },
     "CATG": {
-      "sticky_in": false
+      "sticky_in": true
     },
     "CCUP": {
       "sticky_in": true
@@ -166,7 +181,10 @@
       "sticky_in": false
     },
     "CHNU": {
-      "sticky_in": false
+      "sticky_in": true
+    },
+    "CIEG": {
+      "sticky_in": true
     },
     "CIFG": {
       "sticky_in": true
@@ -175,13 +193,13 @@
       "sticky_in": true
     },
     "CMGG": {
-      "sticky_in": true
+      "sticky_in": false
     },
     "CNCG": {
       "sticky_in": true
     },
     "COHH": {
-      "sticky_in": false
+      "sticky_in": true
     },
     "COHX": {
       "sticky_in": true
@@ -228,6 +246,9 @@
     "CRMU": {
       "sticky_in": true
     },
+    "CRMX": {
+      "sticky_in": true
+    },
     "CRWG": {
       "sticky_in": true
     },
@@ -267,6 +288,9 @@
     "DOGD": {
       "sticky_in": true
     },
+    "DRNL": {
+      "sticky_in": true
+    },
     "DUOG": {
       "sticky_in": true
     },
@@ -287,6 +311,9 @@
     },
     "ETHU": {
       "sticky_in": true
+    },
+    "ETNG": {
+      "sticky_in": false
     },
     "ETRL": {
       "sticky_in": true
@@ -313,6 +340,9 @@
       "sticky_in": false
     },
     "GDXU": {
+      "sticky_in": true
+    },
+    "GEMG": {
       "sticky_in": true
     },
     "GEVG": {
@@ -350,6 +380,9 @@
     },
     "HODU": {
       "sticky_in": true
+    },
+    "HONG": {
+      "sticky_in": false
     },
     "HOOG": {
       "sticky_in": true
@@ -416,6 +449,9 @@
     },
     "LINT": {
       "sticky_in": true
+    },
+    "LITU": {
+      "sticky_in": false
     },
     "LITX": {
       "sticky_in": true
@@ -573,6 +609,9 @@
     "OSCX": {
       "sticky_in": true
     },
+    "OSSL": {
+      "sticky_in": false
+    },
     "PAAU": {
       "sticky_in": true
     },
@@ -601,7 +640,7 @@
       "sticky_in": true
     },
     "POEL": {
-      "sticky_in": false
+      "sticky_in": true
     },
     "PONX": {
       "sticky_in": true
@@ -643,6 +682,9 @@
       "sticky_in": true
     },
     "RDWU": {
+      "sticky_in": true
+    },
+    "RGTU": {
       "sticky_in": true
     },
     "RGTX": {
@@ -691,7 +733,7 @@
       "sticky_in": true
     },
     "SNDG": {
-      "sticky_in": false
+      "sticky_in": true
     },
     "SNDU": {
       "sticky_in": true
@@ -739,7 +781,7 @@
       "sticky_in": true
     },
     "STXU": {
-      "sticky_in": false
+      "sticky_in": true
     },
     "STXX": {
       "sticky_in": true
@@ -790,7 +832,10 @@
       "sticky_in": true
     },
     "TXXH": {
-      "sticky_in": false
+      "sticky_in": true
+    },
+    "TXXS": {
+      "sticky_in": true
     },
     "UBRL": {
       "sticky_in": true
@@ -819,6 +864,12 @@
     "URTY": {
       "sticky_in": true
     },
+    "USGG": {
+      "sticky_in": true
+    },
+    "USLV": {
+      "sticky_in": false
+    },
     "UUUG": {
       "sticky_in": true
     },
@@ -844,7 +895,7 @@
       "sticky_in": true
     },
     "XNDX": {
-      "sticky_in": false
+      "sticky_in": true
     },
     "XOMX": {
       "sticky_in": false
@@ -871,6 +922,6 @@
       "sticky_in": true
     }
   },
-  "updated_run_date": "2026-06-25",
+  "updated_run_date": "2026-07-10",
   "version": 1
 }

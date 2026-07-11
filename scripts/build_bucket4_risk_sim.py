@@ -58,7 +58,8 @@ def build_portfolio(uni, panel, start, min_days, *, min_days_short: int = 30):
     """Per-pair returns under the CURRENT production cadence; gross-weighted."""
     blk = knobs_from_yaml()
     knobs = make_knobs(blk)  # production knobs straight from YAML
-    df = uni[uni["sleeve"].isin(["inverse_decay_bucket4", "volatility_etp_bucket5"])].copy()
+    # B5 uses bucket5_carry_bt, not B4 dynamic-h — risk_sim is B4 cadence only.
+    df = uni[uni["sleeve"].isin(["inverse_decay_bucket4"])].copy()
     df = df[df["ETF"].isin(panel.keys())].reset_index(drop=True)
     # Dashboard sim uses the proposed book only (no screener-proxy stress universe).
     df = df[pd.to_numeric(df.get("gross_target_usd"), errors="coerce").fillna(0.0).gt(0)].copy()
@@ -66,13 +67,18 @@ def build_portfolio(uni, panel, start, min_days, *, min_days_short: int = 30):
         return None
 
     ret_cols, weights, pairs = {}, {}, []
+    skipped: list[str] = []
     for _, row in df.iterrows():
         etf, und = row["ETF"], row["Underlying"]
+        if etf not in panel:
+            skipped.append(f"{etf}:not_in_panel")
+            continue
         px = panel[etf]
         cal = pd.DatetimeIndex([d for d in px.index if d >= pd.Timestamp(start)])
         etf_u = str(etf).upper()
         need_days = min_days_short if (etf_u in FORCE_INCLUDE_ETFS or bool(row.get("low_n_included"))) else min_days
         if len(cal) < need_days:
+            skipped.append(f"{etf}:short_hist({len(cal)}<{need_days})")
             continue
         sig = get_pair_signal(etf, und, cal, history={}, underlying_prices=px["b_px"],
                               window=60, lookahead_shift=1)
@@ -102,6 +108,8 @@ def build_portfolio(uni, panel, start, min_days, *, min_days_short: int = 30):
             "proposed_gross_usd": round(proposed, 2),
             "optimal_gross_usd": round(optimal, 2) if optimal > 0 else None,
         })
+    if skipped:
+        print(f"[risk-sim] skipped {len(skipped)} pairs: {'; '.join(skipped[:12])}")
     if not ret_cols:
         return None
     ret_df = pd.DataFrame(ret_cols).reindex(

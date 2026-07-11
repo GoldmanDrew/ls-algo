@@ -97,15 +97,25 @@ def load_metrics(metrics_path: Path) -> pd.DataFrame:
 def build_prices(metrics: pd.DataFrame, etf: str, start: pd.Timestamp) -> pd.DataFrame | None:
     sub = metrics[metrics["ticker"] == etf].dropna(subset=["date", "etf_px", "underlying_adj_close"])
     sub = sub.drop_duplicates("date").sort_values("date")
-    sub = sub[sub["date"] >= start]
+    # Keep pre-start history for split adjustment continuity, then clip.
     sub = sub[sub["etf_px"] > 0]
     sub = sub[sub["underlying_adj_close"] > 0]
     if len(sub) < 40:
         return None
-    return pd.DataFrame(
-        {"a_px": sub["etf_px"].to_numpy(), "b_px": sub["underlying_adj_close"].to_numpy()},
-        index=pd.DatetimeIndex(sub["date"]),
-    )
+    a = pd.Series(sub["etf_px"].to_numpy(dtype=float), index=pd.DatetimeIndex(sub["date"]))
+    b = pd.Series(sub["underlying_adj_close"].to_numpy(dtype=float), index=a.index)
+    try:
+        from scripts.pair_price_panel import apply_flex_splits_to_series
+
+        a = apply_flex_splits_to_series(a, etf)
+    except Exception:
+        pass
+    out = pd.DataFrame({"a_px": a.to_numpy(dtype=float), "b_px": b.reindex(a.index).to_numpy(dtype=float)}, index=a.index)
+    out = out.dropna()
+    out = out.loc[out.index >= start]
+    if len(out) < 40:
+        return None
+    return out
 
 
 def run_one(

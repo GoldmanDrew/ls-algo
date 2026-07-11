@@ -1,0 +1,74 @@
+{
+  "mode": "recompute",
+  "run_date": "2026-07-10",
+  "start": "2025-05-01",
+  "end": "2026-07-09",
+  "capital_usd": 1050000.0,
+  "gross_leverage": 4.0,
+  "budgets_usd": {
+    "core_leveraged": 2142000.0,
+    "yieldboost": 1932000.0,
+    "inverse_decay_bucket4": 115500.0,
+    "volatility_etp_bucket5": 10500.0
+  },
+  "rebalance_knobs": {
+    "target_basis": "hybrid",
+    "enter_band_pct": 0.12,
+    "exit_band_pct": 0.04,
+    "min_trade_usd": 250.0,
+    "stock_rebalance": "W-FRI",
+    "slippage_bps": 20.0,
+    "commission_per_share": 0.0035,
+    "margin_rate_annual": 0.0445,
+    "financing_daycount": 360.0,
+    "execution_lag_sessions": 1,
+    "target_notional_mode": "equity_scaled"
+  },
+  "archive_coverage": [
+    {
+      "artifact": "proposed_trades.csv",
+      "n_dates": 83,
+      "first": "2025-12-28",
+      "last": "2026-07-11",
+      "n_on_or_after_start": 83,
+      "gap_before_first_plan_days": 241
+    },
+    {
+      "artifact": "etf_screened_today.csv",
+      "n_dates": 51,
+      "first": "2025-12-28",
+      "last": "2026-07-11",
+      "n_on_or_after_start": 51,
+      "gap_before_first_plan_days": 241
+    }
+  ],
+  "recompute_stats": {
+    "n_timeline": 113,
+    "n_mirror_ok": 49,
+    "n_mirror_fail": 0,
+    "n_archived_only": 62,
+    "n_fallback_archived": 2
+  },
+  "book": {
+    "cagr": -0.08021085891307322,
+    "vol": 0.09575820540540832,
+    "sharpe": -0.8319982653569671,
+    "maxdd": -0.10599765716942666,
+    "start_usd": 1050000.0,
+    "end_usd": 950698.3099117998,
+    "n_plans_used": 84,
+    "first_plan": "2025-12-28",
+    "cash_days": 167
+  },
+  "limitations": [
+    "Phase B: mirror_generate_trade_plan_sizing on archived screened CSVs (decay-score path).",
+    "Mirror does NOT run live B4 opt2 / crash-budget / scale_to_budget / post-cap smooth / ratchet \u2014 B4 hedge is plan long/short fractions.",
+    "B1 hysteresis state is carried across recompute days in an isolated temp file (prod state untouched).",
+    "Days without screened fall back to archived proposed_trades.",
+    "Existing legs use production Phase-2b enter/exit hysteresis and the configured minimum trade.",
+    "Point-in-time legs use next-close execution, share-hold marking, 20 bp slippage, $0.0035/share commissions, borrow, and 4.45% margin debit / Actual-360.",
+    "The 4.45% financing input is a visible fallback, not a point-in-time OBFR curve.",
+    "Pre-archive window uses scripts/backfill_screened_history.py (PIT prices; borrow carry-first-known/default; shares stubbed; no live FTP locates).",
+    "B3 flow excluded."
+  ]
+}

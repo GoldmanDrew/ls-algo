@@ -1,0 +1,70 @@
+{
+  "mode": "replay",
+  "run_date": "2026-07-10",
+  "start": "2025-05-01",
+  "end": "2026-07-09",
+  "capital_usd": 1050000.0,
+  "gross_leverage": 4.0,
+  "budgets_usd": {
+    "core_leveraged": 2142000.0,
+    "yieldboost": 1932000.0,
+    "inverse_decay_bucket4": 115500.0,
+    "volatility_etp_bucket5": 10500.0
+  },
+  "rebalance_knobs": {
+    "target_basis": "hybrid",
+    "enter_band_pct": 0.12,
+    "exit_band_pct": 0.04,
+    "min_trade_usd": 250.0,
+    "stock_rebalance": "W-FRI",
+    "slippage_bps": 20.0,
+    "commission_per_share": 0.0035,
+    "margin_rate_annual": 0.0445,
+    "financing_daycount": 360.0,
+    "execution_lag_sessions": 1,
+    "target_notional_mode": "equity_scaled"
+  },
+  "archive_coverage": [
+    {
+      "artifact": "proposed_trades.csv",
+      "n_dates": 83,
+      "first": "2025-12-28",
+      "last": "2026-07-11",
+      "n_on_or_after_start": 83,
+      "gap_before_first_plan_days": 241
+    },
+    {
+      "artifact": "etf_screened_today.csv",
+      "n_dates": 51,
+      "first": "2025-12-28",
+      "last": "2026-07-11",
+      "n_on_or_after_start": 51,
+      "gap_before_first_plan_days": 241
+    }
+  ],
+  "book": {
+    "cagr": -0.05193491290650376,
+    "vol": 0.09518779153340871,
+    "sharpe": -0.5169171902903447,
+    "maxdd": -0.07972360782930354,
+    "start_usd": 1050000.0,
+    "end_usd": 985525.2651618898,
+    "n_plans_used": 61,
+    "first_plan": "2025-12-28",
+    "cash_days": 167
+  },
+  "limitations": [
+    "Phase A: replays archived proposed_trades (exact GTP output when archived).",
+    "Archives begin 2025-12-28; before that policy=cash.",
+    "Schema normalized across eras (gross from |long|+|short|; whitelist_stock\u2192yieldboost).",
+    "Point-in-time plan legs are held as signed close notionals between weekly rebalances; no latest-plan look-ahead.",
+    "Plans are known after their run-date close, execute at the next available close, and earn P&L from the following session.",
+    "Gross targets preserve the archived plan gross/equity multiple as NAV changes; missing panels stay undeployed.",
+    "Existing legs use production Phase-2b enter/exit hysteresis and the configured minimum trade; new pairs establish and exits close.",
+    "Costs include 20 bp slippage per traded dollar, $0.0035/share commissions, archived borrow, and 4.45% margin debit / Actual-360.",
+    "The 4.45% financing input is the Diamond Creek fallback (4.00% benchmark + 45 bp), not a point-in-time OBFR curve.",
+    "Replay mirrors Phase-2b resize math but not broker execution sequencing or the B4 intra-pair cadence engine.",
+    "B4 full stack (opt2 \u2192 crash+scale \u2192 post-cap smooth \u2192 legs) appears only on dates whose archived plan was generated after those features shipped.",
+    "B3 flow excluded. Mirror recompute still skips live B4 opt2/crash/smooth/ratchet."
+  ]
+}

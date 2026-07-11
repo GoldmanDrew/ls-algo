@@ -1,0 +1,34 @@
+Bucket 4 rebalance cadence + hedge ratio  (run 2026-07-10)
+================================================================
+RKLB: rebalance every ~11.0 trading day(s); h=0.5951
+   interval=11d  |  denom=1 + k_tr(-1.00)*(tr_est(0.925)-1)=+0.0748 + m_vcr(2.50)*(VCR-VCR_med)=+0.2422 = 1.3170 -> base_days(14.0)/denom=10.630 -> round->clip[1,21]=11
+   h=0.5951  |  h_mid(0.450) + k_vcr(1.00)*(VCR(0.26907)-VCR_med(0.17219)=+0.09687) = 0.5469 - k_z(0.20)*z_xsec(-0.430) = 0.6330 -> clip[0.30,0.80]=0.6330 -> EMA(a=0.25; prev=0.5825)=0.5951
+QBTS: rebalance every ~12.0 trading day(s); h=0.6604
+   interval=12d  |  denom=1 + k_tr(-1.00)*(tr_est(0.977)-1)=+0.0227 + m_vcr(2.50)*(VCR-VCR_med)=+0.1682 = 1.1909 -> base_days(14.0)/denom=11.756 -> round->clip[1,21]=12
+   h=0.6604  |  h_mid(0.450) + k_vcr(1.00)*(VCR(0.23797)-VCR_med(0.17069)=+0.06728) = 0.5173 - k_z(0.20)*z_xsec(-0.233) = 0.5639 -> clip[0.30,0.80]=0.5639 -> EMA(a=0.25; prev=0.6925)=0.6604
+NBIS: rebalance every ~14.0 trading day(s); h=0.3684
+   interval=14d  |  denom=1 + k_tr(-1.00)*(tr_est(1.026)-1)=-0.0262 + m_vcr(2.50)*(VCR-VCR_med)=+0.0030 = 0.9768 -> base_days(14.0)/denom=14.333 -> round->clip[1,21]=14
+   h=0.3684  |  h_mid(0.450) + k_vcr(1.00)*(VCR(0.12759)-VCR_med(0.12640)=+0.00120) = 0.4512 - k_z(0.20)*z_xsec(+1.766) = 0.0980 -> clip[0.30,0.80]=0.3000 -> EMA(a=0.25; prev=0.3912)=0.3684
+AMD: rebalance every ~15.0 trading day(s); h=0.5864
+   interval=15d  |  denom=1 + k_tr(-1.00)*(tr_est(1.069)-1)=-0.0686 + m_vcr(2.50)*(VCR-VCR_med)=-0.0157 = 0.9157 -> base_days(14.0)/denom=15.289 -> round->clip[1,21]=15
+   h=0.5864  |  h_mid(0.450) + k_vcr(1.00)*(VCR(0.16767)-VCR_med(0.17393)=-0.00626) = 0.4437 - k_z(0.20)*z_xsec(-1.251) = 0.6939 -> clip[0.30,0.80]=0.6939 -> EMA(a=0.25; prev=0.5506)=0.5864
+LITE: rebalance every ~15.0 trading day(s); h=0.399
+   interval=15d  |  denom=1 + k_tr(-1.00)*(tr_est(0.885)-1)=+0.1150 + m_vcr(2.50)*(VCR-VCR_med)=-0.1932 = 0.9218 -> base_days(14.0)/denom=15.188 -> round->clip[1,21]=15
+   h=0.3990  |  h_mid(0.450) + k_vcr(1.00)*(VCR(0.12427)-VCR_med(0.20154)=-0.07727) = 0.3727 - k_z(0.20)*z_xsec(-0.019) = 0.3765 -> clip[0.30,0.80]=0.3765 -> EMA(a=0.25; prev=0.4064)=0.3990
+CRWV: rebalance every ~15.0 trading day(s); h=0.3393
+   interval=15d  |  denom=1 + k_tr(-1.00)*(tr_est(0.921)-1)=+0.0789 + m_vcr(2.50)*(VCR-VCR_med)=-0.1334 = 0.9456 -> base_days(14.0)/denom=14.806 -> round->clip[1,21]=15
+   h=0.3393  |  h_mid(0.450) + k_vcr(1.00)*(VCR(0.12785)-VCR_med(0.18119)=-0.05334) = 0.3967 - k_z(0.20)*z_xsec(+1.020) = 0.1927 -> clip[0.30,0.80]=0.3000 -> EMA(a=0.25; prev=0.3524)=0.3393
+SNDK: rebalance every ~16.0 trading day(s); h=0.3486
+   interval=16d  |  denom=1 + k_tr(-1.00)*(tr_est(1.033)-1)=-0.0328 + m_vcr(2.50)*(VCR-VCR_med)=-0.0661 = 0.9011 -> base_days(14.0)/denom=15.537 -> round->clip[1,21]=16
+   h=0.3486  |  h_mid(0.450) + k_vcr(1.00)*(VCR(0.12288)-VCR_med(0.14932)=-0.02644) = 0.4236 - k_z(0.20)*z_xsec(+0.161) = 0.3914 -> clip[0.30,0.80]=0.3914 -> EMA(a=0.25; prev=0.3343)=0.3486
+COIN: rebalance every ~16.0 trading day(s); h=0.519
+   interval=16d  |  denom=1 + k_tr(-1.00)*(tr_est(0.961)-1)=+0.0390 + m_vcr(2.50)*(VCR-VCR_med)=-0.1747 = 0.8643 -> base_days(14.0)/denom=16.198 -> round->clip[1,21]=16
+   h=0.5190  |  h_mid(0.450) + k_vcr(1.00)*(VCR(0.06868)-VCR_med(0.13856)=-0.06988) = 0.3801 - k_z(0.20)*z_xsec(-1.296) = 0.6393 -> clip[0.30,0.80]=0.6393 -> EMA(a=0.25; prev=0.4789)=0.5190
+MU: rebalance every ~17.0 trading day(s); h=0.4927
+   interval=17d  |  denom=1 + k_tr(-1.00)*(tr_est(1.081)-1)=-0.0813 + m_vcr(2.50)*(VCR-VCR_med)=-0.0760 = 0.8427 -> base_days(14.0)/denom=16.613 -> round->clip[1,21]=17
+   h=0.4927  |  h_mid(0.450) + k_vcr(1.00)*(VCR(0.11735)-VCR_med(0.14777)=-0.03042) = 0.4196 - k_z(0.20)*z_xsec(-0.614) = 0.5424 -> clip[0.30,0.80]=0.5424 -> EMA(a=0.25; prev=0.4761)=0.4927
+MSTR: rebalance every ~20.0 trading day(s); h=0.3555
+   interval=20d  |  denom=1 + k_tr(-1.00)*(tr_est(1.056)-1)=-0.0563 + m_vcr(2.50)*(VCR-VCR_med)=-0.2388 = 0.7049 -> base_days(14.0)/denom=19.862 -> round->clip[1,21]=20
+   h=0.3555  |  h_mid(0.450) + k_vcr(1.00)*(VCR(0.08341)-VCR_med(0.17893)=-0.09552) = 0.3545 - k_z(0.20)*z_xsec(-0.306) = 0.4157 -> clip[0.30,0.80]=0.4157 -> EMA(a=0.25; prev=0.3355)=0.3555
+SPCX: rebalance every ~nan trading day(s); h=0.75
+   h=0.750 | insufficient history -> h_base
