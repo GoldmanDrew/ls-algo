@@ -1,0 +1,16 @@
+{
+  "run_date": "2026-07-10",
+  "weight_by_pair": {
+    "MSTZ|MSTR": 0.6598046,
+    "CONI|COIN": 0.56860549,
+    "CORD|CRWV": 0.66142399,
+    "NBIZ|NBIS": 0.58675229,
+    "QBTZ|QBTS": 0.4979357,
+    "DAMD|AMD": 0.3771467,
+    "RKLZ|RKLB": 0.39664307,
+    "LITZ|LITE": 0.52603964,
+    "SNDQ|SNDK": 0.62204725,
+    "MUZ|MU": 0.48359498,
+    "SSPC|SPCX": 0.61322351
+  }
+}

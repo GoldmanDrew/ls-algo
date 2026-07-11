@@ -1,8 +1,9 @@
 """Bucket 4 production sizing API for dashboard / CI walk-forward backtests.
 
 Exposes the live GTP stack:
-  v6 opt2 (decay/borrow/cov + borrow_ramp) → optional trim-only weight_smoothing
-  → conditional crash budget
+  v6 opt2 (decay/borrow/cov + borrow_ramp) → conditional crash budget
+  (scale_to_budget refill + asymmetric L EMA) → post-cap trim-only
+  weight_smoothing (entry ramp + no-trade band)
 without requiring IBKR or the full multi-sleeve book. Ratchet is applied by the
 dashboard walk-forward bridge.
 
@@ -63,25 +64,35 @@ def smooth_pair_weights_trim_only(
     prev_weights: Mapping[tuple[str, str], float],
     *,
     alpha: float,
+    ramp_new_entries: bool = False,
+    no_trade_band_rel: float = 0.0,
+    no_trade_band_abs: float = 0.0,
 ) -> dict[tuple[str, str], float]:
-    """Trim-only EMA (same contract as bucket4_weekly_opt2)."""
+    """Trim-only EMA + entry ramp + no-trade band (same contract as
+    bucket4_weekly_opt2.smooth_pair_weights_trim_only)."""
     a = float(np.clip(alpha, 0.0, 1.0))
+    band_rel = max(0.0, float(no_trade_band_rel))
+    band_abs = max(0.0, float(no_trade_band_abs))
+    has_history = any(
+        v is not None and np.isfinite(float(v)) for v in prev_weights.values()
+    )
     out: dict[tuple[str, str], float] = {}
     for k, w in pair_weights.items():
         w = max(0.0, float(w))
         wp = prev_weights.get(k)
         if wp is None or not np.isfinite(float(wp)):
-            out[k] = w
-        elif w < float(wp):
-            out[k] = w
-        else:
-            out[k] = float(wp) + a * (w - float(wp))
+            out[k] = a * w if (ramp_new_entries and has_history) else w
+            continue
+        wp = float(wp)
+        cand = w if w < wp else wp + a * (w - wp)
+        band = max(band_abs, band_rel * wp)
+        out[k] = wp if abs(cand - wp) < band else cand
     return out
 
 
 @dataclass
 class SizedBook:
-    """Opt2 (+ optional smooth) + crash-budget result for one as-of date."""
+    """Opt2 + crash-budget (+ post-cap smoothing) result for one as-of date."""
 
     run_date: str
     weights_opt2: dict[tuple[str, str], float]
@@ -94,6 +105,7 @@ class SizedBook:
     opt2_meta: dict[str, Any] = field(default_factory=dict)
     sizing_method: str = "v6_opt2_crash_budget"
     smooth_prev: dict[tuple[str, str], float] = field(default_factory=dict)
+    crash_l_state: dict[tuple[str, str], float] = field(default_factory=dict)
 
     def weights_by_etf(self) -> dict[str, float]:
         out: dict[str, float] = {}
@@ -132,14 +144,17 @@ def size_b4_book_asof(
     get_ibkr_borrow_map: Callable[[list[str]], dict[str, float]] | None = None,
     use_ibkr_uvix_borrow: bool = False,
     prev_smooth_weights: Mapping[tuple[str, str], float] | None = None,
+    prev_crash_l: Mapping[tuple[str, str], float] | None = None,
 ) -> SizedBook:
     """Production B4 sizing for one as-of date.
 
-    Order matches live GTP: opt2 → trim-only weight_smoothing → crash-budget
-    (optional ``scale_to_budget`` refill). With ``scale_to_budget=false``,
-    capped weights sum to less than 1 (freed gross stays in cash) and
-    ``budget_eff = budget * sum(w_capped)``. With ``scale_to_budget=true``,
-    weights are renormalized to sum 1 and ``budget_eff = budget``.
+    Order matches live GTP: opt2 → crash-budget (optional ``scale_to_budget``
+    refill, optional asymmetric L EMA via ``prev_crash_l``) → post-cap
+    trim-only weight_smoothing (entry ramp + no-trade band).
+    ``prev_smooth_weights`` are the PREVIOUS run's final post-cap weights
+    (``SizedBook.smooth_prev``); ``prev_crash_l`` is the previous run's
+    ``SizedBook.crash_l_state``. ``budget_eff = budget * sum(w_final)``
+    (capped at ``budget``), so ramp-in under-deployment stays in cash.
     """
     ns = norm_sym or _norm_sym
     opt2 = dict(opt2_cfg or {})
@@ -204,19 +219,17 @@ def size_b4_book_asof(
         use_ibkr_uvix_borrow=bool(use_ibkr_uvix_borrow),
     )
 
-    ws_cfg = opt2.get("weight_smoothing") or {}
-    smooth_prev: dict[tuple[str, str], float] = {
-        (ns(k[0]), ns(k[1])): float(v)
-        for k, v in (prev_smooth_weights or {}).items()
-    }
-    if bool(ws_cfg.get("enabled", False)):
-        alpha = float(ws_cfg.get("alpha", 0.5))
-        pw = smooth_pair_weights_trim_only(pw, smooth_prev, alpha=alpha)
-        smooth_prev = {k: float(v) for k, v in pw.items()}
+    weights_solved = {(ns(k[0]), ns(k[1])): float(v) for k, v in pw.items()}
 
     cb_cfg = opt2.get("crash_budget") or {}
+    crash_l_state: dict[tuple[str, str], float] = {}
     if cb_cfg.get("enabled", True):
         cb_params = CrashBudgetParams.from_config(cb_cfg)
+        prev_l = {
+            (ns(k[0]), ns(k[1])): float(v)
+            for k, v in (prev_crash_l or {}).items()
+            if v is not None and np.isfinite(float(v))
+        }
         caps = compute_crash_caps(
             pair_cache=cache,
             hedge_by_underlying=h_map,
@@ -226,7 +239,14 @@ def size_b4_book_asof(
             budget_usd=budget,
             params=cb_params,
             norm_sym=ns,
+            prev_l=prev_l or None,
         )
+        if caps is not None and not caps.empty:
+            crash_l_state = {
+                (str(r["ETF"]), str(r["Underlying"])): float(r["L"])
+                for _, r in caps.iterrows()
+                if pd.notna(r.get("L"))
+            }
         capped, budget_eff, tel = cap_pair_weights(
             pw,
             caps,
@@ -242,12 +262,33 @@ def size_b4_book_asof(
         budget_eff = budget
         telemetry = []
 
+    # Post-cap trim-only smoothing: damps scale_to_budget cross-coupling,
+    # ramps new entries in at alpha, holds sub-band churn.
+    ws_cfg = opt2.get("weight_smoothing") or {}
+    smooth_prev: dict[tuple[str, str], float] = {
+        (ns(k[0]), ns(k[1])): float(v)
+        for k, v in (prev_smooth_weights or {}).items()
+    }
+    if bool(ws_cfg.get("enabled", False)):
+        capped = smooth_pair_weights_trim_only(
+            capped,
+            smooth_prev,
+            alpha=float(ws_cfg.get("alpha", 0.5)),
+            ramp_new_entries=bool(ws_cfg.get("ramp_new_entries", True)),
+            no_trade_band_rel=float(ws_cfg.get("no_trade_band_rel", 0.0)),
+            no_trade_band_abs=float(ws_cfg.get("no_trade_band_abs", 0.0)),
+        )
+        # Ramp-in under-deployment stays in cash; band holds can push the sum
+        # marginally over 1, so cap at the full budget.
+        budget_eff = min(float(budget), float(budget) * float(sum(capped.values())))
+    smooth_prev = {k: float(v) for k, v in capped.items()}
+
     deployed = float(sum(capped.values()))
     meta_out = {k: v for k, v in (meta or {}).items() if not isinstance(v, (pd.DataFrame, pd.Series))}
     meta_out["weight_smoothing_enabled"] = bool(ws_cfg.get("enabled", False))
     return SizedBook(
         run_date=as_of,
-        weights_opt2={(_norm_sym(k[0]), _norm_sym(k[1])): float(v) for k, v in pw.items()},
+        weights_opt2=weights_solved,
         weights_capped={(_norm_sym(k[0]), _norm_sym(k[1])): float(v) for k, v in capped.items()},
         budget_usd=budget,
         budget_eff=float(budget_eff),
@@ -256,6 +297,7 @@ def size_b4_book_asof(
         telemetry=telemetry,
         opt2_meta=meta_out,
         smooth_prev=smooth_prev,
+        crash_l_state=crash_l_state,
     )
 
 

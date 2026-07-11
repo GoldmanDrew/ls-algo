@@ -1,0 +1,17 @@
+{
+  "run_date": "2026-07-10",
+  "weight_by_pair": {
+    "LITZ|LITE": 0.0921848,
+    "SNDQ|SNDK": 0.07795687,
+    "MSTZ|MSTR": 0.07349579,
+    "QBTZ|QBTS": 0.09738779,
+    "RKLZ|RKLB": 0.12225817,
+    "NBIZ|NBIS": 0.08264622,
+    "CORD|CRWV": 0.07331584,
+    "DAMD|AMD": 0.12857824,
+    "CONI|COIN": 0.08528384,
+    "SSPC|SPCX": 0.0790786,
+    "MUZ|MU": 0.08781385
+  },
+  "stage": "post_cap_scale"
+}

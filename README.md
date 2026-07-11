@@ -192,26 +192,32 @@ Everything operational reads from this file. **Do not treat the table below as a
 
 ## Bucket 4 sizing
 
-Bucket 4 shorts inverse ETFs and hedges with underlying shorts to harvest structural decay. Production sizing (2026-07-10+) is a four-step stack — not a single weight formula:
+Bucket 4 shorts inverse ETFs and hedges with underlying shorts to harvest structural decay. Production sizing (2026-07-11+) is a four-step stack — not a single weight formula:
 
 ```text
 1. Score          decay / borrow aversion + continuous borrow ramp
                   → relative pair weights (sum ≈ 1)
-2. Smooth         trim-only weight EMA (risk cuts immediate; adds fade in)
-3. Crash-cap      gross_i ≤ rho × sleeve_budget / L_i, then (if scale_to_budget)
-                  scale pro-rata so sleeve gross = target
+2. Crash-cap      gross_i ≤ rho × sleeve_budget / L_i (L uses an asymmetric
+                  EMA: risk-up immediate, risk-down smoothed), then
+                  (if scale_to_budget) scale pro-rata so sleeve gross = target
+3. Smooth         trim-only weight EMA on the FINAL capped weights (risk cuts
+                  immediate; adds fade in; new entries ramp from zero; moves
+                  inside the no-trade band are held)
 4. Leg split      inv = gross / (1 + h·β),  und = h·β·inv
                   (+ grow-only inverse ratchet / continuous trim)
 ```
 
-**`target_weight: 0.03` is the deploy target.** Crash sizing first trims each name to `rho × budget / L`, then (with `scale_to_budget: true`) scales that book pro-rata so the sleeve fills the target. `rho` sets *relative* crash risk; the effective per-name crash loss is approximately `rho × scale_mult` (logged each run).
+**`target_weight: 0.03` is the deploy target.** Crash sizing first trims each name to `rho × budget / L`, then (with `scale_to_budget: true`) scales that book pro-rata so the sleeve fills the target. `rho` sets *relative* crash risk; the effective per-name crash loss is approximately `rho × scale_mult` (logged each run). Smoothing runs **after** the cap/scale step so the refill's cross-coupling (one name's cap change re-pricing every other name) is damped too; under-deployment while entries ramp in stays in cash and self-corrects.
 
 | Knob | Role |
 |------|------|
 | `crash_budget.rho` | Relative crash-loss scale (riskier names → less weight) |
 | `crash_budget.scale_to_budget` | `true` = refill sleeve after trim; `false` = leave freed cash undeployed |
+| `crash_budget.l_ema_alpha` | Risk-down smoothing on per-name L (risk-up binds immediately) |
 | `borrow_ramp_lo` / `borrow_ramp_hi` | Continuous high-borrow fade (no binary exclusion cliff) |
 | `weight_smoothing.alpha` | How fast size *increases* converge (cuts are immediate) |
+| `weight_smoothing.ramp_new_entries` | New names ramp in at `alpha` per run instead of full size |
+| `weight_smoothing.no_trade_band_rel/_abs` | Hold weights when the move is inside the band (no churn) |
 | `hedge_cadence_policy` | Dynamic `h` + rebalance cadence (`docs/b4_engine_notes.md`) |
 
 Per-run telemetry:

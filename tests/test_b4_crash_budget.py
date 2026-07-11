@@ -137,6 +137,58 @@ class TestComputeCrashCaps:
         new = caps.loc[caps["Underlying"] == "NEW"].iloc[0]
         assert np.isinf(float(new["cap_usd"]))
 
+    def test_l_ema_risk_up_immediate_risk_down_smoothed(self):
+        cache = _pair_cache()
+        params = CrashBudgetParams(l_ema_alpha=0.4)
+        base = compute_crash_caps(
+            pair_cache=cache, hedge_by_underlying=_hedges(cache), closes_broad=None,
+            hedge_base=0.45, run_date="2026-07-08", budget_usd=100_000.0,
+            params=params, norm_sym=_norm,
+        )
+        amd_l = float(base.loc[base["Underlying"] == "AMD", "L"].iloc[0])
+
+        # prev L below the fresh estimate (risk UP): fresh L binds immediately.
+        caps_up = compute_crash_caps(
+            pair_cache=cache, hedge_by_underlying=_hedges(cache), closes_broad=None,
+            hedge_base=0.45, run_date="2026-07-08", budget_usd=100_000.0,
+            params=params, norm_sym=_norm,
+            prev_l={("AMDS", "AMD"): amd_l * 0.5},
+        )
+        assert float(caps_up.loc[caps_up["Underlying"] == "AMD", "L"].iloc[0]) == pytest.approx(amd_l)
+
+        # prev L above the fresh estimate (risk DOWN): only alpha of the drop
+        # passes -> caps loosen gradually instead of stepping.
+        prev = amd_l * 2.0
+        caps_dn = compute_crash_caps(
+            pair_cache=cache, hedge_by_underlying=_hedges(cache), closes_broad=None,
+            hedge_base=0.45, run_date="2026-07-08", budget_usd=100_000.0,
+            params=params, norm_sym=_norm,
+            prev_l={("AMDS", "AMD"): prev},
+        )
+        row = caps_dn.loc[caps_dn["Underlying"] == "AMD"].iloc[0]
+        assert float(row["L"]) == pytest.approx(0.6 * prev + 0.4 * amd_l)
+        assert float(row["L_raw"]) == pytest.approx(amd_l)
+        assert float(row["cap_usd"]) == pytest.approx(
+            params.rho * 100_000.0 / max(float(row["L"]), params.l_floor)
+        )
+
+    def test_l_ema_disabled_by_default(self):
+        cache = _pair_cache()
+        base = compute_crash_caps(
+            pair_cache=cache, hedge_by_underlying=_hedges(cache), closes_broad=None,
+            hedge_base=0.45, run_date="2026-07-08", budget_usd=100_000.0,
+            params=P, norm_sym=_norm,
+        )
+        amd_l = float(base.loc[base["Underlying"] == "AMD", "L"].iloc[0])
+        caps = compute_crash_caps(
+            pair_cache=cache, hedge_by_underlying=_hedges(cache), closes_broad=None,
+            hedge_base=0.45, run_date="2026-07-08", budget_usd=100_000.0,
+            params=P, norm_sym=_norm,
+            prev_l={("AMDS", "AMD"): amd_l * 10.0},
+        )
+        # l_ema_alpha=1.0 (default): prev state is ignored entirely.
+        assert float(caps.loc[caps["Underlying"] == "AMD", "L"].iloc[0]) == pytest.approx(amd_l)
+
 
 class TestCapPairWeights:
     def test_trim_only_and_budget_shrinks(self):

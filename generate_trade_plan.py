@@ -103,12 +103,22 @@ def _b4_write_ratchet_state(path: Path, state: dict, run_date: str) -> None:
         print(f"[WARN] could not persist b4 ratchet state ({e})")
 
 
-def _b4_load_weight_ema_state(path: Path) -> dict[str, float]:
-    """Load persisted per-pair smoothed weights ({'ETF|UND': weight})."""
+def _b4_load_weight_ema_state(path: Path, *, stage: str | None = None) -> dict[str, float]:
+    """Load persisted per-pair smoothed values ({'ETF|UND': value}).
+
+    ``stage`` (when given) must match the persisted payload's stage tag;
+    mismatched or untagged state is discarded so a pipeline reorder (e.g.
+    pre-cap -> post-cap weights, which changes units) resets cleanly instead
+    of blending incompatible numbers.
+    """
     try:
         if path.is_file():
             raw = json.loads(path.read_text())
-            d = raw.get("weight_by_pair", raw) if isinstance(raw, dict) else {}
+            if not isinstance(raw, dict):
+                return {}
+            if stage is not None and str(raw.get("stage") or "") != stage:
+                return {}
+            d = raw.get("weight_by_pair", raw)
             return {str(k): float(v) for k, v in (d or {}).items()
                     if v is not None and np.isfinite(float(v))}
     except Exception:
@@ -116,14 +126,18 @@ def _b4_load_weight_ema_state(path: Path) -> dict[str, float]:
     return {}
 
 
-def _b4_write_weight_ema_state(path: Path, state: dict[str, float], run_date: str) -> None:
-    """Atomically persist the post-smoothing B4 pair weights."""
+def _b4_write_weight_ema_state(
+    path: Path, state: dict[str, float], run_date: str, *, stage: str | None = None
+) -> None:
+    """Atomically persist per-pair smoothed values (weights or L estimates)."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
+        payload: dict[str, Any] = {
             "run_date": str(run_date),
             "weight_by_pair": {k: round(float(v), 8) for k, v in state.items()},
         }
+        if stage is not None:
+            payload["stage"] = stage
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(payload, indent=2))
         tmp.replace(path)
@@ -2850,48 +2864,6 @@ def main() -> None:
                             f"({_ex.get('reason', 'ramp 0')})"
                         )
 
-                    # ---- Temporal weight smoothing (Phase 5): trim-only EMA at
-                    # plan time. Risk cuts apply immediately; size increases
-                    # smooth in with alpha. State persists across runs so weekly
-                    # weight jumps (borrow/decay noise) do not slam position
-                    # targets. Crash caps are applied AFTER smoothing, so the
-                    # EMA can never lift a name above its crash cap.
-                    _ws_cfg = b4_opt2.get("weight_smoothing") or {}
-                    if bool(_ws_cfg.get("enabled")):
-                        from scripts.bucket4_weekly_opt2 import smooth_pair_weights_trim_only
-
-                        _ws_path = Path(str(_ws_cfg.get("state_json") or "data/b4_weight_ema_state.json"))
-                        _ws_prev_raw = _b4_load_weight_ema_state(_ws_path)
-                        _ws_prev = {}
-                        for _k, _v in _ws_prev_raw.items():
-                            if "|" in _k:
-                                _e, _u = _k.split("|", 1)
-                                _ws_prev[(_norm_sym(_e), _norm_sym(_u))] = float(_v)
-                        _ws_alpha = float(_ws_cfg.get("alpha", 0.5))
-                        pw_smoothed = smooth_pair_weights_trim_only(pw, _ws_prev, alpha=_ws_alpha)
-                        # 1e-6 tolerance: the persisted state is rounded to 8dp,
-                        # so sub-rounding residue must not read as a real move.
-                        _n_cut = sum(
-                            1 for _k in pw_smoothed
-                            if _k in _ws_prev and pw_smoothed[_k] < _ws_prev[_k] - 1e-6
-                        )
-                        _n_smooth = sum(
-                            1 for _k in pw_smoothed
-                            if _k in _ws_prev and pw_smoothed[_k] > _ws_prev[_k] + 1e-6
-                        )
-                        print(
-                            f"[INFO] B4 weight EMA (trim-only, alpha={_ws_alpha:.2f}): "
-                            f"{_n_cut} immediate cut(s), {_n_smooth} smoothed increase(s), "
-                            f"{len(pw_smoothed) - _n_cut - _n_smooth} unchanged/new -> {_ws_path.name}"
-                        )
-                        pw = pw_smoothed
-                        _b4_write_weight_ema_state(
-                            _ws_path,
-                            {f"{k[0]}|{k[1]}": float(v) for k, v in pw.items()},
-                            args.run_date,
-                        )
-                    _b4_wf_ctx["weight_smoothed"] = {k: float(v) for k, v in pw.items()}
-
                     # ---- Conditional-crash budget. Trim each name to
                     # gross_i <= rho*budget/L_i. With scale_to_budget=false,
                     # freed dollars stay in cash; with true, the capped book
@@ -2911,6 +2883,16 @@ def main() -> None:
                         )
 
                         _cb_params = CrashBudgetParams.from_config(_cb_cfg)
+                        # Asymmetric L EMA state: risk-up immediate, risk-down
+                        # smoothed, so a single tail print rolling through the
+                        # lookback window can't step every cap at once.
+                        _cb_l_path = Path(str(_cb_cfg.get("l_state_json") or "data/b4_crash_l_state.json"))
+                        _cb_prev_l: dict[tuple[str, str], float] = {}
+                        if float(_cb_params.l_ema_alpha) < 1.0:
+                            for _k, _v in _b4_load_weight_ema_state(_cb_l_path).items():
+                                if "|" in _k:
+                                    _e, _u = _k.split("|", 1)
+                                    _cb_prev_l[(_norm_sym(_e), _norm_sym(_u))] = float(_v)
                         _cb_caps = compute_crash_caps(
                             pair_cache=st_b4.pair_cache,
                             hedge_by_underlying=st_b4.hedge_by_underlying,
@@ -2920,7 +2902,18 @@ def main() -> None:
                             budget_usd=float(b4_core_cash),
                             params=_cb_params,
                             norm_sym=_norm_sym,
+                            prev_l=_cb_prev_l or None,
                         )
+                        if float(_cb_params.l_ema_alpha) < 1.0 and _cb_caps is not None and not _cb_caps.empty:
+                            _b4_write_weight_ema_state(
+                                _cb_l_path,
+                                {
+                                    f"{_r['ETF']}|{_r['Underlying']}": float(_r["L"])
+                                    for _, _r in _cb_caps.iterrows()
+                                    if pd.notna(_r.get("L"))
+                                },
+                                args.run_date,
+                            )
                         pw, _b4_budget_eff, _cb_tel = cap_pair_weights(
                             pw,
                             _cb_caps,
@@ -2978,14 +2971,85 @@ def main() -> None:
                             if np.isfinite(_cb_default_cap):
                                 _cb_default_cap = float(_cb_default_cap) * _cb_scale_mult
                         _b4_wf_ctx["caps"] = _cb_caps
-                        _b4_wf_ctx["budget_eff"] = float(_b4_budget_eff)
                         _b4_wf_ctx["scale_mult"] = float(_cb_scale_mult)
-                        # Only shrink the sleeve reserve when freed cash is kept
-                        # (scale_to_budget=false). With scale-to-target, budget_eff
-                        # already equals the full sleeve cash.
-                        b4_core_reserved = max(
-                            0.0, b4_core_reserved - (float(b4_core_cash) - float(_b4_budget_eff))
+                    _b4_wf_ctx["weight_capped"] = {k: float(v) for k, v in pw.items()}
+
+                    # ---- Temporal weight smoothing (Phase 5, post-cap): trim-only
+                    # EMA on the FINAL capped/scaled weights. Running it AFTER the
+                    # crash budget also damps scale_to_budget's cross-coupling
+                    # (one name's cap change re-pricing every other name). Risk
+                    # cuts still apply immediately; increases smooth in at alpha;
+                    # new entries ramp from zero instead of arriving at full
+                    # size; a no-trade band kills sub-percent churn. The EMA only
+                    # holds or shrinks a weight vs its capped target, and the
+                    # final crash clamp still enforces the hard cap regardless.
+                    _ws_cfg = b4_opt2.get("weight_smoothing") or {}
+                    if bool(_ws_cfg.get("enabled")):
+                        from scripts.bucket4_weekly_opt2 import smooth_pair_weights_trim_only
+
+                        # Keep state units = "fraction of sleeve budget" even
+                        # when the crash budget (which normalizes) is disabled.
+                        if not bool(_cb_cfg.get("enabled")):
+                            _wsum = sum(max(0.0, float(v)) for v in pw.values()) or 1.0
+                            pw = {k: max(0.0, float(v)) / _wsum for k, v in pw.items()}
+                        _ws_path = Path(str(_ws_cfg.get("state_json") or "data/b4_weight_ema_state.json"))
+                        # Stage-tagged state: pre-cap-era files are discarded
+                        # (units changed), so the first post-cap run is a no-op.
+                        _ws_prev_raw = _b4_load_weight_ema_state(_ws_path, stage="post_cap_scale")
+                        _ws_prev = {}
+                        for _k, _v in _ws_prev_raw.items():
+                            if "|" in _k:
+                                _e, _u = _k.split("|", 1)
+                                _ws_prev[(_norm_sym(_e), _norm_sym(_u))] = float(_v)
+                        _ws_alpha = float(_ws_cfg.get("alpha", 0.5))
+                        pw_smoothed = smooth_pair_weights_trim_only(
+                            pw,
+                            _ws_prev,
+                            alpha=_ws_alpha,
+                            ramp_new_entries=bool(_ws_cfg.get("ramp_new_entries", True)),
+                            no_trade_band_rel=float(_ws_cfg.get("no_trade_band_rel", 0.0)),
+                            no_trade_band_abs=float(_ws_cfg.get("no_trade_band_abs", 0.0)),
                         )
+                        # 1e-6 tolerance: the persisted state is rounded to 8dp,
+                        # so sub-rounding residue must not read as a real move.
+                        _n_cut = sum(
+                            1 for _k in pw_smoothed
+                            if _k in _ws_prev and pw_smoothed[_k] < _ws_prev[_k] - 1e-6
+                        )
+                        _n_smooth = sum(
+                            1 for _k in pw_smoothed
+                            if _k in _ws_prev and pw_smoothed[_k] > _ws_prev[_k] + 1e-6
+                        )
+                        _n_new = sum(1 for _k in pw_smoothed if _k not in _ws_prev)
+                        print(
+                            f"[INFO] B4 weight EMA (post-cap trim-only, alpha={_ws_alpha:.2f}): "
+                            f"{_n_cut} immediate cut(s), {_n_smooth} smoothed increase(s), "
+                            f"{_n_new} new (ramped), "
+                            f"{len(pw_smoothed) - _n_cut - _n_smooth - _n_new} held/banded -> {_ws_path.name}"
+                        )
+                        pw = pw_smoothed
+                        _b4_write_weight_ema_state(
+                            _ws_path,
+                            {f"{k[0]}|{k[1]}": float(v) for k, v in pw.items()},
+                            args.run_date,
+                            stage="post_cap_scale",
+                        )
+                        # Under-deployment while entries ramp in is intentional
+                        # and self-correcting; shrink the effective budget so the
+                        # target solver's internal renorm cannot re-inflate the
+                        # smoothed weights back to the full sleeve. Capped at the
+                        # sleeve cash (band-held names can sum slightly above 1).
+                        _b4_budget_eff = min(
+                            float(b4_core_cash),
+                            float(b4_core_cash) * float(sum(pw.values())),
+                        )
+                    _b4_wf_ctx["weight_smoothed"] = {k: float(v) for k, v in pw.items()}
+                    _b4_wf_ctx["budget_eff"] = float(_b4_budget_eff)
+                    # Only the deployed budget stays reserved; freed / not-yet-
+                    # ramped cash returns to the book (no-op when fully deployed).
+                    b4_core_reserved = max(
+                        0.0, b4_core_reserved - (float(b4_core_cash) - float(_b4_budget_eff))
+                    )
                     # Grow-only ratchet: floor the inverse leg at the MAX of the
                     # persisted per-pair state and the COMMITTED held inverse short
                     # (from the latest accounting snapshot). Sourcing the held leg
@@ -3768,13 +3832,20 @@ def main() -> None:
                         "ETF": _k[0], "Underlying": _k[1],
                         "source": _b4_wf_ctx.get("source_by_key", {}).get(_k, "unknown"),
                         "weight_solved": _b4_wf_ctx.get("weight_solved", {}).get(_k, float("nan")),
+                        "weight_capped": _b4_wf_ctx.get("weight_capped", {}).get(_k, float("nan")),
                         "weight_smoothed": _b4_wf_ctx.get("weight_smoothed", {}).get(_k, float("nan")),
                         # Legacy decay-score allocation (the pre-opt2 stage every
                         # row starts from; the fallback path's solved gross).
                         "gross_decay_score_usd": _b4_wf_ctx.get("gross_solved_by_key", {}).get(_k, float("nan")),
-                        # What the opt2 solve wanted BEFORE the crash budget:
-                        # smoothed weight x full sleeve budget.
-                        "gross_opt2_solved_usd": (
+                        # Crash-capped/scaled target BEFORE the post-cap EMA:
+                        # capped weight x full sleeve budget.
+                        "gross_after_caps_usd": (
+                            float(_b4_wf_ctx.get("weight_capped", {}).get(_k)) * _wf_budget
+                            if _k in _b4_wf_ctx.get("weight_capped", {}) and _wf_budget > 0
+                            else float("nan")
+                        ),
+                        # Post-EMA (ramp/band) target: smoothed weight x budget.
+                        "gross_after_smooth_usd": (
                             float(_b4_wf_ctx.get("weight_smoothed", {}).get(_k)) * _wf_budget
                             if _k in _b4_wf_ctx.get("weight_smoothed", {}) and _wf_budget > 0
                             else float("nan")

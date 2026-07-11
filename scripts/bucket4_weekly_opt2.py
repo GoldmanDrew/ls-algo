@@ -1121,14 +1121,28 @@ def smooth_pair_weights_trim_only(
     prev_weights: Mapping[tuple[str, str], float],
     *,
     alpha: float,
+    ramp_new_entries: bool = False,
+    no_trade_band_rel: float = 0.0,
+    no_trade_band_abs: float = 0.0,
 ) -> dict[tuple[str, str], float]:
     """Temporal weight smoothing with a TRIM-ONLY override (B4 Phase 5).
 
     Per pair: risk cuts apply immediately (``w_solved < w_prev`` -> take
     ``w_solved``); size increases smooth in (``w_prev + alpha*(w_solved -
-    w_prev)``). Pairs with no history (new entries, first run) take the solved
-    weight unchanged, so enabling this live is a no-op on day one. Pairs that
-    dropped out of the solve get no weight (an exit is a risk cut).
+    w_prev)``). Pairs that dropped out of the solve get no weight (an exit is
+    a risk cut).
+
+    ``ramp_new_entries``: names with no history are seeded at ``w_prev = 0``
+    so they ramp in at ``alpha`` per run instead of arriving at full size
+    (the 2025-08-08 PLTZ +24%-of-sleeve week). When ``prev_weights`` is
+    entirely empty (first ever run, no state) the ramp is skipped so
+    enabling this live stays a no-op on day one.
+
+    ``no_trade_band_rel`` / ``no_trade_band_abs``: hold the previous weight
+    when the post-EMA move is smaller than
+    ``max(no_trade_band_abs, no_trade_band_rel * w_prev)`` — kills persistent
+    sub-percent churn from weekly borrow/decay re-estimates. Never applied to
+    new entries; large risk cuts pass through untouched.
 
     The result is NOT renormalized: downstream consumers
     (``cap_pair_weights``, ``compute_bucket4_targets``) normalize internally,
@@ -1139,16 +1153,25 @@ def smooth_pair_weights_trim_only(
     are a no-op.
     """
     a = float(np.clip(alpha, 0.0, 1.0))
+    band_rel = max(0.0, float(no_trade_band_rel))
+    band_abs = max(0.0, float(no_trade_band_abs))
+    has_history = any(
+        v is not None and np.isfinite(float(v)) for v in prev_weights.values()
+    )
     out: dict[tuple[str, str], float] = {}
     for k, w in pair_weights.items():
         w = max(0.0, float(w))
         wp = prev_weights.get(k)
         if wp is None or not np.isfinite(float(wp)):
-            out[k] = w
-        elif w < float(wp):
-            out[k] = w
-        else:
-            out[k] = float(wp) + a * (w - float(wp))
+            if ramp_new_entries and has_history:
+                out[k] = a * w  # ramp in from zero
+            else:
+                out[k] = w
+            continue
+        wp = float(wp)
+        cand = w if w < wp else wp + a * (w - wp)
+        band = max(band_abs, band_rel * wp)
+        out[k] = wp if abs(cand - wp) < band else cand
     return out
 
 

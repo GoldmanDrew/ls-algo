@@ -56,6 +56,11 @@ class CrashBudgetParams:
     #: After trim-only caps, scale the book pro-rata to refill ``budget_usd``.
     #: ``rho`` becomes a relative-risk knob; see module docstring.
     scale_to_budget: bool = False
+    #: Asymmetric EMA on per-name L across runs: risk increases apply
+    #: immediately (L_used = L_new when L_new > blend), risk decreases smooth
+    #: in at this alpha so caps don't step on a single new tail observation.
+    #: 1.0 disables (no memory).
+    l_ema_alpha: float = 1.0
 
     @classmethod
     def from_config(cls, cfg: Mapping[str, Any] | None) -> "CrashBudgetParams":
@@ -112,12 +117,19 @@ def compute_crash_caps(
     budget_usd: float,
     params: CrashBudgetParams,
     norm_sym: Callable[[str], str],
+    prev_l: Mapping[tuple[str, str], float] | None = None,
 ) -> pd.DataFrame:
     """Per-pair conditional crash table with ``cap_usd = rho * budget / L``.
 
     Inputs mirror ``compute_bucket4_targets`` (same pair cache, same
     per-underlying hedge series as of the run date), so the cap is consistent
     with the legs the engine will actually propose.
+
+    ``prev_l`` (with ``params.l_ema_alpha < 1``) enables the asymmetric L
+    EMA: per name, ``L_used = max(L_new, (1-a)*L_prev + a*L_new)`` — risk
+    increases bind immediately, decreases smooth in. The returned ``L``
+    column is the smoothed value (persist it as the next run's ``prev_l``);
+    ``L_raw`` keeps the unsmoothed estimate for telemetry.
     """
     as_of = pd.Timestamp(run_date)
     rows: list[dict[str, Any]] = []
@@ -168,6 +180,20 @@ def compute_crash_caps(
         l_default = float(caps.loc[ok, "L"].clip(lower=params.l_floor).quantile(params.missing_l_quantile))
         caps.loc[~ok, "L"] = l_default
         caps.loc[~ok, "crash_l_source"] = "book_quantile"
+
+    # Asymmetric L EMA: risk-up immediate, risk-down smoothed (caps don't
+    # step when one new tail print rolls into/out of the lookback window).
+    caps["L_raw"] = caps["L"]
+    a = float(np.clip(params.l_ema_alpha, 0.0, 1.0))
+    if prev_l and a < 1.0:
+        for i in caps.index:
+            key = (str(caps.at[i, "ETF"]), str(caps.at[i, "Underlying"]))
+            lp = prev_l.get(key)
+            ln = caps.at[i, "L"]
+            if lp is None or not np.isfinite(float(lp)) or not np.isfinite(float(ln)):
+                continue
+            blend = (1.0 - a) * float(lp) + a * float(ln)
+            caps.at[i, "L"] = max(float(ln), blend)
 
     l_eff = pd.to_numeric(caps["L"], errors="coerce").clip(lower=params.l_floor)
     caps["cap_usd"] = np.where(l_eff.notna(), params.rho * float(budget_usd) / l_eff, np.inf)

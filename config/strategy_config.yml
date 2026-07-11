@@ -392,12 +392,18 @@ portfolio:
           # Uses the same posterior borrow as the aversion terms (no cliffs).
           borrow_ramp_lo: 0.80
           borrow_ramp_hi: 1.20
-          # Trim-only weight EMA at plan time. Risk cuts apply immediately;
-          # size increases move alpha of the way to the new solve per run.
-          # Applied BEFORE the crash budget. State: data/b4_weight_ema_state.json.
+          # Trim-only weight EMA at plan time, applied AFTER the crash budget
+          # (so scale_to_budget cross-coupling is damped too). Risk cuts apply
+          # immediately; increases move alpha of the way to the capped target;
+          # new entries ramp in from zero at alpha per run; moves smaller than
+          # max(no_trade_band_abs, no_trade_band_rel * w_prev) are held (no
+          # churn). State: data/b4_weight_ema_state.json (stage-tagged).
           weight_smoothing:
             enabled: true
             alpha: 0.5
+            ramp_new_entries: true
+            no_trade_band_rel: 0.15    # hold if move < 15% of current weight
+            no_trade_band_abs: 0.0025  # ... or < 25bp of the sleeve
             state_json: data/b4_weight_ema_state.json
           # Conditional-crash sizing: trim each name to rho*budget/L, then
           # (with scale_to_budget) refill the sleeve pro-rata so target_weight
@@ -413,6 +419,11 @@ portfolio:
             l_floor: 0.02          # min L in the cap denominator (bounds any single cap)
             missing_policy: book_quantile   # short-history names get the book's q75 L
             missing_l_quantile: 0.75
+            # Asymmetric EMA on per-name L across runs: risk increases bind
+            # immediately; decreases smooth in at this alpha so caps don't
+            # step when one tail print rolls through the lookback window.
+            l_ema_alpha: 0.4
+            l_state_json: data/b4_crash_l_state.json
           # Hedge ratio (h) + rebalance cadence (days) engine. Every output is
           # reverse-engineerable from the printed inputs (TR, VCR, VCR_med).
           # Backtest rationale for every knob below: docs/b4_engine_notes.md.

@@ -317,3 +317,36 @@ class TestWeightSmoothing:
         # survivor's increase is smoothed (0.5 -> 0.75), NOT snapped to 1.0:
         # the dropped pair's weight is freed to cash, not redeployed.
         assert out[("A", "X")] == pytest.approx(0.75)
+
+    def test_new_entry_ramps_from_zero_when_history_exists(self):
+        f = self._smooth()
+        prev = {("A", "X"): 0.5}
+        solved = {("A", "X"): 0.5, ("NEW", "N"): 0.24}
+        out = f(solved, prev, alpha=0.5, ramp_new_entries=True)
+        # The PLTZ lesson: a new name arrives at alpha * solved, not full size.
+        assert out[("NEW", "N")] == pytest.approx(0.12)
+        assert out[("A", "X")] == pytest.approx(0.5)
+
+    def test_ramp_skipped_on_first_ever_run(self):
+        f = self._smooth()
+        solved = {("A", "X"): 0.6, ("B", "Y"): 0.4}
+        out = f(solved, {}, alpha=0.5, ramp_new_entries=True)
+        # Empty state (day one) -> no-op, same as before the ramp existed.
+        assert out == pytest.approx(solved)
+
+    def test_no_trade_band_holds_small_moves(self):
+        f = self._smooth()
+        prev = {("A", "X"): 0.10, ("B", "Y"): 0.10}
+        solved = {("A", "X"): 0.104, ("B", "Y"): 0.05}
+        out = f(solved, prev, alpha=1.0, no_trade_band_rel=0.15)
+        # A's +4% move is inside the 15% band -> held; B's -50% cut passes.
+        assert out[("A", "X")] == pytest.approx(0.10)
+        assert out[("B", "Y")] == pytest.approx(0.05)
+
+    def test_no_trade_band_abs_floor(self):
+        f = self._smooth()
+        prev = {("A", "X"): 0.002}
+        solved = {("A", "X"): 0.0035}
+        out = f(solved, prev, alpha=1.0, no_trade_band_abs=0.0025)
+        # Move of 0.0015 < 25bp absolute band -> held.
+        assert out[("A", "X")] == pytest.approx(0.002)
