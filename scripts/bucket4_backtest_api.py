@@ -1,7 +1,10 @@
 """Bucket 4 production sizing API for dashboard / CI walk-forward backtests.
 
-Exposes the live GTP stack (v6 opt2 decay/borrow/cov + conditional crash budget)
-without requiring IBKR, ratchet state files, or the full multi-sleeve book.
+Exposes the live GTP stack:
+  v6 opt2 (decay/borrow/cov + borrow_ramp) → optional trim-only weight_smoothing
+  → conditional crash budget
+without requiring IBKR or the full multi-sleeve book. Ratchet is applied by the
+dashboard walk-forward bridge.
 
 Usage::
 
@@ -15,6 +18,7 @@ Usage::
         screened_csv="data/etf_screened_today.csv",
         sleeve_budget_usd=100_000.0,
         opt2_cfg={...},
+        prev_smooth_weights={...},
     )
 """
 from __future__ import annotations
@@ -54,9 +58,30 @@ def _stub_ibkr(_symbols: list[str]) -> dict[str, float]:
     return {}
 
 
+def smooth_pair_weights_trim_only(
+    pair_weights: Mapping[tuple[str, str], float],
+    prev_weights: Mapping[tuple[str, str], float],
+    *,
+    alpha: float,
+) -> dict[tuple[str, str], float]:
+    """Trim-only EMA (same contract as bucket4_weekly_opt2)."""
+    a = float(np.clip(alpha, 0.0, 1.0))
+    out: dict[tuple[str, str], float] = {}
+    for k, w in pair_weights.items():
+        w = max(0.0, float(w))
+        wp = prev_weights.get(k)
+        if wp is None or not np.isfinite(float(wp)):
+            out[k] = w
+        elif w < float(wp):
+            out[k] = w
+        else:
+            out[k] = float(wp) + a * (w - float(wp))
+    return out
+
+
 @dataclass
 class SizedBook:
-    """Opt2 + crash-budget result for one as-of date."""
+    """Opt2 (+ optional smooth) + crash-budget result for one as-of date."""
 
     run_date: str
     weights_opt2: dict[tuple[str, str], float]
@@ -68,6 +93,7 @@ class SizedBook:
     telemetry: list[dict[str, Any]] = field(default_factory=list)
     opt2_meta: dict[str, Any] = field(default_factory=dict)
     sizing_method: str = "v6_opt2_crash_budget"
+    smooth_prev: dict[tuple[str, str], float] = field(default_factory=dict)
 
     def weights_by_etf(self) -> dict[str, float]:
         out: dict[str, float] = {}
@@ -105,9 +131,11 @@ def size_b4_book_asof(
     norm_sym: NormSym | None = None,
     get_ibkr_borrow_map: Callable[[list[str]], dict[str, float]] | None = None,
     use_ibkr_uvix_borrow: bool = False,
+    prev_smooth_weights: Mapping[tuple[str, str], float] | None = None,
 ) -> SizedBook:
-    """Production B4 sizing for one as-of date: opt2 weights then crash-budget caps.
+    """Production B4 sizing for one as-of date.
 
+    Order matches live GTP: opt2 → trim-only weight_smoothing → crash-budget.
     Returns capped weights that generally sum to **less than 1** (freed gross
     stays in cash). ``budget_eff = budget * sum(w_capped)``.
     """
@@ -174,6 +202,16 @@ def size_b4_book_asof(
         use_ibkr_uvix_borrow=bool(use_ibkr_uvix_borrow),
     )
 
+    ws_cfg = opt2.get("weight_smoothing") or {}
+    smooth_prev: dict[tuple[str, str], float] = {
+        (ns(k[0]), ns(k[1])): float(v)
+        for k, v in (prev_smooth_weights or {}).items()
+    }
+    if bool(ws_cfg.get("enabled", False)):
+        alpha = float(ws_cfg.get("alpha", 0.5))
+        pw = smooth_pair_weights_trim_only(pw, smooth_prev, alpha=alpha)
+        smooth_prev = {k: float(v) for k, v in pw.items()}
+
     cb_cfg = opt2.get("crash_budget") or {}
     if cb_cfg.get("enabled", True):
         caps = compute_crash_caps(
@@ -196,6 +234,8 @@ def size_b4_book_asof(
         telemetry = []
 
     deployed = float(sum(capped.values()))
+    meta_out = {k: v for k, v in (meta or {}).items() if not isinstance(v, (pd.DataFrame, pd.Series))}
+    meta_out["weight_smoothing_enabled"] = bool(ws_cfg.get("enabled", False))
     return SizedBook(
         run_date=as_of,
         weights_opt2={(_norm_sym(k[0]), _norm_sym(k[1])): float(v) for k, v in pw.items()},
@@ -205,7 +245,8 @@ def size_b4_book_asof(
         deployed_fraction=deployed,
         cash_residual=max(0.0, 1.0 - deployed),
         telemetry=telemetry,
-        opt2_meta={k: v for k, v in (meta or {}).items() if not isinstance(v, (pd.DataFrame, pd.Series))},
+        opt2_meta=meta_out,
+        smooth_prev=smooth_prev,
     )
 
 
@@ -315,6 +356,10 @@ def main(argv: list[str] | None = None) -> int:
         from scripts.b4_crash_budget import pair_loss
 
         assert pair_loss(0.3, 0.0, 2.0, 0.5) > 0
+        sm = smooth_pair_weights_trim_only(
+            {("A", "U"): 0.2}, {("A", "U"): 0.1}, alpha=0.5
+        )[("A", "U")]
+        assert abs(sm - 0.15) < 1e-12
         print(json.dumps({"ok": True, "module": "bucket4_backtest_api"}))
         return 0
     print("dashboard payload requires etf-dashboard builder inputs; use size_b4_book_asof from Python", file=sys.stderr)
