@@ -130,6 +130,22 @@ def rebalance_knobs(cfg: dict) -> dict:
         # GTP mode: size every screened day, but trade on the weekly clock so
         # daily score reshuffles do not pay 20 bp on the whole book.
         "retarget_on_plan_change": False,
+        # Rebuild hedge legs from OLS β on the price panel through the
+        # rebalance date (no lookahead).  Falls back to plan Delta if OLS
+        # needs more history.
+        "recompute_delta_asof": True,
+        "delta_min_days": 40,
+        "delta_lookback": 60,
+        "delta_floor": float((cfg.get("strategy") or {}).get("delta_floor", 0.1) or 0.1),
+        "b4_partial_hedge_ratio": float(
+            (
+                ((cfg.get("portfolio") or {}).get("sleeves") or {})
+                .get("inverse_decay_bucket4", {})
+                .get("rules", {})
+                .get("partial_hedge_ratio", 1.0)
+            )
+            or 1.0
+        ),
     }
 
 
@@ -886,6 +902,64 @@ def _resize_band_target(
     return float(np.sign(tgt) * max(new_abs, 0.0))
 
 
+def estimate_delta_asof(
+    panel: dict[str, pd.DataFrame],
+    etf: str,
+    *,
+    asof: pd.Timestamp,
+    min_days: int = 40,
+    lookback: int = 60,
+) -> tuple[float | None, int]:
+    """OLS ETF-on-underlying beta using only bars available through ``asof``.
+
+    Uses the same raw OLS definition as ``daily_screener.compute_beta_ols`` on the
+    split-adjusted backtest panel (no lookahead past ``asof``).
+    """
+    from daily_screener import compute_beta_ols
+
+    px = panel.get(str(etf))
+    if px is None or px.empty:
+        return None, 0
+    asof = pd.Timestamp(asof).normalize()
+    hist = px.loc[:asof].dropna(subset=["a_px", "b_px"])
+    if lookback and lookback > 0 and len(hist) > lookback + 1:
+        hist = hist.iloc[-(lookback + 1) :]
+    if len(hist) < max(min_days, 5):
+        return None, 0
+    beta, n_obs = compute_beta_ols(hist["a_px"], hist["b_px"], min_days=min_days)
+    if beta is None or not np.isfinite(beta):
+        return None, int(n_obs or 0)
+    return float(beta), int(n_obs or 0)
+
+
+def _legs_from_gross_delta(
+    *,
+    gross_usd: float,
+    delta: float,
+    sleeve: str,
+    delta_floor: float = 0.1,
+    b4_partial_hedge_ratio: float = 1.0,
+) -> tuple[float, float, float]:
+    """Return ``(etf_usd, underlying_usd, beta_used_abs)`` for a pair gross.
+
+    Stock sleeves (B1/B2): long underlying / short ETF at ``1/|β|``.
+    B4 inverse: short ETF gross + short underlying hedge ``h·|β|·gross``.
+    """
+    g = abs(float(gross_usd))
+    if g <= 0:
+        return 0.0, 0.0, float("nan")
+    beta_abs = max(abs(float(delta)), float(delta_floor)) if np.isfinite(delta) else float(delta_floor)
+    sleeve_l = str(sleeve or "").strip().lower()
+    if sleeve_l == B4_SLEEVE or sleeve_l in {"inverse_decay_bucket4", "bucket4", "bucket_4"}:
+        etf_usd = -g
+        und_usd = -(float(b4_partial_hedge_ratio) * beta_abs * g)
+        return etf_usd, und_usd, beta_abs
+    hr = 1.0 / beta_abs
+    und_usd = g / (1.0 + hr)
+    etf_usd = -(hr * und_usd)
+    return etf_usd, und_usd, beta_abs
+
+
 def _targets_from_plan(
     plan: pd.DataFrame,
     *,
@@ -894,6 +968,12 @@ def _targets_from_plan(
     equity: float,
     capital_usd: float,
     target_notional_mode: str,
+    asof: pd.Timestamp | None = None,
+    recompute_delta: bool = False,
+    delta_floor: float = 0.1,
+    b4_partial_hedge_ratio: float = 1.0,
+    delta_min_days: int = 40,
+    delta_lookback: int = 60,
 ) -> pd.DataFrame:
     """Build signed ETF/underlying close targets from one archived plan.
 
@@ -901,6 +981,10 @@ def _targets_from_plan(
     redistributed to surviving names.  ``equity_scaled`` preserves each
     archived plan's gross/equity multiple as NAV changes; ``fixed_plan_usd``
     replays the literal archived dollars.
+
+    When ``recompute_delta`` is True, ignore archived long/short fractions and
+    rebuild legs from pair gross using OLS β on the panel through ``asof``
+    (fallback: plan Delta, then |β|=1).
     """
     cols = [
         "ETF", "Underlying", "sleeve", "gross_usd", "etf_usd", "underlying_usd",
@@ -913,6 +997,7 @@ def _targets_from_plan(
         raise ValueError(f"unknown target_notional_mode={target_notional_mode!r}")
     nav_scale = float(equity) / float(capital_usd) if mode == "equity_scaled" else 1.0
     nav_scale = max(nav_scale, 0.0)
+    asof_ts = pd.Timestamp(asof).normalize() if asof is not None else None
 
     rows: list[dict[str, Any]] = []
     planned_gross = 0.0
@@ -933,14 +1018,44 @@ def _targets_from_plan(
             if etf not in panel or raw_gross <= 0:
                 continue
             gross_usd = float(raw_gross / g_sum * sleeve_cap)
-            # proposed_trades contract: long_usd is the UNDERLYING target and
-            # short_usd is the ETF target.  Prefer the explicit columns when
-            # present so this cannot silently regress to the old reversed map.
-            leg_a = _float_or(r.get("etf_target_usd"), _float_or(r.get("short_usd")))
-            leg_b = _float_or(r.get("underlying_target_usd"), _float_or(r.get("long_usd")))
-            leg_gross = abs(leg_a) + abs(leg_b)
-            if leg_gross <= 0:
-                continue
+            plan_delta = float(pd.to_numeric(r.get("Delta"), errors="coerce") or np.nan)
+            delta_used = plan_delta
+            if recompute_delta and asof_ts is not None:
+                est, _n = estimate_delta_asof(
+                    panel,
+                    etf,
+                    asof=asof_ts,
+                    min_days=int(delta_min_days),
+                    lookback=int(delta_lookback),
+                )
+                if est is not None and np.isfinite(est):
+                    # Keep sign convention from the plan/sleeve when OLS flips
+                    # spuriously on short history (e.g. inverse names).
+                    if np.isfinite(plan_delta) and plan_delta != 0:
+                        delta_used = abs(est) * np.sign(plan_delta)
+                    else:
+                        delta_used = float(est)
+
+            if recompute_delta and np.isfinite(delta_used):
+                etf_usd, und_usd, _beta_abs = _legs_from_gross_delta(
+                    gross_usd=gross_usd,
+                    delta=float(delta_used),
+                    sleeve=sleeve,
+                    delta_floor=float(delta_floor),
+                    b4_partial_hedge_ratio=float(b4_partial_hedge_ratio),
+                )
+            else:
+                # proposed_trades contract: long_usd is the UNDERLYING target and
+                # short_usd is the ETF target.  Prefer the explicit columns when
+                # present so this cannot silently regress to the old reversed map.
+                leg_a = _float_or(r.get("etf_target_usd"), _float_or(r.get("short_usd")))
+                leg_b = _float_or(r.get("underlying_target_usd"), _float_or(r.get("long_usd")))
+                leg_gross = abs(leg_a) + abs(leg_b)
+                if leg_gross <= 0:
+                    continue
+                etf_usd = gross_usd * leg_a / leg_gross
+                und_usd = gross_usd * leg_b / leg_gross
+
             borrow_b = _float_or(
                 r.get("borrow_underlying"),
                 _float_or(r.get("borrow_b"), _float_or(r.get("underlying_borrow_annual"))),
@@ -951,11 +1066,11 @@ def _targets_from_plan(
                     "Underlying": str(r.get("Underlying", "") or ""),
                     "sleeve": sleeve,
                     "gross_usd": gross_usd,
-                    "etf_usd": gross_usd * leg_a / leg_gross,
-                    "underlying_usd": gross_usd * leg_b / leg_gross,
+                    "etf_usd": etf_usd,
+                    "underlying_usd": und_usd,
                     "borrow_current": _float_or(r.get("borrow_current")),
                     "borrow_underlying": borrow_b,
-                    "Delta": float(pd.to_numeric(r.get("Delta"), errors="coerce") or np.nan),
+                    "Delta": float(delta_used) if np.isfinite(delta_used) else np.nan,
                 }
             )
     if not rows:
@@ -1045,6 +1160,11 @@ def simulate_book_from_plan_timeline(
     use_resize_bands: bool = True,
     check_freq: str = "W-FRI",
     retarget_on_plan_change: bool = True,
+    recompute_delta_asof: bool = False,
+    delta_floor: float = 0.1,
+    b4_partial_hedge_ratio: float = 1.0,
+    delta_min_days: int = 40,
+    delta_lookback: int = 60,
     pre_archive_policy: str = "cash",
 ) -> tuple[pd.Series, pd.DataFrame, dict[str, Any], pd.DataFrame, pd.DataFrame]:
     """Close-to-close, share-hold simulation with point-in-time plans.
@@ -1222,6 +1342,14 @@ def simulate_book_from_plan_timeline(
             or (plan_changed and bool(retarget_on_plan_change))
             or (plan_changed and cur.empty)
         )
+        # Between plan retargets, still refresh the hedge mix from as-of OLS β
+        # so dollar hedges do not silently drift with price path.
+        need_delta_rehedge = (
+            bool(recompute_delta_asof)
+            and not need_rebal
+            and not cur.empty
+            and active_plan is not None
+        )
         target = pd.DataFrame(columns=pos_cols[:-1])
         target_planned_gross = 0.0
         target_tradeable_gross = 0.0
@@ -1234,11 +1362,74 @@ def simulate_book_from_plan_timeline(
                 equity=equity,
                 capital_usd=capital_usd,
                 target_notional_mode=target_notional_mode,
+                asof=d,
+                recompute_delta=bool(recompute_delta_asof),
+                delta_floor=float(delta_floor),
+                b4_partial_hedge_ratio=float(b4_partial_hedge_ratio),
+                delta_min_days=int(delta_min_days),
+                delta_lookback=int(delta_lookback),
             )
             target_planned_gross = float(target.attrs.get("planned_gross_usd", 0.0))
             target_tradeable_gross = float(target.attrs.get("tradeable_gross_usd", 0.0))
             target = target.copy()
             target["plan_date"] = str(active_plan_date.date()) if active_plan_date is not None else ""
+        elif need_delta_rehedge:
+            rows_h: list[dict[str, Any]] = []
+            for etf, row in cur.iterrows():
+                gross = abs(float(row["etf_usd"])) + abs(float(row["underlying_usd"]))
+                if gross <= 1e-9:
+                    continue
+                plan_delta = float(pd.to_numeric(row.get("Delta"), errors="coerce") or np.nan)
+                est, _n = estimate_delta_asof(
+                    panel,
+                    etf,
+                    asof=d,
+                    min_days=int(delta_min_days),
+                    lookback=int(delta_lookback),
+                )
+                delta_used = plan_delta
+                if est is not None and np.isfinite(est):
+                    if np.isfinite(plan_delta) and plan_delta != 0:
+                        delta_used = abs(est) * np.sign(plan_delta)
+                    else:
+                        delta_used = float(est)
+                if not np.isfinite(delta_used):
+                    continue
+                etf_usd, und_usd, _b = _legs_from_gross_delta(
+                    gross_usd=gross,
+                    delta=float(delta_used),
+                    sleeve=str(row.get("sleeve", "")),
+                    delta_floor=float(delta_floor),
+                    b4_partial_hedge_ratio=float(b4_partial_hedge_ratio),
+                )
+                rows_h.append(
+                    {
+                        "ETF": etf,
+                        "Underlying": str(row.get("Underlying", "")),
+                        "sleeve": str(row.get("sleeve", "")),
+                        "gross_usd": gross,
+                        "etf_usd": etf_usd,
+                        "underlying_usd": und_usd,
+                        "borrow_current": _float_or(row.get("borrow_current")),
+                        "borrow_underlying": _float_or(row.get("borrow_underlying")),
+                        "Delta": float(delta_used),
+                        "plan_date": str(row.get("plan_date", "")),
+                    }
+                )
+            if rows_h:
+                target = pd.DataFrame(rows_h).set_index("ETF")
+                # Keep any open names we could not re-estimate so they are not
+                # accidentally exited by the hedge-refresh path.
+                missing = [e for e in cur.index if e not in target.index]
+                if missing:
+                    target = pd.concat([target, cur.loc[missing]], axis=0)
+                target_planned_gross = float(
+                    target[["etf_usd", "underlying_usd"]].abs().sum().sum()
+                )
+                target_tradeable_gross = target_planned_gross
+                need_rebal = True  # reuse the execution block below
+
+        if need_rebal and not target.empty:
             old_names = set(cur.index)
             new_names = set(target.index)
             n_added = len(new_names - old_names)
@@ -1429,6 +1620,9 @@ def simulate_book_from_plan_timeline(
         "financing_daycount": float(financing_daycount),
         "short_proceeds_credit_annual": float(short_proceeds_credit_annual),
         "retarget_on_plan_change": bool(retarget_on_plan_change),
+        "recompute_delta_asof": bool(recompute_delta_asof),
+        "delta_floor": float(delta_floor),
+        "b4_partial_hedge_ratio": float(b4_partial_hedge_ratio),
         "use_resize_bands": bool(use_resize_bands),
         "enter_band_pct": float(enter_band_pct),
         "exit_band_pct": float(exit_band_pct),
@@ -1922,6 +2116,11 @@ def run_replay_backtest(
         min_trade_usd=rknobs["min_trade_usd"],
         check_freq="W-FRI",
         retarget_on_plan_change=True,  # archived plans already sparse; apply on arrival
+        recompute_delta_asof=bool(rknobs.get("recompute_delta_asof", True)),
+        delta_floor=float(rknobs.get("delta_floor", 0.1)),
+        b4_partial_hedge_ratio=float(rknobs.get("b4_partial_hedge_ratio", 1.0)),
+        delta_min_days=int(rknobs.get("delta_min_days", 40)),
+        delta_lookback=int(rknobs.get("delta_lookback", 60)),
         pre_archive_policy=pre_archive_policy,
     )
 
@@ -2044,6 +2243,11 @@ def run_gtp_approx_backtest(
         # Size daily from screened; trade on Friday with the latest plan so
         # daily score reshuffles do not churn the whole book at 20 bp.
         retarget_on_plan_change=bool(rknobs.get("retarget_on_plan_change", False)),
+        recompute_delta_asof=bool(rknobs.get("recompute_delta_asof", True)),
+        delta_floor=float(rknobs.get("delta_floor", 0.1)),
+        b4_partial_hedge_ratio=float(rknobs.get("b4_partial_hedge_ratio", 1.0)),
+        delta_min_days=int(rknobs.get("delta_min_days", 40)),
+        delta_lookback=int(rknobs.get("delta_lookback", 60)),
         pre_archive_policy=pre_archive_policy,
     )
 
@@ -2095,6 +2299,8 @@ def run_gtp_approx_backtest(
             "Does not consume archived proposed_trades.csv; B5 is not sized by the mirror.",
             "Average borrow is often higher than spot → tighter entry caps → fewer pairs than replay.",
             "Plans sized every screened day; book retargets weekly (W-FRI) with the latest plan.",
+            "Hedge legs rebuilt from OLS ETF-on-underlying β on the split-adjusted panel "
+            "through each day (no lookahead); falls back to plan Delta if history is short.",
             "IBKR short-sale proceeds credit modelled at 3.8% annual on short notional (Actual/360); "
             "borrow fee still charged from screened/IBKR rates.",
             "Mirror decay-score path only — no live B4 opt2 / crash-budget / post-cap smooth / ratchet.",
@@ -2182,6 +2388,11 @@ def run_recompute_backtest(
         min_trade_usd=rknobs["min_trade_usd"],
         check_freq="W-FRI",
         retarget_on_plan_change=True,
+        recompute_delta_asof=bool(rknobs.get("recompute_delta_asof", True)),
+        delta_floor=float(rknobs.get("delta_floor", 0.1)),
+        b4_partial_hedge_ratio=float(rknobs.get("b4_partial_hedge_ratio", 1.0)),
+        delta_min_days=int(rknobs.get("delta_min_days", 40)),
+        delta_lookback=int(rknobs.get("delta_lookback", 60)),
         pre_archive_policy=pre_archive_policy,
     )
 

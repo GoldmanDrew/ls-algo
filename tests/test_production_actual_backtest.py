@@ -8,14 +8,79 @@ import pytest
 from scripts.production_actual_backtest import (
     B5_SLEEVE,
     _b5_sleeve_nav,
+    _legs_from_gross_delta,
     _pair_stats_from_navs,
     _stock_sleeve_nav,
     _targets_from_plan,
+    estimate_delta_asof,
     normalize_plan,
     prepare_screened_for_gtp_approx,
     simulate_book_from_plan_timeline,
 )
 from scripts.sizing_tilt_cadence_bt import load_price_panel, pair_daily_returns
+
+
+def test_legs_from_gross_delta_stock_and_b4():
+    etf, und, beta = _legs_from_gross_delta(
+        gross_usd=300.0, delta=2.0, sleeve="core_leveraged", delta_floor=0.1
+    )
+    assert beta == pytest.approx(2.0)
+    assert etf == pytest.approx(-100.0)
+    assert und == pytest.approx(200.0)
+    etf4, und4, _ = _legs_from_gross_delta(
+        gross_usd=100.0,
+        delta=-2.0,
+        sleeve="inverse_decay_bucket4",
+        b4_partial_hedge_ratio=0.5,
+    )
+    assert etf4 == pytest.approx(-100.0)
+    assert und4 == pytest.approx(-100.0)  # -0.5 * 2 * 100
+
+
+def test_targets_recompute_delta_asof_no_lookahead():
+    rng = np.random.default_rng(0)
+    cal = pd.bdate_range("2025-01-01", periods=80)
+    # Noisy underlying with ~2x ETF; OLS needs variance to identify β.
+    r_und = rng.normal(0.001, 0.02, size=len(cal))
+    r_etf = 2.0 * r_und + rng.normal(0.0, 0.001, size=len(cal))
+    und = 100.0 * np.cumprod(1.0 + r_und)
+    etf_px = 50.0 * np.cumprod(1.0 + r_etf)
+    panel = {"AAA": pd.DataFrame({"a_px": etf_px, "b_px": und}, index=cal)}
+    plan = normalize_plan(
+        pd.DataFrame(
+            [
+                {
+                    "ETF": "AAA",
+                    "Underlying": "BBB",
+                    "sleeve": "core_leveraged",
+                    "Delta": 1.0,  # intentionally wrong archived delta
+                    "long_usd": 150.0,
+                    "short_usd": -150.0,
+                    "gross_target_usd": 300.0,
+                }
+            ]
+        ),
+        source_date="2025-03-01",
+    )
+    asof = cal[70]
+    tgt = _targets_from_plan(
+        plan,
+        budgets={"core_leveraged": 300.0},
+        panel=panel,
+        equity=100.0,
+        capital_usd=100.0,
+        target_notional_mode="fixed_plan_usd",
+        asof=asof,
+        recompute_delta=True,
+        delta_min_days=40,
+        delta_lookback=60,
+    )
+    # Recomputed β should be near 2 → ~200 und / -100 etf, not the archived 50/50.
+    assert float(tgt.at["AAA", "Delta"]) == pytest.approx(2.0, abs=0.15)
+    assert abs(float(tgt.at["AAA", "underlying_usd"])) > abs(float(tgt.at["AAA", "etf_usd"]))
+    beta, n = estimate_delta_asof(panel, "AAA", asof=asof, min_days=40, lookback=60)
+    assert n >= 40
+    assert beta == pytest.approx(2.0, abs=0.15)
 
 
 def test_prepare_screened_uses_borrow_avg_when_finite():
