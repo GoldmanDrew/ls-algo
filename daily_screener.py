@@ -411,6 +411,10 @@ INVERSE_ETF_UNIVERSE = [
     ("UVIX", -2, "SVIX"),
     # 2026-07-13 Leverage Shares 1X Short SK Hynix Daily ETF
     ("SKHZ", -1, "SKHY"),
+    # 2026-07-14 GraniteShares 2X Short SK Hynix Daily ETF
+    ("SKDD", -2, "SKHY"),
+    # 2026-07-15 Tradr 2X Short (AAOI, ORCL)
+    ("AAOZ", -2, "AAOI"), ("ORCZ", -2, "ORCL"),
 
     # Auto-discovered inverse single-stock leveraged ETFs (2026-06-15)
     ("SNK", -2, "SPCX"),
