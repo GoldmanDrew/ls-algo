@@ -456,6 +456,12 @@ portfolio:
             max_interval: 21                # allow calm regimes to stretch toward 3-week spacing
             operator_check_days: 5          # run rebalance_strategy.py every N business days; per-pair due gate inside
             cadence_state_json: data/b4_cadence_state.json
+            # Machine-independent cadence timing: backfill each pair's last_rebalance
+            # from the broker's committed Flex trade record (data/runs/<D>/ibkr_flex/
+            # flex_trades.xml, keyed off the unique inverse-ETF leg) and stagger-seed
+            # any pair with no trade history, so the mutable cadence_state_json never
+            # needs to be committed/pushed. See scripts/bucket4_cadence_reconstruct.py.
+            cadence_reconstruct_from_broker: true
             force_on_max_interval: true     # always rebalance a pair once max_interval trading days elapsed
             # Discretionary per-name overrides (the ONLY sanctioned hand-tune). Bounded
             # by h_min/h_max and min/max_interval regardless of values here.

@@ -69,6 +69,10 @@ class CadenceGateConfig:
     operator_check_days: int = 5
     state_json: Path = Path("data/b4_cadence_state.json")
     force_on_max_interval: bool = True
+    # Machine-independent timing: backfill last_rebalance from the broker's Flex
+    # trade record (and stagger-seed the rest) so the mutable state JSON never
+    # has to be committed/pushed. See scripts/bucket4_cadence_reconstruct.py.
+    reconstruct_from_broker: bool = True
 
     @classmethod
     def from_policy_block(cls, block: Mapping[str, Any] | None, *, opt2_enabled: bool) -> "CadenceGateConfig":
@@ -79,6 +83,7 @@ class CadenceGateConfig:
             operator_check_days=max(1, int(b.get("operator_check_days", 5))),
             state_json=Path(str(b.get("cadence_state_json", "data/b4_cadence_state.json"))),
             force_on_max_interval=bool(b.get("force_on_max_interval", True)),
+            reconstruct_from_broker=bool(b.get("cadence_reconstruct_from_broker", True)),
         )
 
 
@@ -269,8 +274,17 @@ def resolve_due_pairs_for_rebalance(
     resize_df: pd.DataFrame,
     cfg: Mapping[str, Any] | None,
     run_dir_path: Path | None = None,
+    persist_reconstruction: bool = False,
+    runs_root: Path | None = None,
 ) -> tuple[set[tuple[str, str]] | None, list[PairCadenceDecision], CadenceGateConfig]:
-    """Return due B4 pair keys, or ``None`` when the gate is disabled."""
+    """Return due B4 pair keys, or ``None`` when the gate is disabled.
+
+    Before evaluating, per-pair ``last_rebalance`` is backfilled from the
+    broker's Flex trade record (and stagger-seeded when unknown) so cadence
+    timing is machine-independent without committing the mutable state JSON.
+    Set ``persist_reconstruction`` (only on real, non-dry runs) to write the
+    reconciled cache back to disk.
+    """
     gate, knobs, tilts = load_gate_config_from_strategy(cfg)
     if not gate.enabled:
         return None, [], gate
@@ -322,6 +336,25 @@ def resolve_due_pairs_for_rebalance(
             policies.append(pol)
 
     state = load_cadence_state(gate.state_json)
+    if gate.reconstruct_from_broker and policies:
+        try:
+            from scripts.bucket4_cadence_reconstruct import reconcile_cadence_state
+
+            pair_intervals = {
+                (p.etf, p.underlying): int(p.interval_days) for p in policies
+            }
+            state, _prov = reconcile_cadence_state(
+                state,
+                pair_intervals=pair_intervals,
+                run_date=run_date,
+                runs_root=runs_root,
+                enable_broker=True,
+            )
+            if persist_reconstruction:
+                save_cadence_state(gate.state_json, state)
+        except Exception as exc:  # never block a rebalance on reconstruction
+            print(f"[B4-CADENCE] broker reconstruction skipped ({exc}); using local state only")
+
     due_keys, decisions = evaluate_cadence_gate(
         policies,
         run_date=run_date,

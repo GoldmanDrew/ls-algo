@@ -3042,6 +3042,9 @@ def main() -> None:
                 resize_df=resize_df,
                 cfg=cfg,
                 run_dir_path=run_dir(run_date),
+                # Persist the broker-reconstructed cadence cache on real runs so a
+                # fresh machine converges without committing state to the repo.
+                persist_reconstruction=not dry_run,
             )
             resize_plan = resize_df
             if b4_due_keys is not None:
