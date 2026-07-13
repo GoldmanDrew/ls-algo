@@ -308,9 +308,22 @@ def compute_v6_b4_pf_weight_dict(
         ramp_by_pair[(etf_sym, und_sym)] = m
 
     if len(pairs_live) < p.min_pairs:
-        raise RuntimeError(
-            f"Need at least {p.min_pairs} tradable pairs after borrow ramp; got {len(pairs_live)} "
-            f"(excluded {len(excluded_borrow)} with borrow >= {p.borrow_ramp_hi:.0%})."
+        # Do not abort the whole trade plan on thin B4 days (common on older /
+        # incomplete screened archives). Callers treat empty weights as "no B4".
+        return (
+            {},
+            pd.DataFrame(),
+            {
+                "excluded_high_borrow": excluded_borrow,
+                "n_pairs_live": int(len(pairs_live)),
+                "min_pairs": int(p.min_pairs),
+                "skipped_thin_book": True,
+                "reason": (
+                    f"Need at least {p.min_pairs} tradable pairs after borrow ramp; "
+                    f"got {len(pairs_live)} (excluded {len(excluded_borrow)} with "
+                    f"borrow >= {p.borrow_ramp_hi:.0%})."
+                ),
+            },
         )
 
     ix_list = [pair_cache[k]["prices"].index for k in pairs_live]

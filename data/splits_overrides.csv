@@ -1,0 +1,6 @@
+symbol,ex_date,numerator,denominator,source,note
+COYY,2026-06-08,1,6,manual,GraniteShares COYY residual 1-for-6 (flex dated 06-02 self-healed after crater; raw 06-08 gap ~6.06x was mis-matched as x5)
+MTYY,2026-06-08,1,6,manual,GraniteShares MTYY residual 1-for-6 (same crater/flex pattern as COYY; raw 06-08 gap ~6.07x)
+TSYY,2026-06-08,1,8,manual,GraniteShares TSYY residual 1-for-8 (flex dated 06-02 self-healed after crater; raw 06-08 gap ~8.21x)
+SNDU,2026-04-21,1,3,manual,T-Rex SNDU 1-for-3 reverse — panel had unadjusted +228% jump; heuristic self-heal false-skipped via lookahead
+SNDU,2026-04-27,3,1,manual,T-Rex SNDU 3-for-1 forward — restores scale after 04-21..04-24 inflated prints (raw -72% day)

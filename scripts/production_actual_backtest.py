@@ -2,25 +2,27 @@
 
 Primary mode
 ------------
-``gtp`` (default)
-    Each archived ``etf_screened_today.csv`` is sized with a generate-trade-plan
-    approximation: ``mirror_generate_trade_plan_sizing`` using that day's listed
-    universe, ``borrow_avg_annual`` (fallback ``borrow_current``) for the borrow
-    penalty / caps, and ``net_edge_p50_annual`` as the sizing signal. Does **not**
+``prod`` (default)
+    Full historical replay of today's ``generate_trade_plan`` stack on each
+    archived ``etf_screened_today.csv``: B1/B2 + B4 opt2 → crash → smooth →
+    ratchet, with isolated state carried day-to-day. Spot ``borrow_current`` /
+    screener edge columns as production (no avg-borrow overlay). Does **not**
     consume archived ``proposed_trades.csv``. Plans execute via the unified
-    share-hold ledger (next-close, Phase-2b bands, borrow/margin/slippage).
+    share-hold ledger (next-close, weekly W-FRI Phase-2b, borrow/margin/slippage,
+    3.8% short-proceeds credit).
 
 Legacy modes (CLI only; notebook no longer runs them)
 -----------------------------------------------------
+``gtp`` — decay-score mirror (avg borrow + net edge; no opt2/crash/ratchet).
 ``frozen`` / ``replay`` / ``recompute`` — see git history or ``--help``.
 
-Outputs under ``notebooks/output/production_actual_bt/`` (``gtp`` writes at the
+Outputs under ``notebooks/output/production_actual_bt/`` (``prod`` writes at the
 root; legacy modes still use subdirs).
 
 Run
 ---
     python -m scripts.production_actual_backtest
-    python -m scripts.production_actual_backtest --mode gtp --start 2025-12-28
+    python -m scripts.production_actual_backtest --mode prod --start 2026-02-27
 """
 
 from __future__ import annotations
@@ -127,6 +129,9 @@ def rebalance_knobs(cfg: dict) -> dict:
         # Preserve the plan's gross/equity multiple as NAV changes, matching
         # Diamond Creek's dynamic target-gross convention.
         "target_notional_mode": "equity_scaled",
+        # Scale each sleeve's plan legs up/down so sleeve gross equals the YAML
+        # sleeve budget (then apply equity_scaled NAV scaling).
+        "scale_sleeves_to_budget": True,
         # GTP mode: size every screened day, but trade on the weekly clock so
         # daily score reshuffles do not pay 20 bp on the whole book.
         "retarget_on_plan_change": False,
@@ -208,7 +213,18 @@ def normalize_plan(df: pd.DataFrame, *, source_date: str | None = None) -> pd.Da
             out["borrow_underlying"] = out["underlying_borrow_annual"]
         elif "borrow_b" in out.columns:
             out["borrow_underlying"] = out["borrow_b"]
-    out = out[out["gross_target_usd"] > 0].copy()
+    # Purgatory keep-open: production emits 0-gross rows so execution does not
+    # auto-close. Preserve them for the simulator (hold shares).
+    if "purgatory" in out.columns:
+        purg = out["purgatory"]
+        if purg.dtype == object:
+            purg = purg.astype(str).str.strip().str.lower().isin({"1", "true", "t", "yes", "y"})
+        else:
+            purg = purg.fillna(False).astype(bool)
+    else:
+        purg = pd.Series(False, index=out.index)
+    out["keep_open"] = purg & (out["gross_target_usd"].abs() <= 1e-9)
+    out = out[(out["gross_target_usd"] > 0) | out["keep_open"]].copy()
     if source_date is not None:
         out["_plan_date"] = source_date
     return out.reset_index(drop=True)
@@ -894,6 +910,7 @@ def _targets_from_plan(
     equity: float,
     capital_usd: float,
     target_notional_mode: str,
+    scale_sleeves_to_budget: bool = True,
 ) -> pd.DataFrame:
     """Build signed ETF/underlying close targets from one archived plan.
 
@@ -901,6 +918,10 @@ def _targets_from_plan(
     redistributed to surviving names.  ``equity_scaled`` preserves each
     archived plan's gross/equity multiple as NAV changes; ``fixed_plan_usd``
     replays the literal archived dollars.
+
+    When ``scale_sleeves_to_budget`` is True (default), each sleeve with positive
+    planned gross is scaled so sleeve gross equals the YAML sleeve budget
+    (then × nav_scale). When False, uses ``min(budget, plan_gross)`` as before.
     """
     cols = [
         "ETF", "Underlying", "sleeve", "gross_usd", "etf_usd", "underlying_usd",
@@ -926,7 +947,10 @@ def _targets_from_plan(
         g_sum = float(g_all.sum())
         if g_sum <= 0:
             continue
-        sleeve_cap = min(float(budget), g_sum) * nav_scale
+        if scale_sleeves_to_budget:
+            sleeve_cap = float(budget) * nav_scale
+        else:
+            sleeve_cap = min(float(budget), g_sum) * nav_scale
         planned_gross += sleeve_cap
         for (_, r), raw_gross in zip(sub_all.iterrows(), g_all.to_numpy()):
             etf = str(r["ETF"])
@@ -997,6 +1021,7 @@ def _weights_from_plan(
     target = _targets_from_plan(
         plan, budgets=budgets, panel=panel, equity=1.0, capital_usd=1.0,
         target_notional_mode="fixed_plan_usd",
+        scale_sleeves_to_budget=True,
     )
     if target.empty:
         return pd.Series(dtype=float), pd.DataFrame()
@@ -1039,6 +1064,7 @@ def simulate_book_from_plan_timeline(
     short_proceeds_credit_annual: float = 0.038,
     execution_lag_sessions: int = 1,
     target_notional_mode: str = "equity_scaled",
+    scale_sleeves_to_budget: bool = True,
     enter_band_pct: float = 0.12,
     exit_band_pct: float = 0.04,
     min_trade_usd: float = 250.0,
@@ -1051,13 +1077,22 @@ def simulate_book_from_plan_timeline(
 
     Returns ``(nav, audit, meta, pair_stats, sleeve_daily)``.
 
+    ``meta["pair_daily"]`` is a long DataFrame (one row per pair×day with activity
+    or open exposure) used for top/bottom time-series plots.
+
     ``pre_archive_policy``
         ``cash`` — hold capital until first plan (default).
         ``skip`` — start calendar at first plan date.
     """
     empty = pd.DataFrame()
     if not timeline:
-        return pd.Series(dtype=float), empty, {"error": "empty_timeline"}, empty, empty
+        return (
+            pd.Series(dtype=float),
+            empty,
+            {"error": "empty_timeline", "pair_daily": empty},
+            empty,
+            empty,
+        )
 
     first_plan = min(timeline)
     sim_start = start
@@ -1066,12 +1101,18 @@ def simulate_book_from_plan_timeline(
 
     ret_cache = _build_return_cache(list(timeline.values()), panel)
     if not ret_cache:
-        return pd.Series(dtype=float), empty, {"error": "no_returns"}, empty, empty
+        return pd.Series(dtype=float), empty, {"error": "no_returns", "pair_daily": empty}, empty, empty
 
     all_idx = sorted(set().union(*[set(s.index) for s in ret_cache.values()]))
     cal = pd.DatetimeIndex([d for d in all_idx if d >= sim_start])
     if len(cal) < 20:
-        return pd.Series(dtype=float), empty, {"error": "short_calendar"}, empty, empty
+        return (
+            pd.Series(dtype=float),
+            empty,
+            {"error": "short_calendar", "pair_daily": empty},
+            empty,
+            empty,
+        )
 
     check_days = set(
         pd.DatetimeIndex(pd.Series(1, index=cal).resample(check_freq).last().index).intersection(cal)
@@ -1098,6 +1139,7 @@ def simulate_book_from_plan_timeline(
     cash_days = 0
     contrib: dict[str, dict[str, Any]] = {}
     sleeve_daily_rows: list[dict] = []
+    pair_daily_rows: list[dict] = []
     running_peak = float(capital_usd)
 
     def _ensure_contrib(etf: str, row: pd.Series | None = None) -> dict[str, Any]:
@@ -1111,10 +1153,18 @@ def simulate_book_from_plan_timeline(
                 "short_credit_usd": 0.0,
                 "margin_cost_usd": 0.0,
                 "txn_cost_usd": 0.0,
+                "rebalance_dates": [],
+                "end_etf_usd": 0.0,
+                "end_underlying_usd": 0.0,
+                "last_target_etf_usd": 0.0,
+                "last_target_underlying_usd": 0.0,
+                "Delta": np.nan,
             }
         elif row is not None:
             contrib[etf]["Underlying"] = str(row.get("Underlying", contrib[etf]["Underlying"]))
             contrib[etf]["sleeve"] = str(row.get("sleeve", contrib[etf]["sleeve"]))
+            if "Delta" in row.index and pd.notna(row.get("Delta")):
+                contrib[etf]["Delta"] = float(pd.to_numeric(row.get("Delta"), errors="coerce") or np.nan)
         return contrib[etf]
 
     for i, d in enumerate(cal):
@@ -1126,6 +1176,27 @@ def simulate_book_from_plan_timeline(
             s: {"price": 0.0, "borrow": 0.0, "credit": 0.0, "margin": 0.0, "txn": 0.0}
             for s in ALL_SLEEVES
         }
+        day_pair: dict[str, dict[str, Any]] = {}
+
+        def _day_pair(etf: str, row: pd.Series | None = None) -> dict[str, Any]:
+            if etf not in day_pair:
+                day_pair[etf] = {
+                    "ETF": etf,
+                    "Underlying": str(row.get("Underlying", "") if row is not None else ""),
+                    "sleeve": str(row.get("sleeve", "") if row is not None else ""),
+                    "price_pnl": 0.0,
+                    "borrow_cost": 0.0,
+                    "short_credit": 0.0,
+                    "margin_cost": 0.0,
+                    "txn_cost": 0.0,
+                }
+            elif row is not None:
+                day_pair[etf]["Underlying"] = str(
+                    row.get("Underlying", day_pair[etf]["Underlying"])
+                )
+                day_pair[etf]["sleeve"] = str(row.get("sleeve", day_pair[etf]["sleeve"]))
+            return day_pair[etf]
+
         price_pnl = 0.0
         borrow_cost = 0.0
         short_credit = 0.0
@@ -1159,6 +1230,7 @@ def simulate_book_from_plan_timeline(
                 price_pnl += pnl_e
                 c = _ensure_contrib(etf, cur.loc[etf])
                 c["price_pnl_usd"] += pnl_e
+                _day_pair(etf, cur.loc[etf])["price_pnl"] += pnl_e
                 sl = str(row.get("sleeve", ""))
                 if sl in sleeve_comp:
                     sleeve_comp[sl]["price"] += pnl_e
@@ -1188,6 +1260,9 @@ def simulate_book_from_plan_timeline(
                 c = _ensure_contrib(etf, row)
                 c["borrow_cost_usd"] += cost
                 c["short_credit_usd"] += credit
+                dp = _day_pair(etf, row)
+                dp["borrow_cost"] += cost
+                dp["short_credit"] += credit
                 if sl in sleeve_comp:
                     sleeve_comp[sl]["borrow"] += cost
                     sleeve_comp[sl]["credit"] += credit
@@ -1205,6 +1280,7 @@ def simulate_book_from_plan_timeline(
                     alloc = margin_cost * basis / long_total
                     row = cur.loc[etf]
                     _ensure_contrib(etf, row)["margin_cost_usd"] += alloc
+                    _day_pair(etf, row)["margin_cost"] += alloc
                     sl = str(row.get("sleeve", ""))
                     if sl in sleeve_comp:
                         sleeve_comp[sl]["margin"] += alloc
@@ -1234,6 +1310,7 @@ def simulate_book_from_plan_timeline(
                 equity=equity,
                 capital_usd=capital_usd,
                 target_notional_mode=target_notional_mode,
+                scale_sleeves_to_budget=scale_sleeves_to_budget,
             )
             target_planned_gross = float(target.attrs.get("planned_gross_usd", 0.0))
             target_tradeable_gross = float(target.attrs.get("tradeable_gross_usd", 0.0))
@@ -1250,7 +1327,11 @@ def simulate_book_from_plan_timeline(
                 if abs(new_g - old_g) > 250.0:
                     n_resized += 1
             n_resized_executed = 0
-            union = sorted(set(cur.index) | set(target.index))
+            keep_open_etfs: set[str] = set()
+            if active_plan is not None and not active_plan.empty and "keep_open" in active_plan.columns:
+                ko = active_plan.loc[active_plan["keep_open"].astype(bool), "ETF"].astype(str)
+                keep_open_etfs = set(ko.tolist())
+            union = sorted(set(cur.index) | set(target.index) | keep_open_etfs)
             for etf in union:
                 # No close bar -> cannot fill or liquidate; carry the old mark.
                 if etf not in panel or d not in panel[etf].index:
@@ -1262,7 +1343,18 @@ def simulate_book_from_plan_timeline(
                 old_b = float(old["underlying_usd"]) if old is not None else 0.0
                 new_a = float(new["etf_usd"]) if new is not None else 0.0
                 new_b = float(new["underlying_usd"]) if new is not None else 0.0
-                if use_resize_bands and old is not None and new is not None:
+                # Purgatory keep-open: hold current shares (do not liquidate).
+                if etf in keep_open_etfs and (new is None or abs(new_a) + abs(new_b) <= 1e-9):
+                    if old is None:
+                        continue
+                    new_a, new_b = old_a, old_b
+                    # Synthesize a hold "target" so downstream writes keep the row.
+                    if new is None:
+                        new = old.copy()
+                        new["etf_usd"] = old_a
+                        new["underlying_usd"] = old_b
+                        new["gross_usd"] = abs(old_a) + abs(old_b)
+                if use_resize_bands and old is not None and new is not None and etf not in keep_open_etfs:
                     new_a = _resize_band_target(
                         old_a, new_a, enter_band_pct=enter_band_pct,
                         exit_band_pct=exit_band_pct, min_trade_usd=min_trade_usd,
@@ -1289,18 +1381,31 @@ def simulate_book_from_plan_timeline(
                 ref = new if new is not None else old
                 c = _ensure_contrib(etf, ref)
                 c["txn_cost_usd"] += pair_txn
+                dp = _day_pair(etf, ref)
+                dp["txn_cost"] += pair_txn
+                if pair_turn > 1e-9:
+                    c["rebalance_dates"].append(str(pd.Timestamp(d).date()))
+                if new is not None:
+                    c["last_target_etf_usd"] = new_a
+                    c["last_target_underlying_usd"] = new_b
+                    if pd.notna(new.get("Delta")):
+                        c["Delta"] = float(pd.to_numeric(new.get("Delta"), errors="coerce") or np.nan)
                 sl = str(ref.get("sleeve", "")) if ref is not None else ""
                 if sl in sleeve_comp:
                     sleeve_comp[sl]["txn"] += pair_txn
                 if new is None or (abs(new_a) + abs(new_b) <= 1e-9):
                     if etf in cur.index:
                         cur = cur.drop(index=etf)
+                    c["end_etf_usd"] = 0.0
+                    c["end_underlying_usd"] = 0.0
                 else:
                     exec_row = new.copy()
                     exec_row["etf_usd"] = new_a
                     exec_row["underlying_usd"] = new_b
                     exec_row["gross_usd"] = abs(new_a) + abs(new_b)
                     cur.loc[etf, pos_cols] = [exec_row.get(cn, np.nan) for cn in pos_cols]
+                    c["end_etf_usd"] = new_a
+                    c["end_underlying_usd"] = new_b
 
             equity -= txn_cost
             n_rebal += 1
@@ -1326,6 +1431,47 @@ def simulate_book_from_plan_timeline(
                     "n_resize_candidates": n_resized,
                     "n_resized": n_resized_executed,
                     "equity": equity,
+                }
+            )
+
+        # Persist open-book pairs even on flat PnL days so time series stay continuous.
+        if not cur.empty:
+            for etf, row in cur.iterrows():
+                _day_pair(etf, row)
+
+        for etf, dp in day_pair.items():
+            etf_usd = float(cur.at[etf, "etf_usd"]) if etf in cur.index else 0.0
+            und_usd = float(cur.at[etf, "underlying_usd"]) if etf in cur.index else 0.0
+            daily_net = (
+                float(dp["price_pnl"])
+                - float(dp["borrow_cost"])
+                + float(dp["short_credit"])
+                - float(dp["margin_cost"])
+                - float(dp["txn_cost"])
+            )
+            pair_daily_rows.append(
+                {
+                    "date": d,
+                    "ETF": etf,
+                    "Underlying": dp["Underlying"],
+                    "sleeve": dp["sleeve"],
+                    "etf_usd": etf_usd,
+                    "underlying_usd": und_usd,
+                    "long_usd": und_usd,
+                    "short_usd": etf_usd,
+                    "hedge_ratio": (
+                        abs(und_usd) / abs(etf_usd) if abs(etf_usd) > 1e-9 else np.nan
+                    ),
+                    "price_pnl": float(dp["price_pnl"]),
+                    "borrow_cost": float(dp["borrow_cost"]),
+                    "short_credit": float(dp["short_credit"]),
+                    "margin_cost": float(dp["margin_cost"]),
+                    "txn_cost": float(dp["txn_cost"]),
+                    "daily_pnl": daily_net,
+                    "is_rebalance": int(need_rebal),
+                    "active_plan_date": (
+                        str(active_plan_date.date()) if active_plan_date is not None else None
+                    ),
                 }
             )
 
@@ -1396,6 +1542,22 @@ def simulate_book_from_plan_timeline(
             abs(float(cur.at[e, "etf_usd"])) + abs(float(cur.at[e, "underlying_usd"]))
             if e in cur.index else 0.0
         )
+        if e in cur.index:
+            end_etf = float(cur.at[e, "etf_usd"])
+            end_und = float(cur.at[e, "underlying_usd"])
+            c["end_etf_usd"] = end_etf
+            c["end_underlying_usd"] = end_und
+        else:
+            end_etf = float(c.get("end_etf_usd", 0.0) or 0.0)
+            end_und = float(c.get("end_underlying_usd", 0.0) or 0.0)
+        # Prefer last target legs for exposure / hedge (stable vs drifted marks).
+        tgt_etf = float(c.get("last_target_etf_usd", end_etf) or end_etf)
+        tgt_und = float(c.get("last_target_underlying_usd", end_und) or end_und)
+        # Convention: long_usd = underlying target; short_usd = ETF target.
+        long_usd = tgt_und
+        short_usd = tgt_etf
+        hedge_ratio = abs(tgt_und) / abs(tgt_etf) if abs(tgt_etf) > 1e-9 else np.nan
+        reb_dates = c.get("rebalance_dates") or []
         net_pair = (
             float(c["price_pnl_usd"])
             - float(c["borrow_cost_usd"])
@@ -1403,7 +1565,20 @@ def simulate_book_from_plan_timeline(
             - float(c["margin_cost_usd"])
             - float(c["txn_cost_usd"])
         )
-        pair_rows.append({**c, "pnl_usd": net_pair, "end_weight": gross_end / equity if equity > 0 else np.nan})
+        pair_rows.append(
+            {
+                **{k: v for k, v in c.items() if k != "rebalance_dates"},
+                "pnl_usd": net_pair,
+                "end_weight": gross_end / equity if equity > 0 else np.nan,
+                "long_usd": long_usd,
+                "short_usd": short_usd,
+                "end_etf_usd": end_etf,
+                "end_underlying_usd": end_und,
+                "hedge_ratio": hedge_ratio,
+                "n_rebals": int(len(reb_dates)),
+                "rebalance_dates": ";".join(reb_dates),
+            }
+        )
     pair_stats = pd.DataFrame(pair_rows)
     if not pair_stats.empty:
         pair_stats = pair_stats.sort_values("pnl_usd")
@@ -1412,6 +1587,13 @@ def simulate_book_from_plan_timeline(
         for s in ALL_SLEEVES:
             if s in sleeve_daily.columns:
                 sleeve_daily[f"{s}_cum_pnl"] = sleeve_daily[s].cumsum()
+
+    pair_daily = pd.DataFrame(pair_daily_rows)
+    if not pair_daily.empty:
+        pair_daily = pair_daily.sort_values(["sleeve", "ETF", "date"]).reset_index(drop=True)
+        pair_daily["cum_pnl"] = pair_daily.groupby(["sleeve", "ETF"], sort=False)[
+            "daily_pnl"
+        ].cumsum()
 
     meta = {
         "n_rebal": n_rebal,
@@ -1424,6 +1606,7 @@ def simulate_book_from_plan_timeline(
         "end_usd": float(nav.iloc[-1]) if len(nav) else np.nan,
         "execution_lag_sessions": int(execution_lag_sessions),
         "target_notional_mode": target_notional_mode,
+        "scale_sleeves_to_budget": bool(scale_sleeves_to_budget),
         "commission_per_share": float(commission_per_share),
         "margin_rate_annual": float(margin_rate_annual),
         "financing_daycount": float(financing_daycount),
@@ -1435,12 +1618,263 @@ def simulate_book_from_plan_timeline(
         "min_trade_usd": float(min_trade_usd),
         **perf(nav),
     }
+    meta["pair_daily"] = pair_daily
     return nav, audit, meta, pair_stats, sleeve_daily
 
 
+def _take_pair_daily(meta: dict[str, Any]) -> pd.DataFrame:
+    """Remove pair_daily from sim meta so it is not serialized into report.json."""
+    raw = meta.pop("pair_daily", None)
+    return raw if isinstance(raw, pd.DataFrame) else pd.DataFrame()
+
+
 # ---------------------------------------------------------------------------
-# GTP-approx daily sizing (primary) + legacy recompute
+# GTP-approx daily sizing (legacy) + full prod replay (primary)
 # ---------------------------------------------------------------------------
+def prod_replay_plan_timeline(
+    *,
+    cfg: dict,
+    start: pd.Timestamp,
+    end: pd.Timestamp | None = None,
+    state_root: Path | str | None = None,
+    keep_state: bool = False,
+    fallback_to_archived_plans: bool = True,
+    plans_dir: Path | str | None = None,
+) -> tuple[dict[pd.Timestamp, pd.DataFrame], pd.DataFrame]:
+    """Daily plans from full production GTP sizing on screened archives.
+
+    Carries isolated crash / EMA / ratchet / decay state forward under
+    ``state_root``. Ratchet floors use the prior day's sized plan (simulated
+    holdings), not live Flex. Does not apply the avg-borrow overlay.
+
+    When sizing fails (or returns an empty book) and
+    ``fallback_to_archived_plans`` is True, insert that date's archived
+    ``proposed_trades.csv`` if present so pre-schema-gap windows can still
+    trade from live plans (e.g. 2026-03-24, 2026-04-01).
+
+    If ``plans_dir`` is set, each accepted plan is also written to
+    ``{plans_dir}/{YYYY-MM-DD}.csv`` so simulation can be re-run without
+    re-sizing.
+    """
+    from scripts.gtp_prod_sizing import held_from_plan, size_book_from_screened
+
+    screened_dates = [d for d in list_archived_screened_dates() if d >= start]
+    if end is not None:
+        screened_dates = [d for d in screened_dates if d <= end]
+
+    # Also consider archived proposed_trades on dates without a screened CSV
+    # (common in mid-April) when fallback is enabled.
+    plan_only_dates: list[pd.Timestamp] = []
+    if fallback_to_archived_plans:
+        screened_set = set(screened_dates)
+        for d in list_archived_plan_dates():
+            if d < start:
+                continue
+            if end is not None and d > end:
+                continue
+            if d not in screened_set:
+                plan_only_dates.append(d)
+
+    own_tmp = state_root is None
+    root = Path(state_root) if state_root is not None else Path(tempfile.mkdtemp(prefix="prod_replay_state_"))
+    if not root.is_absolute():
+        root = (REPO / root).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+
+    dump_dir: Path | None = None
+    if plans_dir is not None:
+        dump_dir = Path(plans_dir)
+        if not dump_dir.is_absolute():
+            dump_dir = (REPO / dump_dir).resolve()
+        dump_dir.mkdir(parents=True, exist_ok=True)
+
+    timeline: dict[pd.Timestamp, pd.DataFrame] = {}
+    diag_rows: list[dict] = []
+    held: dict[tuple[str, str], dict[str, float]] = {}
+
+    def _store_plan(d: pd.Timestamp, plan: pd.DataFrame) -> None:
+        timeline[d] = plan
+        if dump_dir is not None:
+            plan.to_csv(dump_dir / f"{d.strftime('%Y-%m-%d')}.csv", index=False)
+
+    def _append_archived(d: pd.Timestamp, *, reason: str) -> bool:
+        nonlocal held
+        arch = load_plan_file(RUNS_DIR / d.strftime("%Y-%m-%d") / "proposed_trades.csv")
+        sized_arch = (
+            arch.loc[arch["gross_target_usd"].abs() > 1e-6].copy()
+            if not arch.empty
+            else pd.DataFrame()
+        )
+        if sized_arch.empty:
+            return False
+        _store_plan(d, arch)
+        held = held_from_plan(sized_arch)
+        b4 = sized_arch[
+            sized_arch["sleeve"].astype(str).str.lower().isin(
+                {"inverse_decay_bucket4", "bucket4", "bucket_4"}
+            )
+        ]
+        diag_rows.append(
+            {
+                "date": d,
+                "source": "archived_proposed_fallback",
+                "n_pairs": len(sized_arch),
+                "n_keep_open": int(arch["keep_open"].sum()) if "keep_open" in arch.columns else 0,
+                "gross_sum": float(sized_arch["gross_target_usd"].sum()),
+                "gross_b4": float(b4["gross_target_usd"].sum()) if len(b4) else 0.0,
+                "n_b4": int(len(b4)),
+                "n_held_in": int(len(held)),
+                "n_screened": 0,
+                "edge_source": "archived_proposed_trades",
+                "n_edge_fallback": 0,
+                "ok": True,
+                "error": reason,
+            }
+        )
+        return True
+
+    try:
+        for d in screened_dates:
+            path = RUNS_DIR / d.strftime("%Y-%m-%d") / "etf_screened_today.csv"
+            try:
+                screened = pd.read_csv(path)
+                screened, edge_diag = prepare_screened_for_prod_replay(screened)
+                sized, sdiag = size_book_from_screened(
+                    screened,
+                    d.strftime("%Y-%m-%d"),
+                    cfg,
+                    state_root=root,
+                    held_inverse_short_by_pair=held,
+                    quiet=True,
+                )
+                plan = normalize_plan(sized, source_date=d.strftime("%Y-%m-%d"))
+                sized_plan = plan.loc[plan["gross_target_usd"].abs() > 1e-6].copy()
+                if sized_plan.empty:
+                    raise ValueError("prod GTP returned empty plan")
+                _store_plan(d, plan)  # includes keep_open purgatory rows
+                held = held_from_plan(sized_plan)
+                b4 = sized_plan[
+                    sized_plan["sleeve"].astype(str).str.lower().isin(
+                        {"inverse_decay_bucket4", "bucket4", "bucket_4"}
+                    )
+                ]
+                diag_rows.append(
+                    {
+                        "date": d,
+                        "source": "prod_replay",
+                        "n_pairs": len(sized_plan),
+                        "n_keep_open": int(plan["keep_open"].sum()) if "keep_open" in plan.columns else 0,
+                        "gross_sum": float(sized_plan["gross_target_usd"].sum()),
+                        "gross_b4": float(b4["gross_target_usd"].sum()) if len(b4) else 0.0,
+                        "n_b4": int(len(b4)),
+                        "n_held_in": int(sdiag.get("n_held_pairs", 0) or 0),
+                        "n_screened": int(len(screened)),
+                        "edge_source": edge_diag.get("edge_source", ""),
+                        "n_edge_fallback": int(edge_diag.get("n_edge_fallback", 0) or 0),
+                        "ok": True,
+                        "error": "",
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001
+                if fallback_to_archived_plans and _append_archived(
+                    d, reason=f"fallback after {type(exc).__name__}: {exc}"
+                ):
+                    continue
+                diag_rows.append(
+                    {
+                        "date": d,
+                        "source": "prod_replay_failed",
+                        "n_pairs": 0,
+                        "gross_sum": 0.0,
+                        "gross_b4": 0.0,
+                        "n_b4": 0,
+                        "n_held_in": int(len(held)),
+                        "n_screened": 0,
+                        "ok": False,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+        for d in plan_only_dates:
+            _append_archived(d, reason="plan-only archive (no screened CSV)")
+    finally:
+        if own_tmp and not keep_state:
+            shutil.rmtree(root, ignore_errors=True)
+
+    return timeline, pd.DataFrame(diag_rows).sort_values("date") if diag_rows else pd.DataFrame()
+
+
+def load_cached_plan_timeline(plans_dir: Path | str) -> dict[pd.Timestamp, pd.DataFrame]:
+    """Load plans previously dumped by ``prod_replay_plan_timeline(..., plans_dir=...)``."""
+    root = Path(plans_dir)
+    if not root.is_absolute():
+        root = (REPO / root).resolve()
+    out: dict[pd.Timestamp, pd.DataFrame] = {}
+    if not root.is_dir():
+        return out
+    for path in sorted(root.glob("*.csv")):
+        try:
+            d = pd.Timestamp(path.stem)
+        except Exception:
+            continue
+        plan = normalize_plan(pd.read_csv(path), source_date=path.stem)
+        if not plan.empty:
+            out[d] = plan
+    return out
+
+
+def prepare_screened_for_prod_replay(screened: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Backtest-only shim: fill missing ``net_edge_p50_annual`` for older archives.
+
+    Live GTP treats all-NaN ``net_edge_p50_annual`` as ineligible, which zeros the
+    book on pre-2026-04-25 screened CSVs. Map from historical proxies without
+    changing live ``generate_trade_plan`` economics.
+    """
+    out = screened.copy()
+    if "Delta" not in out.columns and "Beta" in out.columns:
+        out["Delta"] = out["Beta"]
+
+    diag: dict[str, Any] = {
+        "n_rows": int(len(out)),
+        "edge_source": "net_edge_p50_annual",
+        "n_edge_fallback": 0,
+    }
+    edge = (
+        pd.to_numeric(out["net_edge_p50_annual"], errors="coerce")
+        if "net_edge_p50_annual" in out.columns
+        else pd.Series(np.nan, index=out.index)
+    )
+    if int(np.isfinite(edge.to_numpy(dtype=float)).sum()) > 0:
+        out["net_edge_p50_annual"] = edge
+        diag["edge_source"] = "net_edge_p50_annual"
+        return out, diag
+
+    fallback_cols = (
+        "net_decay_annual",
+        "blended_gross_decay",
+        "gross_decay_annual",
+    )
+    filled = pd.Series(np.nan, index=out.index, dtype=float)
+    used = "none"
+    for col in fallback_cols:
+        if col not in out.columns:
+            continue
+        cand = pd.to_numeric(out[col], errors="coerce")
+        if int(np.isfinite(cand.to_numpy(dtype=float)).sum()) == 0:
+            continue
+        # Prefer first proxy that has any finite values; fill remaining holes
+        # from later proxies.
+        if used == "none":
+            filled = cand.copy()
+            used = col
+        else:
+            filled = filled.where(np.isfinite(filled), cand)
+    out["net_edge_p50_annual"] = filled
+    diag["edge_source"] = used
+    diag["n_edge_fallback"] = int(np.isfinite(filled.to_numpy(dtype=float)).sum())
+    out["edge_used_for_prod_replay"] = used
+    return out, diag
+
+
 def prepare_screened_for_gtp_approx(screened: pd.DataFrame) -> pd.DataFrame:
     """Point-in-time GTP inputs: average borrow + current net-edge scores.
 
@@ -1917,6 +2351,7 @@ def run_replay_backtest(
         short_proceeds_credit_annual=rknobs["short_proceeds_credit_annual"],
         execution_lag_sessions=rknobs["execution_lag_sessions"],
         target_notional_mode=rknobs["target_notional_mode"],
+        scale_sleeves_to_budget=bool(rknobs.get("scale_sleeves_to_budget", True)),
         enter_band_pct=rknobs["enter_band_pct"],
         exit_band_pct=rknobs["exit_band_pct"],
         min_trade_usd=rknobs["min_trade_usd"],
@@ -1925,6 +2360,7 @@ def run_replay_backtest(
         pre_archive_policy=pre_archive_policy,
     )
 
+    pair_daily = _take_pair_daily(meta)
     book_meta = {"sleeve": "BOOK", "mode": "replay", **meta}
     summary = pd.DataFrame([book_meta])
     series = pd.DataFrame({"BOOK_NAV": nav})
@@ -1976,6 +2412,8 @@ def run_replay_backtest(
     if not sleeve_daily.empty:
         extra["sleeve_daily_pnl.csv"] = sleeve_daily
         extra["daily_diagnostics.csv"] = sleeve_daily
+    if not pair_daily.empty:
+        extra["pair_daily_pnl.csv"] = pair_daily
     _write_outputs(
         outdir=outdir,
         mode="replay",
@@ -1988,6 +2426,197 @@ def run_replay_backtest(
     print(
         f"[prod-bt:replay] BOOK CAGR={book_meta.get('cagr')} MaxDD={book_meta.get('maxdd')} "
         f"end=${book_meta.get('end_usd'):,.0f} plans={book_meta.get('n_plans_used')} cash_days={book_meta.get('cash_days')}"
+    )
+    return report
+
+
+def run_prod_replay_backtest(
+    *,
+    run_date: str,
+    start: str,
+    outdir: Path,
+    pre_archive_policy: str = "cash",
+    state_root: Path | str | None = None,
+    reuse_plans: bool = False,
+) -> dict:
+    """Primary path: full GTP stack (opt2→crash→smooth→ratchet) on screened archives."""
+    cfg = load_config(REPO / "config" / "strategy_config.yml")
+    capital = float(cfg["strategy"]["capital_usd"])
+    lev = float(cfg["strategy"]["gross_leverage"])
+    budgets = sleeve_budgets_usd(cfg)
+    rknobs = rebalance_knobs(cfg)
+    start_ts = pd.Timestamp(start)
+
+    cov = archive_coverage_summary(start)
+    print("[prod-bt:prod] archive coverage:")
+    print(cov.to_string(index=False))
+
+    plans_dir = outdir / "plans"
+    diag = pd.DataFrame()
+    if reuse_plans:
+        print(f"[prod-bt:prod] reusing cached plans from {plans_dir} ...")
+        timeline = load_cached_plan_timeline(plans_dir)
+        if not timeline:
+            raise RuntimeError(
+                f"--reuse-plans set but no plan CSVs found under {plans_dir}"
+            )
+        n_ok = len(timeline)
+        n_fail = 0
+        n_fallback = 0
+        print(f"[prod-bt:prod] timeline={len(timeline)} from cache (skip GTP sizing)")
+    else:
+        print("[prod-bt:prod] building plan timeline via full GTP sizing replay ...")
+        timeline, diag = prod_replay_plan_timeline(
+            cfg=cfg,
+            start=start_ts,
+            state_root=state_root,
+            keep_state=state_root is not None,
+            plans_dir=plans_dir,
+        )
+        if not timeline:
+            raise RuntimeError(
+                "prod replay produced empty timeline — need archived etf_screened_today.csv"
+            )
+
+        n_ok = int(diag["ok"].astype(bool).sum()) if not diag.empty and "ok" in diag.columns else 0
+        n_fail = int((~diag["ok"].astype(bool)).sum()) if not diag.empty and "ok" in diag.columns else 0
+        n_fallback = (
+            int((diag["source"] == "archived_proposed_fallback").sum()) if not diag.empty else 0
+        )
+        print(
+            f"[prod-bt:prod] timeline={len(timeline)} sized_ok={n_ok} "
+            f"sized_fail={n_fail} archived_fallback={n_fallback}"
+        )
+        if not diag.empty and "gross_b4" in diag.columns and n_ok:
+            print(
+                f"[prod-bt:prod] B4 gross median=${float(diag.loc[diag['ok'], 'gross_b4'].median()):,.0f} "
+                f"max=${float(diag.loc[diag['ok'], 'gross_b4'].max()):,.0f}"
+            )
+
+    panel = load_price_panel(run_date)
+    nav, audit, meta, pair_stats, sleeve_daily = simulate_book_from_plan_timeline(
+        timeline,
+        panel,
+        budgets=budgets,
+        capital_usd=capital,
+        start=start_ts,
+        slippage_bps=rknobs["slippage_bps"],
+        commission_per_share=rknobs["commission_per_share"],
+        margin_rate_annual=rknobs["margin_rate_annual"],
+        financing_daycount=rknobs["financing_daycount"],
+        short_proceeds_credit_annual=rknobs["short_proceeds_credit_annual"],
+        execution_lag_sessions=rknobs["execution_lag_sessions"],
+        target_notional_mode=rknobs["target_notional_mode"],
+        scale_sleeves_to_budget=bool(rknobs.get("scale_sleeves_to_budget", True)),
+        enter_band_pct=rknobs["enter_band_pct"],
+        exit_band_pct=rknobs["exit_band_pct"],
+        min_trade_usd=rknobs["min_trade_usd"],
+        check_freq="W-FRI",
+        retarget_on_plan_change=bool(rknobs.get("retarget_on_plan_change", False)),
+        pre_archive_policy=pre_archive_policy,
+    )
+
+    pair_daily = _take_pair_daily(meta)
+    book_meta = {"sleeve": "BOOK", "mode": "prod", **meta}
+    summary = pd.DataFrame([book_meta])
+    series = pd.DataFrame({"BOOK_NAV": nav})
+    if not sleeve_daily.empty:
+        for s in ALL_SLEEVES:
+            col = f"{s}_cum_pnl"
+            if col in sleeve_daily.columns:
+                series[s] = (
+                    capital + sleeve_daily.set_index("date")[col]
+                ).reindex(series.index).ffill()
+
+    b4_budget = float(budgets.get("inverse_decay_bucket4") or 0.0)
+    report = {
+        "mode": "prod",
+        "run_date": run_date,
+        "start": start,
+        "end": str(nav.index[-1].date()) if len(nav) else None,
+        "capital_usd": capital,
+        "gross_leverage": lev,
+        "budgets_usd": budgets,
+        "rebalance_knobs": rknobs,
+        "archive_coverage": cov.to_dict(orient="records"),
+        "prod_stats": {
+            "n_timeline": len(timeline),
+            "n_sized_ok": n_ok,
+            "n_sized_fail": n_fail,
+            "b4_budget_usd": b4_budget,
+            "b4_gross_median": float(diag.loc[diag["ok"], "gross_b4"].median())
+            if not diag.empty and n_ok and "gross_b4" in diag.columns
+            else None,
+            "b4_gross_max": float(diag.loc[diag["ok"], "gross_b4"].max())
+            if not diag.empty and n_ok and "gross_b4" in diag.columns
+            else None,
+        },
+        "book": {
+            k: book_meta.get(k)
+            for k in (
+                "cagr",
+                "vol",
+                "sharpe",
+                "maxdd",
+                "start_usd",
+                "end_usd",
+                "n_plans_used",
+                "first_plan",
+                "cash_days",
+            )
+        },
+        "limitations": [
+            "Daily targets from full generate_trade_plan on archived etf_screened_today.csv "
+            "(opt2 → crash → smooth → ratchet) with isolated state carried forward.",
+            "Borrow/edge inputs: screened spot borrow_current + production edge/opt2 path "
+            "(no avg-borrow overlay).",
+            "Ratchet floors from prior-day sized plan (simulated), not live Flex holdings.",
+            "Does not prefer archived proposed_trades.csv, but falls back to them when "
+            "prod sizing fails or on plan-only archive dates.",
+            "Archive gap ~Dec 2025 / sparse screened: pre-2026-04-25 archives lack "
+            "net_edge_p50_annual — prod replay shims from net_decay_annual (backtest-only).",
+            "B5 included only when GTP sizes it; no live locates / execution rejects.",
+            "Plans sized every screened day; book retargets weekly (W-FRI) with the latest plan "
+            "(share-hold between Fridays — no daily OLS hedge rebuild).",
+            "Phase-2b hysteresis on existing legs (12%/4%/$250); purgatory keep-open holds shares.",
+            "Sleeve legs scaled to YAML sleeve budgets (scale_sleeves_to_budget) then equity-scaled with NAV.",
+            "IBKR short-sale proceeds credit modelled at 3.8% annual on short notional (Actual/360); "
+            "borrow fee still charged from screened/IBKR rates.",
+            "Point-in-time legs use next-close execution, share-hold marking, 20 bp slippage, "
+            "$0.0035/share commissions, and 4.45% margin debit / Actual-360.",
+            "B3 flow excluded.",
+            "Screened archives begin 2026-02-27 for this run window (sparse thereafter).",
+        ],
+    }
+    extra: dict[str, pd.DataFrame] = {}
+    if not audit.empty:
+        extra["rebalance_audit.csv"] = audit
+    if not diag.empty:
+        extra["prod_sizing_diag.csv"] = diag
+    if not pair_stats.empty:
+        extra["pair_stats.csv"] = pair_stats
+        extra["sleeve_pnl.csv"] = (
+            pair_stats.groupby("sleeve", as_index=False)
+            .agg(n_pairs=("ETF", "count"), pnl_usd=("pnl_usd", "sum"))
+            .sort_values("pnl_usd")
+        )
+    if not sleeve_daily.empty:
+        extra["sleeve_daily_pnl.csv"] = sleeve_daily
+        extra["daily_diagnostics.csv"] = sleeve_daily
+    # Always write (even empty) so a stale file from a killed run cannot linger.
+    extra["pair_daily_pnl.csv"] = pair_daily
+    _write_outputs(
+        outdir=outdir,
+        mode="prod",
+        report=report,
+        summary=summary,
+        series=series,
+        extra_csvs=extra or None,
+    )
+    print(f"[prod-bt:prod] wrote {outdir}")
+    print(
+        f"[prod-bt:prod] BOOK CAGR={book_meta.get('cagr')} MaxDD={book_meta.get('maxdd')} "
+        f"end=${book_meta.get('end_usd'):,.0f}"
     )
     return report
 
@@ -2037,6 +2666,7 @@ def run_gtp_approx_backtest(
         short_proceeds_credit_annual=rknobs["short_proceeds_credit_annual"],
         execution_lag_sessions=rknobs["execution_lag_sessions"],
         target_notional_mode=rknobs["target_notional_mode"],
+        scale_sleeves_to_budget=bool(rknobs.get("scale_sleeves_to_budget", True)),
         enter_band_pct=rknobs["enter_band_pct"],
         exit_band_pct=rknobs["exit_band_pct"],
         min_trade_usd=rknobs["min_trade_usd"],
@@ -2047,6 +2677,7 @@ def run_gtp_approx_backtest(
         pre_archive_policy=pre_archive_policy,
     )
 
+    pair_daily = _take_pair_daily(meta)
     book_meta = {"sleeve": "BOOK", "mode": "gtp", **meta}
     summary = pd.DataFrame([book_meta])
     series = pd.DataFrame({"BOOK_NAV": nav})
@@ -2119,6 +2750,8 @@ def run_gtp_approx_backtest(
     if not sleeve_daily.empty:
         extra["sleeve_daily_pnl.csv"] = sleeve_daily
         extra["daily_diagnostics.csv"] = sleeve_daily
+    if not pair_daily.empty:
+        extra["pair_daily_pnl.csv"] = pair_daily
     _write_outputs(
         outdir=outdir,
         mode="gtp",
@@ -2177,6 +2810,7 @@ def run_recompute_backtest(
         short_proceeds_credit_annual=rknobs["short_proceeds_credit_annual"],
         execution_lag_sessions=rknobs["execution_lag_sessions"],
         target_notional_mode=rknobs["target_notional_mode"],
+        scale_sleeves_to_budget=bool(rknobs.get("scale_sleeves_to_budget", True)),
         enter_band_pct=rknobs["enter_band_pct"],
         exit_band_pct=rknobs["exit_band_pct"],
         min_trade_usd=rknobs["min_trade_usd"],
@@ -2185,6 +2819,7 @@ def run_recompute_backtest(
         pre_archive_policy=pre_archive_policy,
     )
 
+    pair_daily = _take_pair_daily(meta)
     book_meta = {"sleeve": "BOOK", "mode": "recompute", **meta}
     summary = pd.DataFrame([book_meta])
     series = pd.DataFrame({"BOOK_NAV": nav})
@@ -2242,6 +2877,8 @@ def run_recompute_backtest(
     if not sleeve_daily.empty:
         extra["sleeve_daily_pnl.csv"] = sleeve_daily
         extra["daily_diagnostics.csv"] = sleeve_daily
+    if not pair_daily.empty:
+        extra["pair_daily_pnl.csv"] = pair_daily
     _write_outputs(
         outdir=outdir,
         mode="recompute",
@@ -2263,10 +2900,19 @@ def run_production_actual_backtest(
     run_date: str,
     start: str,
     outdir: Path,
-    mode: str = "gtp",
+    mode: str = "prod",
     pre_archive_policy: str = "cash",
+    reuse_plans: bool = False,
 ) -> dict:
-    mode = str(mode or "gtp").strip().lower()
+    mode = str(mode or "prod").strip().lower()
+    if mode in ("prod", "prod_replay"):
+        return run_prod_replay_backtest(
+            run_date=run_date,
+            start=start,
+            outdir=outdir,
+            pre_archive_policy=pre_archive_policy,
+            reuse_plans=reuse_plans,
+        )
     if mode == "gtp":
         return run_gtp_approx_backtest(
             run_date=run_date,
@@ -2290,24 +2936,29 @@ def run_production_actual_backtest(
             outdir=outdir,
             pre_archive_policy=pre_archive_policy,
         )
-    raise ValueError(f"Unknown mode={mode!r}; use gtp|frozen|replay|recompute")
+    raise ValueError(f"Unknown mode={mode!r}; use prod|gtp|frozen|replay|recompute")
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run-date", default="2026-07-10", help="Price-panel run date")
-    ap.add_argument("--start", default="2025-05-01")
+    ap.add_argument("--start", default="2026-02-27")
     ap.add_argument(
         "--mode",
-        default="gtp",
-        choices=("gtp", "frozen", "replay", "recompute"),
-        help="gtp=daily GTP approx from screened (default); others are legacy",
+        default="prod",
+        choices=("prod", "gtp", "frozen", "replay", "recompute"),
+        help="prod=full GTP historical replay (default); gtp=legacy mirror approx",
     )
     ap.add_argument(
         "--pre-archive-policy",
         default="cash",
         choices=("cash", "skip"),
         help="Before first sized plan: hold cash or start calendar at first plan",
+    )
+    ap.add_argument(
+        "--reuse-plans",
+        action="store_true",
+        help="Skip GTP sizing; resimulate from outdir/plans/*.csv (split/panel fixes)",
     )
     ap.add_argument(
         "--outdir",
@@ -2319,13 +2970,14 @@ def main(argv=None) -> int:
     outdir = args.outdir
     if outdir is None:
         base = REPO / "notebooks" / "output" / "production_actual_bt"
-        outdir = base if args.mode in ("gtp", "frozen") else base / args.mode
+        outdir = base if args.mode in ("prod", "gtp", "frozen") else base / args.mode
     run_production_actual_backtest(
         run_date=args.run_date,
         start=args.start,
         outdir=outdir,
         mode=args.mode,
         pre_archive_policy=args.pre_archive_policy,
+        reuse_plans=bool(args.reuse_plans),
     )
     return 0
 

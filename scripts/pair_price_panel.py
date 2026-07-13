@@ -70,9 +70,22 @@ def apply_flex_splits_to_series(
     residual_heuristic: bool = True,
     residual_jump_threshold: float = 0.5,
 ) -> pd.Series:
-    """Return a copy of ``prices`` with flex (+ optional residual heuristic) splits applied."""
+    """Return a copy of ``prices`` with flex + overrides (+ residual heuristic).
+
+    Order matches the historical panel path so residual heuristics see the
+    post-flex series (not raw Yahoo), which matters for BAIG/BMNG-style
+    windows. Operator overrides from ``data/splits_overrides.csv`` are applied
+    after flex / legacy manuals so COYY / SNDU residuals still land even when
+    flex self-heals on an earlier crater date.
+    """
     try:
-        from splits import apply_split_events, detect_heuristic_splits, repair_split_craters
+        from splits import (
+            apply_split_events,
+            detect_heuristic_splits,
+            load_legacy_manual_overrides,
+            load_splits_overrides_csv,
+            repair_split_craters,
+        )
     except ImportError:
         return prices.copy()
 
@@ -82,11 +95,30 @@ def apply_flex_splits_to_series(
     a = a[~a.index.duplicated(keep="last")]
     # Always stitch multi-day reverse-split garbage before Flex ×N.
     a = repair_split_craters(a, sym_label=sym)
-    evs = list(smap.get(sym, []))
-    if evs:
-        a, _ = apply_split_events(a, evs, sym_label=sym)
+
+    flex_evs = list(smap.get(sym, []))
+    legacy = [
+        e
+        for e in load_legacy_manual_overrides()
+        if str(getattr(e, "symbol", "") or "").strip().upper().replace(".", "-") == sym
+    ]
+    stage1 = flex_evs + legacy
+    if stage1:
+        a, _ = apply_split_events(a, stage1, sym_label=sym)
     else:
         a = repair_split_craters(a, sym_label=sym)
+
+    overrides_path = REPO / "data" / "splits_overrides.csv"
+    if overrides_path.is_file():
+        ov = [
+            e
+            for e in load_splits_overrides_csv(overrides_path)
+            if str(getattr(e, "symbol", "") or "").strip().upper().replace(".", "-")
+            == sym
+        ]
+        if ov:
+            a, _ = apply_split_events(a, ov, sym_label=sym)
+
     if residual_heuristic:
         r_chk = a.pct_change().abs()
         if len(r_chk) and float(r_chk.max()) > residual_jump_threshold:

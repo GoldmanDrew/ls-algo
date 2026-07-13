@@ -1,32 +1,32 @@
-# Production actual backtest (frozen) — 2025-05-01 → 2026-07-10
+# Production actual backtest (prod) — 2026-02-27 → 2026-07-09
 
-Mode: **frozen**
+Mode: **prod**
 Capital: $1,050,000 × 4.0x
 
 ## Sleeve / book summary
 ```
-                sleeve  n_pairs  n_skipped                                                                                                                                                                                 skip_reasons  n_rebal  turnover_l1      start_usd  yaml_budget_usd  plan_deployed_usd        end_usd                                                                    engine   cagr    vol  sharpe   maxdd  admitted_gross_usd  cadence_base_days  cadence_k_tr  min_equity_pre_floor    rho
-        core_leveraged      218    10.0000 TXXH:not_in_panel; AMKL:not_in_panel; AXTU:not_in_panel; XNDX:not_in_panel; DRNL:not_in_panel; AAOG:not_in_panel; CATG:not_in_panel; COHH:not_in_panel; SNDG:not_in_panel; STXU:not_in_panel  59.0000       1.9659 1,801,148.2120   2,142,000.0000     1,801,148.2120 1,823,717.0480 pair_daily_returns + weekly retarget (cash for inactive; no pair_eq wipe) 0.0105 0.0420  0.2722 -0.0224                 NaN                NaN           NaN                   NaN    NaN
-            yieldboost        8     2.0000                                                                                                                                                           CRY:not_in_panel; CWY:not_in_panel  55.0000       1.8894   535,480.2387   1,932,000.0000       535,480.2387   700,484.7881 pair_daily_returns + weekly retarget (cash for inactive; no pair_eq wipe) 0.2634 0.1128  2.1807 -0.0627                 NaN                NaN           NaN                   NaN    NaN
- inverse_decay_bucket4        9     2.0000                                                                                                                                                          MUZ:not_in_panel; SSPC:not_in_panel      NaN          NaN    27,977.0860     115,500.0000       105,861.9611   116,094.4607       bucket4_dynamic_bt + production cadence/v7 + admitted-only notional 2.3213 2.4560  1.2966 -0.7865         96,223.9222            14.0000       -1.0000                   NaN    NaN
-volatility_etp_bucket5        1     0.0000                                                                                                                                                                                          NaN      NaN          NaN    10,500.0000      10,500.0000        10,500.0000    10,727.8530                         bucket5_carry_bt short-UVIX/short-SVIX (plan rho) 0.0182 0.0566  0.3488 -0.0311                 NaN                NaN           NaN           10,272.1707 1.9921
-                  BOOK      236        NaN                                                                                                                                                                                          NaN      NaN          NaN 1,050,000.0000              NaN                NaN 1,171,983.9820                                sum sleeve budgets, rescale to capital_usd 0.0967 0.0645  1.4732 -0.0551                 NaN                NaN           NaN                   NaN    NaN
+sleeve mode  n_rebal  turnover_l1  turnover_usd  cash_days first_plan  n_plans_used  start_usd      end_usd  execution_lag_sessions target_notional_mode  scale_sleeves_to_budget  commission_per_share  margin_rate_annual  financing_daycount  short_proceeds_credit_annual  retarget_on_plan_change  use_resize_bands  enter_band_pct  exit_band_pct  min_trade_usd     cagr      vol  sharpe     maxdd
+  BOOK prod       16    25.604664  2.773565e+07          2 2026-02-27            80  1050000.0 1.323562e+06                       1        equity_scaled                     True                0.0035              0.0445               360.0                         0.038                    False              True            0.12           0.04          250.0 0.897756 0.248319 2.73608 -0.047143
 ```
 
 ## Book
-- CAGR: 0.09667700469482932
-- Vol: 0.06451021469225339
-- Sharpe: 1.4732036862205293
-- MaxDD: -0.05510730313518086
-- End NAV: $1171983.9819841343
+- CAGR: 0.8977563816700336
+- Vol: 0.24831933737094683
+- Sharpe: 2.7360796081532786
+- MaxDD: -0.04714303954199206
+- End NAV: $1323562.253566446
 
 ## Limitations
-- Universe/weights frozen to run_date proposed_trades (full B4 stack when GTP wrote them).
-- B1/B2: plan leg fractions + weekly retarget; inactive names held as cash (no pair_eq wipe on NaN Fridays).
-- Prices split-adjusted via data/splits_from_flex.csv before returns.
-- B4: production cadence + v7 dynamic hedge; per-pair sim_start; skipped gross stays cash.
-- B4 sizing: opt2 → crash-cap + scale_to_budget → post-cap dilution-aware smooth → legs/ratchet.
-- B5: bucket5_carry_bt short-UVIX/short-SVIX at plan rho (not B4 dynamic-h).
-- B1/B2 ETF shorts pay borrow_current; explicit underlying borrow is charged when that leg is short.
-- B3 flow ($1,300/wk) excluded from NAV.
-- Frozen is counterfactual (today's book from --start); prefer --mode replay for PIT history.
+- Daily targets from full generate_trade_plan on archived etf_screened_today.csv (opt2 → crash → smooth → ratchet) with isolated state carried forward.
+- Borrow/edge inputs: screened spot borrow_current + production edge/opt2 path (no avg-borrow overlay).
+- Ratchet floors from prior-day sized plan (simulated), not live Flex holdings.
+- Does not prefer archived proposed_trades.csv, but falls back to them when prod sizing fails or on plan-only archive dates.
+- Archive gap ~Dec 2025 / sparse screened: pre-2026-04-25 archives lack net_edge_p50_annual — prod replay shims from net_decay_annual (backtest-only).
+- B5 included only when GTP sizes it; no live locates / execution rejects.
+- Plans sized every screened day; book retargets weekly (W-FRI) with the latest plan (share-hold between Fridays — no daily OLS hedge rebuild).
+- Phase-2b hysteresis on existing legs (12%/4%/$250); purgatory keep-open holds shares.
+- Sleeve legs scaled to YAML sleeve budgets (scale_sleeves_to_budget) then equity-scaled with NAV.
+- IBKR short-sale proceeds credit modelled at 3.8% annual on short notional (Actual/360); borrow fee still charged from screened/IBKR rates.
+- Point-in-time legs use next-close execution, share-hold marking, 20 bp slippage, $0.0035/share commissions, and 4.45% margin debit / Actual-360.
+- B3 flow excluded.
+- Screened archives begin 2026-02-27 for this run window (sparse thereafter).

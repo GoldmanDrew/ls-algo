@@ -2882,6 +2882,9 @@ def main() -> None:
                     )
                     st_b4 = build_bucket4_state(cfg_b4, bucket4_pairs=pairs_subset)
                     pw, _, _opt2_meta = compute_bucket4_weights(st_b4)
+                    if bool((_opt2_meta or {}).get("skipped_thin_book")):
+                        print(f"[WARN] B4 opt2 skipped thin book: {_opt2_meta.get('reason')}")
+                        pw = {}
                     _b4_wf_ctx["weight_solved"] = {k: float(v) for k, v in pw.items()}
                     for _ex in (_opt2_meta.get("excluded_high_borrow") or []):
                         print(
@@ -4151,7 +4154,9 @@ def main() -> None:
         # returns. Existing state is loaded and merged so days_open carries across runs.
         try:
             import json
-            gap_state_path = Path("data") / "liquidity_gap_state.json"
+            gap_state_path = Path(
+                str(paths.get("liquidity_gap_state_json", "data/liquidity_gap_state.json"))
+            )
             run_date_str = str(args.run_date)
             prior: dict[str, Any] = {}
             if gap_state_path.exists():
@@ -4195,6 +4200,37 @@ def main() -> None:
             print(f"[WARN] liquidity_gap_state.json update failed: {ex}")
 
     print("[OK] Bucket 1/2/4 position generation complete. Flow sleeve execution remains separate.")
+
+
+def size_book_from_screened(
+    screened_df,
+    run_date: str,
+    cfg,
+    *,
+    state_paths=None,
+    state_root=None,
+    held_inverse_short_by_pair=None,
+    quiet: bool = True,
+):
+    """Callable sleeve sizing for historical replay (isolated state).
+
+    Thin wrapper around ``scripts.gtp_prod_sizing.size_book_from_screened``.
+    Prefer ``state_root`` (directory); ``state_paths`` may be a Path/str root
+    for compatibility with the replay plan API.
+    """
+    from scripts.gtp_prod_sizing import size_book_from_screened as _impl
+
+    root = state_root if state_root is not None else state_paths
+    if root is None:
+        raise ValueError("size_book_from_screened requires state_root (or state_paths)")
+    return _impl(
+        screened_df,
+        run_date,
+        cfg,
+        state_root=root,
+        held_inverse_short_by_pair=held_inverse_short_by_pair,
+        quiet=quiet,
+    )
 
 
 if __name__ == "__main__":

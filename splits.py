@@ -66,7 +66,7 @@ import pandas as pd
 # ─────────────────────────────────────────────────────────────────────
 # Constants — kept consistent with prior daily_screener / etf_analytics
 # ─────────────────────────────────────────────────────────────────────
-_INTEGER_SPLIT_FACTORS: tuple[int, ...] = (2, 3, 4, 5, 10, 15, 20, 25, 50)
+_INTEGER_SPLIT_FACTORS: tuple[int, ...] = (2, 3, 4, 5, 6, 10, 15, 20, 25, 50)
 _SPLIT_RATIOS: tuple[float, ...] = tuple(
     sorted(
         set(list(_INTEGER_SPLIT_FACTORS) + [1.0 / f for f in _INTEGER_SPLIT_FACTORS]),
@@ -86,6 +86,10 @@ _ZSCORE_THRESHOLD: float = 4.0      # split jump must be > 4σ vs local vol
 # larger splits (1:10, 1:20) leave a much bigger ratio if unadjusted, so this
 # bound stays well clear of the actual split signal.
 _SELF_HEAL_RATIO_BAND: float = 3.0
+# Operator overrides / legacy manuals use a tighter band so a still-broken
+# boundary (e.g. SNDU +228% with later recovery in the lookahead window) is
+# force-applied, while a second pass on an already-fixed series still no-ops.
+_SELF_HEAL_RATIO_BAND_OVERRIDE: float = 1.25
 # Lookahead bars used when the first post-ex print is a garbage crater
 # (NBIZ/BEZ-style reverse-split windows with 1–3 bad mid prices).
 _SELF_HEAL_LOOKAHEAD: int = 5
@@ -818,6 +822,9 @@ def _self_healed(
     apply_ts: pd.Timestamp,
     factor: float,
     cumulative_pre_factor: float,
+    *,
+    band: float | None = None,
+    first_bar_only: bool = False,
 ) -> bool:
     """Decide whether to skip applying ``factor`` because the source already
     adjusted history.
@@ -825,6 +832,10 @@ def _self_healed(
     Compare last pre-bar to a *stable* post-ex price (lookahead median of
     bars near the pre level). First-print craters after reverse splits must
     not force a double-adjust.
+
+    ``first_bar_only``: use the first post print only (no lookahead). Required
+    for operator overrides where a later recovery inside the window would
+    otherwise false-skip a still-broken ex-date jump (SNDU Apr-2026).
     """
     pre_bars = series.loc[series.index < apply_ts]
     post_bars = series.loc[series.index >= apply_ts]
@@ -833,19 +844,22 @@ def _self_healed(
     pre_raw = float(pre_bars.iloc[-1])
     if pre_raw <= 0:
         return False
-    post_raw = _stable_boundary_post(series, apply_ts, pre_raw)
-    if not (np.isfinite(post_raw) and post_raw > 0):
+    heal_band = float(_SELF_HEAL_RATIO_BAND if band is None else band)
+    if first_bar_only:
         post_raw = float(post_bars.iloc[0])
-    if post_raw <= 0:
+    else:
+        post_raw = _stable_boundary_post(series, apply_ts, pre_raw, band=heal_band)
+        if not (np.isfinite(post_raw) and post_raw > 0):
+            post_raw = float(post_bars.iloc[0])
+    if not (np.isfinite(post_raw) and post_raw > 0):
         return False
     raw_ratio = post_raw / pre_raw
-    band = _SELF_HEAL_RATIO_BAND
     # Note: cumulative_pre_factor reflects prior events ALREADY APPLIED to
     # ``series`` (in-memory). So ``pre_raw`` here is already adjusted by
     # ``cumulative_pre_factor``. Comparing post / pre directly tells us the
     # raw boundary jump in the (already-prior-adjusted) series.
     del factor, cumulative_pre_factor  # retained for call-site compatibility
-    if 1.0 / band < raw_ratio < band:
+    if 1.0 / heal_band < raw_ratio < heal_band:
         return True
     return False
 
@@ -929,8 +943,22 @@ def apply_split_events(
                 continue
 
         # Self-healing — compare raw boundary ratio in the already-adjusted
-        # series.
-        if _self_healed(out, apply_ts, ev.factor, cumulative_pre_factor):
+        # series. Operator overrides / legacy manuals use a tighter band and
+        # first-bar-only check so a still-broken ex jump (SNDU +228% with later
+        # recovery in the lookahead window) still applies, while a second pass
+        # on an already-fixed series no-ops (idempotent re-runs).
+        is_override = ev.source in {"splits_overrides_csv", "manual_override_dict"}
+        heal_band = (
+            _SELF_HEAL_RATIO_BAND_OVERRIDE if is_override else _SELF_HEAL_RATIO_BAND
+        )
+        if _self_healed(
+            out,
+            apply_ts,
+            ev.factor,
+            cumulative_pre_factor,
+            band=heal_band,
+            first_bar_only=is_override,
+        ):
             if sym:
                 pre_bars = out.loc[out.index < apply_ts]
                 post_bars = out.loc[out.index >= apply_ts]

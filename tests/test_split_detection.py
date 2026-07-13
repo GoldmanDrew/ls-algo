@@ -130,15 +130,19 @@ def test_yahoo_already_adjusted_is_noop() -> None:
 # (4) News-spike non-split — must NOT correct
 # ──────────────────────────────────────────────────────────────────────
 def test_news_spike_not_corrected() -> None:
-    """A 7× news-driven spike that does NOT match an integer split factor
+    """A non-integer news spike that does NOT match a whitelist split factor
     AND is followed by similar-magnitude moves (so z-score is bounded)
     should be left alone.
+
+    Uses ~7.8× (between whitelist 6 and 10) so the loose log-space matcher
+    cannot pull it onto either neighbor — 7× previously matched ×6 after 6
+    was added to the integer whitelist for COYY residuals.
     """
     rng = np.random.default_rng(2026)
     n = 200
     rets = rng.normal(0, 0.20, size=n)  # 20 % daily vol — penny-stock realm
-    # Inject a 7× spike on day 150 — does not match an integer ratio.
-    rets[150] = np.log(7.0)
+    # Inject a 7.8× spike on day 150 — mid-gap between whitelist 6 and 10.
+    rets[150] = np.log(7.8)
     prices = 5.0 * np.exp(np.cumsum(rets))
     s = _build_series(list(prices))
 
@@ -439,3 +443,99 @@ def test_flex_reverse_split_skips_when_crater_repaired() -> None:
     assert float(r.abs().max()) < 0.5
     # Must not blow pre-history up by 10×.
     assert float(cleaned.iloc[0]) < 50.0
+
+
+# ──────────────────────────────────────────────────────────────────────
+# (13) Factor 6 whitelist + forced overrides (COYY / SNDU regressions)
+# ──────────────────────────────────────────────────────────────────────
+def test_heuristic_matches_factor_six() -> None:
+    """Raw ~6.06× reverse split must match ×6, not nearest whitelist ×5."""
+    from splits import _INTEGER_SPLIT_FACTORS
+
+    assert 6 in _INTEGER_SPLIT_FACTORS
+    assert 8 not in _INTEGER_SPLIT_FACTORS
+    rng = np.random.default_rng(608)
+    base = 3.2 * np.exp(rng.normal(0, 0.03, size=80).cumsum())
+    base[-1] = base[-2] * 6.06
+    s = _build_series(list(base), start="2026-03-01")
+    events = detect_heuristic_splits(s, sym_label="COYY")
+    assert events, "expected heuristic event on final bar"
+    assert events[-1].factor == pytest.approx(6.0)
+
+
+def test_overrides_csv_force_applies_despite_lookahead_self_heal(
+    tmp_path: Path,
+) -> None:
+    """Operator overrides must apply even when lookahead self-heal would skip.
+
+    SNDU-style: reverse jump, then multi-day plateau, then collapse back —
+    stable-post lookahead finds the recovered price and falsely self-heals.
+    """
+    # pre ~43 → inflated 142 for 3 days → back to ~40
+    prices = [44.0, 43.3] + [142.3, 142.3, 142.3] + [40.2, 52.0, 52.0]
+    s = _build_series(prices, start="2026-04-17")
+    csv = tmp_path / "overrides.csv"
+    csv.write_text(
+        dedent(
+            """\
+            symbol,ex_date,numerator,denominator,source,note
+            SNDU,2026-04-21,1,3,manual,1-for-3 reverse
+            SNDU,2026-04-27,3,1,manual,3-for-1 forward
+            """
+        ),
+        encoding="utf-8",
+    )
+    cleaned, applied = clean_split_artifacts(
+        s,
+        ticker="SNDU",
+        flex_splits_csv=None,
+        splits_overrides_csv=csv,
+        use_heuristic=False,
+        return_log=True,
+    )
+    assert len(applied) == 2
+    assert {round(e.factor, 4) for e in applied} == {3.0, round(1 / 3, 4)}
+    # Inflated window must be scaled down; no remaining >100% day in Apr window.
+    apr = cleaned.loc["2026-04-17":"2026-04-30"]
+    assert float(apr.pct_change().abs().max()) < 0.55
+    assert float(apr.max()) < 80.0
+
+
+def test_coyy_style_june_residual_fixed_by_override(tmp_path: Path) -> None:
+    """After crater lifts pre-history, 06-08 ~6× residual must apply as ×6."""
+    # Explicit calendar so the ~6× gap lands on Monday 2026-06-08 (not Fri 06-05).
+    idx = pd.to_datetime(
+        [
+            "2026-05-28",
+            "2026-05-29",
+            "2026-06-01",
+            "2026-06-02",
+            "2026-06-03",
+            "2026-06-04",
+            "2026-06-05",
+            "2026-06-08",
+            "2026-06-09",
+            "2026-06-10",
+        ]
+    )
+    vals = [3.50, 3.45, 3.45, 3.35, 3.36, 3.27, 3.27, 19.80, 19.35, 19.48]
+    s = pd.Series(vals, index=idx, dtype=float)
+    csv = tmp_path / "overrides.csv"
+    csv.write_text(
+        "symbol,ex_date,numerator,denominator,source,note\n"
+        "COYY,2026-06-08,1,6,manual,residual 1-for-6\n",
+        encoding="utf-8",
+    )
+    cleaned, applied = clean_split_artifacts(
+        s,
+        ticker="COYY",
+        flex_splits_csv=None,
+        splits_overrides_csv=csv,
+        use_heuristic=False,
+        return_log=True,
+    )
+    assert applied and applied[0].factor == pytest.approx(6.0)
+    # Boundary across 06-08 should be near continuous on post basis.
+    i = list(cleaned.index).index(pd.Timestamp("2026-06-08"))
+    ratio = float(cleaned.iloc[i]) / float(cleaned.iloc[i - 1])
+    assert 0.85 < ratio < 1.15
