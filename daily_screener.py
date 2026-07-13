@@ -181,6 +181,8 @@ leverage_pairs_leverageshares = [
     # 2026-07-07 Leverage Shares Themes — 2X long daily (Cboe-listed)
     ("GOOL", "GOOGL"), ("AMZG", "AMZN"), ("METG", "META"), ("AAPE", "AAPL"),
     ("JBLG", "JBL"),  ("VIAG", "VIAV"),
+    # 2026-07-13 Leverage Shares Themes — 2X long SK Hynix ADR (Cboe-listed)
+    ("SKHX", "SKHY"),
 ]
 
 new_pairs = [
@@ -279,6 +281,10 @@ new_pairs = [
     # 2026-06-29 Tradr 2X long daily (Cboe-listed)
     ("CIEX", "CIEN"), ("QNTU", "QNT"),  ("RMBX", "RMBS"), ("TSEU", "TSEM"),
     ("TTMX", "TTMI"),
+    # 2026-07-13 SK Hynix ADR (Nasdaq: SKHY) — 2X long launches
+    ("SK", "SKHY"),    # Corgi SK hynix 2x Daily ETF (ticker SK; vs SKHY ADR)
+    ("HYNX", "SKHY"),  # T-REX 2X Long SK Hynix Daily Target ETF
+    ("SKHL", "SKHY"),  # Direxion Daily SK Hynix Bull 2X ETF
 
     # Auto-discovered single-stock leveraged ETFs (2026-06-15)
     ("SPAL", "SPCX"),
@@ -290,6 +296,8 @@ proshares_pairs_levered = [
     ("SOLT", "SOEZ"),
     # 2026-06-12 ProShares Ultra SpaceX (2x daily long vs SPCX IPO)
     ("SPCF", "SPCX"),
+    # 2026-07-13 ProShares Ultra SK Hynix (2x daily long vs SKHY ADR)
+    ("SKHU", "SKHY"),
 ]
 
 graniteshares_pairs_leveraged = [
@@ -311,6 +319,8 @@ graniteshares_pairs_leveraged = [
     ("BIOY", "XBI"), ("FINY", "XLF"), ("FIYY", "TLT"), ("TECY", "XLK"),
     # 2026-07-07 GraniteShares 2X long daily
     ("BBUL", "BB"), ("PUL", "P"),
+    # 2026-07-13 GraniteShares 2X long SK Hynix daily
+    ("SKUU", "SKHY"),
 ]
 
 leverage_pairs_capped_accel = [
@@ -399,6 +409,8 @@ INVERSE_ETF_UNIVERSE = [
     # 2026-06-15 Leverage Shares Themes 2X Short SpaceX Daily (pending SPCX IPO)
     ("SSPC", -2, "SPCX"),
     ("UVIX", -2, "SVIX"),
+    # 2026-07-13 Leverage Shares 1X Short SK Hynix Daily ETF
+    ("SKHZ", -1, "SKHY"),
 
     # Auto-discovered inverse single-stock leveraged ETFs (2026-06-15)
     ("SNK", -2, "SPCX"),
