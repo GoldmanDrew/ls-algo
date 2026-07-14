@@ -251,6 +251,8 @@ new_pairs = [
     ("UMAL", "UMAC"),  # Defiance Daily Target 2X Long UMAC
     ("PUR", "PURR"),   # Defiance Daily Target 2X Long PURR (Hyperliquid Strategies)
     ("DRNL", "DRNZ"),  # Defiance 2X Long BITA drone index; DRNZ = REX Drone ETF proxy
+    # 2026-07-14 Defiance 2X long (Ouster)
+    ("OUSL", "OUST"),  # Defiance Daily Target 2X Long OUST
     # 2026-05-28 Direxion 2X daily bull — swap-based spot ETP refs (IBIT, ETHA, GLD, SLV)
     ("BTCU", "IBIT"), ("EVMU", "ETHA"), ("UGLD", "GLD"), ("USLV", "SLV"),
     # 2026-05-28 Tradr 2X long semiconductor singles (MCHP, NXPI, ON)
@@ -321,6 +323,8 @@ graniteshares_pairs_leveraged = [
     ("BBUL", "BB"), ("PUL", "P"),
     # 2026-07-13 GraniteShares 2X long SK Hynix daily
     ("SKUU", "SKHY"),
+    # 2026-07-14 GraniteShares 2X long daily
+    ("TDCL", "TDC"),  # GraniteShares 2x Long TDC Daily ETF (Teradata)
 ]
 
 leverage_pairs_capped_accel = [
