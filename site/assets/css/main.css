@@ -147,6 +147,24 @@ pre.raw {
   background: var(--bg-soft);
 }
 .dash-subnav a:hover { background: var(--accent); color: #fff; text-decoration: none; }
+.dash-subnav a.active { background: var(--accent); color: #fff; }
+
+/* Bucket 5 product dashboard (SPX-0DTE-style) */
+.b5p-root { display: flex; flex-direction: column; gap: 12px; }
+.b5p-guide { line-height: 1.55; }
+.b5p-guide-head .lead { font-size: 1.05rem; color: var(--text-secondary, #cbd5e1); margin: 6px 0 10px; }
+.b5p-guide-sec { margin: 14px 0; }
+.b5p-guide-sec h3 { margin: 0 0 6px; font-size: 1rem; color: var(--accent, #0f766e); }
+.b5p-guide-sec ul { margin: 6px 0 0 1.1rem; padding: 0; }
+.b5p-guide-sec li { margin: 3px 0; }
+.b5p-chart { margin: 10px 0 14px; }
+.b5p-chart h3 { font-size: 0.95rem; margin: 0 0 6px; color: var(--text-secondary, #94a3b8); }
+.b5p-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 6px; font-size: 12px; }
+.b5p-leg i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
+.b5p-controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-bottom: 10px; }
+.b5p-controls label { display: flex; gap: 8px; align-items: center; font-size: 0.9rem; }
+.b5p-controls select { min-width: 220px; }
+.b5p-subnav a { cursor: pointer; }
 
 /* ============================================================ */
 /* Buttons                                                        */
@@ -274,6 +292,191 @@ main {
 /* ============================================================ */
 .breaches { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .alert-rows { margin-top: 8px; }
+.overview-secondary {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 1fr);
+  gap: 16px;
+  margin-top: 12px;
+  align-items: start;
+}
+@media (max-width: 980px) {
+  .overview-secondary { grid-template-columns: 1fr; }
+}
+.overview-bucket-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.overview-subhead {
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+.overview-subhead h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-secondary, var(--text-muted));
+}
+.overview-alert-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.seg-filter {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.seg-btn {
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+.seg-btn.active {
+  background: var(--bg-soft);
+  color: var(--accent);
+}
+.overview-top-actions {
+  margin: 10px 0 4px;
+}
+.overview-top-actions:empty { display: none; }
+.top-action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+.top-action-card {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  background: var(--bg-soft);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  width: 100%;
+}
+.top-action-card.hard {
+  border-color: var(--neg);
+  background: var(--hard-bg);
+}
+.top-action-card.warn {
+  border-color: var(--warn, #d08b1f);
+  background: var(--warn-bg);
+}
+.top-action-card:hover { filter: brightness(1.05); }
+.top-action-card .ta-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.top-action-card .ta-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.alert-group {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.alert-group > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--bg-soft);
+  font-size: 12px;
+  font-weight: 600;
+}
+.alert-group > summary::-webkit-details-marker { display: none; }
+.alert-group.hard-group > summary { border-left: 3px solid var(--neg); }
+.alert-group.warn-group > summary { border-left: 3px solid var(--warn, #d08b1f); }
+.alert-group .alert-group-count {
+  margin-left: auto;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.alert-group .alert-table { margin: 0; }
+.alert-group td a.alert-goto,
+button.alert-goto {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.overview-bucket-pnl-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 560px) {
+  .overview-bucket-pnl-grid { grid-template-columns: 1fr; }
+}
+.overview-bucket-period {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.overview-bucket-period .period-label {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.overview-bucket-period .period-total {
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin: 2px 0 8px;
+}
+.overview-bucket-period .pnl-bucket-bars { margin-top: 0; }
+.overview-bucket-period .pnl-bucket-row { gap: 6px; }
+.overview-bucket-period .pnl-bucket-label { font-size: 11px; min-width: 72px; }
+.overview-bucket-period .pnl-bucket-val { font-size: 11px; min-width: 64px; }
+.pnl-bucket-clickable {
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 2px 0;
+}
+.pnl-bucket-clickable:hover {
+  background: rgba(22, 83, 126, 0.08);
+}
+.overview-bucket-risk .risk-bucket-table td:first-child {
+  cursor: pointer;
+  color: var(--accent);
+}
+.cockpit-strip .stat.stat-stale {
+  border-color: var(--warn, #d08b1f);
+  background: var(--warn-bg);
+}
+.spark-wrap { position: relative; display: inline-block; }
+.spark-wrap[title] { cursor: help; }
+.btn-tiny {
+  font-size: 11px;
+  padding: 2px 8px;
+}
 .pill {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;

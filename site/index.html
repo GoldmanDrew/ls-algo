@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="referrer" content="no-referrer">
 <title>ls-algo Risk Dashboard</title>
-<link rel="stylesheet" href="./assets/css/main.css?v=2026-07-04-tabs">
+<link rel="stylesheet" href="./assets/css/main.css?v=2026-07-14-ov2">
 </head>
 <body>
 
@@ -60,6 +60,7 @@
     <nav id="dashboard-tabs" class="tabs dashboard-tabs" aria-label="Dashboard sections">
       <button type="button" class="tab active" data-dash-tab="overview">Overview</button>
       <button type="button" class="tab" data-dash-tab="pnl">P&amp;L</button>
+      <button type="button" class="tab" data-dash-tab="b5">B5 Product</button>
       <button type="button" class="tab" data-dash-tab="risk">Risk models</button>
       <button type="button" class="tab" data-dash-tab="book">Book</button>
       <button type="button" class="tab" data-dash-tab="data">Data</button>
@@ -73,7 +74,38 @@
           <div id="data-quality" class="quality-line"></div>
         </div>
         <div id="cockpit-strip" class="strip cockpit-strip"></div>
-        <div id="alert-rows" class="alert-rows"></div>
+        <div id="overview-top-actions" class="overview-top-actions"></div>
+        <div class="overview-secondary">
+          <div class="overview-alerts">
+            <div class="panel-head overview-subhead">
+              <h3>Alerts</h3>
+              <div class="overview-alert-controls">
+                <span id="overview-alert-meta" class="dim small"></span>
+                <div class="seg-filter" id="alert-status-filter" role="group" aria-label="Alert severity filter">
+                  <button type="button" class="seg-btn active" data-alert-filter="hard">Hard</button>
+                  <button type="button" class="seg-btn" data-alert-filter="all">All</button>
+                </div>
+              </div>
+            </div>
+            <div id="alert-rows" class="alert-rows"></div>
+          </div>
+          <div class="overview-bucket-col">
+            <div class="overview-bucket-pnl">
+              <div class="panel-head overview-subhead">
+                <h3>P&amp;L by bucket</h3>
+                <button type="button" id="overview-pnl-link" class="btn btn-ghost btn-tiny">Open P&amp;L tab</button>
+              </div>
+              <div id="overview-bucket-pnl"></div>
+            </div>
+            <div class="overview-bucket-risk">
+              <div class="panel-head overview-subhead">
+                <h3>Risk by bucket</h3>
+                <button type="button" id="overview-book-link" class="btn btn-ghost btn-tiny">Open Book tab</button>
+              </div>
+              <div id="overview-bucket-risk"></div>
+            </div>
+          </div>
+        </div>
         <div id="dq-drilldown" class="dq-drilldown" hidden></div>
       </section>
       <section id="actions-section" class="panel">
@@ -145,7 +177,6 @@
       <nav id="risk-subnav" class="dash-subnav" aria-label="Risk model sections">
         <a href="#slide-risk-section">Slide risk</a>
         <a href="#b4sim-section">B4 sim</a>
-        <a href="#b5bt-section">B5 insurance</a>
         <a href="#borrow-shock-section">Borrow shocks</a>
       </nav>
       <section id="slide-risk-section" class="panel">
@@ -161,13 +192,6 @@
           <div id="b4sim-meta" class="quality-line"></div>
         </div>
         <div id="b4sim-content"></div>
-      </section>
-      <section id="b5bt-section" class="panel">
-        <div class="panel-head">
-          <h2>Bucket 5 insurance backtest &mdash; UVIX/SVIX carry + SPX puts</h2>
-          <div id="b5bt-meta" class="quality-line"></div>
-        </div>
-        <div id="b5bt-content"></div>
       </section>
       <section id="borrow-shock-section" class="panel">
         <div class="panel-head">
@@ -249,6 +273,13 @@
       </section>
     </div>
 
+    <!-- B5 Product (SPX-0DTE-style) -->
+    <div id="dash-tab-b5" class="dash-tab-panel" data-dash-tab="b5" hidden>
+      <section id="b5-product-section" class="panel panel-hero">
+        <div id="b5-product-content"></div>
+      </section>
+    </div>
+
     <!-- Data -->
     <div id="dash-tab-data" class="dash-tab-panel" data-dash-tab="data" hidden>
       <section id="raw-data-section" class="panel">
@@ -273,8 +304,9 @@
   <span id="deploy-meta" class="dim small"></span>
 </footer>
 
-<script src="./assets/js/config.js?v=2026-07-04-tabs"></script>
+<script src="./assets/js/config.js?v=2026-07-14-b5p"></script>
 <script src="./assets/js/auth.js?v=2026-05-19-login-fix"></script>
-<script src="./assets/js/app.js?v=2026-07-04-tabs"></script>
+<script src="./assets/js/bucket5_product.js?v=2026-07-14-b5p"></script>
+<script src="./assets/js/app.js?v=2026-07-14-ov2"></script>
 </body>
 </html>

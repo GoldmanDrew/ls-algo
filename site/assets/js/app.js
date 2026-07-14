@@ -58,6 +58,13 @@
     dataQuality: document.getElementById("data-quality"),
     dqDrilldown: document.getElementById("dq-drilldown"),
     alertRows: document.getElementById("alert-rows"),
+    overviewAlertMeta: document.getElementById("overview-alert-meta"),
+    overviewBucketPnl: document.getElementById("overview-bucket-pnl"),
+    overviewBucketRisk: document.getElementById("overview-bucket-risk"),
+    overviewTopActions: document.getElementById("overview-top-actions"),
+    overviewPnlLink: document.getElementById("overview-pnl-link"),
+    overviewBookLink: document.getElementById("overview-book-link"),
+    alertStatusFilter: document.getElementById("alert-status-filter"),
     scenarioContent: document.getElementById("scenario-content"),
     contributorContent: document.getElementById("contributor-content"),
     factorSummary: document.getElementById("factor-summary"),
@@ -84,8 +91,10 @@
     dashboardTabs: document.getElementById("dashboard-tabs"),
   };
 
-  const DASH_TAB_IDS = ["overview", "pnl", "risk", "book", "data"];
+  const DASH_TAB_IDS = ["overview", "pnl", "b5", "risk", "book", "data"];
   let _lastSnap = null;
+  let _alertFilter = "hard";
+  let _alertRowsCache = [];
   const _tabRendered = new Set();
 
   /* ----------------------- Formatters ------------------------- */
@@ -445,6 +454,8 @@
     const max = Math.max(...real);
     const span = max - min || 1;
     const n = cleaned.length;
+    const dates = opts?.dates || [];
+    const fmt = opts?.format || ((v) => String(Number(v).toFixed(2)));
     const pts = cleaned.map((v, i) => {
       const x = (i / (n - 1)) * (width - 2) + 1;
       if (v == null) return null;
@@ -462,10 +473,11 @@
       }
     });
     if (buf.length) segments.push(buf);
+    const stroke = opts?.stroke || "#16537e";
     const polylines = segments
       .map(
         (s) =>
-          `<polyline fill="none" stroke="${opts?.stroke || "#16537e"}" stroke-width="1.4" points="${s.join(
+          `<polyline fill="none" stroke="${stroke}" stroke-width="1.4" points="${s.join(
             " "
           )}"/>`
       )
@@ -474,9 +486,21 @@
     const lastIdx = cleaned.lastIndexOf(lastVal);
     const lastX = (lastIdx / (n - 1)) * (width - 2) + 1;
     const lastY = height - 2 - ((lastVal - min) / span) * (height - 4);
-    return `<svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" class="spark">${polylines}<circle cx="${lastX.toFixed(
+    const tipLines = [];
+    cleaned.forEach((v, i) => {
+      if (v == null || Number.isNaN(v)) return;
+      const d = dates[i] || `pt ${i + 1}`;
+      tipLines.push(`${d}: ${fmt(v)}`);
+    });
+    const tip = tipLines.slice(-8).join("\n");
+    const tipEsc = tip
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+    return `<span class="spark-wrap" title="${tipEsc}"><svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" class="spark"><title>${tipEsc}</title>${polylines}<circle cx="${lastX.toFixed(
       1
-    )}" cy="${lastY.toFixed(1)}" r="1.6" fill="${opts?.stroke || "#16537e"}"/></svg>`;
+    )}" cy="${lastY.toFixed(1)}" r="1.6" fill="${stroke}"/></svg></span>`;
   }
 
   function pnlBarChartSvg(rows, opts) {
@@ -529,13 +553,18 @@
     const entries = Object.entries(buckets || {}).filter(([, v]) => v != null && Math.abs(v) > 0.5);
     if (!entries.length) return `<p class="dim">No bucket moves in this period.</p>`;
     const maxAbs = Math.max(...entries.map(([, v]) => Math.abs(Number(v))), 1);
+    const clickable = !!opts?.clickable;
     const rows = entries
       .sort((a, b) => Math.abs(Number(b[1])) - Math.abs(Number(a[1])))
       .map(([k, v]) => {
         const pct = (Math.abs(Number(v)) / maxAbs) * 100;
         const cls = Number(v) >= 0 ? "pos" : "neg";
         const lbl = (labels && labels[k]) || k;
-        return `<div class="pnl-bucket-row">
+        const clickCls = clickable ? " pnl-bucket-clickable" : "";
+        const attrs = clickable
+          ? ` data-bucket="${safeText(k)}" role="button" tabindex="0" title="Open P&amp;L for ${safeText(lbl)}"`
+          : "";
+        return `<div class="pnl-bucket-row${clickCls}"${attrs}>
           <div class="pnl-bucket-label">${safeText(lbl)}</div>
           <div class="pnl-bucket-track"><div class="pnl-bucket-fill ${cls}" style="width:${pct.toFixed(1)}%"></div></div>
           <div class="pnl-bucket-val num ${cls}">${fmtUsdSigned(v)}</div>
@@ -883,23 +912,36 @@
     const book = snap.book || {};
     const worst = snap.worst_shock || {};
     const top = worst.top_contributor || {};
-    const alertRows = snap.alert_rows || [];
     const factor = snap.factor_panel || {};
     const factorTotals = factor.totals || {};
     const history = snap.history || [];
     const deltas = snap.deltas || {};
+    const freshness = snap.freshness || {};
+    const dates = history.map((h) => h?.run_date);
 
     const series = (key) => history.map((h) => h?.[key]);
     const dailyPnlSeries = series("pnl_daily_usd");
     const hasDailyPnl = dailyPnlSeries.some((v) => v != null && !Number.isNaN(v));
+    const coverage = factorTotals.beta_coverage_gross_pct;
+    const coverageLow = coverage != null && coverage < 0.85;
+    const staleDays = freshness.data_age_days;
+    const stale = staleDays != null && staleDays > 1;
 
     const items = [
       {
         label: "NAV",
         value: fmtUsd(book.nav_usd),
-        sub: snap.nav_source ? `source: ${snap.nav_source}` : "",
-        spark: sparklineSvg(series("nav_usd")),
-        delta: "",
+        sub: [
+          snap.nav_source ? `source: ${snap.nav_source}` : "",
+          stale ? `data age ${staleDays}d` : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        spark: sparklineSvg(series("nav_usd"), {
+          dates,
+          format: (v) => fmtUsd(v),
+        }),
+        cls: stale ? "stale" : "neutral",
       },
       {
         label: "P&L today",
@@ -912,7 +954,10 @@
                 "prior"
               )}`,
         cls: signedClass(book.pnl_daily_usd),
-        spark: sparklineSvg(hasDailyPnl ? dailyPnlSeries : series("pnl_cum_usd")),
+        spark: sparklineSvg(hasDailyPnl ? dailyPnlSeries : series("pnl_cum_usd"), {
+          dates,
+          format: (v) => fmtUsdSigned(v),
+        }),
       },
       {
         label: "P&L YTD",
@@ -927,7 +972,10 @@
         label: "Gross / NAV",
         value: fmtPct(book.gross_exposure_pct_nav, 0),
         sub: fmtUsd(book.gross_notional_usd),
-        spark: sparklineSvg(series("gross_pct_nav")),
+        spark: sparklineSvg(series("gross_pct_nav"), {
+          dates,
+          format: (v) => fmtPct(v, 0),
+        }),
         delta: deltaBadge(deltas.delta_gross_pct_nav, { isPct: true }),
       },
       {
@@ -935,7 +983,10 @@
         value: fmtPct(book.net_exposure_pct_nav, 1),
         sub: fmtUsd(book.net_notional_usd),
         cls: signedClass(book.net_notional_usd),
-        spark: sparklineSvg(series("net_pct_nav")),
+        spark: sparklineSvg(series("net_pct_nav"), {
+          dates,
+          format: (v) => fmtPct(v, 1),
+        }),
         delta: deltaBadge(deltas.delta_net_pct_nav, { isPct: true, lowerIsBetter: false }),
       },
       {
@@ -944,37 +995,39 @@
           factorTotals.net_beta_to_spy == null
             ? "-"
             : factorTotals.net_beta_to_spy.toFixed(2) + "x",
-        sub: factorTotals.beta_coverage_gross_pct == null
-          ? "coverage unknown"
-          : `${fmtPct(factorTotals.beta_coverage_gross_pct, 0)} computed`,
-        cls: signedClass(factorTotals.net_beta_to_spy),
-        spark: sparklineSvg(series("net_beta_to_spy")),
+        sub: [
+          coverage == null ? "coverage unknown" : `${fmtPct(coverage, 0)} coverage`,
+          coverageLow ? "LOW" : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        cls: coverageLow ? "stale" : signedClass(factorTotals.net_beta_to_spy),
+        spark: sparklineSvg(series("net_beta_to_spy"), {
+          dates,
+          format: (v) => `${Number(v).toFixed(2)}x`,
+        }),
         delta: deltaBadge(deltas.delta_net_beta_to_spy, { lowerIsBetter: false }),
-      },
-      {
-        label: "Worst scenario contributor",
-        value: safeText(top.underlying, "none"),
-        sub: `${safeText(worst.scenario || worst.label, "no scenario")} / ${fmtUsdSigned(top.pnl_usd)}`,
-        cls: signedClass(top.pnl_usd),
       },
       {
         label: "Worst slide P&L",
         value: fmtUsdSigned(worst.pnl_usd),
-        sub: `${safeText(worst.scenario || worst.label, "no scenario")} / ${fmtPct(
-          worst.pnl_pct_nav ?? worst.total_pnl_pct_nav,
-          2
-        )}`,
+        sub: [
+          safeText(worst.scenario || worst.label, "no scenario"),
+          fmtPct(worst.pnl_pct_nav ?? worst.total_pnl_pct_nav, 2),
+          top.underlying ? `top ${top.underlying}` : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
         cls: signedClass(worst.pnl_usd ?? worst.pnl_pct_nav),
-        spark: sparklineSvg(series("worst_shock_pct_nav"), { stroke: "#c0392b" }),
-        delta: deltaBadge(deltas.delta_worst_shock_pct_nav, { isPct: true, lowerIsBetter: false }),
-      },
-      {
-        label: "Alerts",
-        value: String(alertRows.length),
-        sub: `${alertRows.filter((r) => r.status === "hard").length} hard`,
-        cls: alertRows.some((r) => r.status === "hard") ? "neg" : "",
-        spark: sparklineSvg(series("n_alerts_hard"), { stroke: "#c0392b" }),
-        delta: deltaBadge(deltas.delta_n_alerts_hard, { isInt: true }),
+        spark: sparklineSvg(series("worst_shock_pct_nav"), {
+          stroke: "#c0392b",
+          dates,
+          format: (v) => fmtPct(v, 1),
+        }),
+        delta: deltaBadge(deltas.delta_worst_shock_pct_nav, {
+          isPct: true,
+          lowerIsBetter: false,
+        }),
       },
     ];
     els.cockpitStrip.innerHTML = items
@@ -982,7 +1035,7 @@
         (it) => `
         <div class="stat stat-${it.cls || "neutral"}">
           <div class="label">${it.label}</div>
-          <div class="value ${it.cls || ""}">${it.value}</div>
+          <div class="value ${it.cls === "stale" ? "warn" : it.cls || ""}">${it.value}</div>
           ${it.delta ? `<div class="delta-row">${it.delta}</div>` : ""}
           ${it.sub ? `<div class="sub">${it.sub}</div>` : ""}
           ${it.spark ? `<div class="spark-row">${it.spark}</div>` : ""}
@@ -1034,38 +1087,328 @@
     }</div>`;
   }
 
+  function scrollDashSection(sectionId) {
+    const el = document.getElementById(sectionId);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function selectBookBucket(bucketKey) {
+    if (!els.bucketTabs || !bucketKey || !_lastSnap) return;
+    const btn = els.bucketTabs.querySelector(`button.tab[data-bucket="${bucketKey}"]`);
+    if (!btn) return;
+    els.bucketTabs.querySelectorAll("button.tab").forEach((b) => b.classList.toggle("active", b === btn));
+    renderBucketContent(bucketKey, (_lastSnap.buckets || {})[bucketKey]);
+  }
+
+  function navigateTo(tabId, opts = {}) {
+    if (opts.bucket && tabId === "pnl") {
+      _pnlPanelState.moversBucket = opts.bucket;
+    }
+    switchDashboardTab(tabId, { snap: _lastSnap });
+    requestAnimationFrame(() => {
+      if (opts.bucket && tabId === "book") {
+        selectBookBucket(opts.bucket);
+      }
+      if (opts.bucket && tabId === "pnl") {
+        const sel = document.getElementById("movers-bucket");
+        if (sel) {
+          sel.value = opts.bucket;
+        }
+        if (_pnlRepaintMovers) _pnlRepaintMovers(_lastSnap);
+      }
+      if (opts.sectionId) scrollDashSection(opts.sectionId);
+    });
+  }
+
+  function alertNavigateTarget(r) {
+    const cat = String(r.category || "");
+    const metric = String(r.metric || "");
+    if (cat === "market_risk" || metric.startsWith("slide:")) {
+      return { tab: "risk", sectionId: "slide-risk-section" };
+    }
+    if (cat === "borrow_availability" || metric.startsWith("borrow_squeeze:")) {
+      return { tab: "book", sectionId: "borrow-section" };
+    }
+    if (cat === "borrow_cost" || metric.startsWith("borrow_apr:")) {
+      return { tab: "book", sectionId: "borrow-section" };
+    }
+    if (cat === "concentration") {
+      return { tab: "book", sectionId: "concentration-section" };
+    }
+    if (cat === "book_exposure") {
+      return { tab: "book", sectionId: "sleeve-section" };
+    }
+    return { tab: "book", sectionId: "buckets-section" };
+  }
+
+  function alertRowHtml(r) {
+    const limit =
+      r.limit && typeof r.limit === "object"
+        ? `warn ${r.limit.warn}, hard ${r.limit.hard}`
+        : "-";
+    const isSqueeze = String(r.metric || "").startsWith("borrow_squeeze:");
+    const metricSub = formatSqueezeAlertSource(r);
+    const value = isSqueeze
+      ? formatSqueezeAlertValue(r)
+      : typeof r.value === "number"
+      ? r.value.toFixed(3)
+      : safeText(r.value, "-");
+    const nav = alertNavigateTarget(r);
+    return `<tr class="${rowStatusClass(r.status)}">
+      <td>${statusPill(r.status)}</td>
+      <td><strong>${safeText(r.label || r.metric)}</strong><div class="dim small">${metricSub}</div></td>
+      <td class="num">${value}</td>
+      <td>${limit}</td>
+      <td><button type="button" class="alert-goto" data-goto-tab="${nav.tab}" data-goto-section="${nav.sectionId || ""}">${safeText(
+      r.action,
+      "review"
+    )}</button></td>
+    </tr>`;
+  }
+
   function renderAlerts(rows) {
-    if (!rows || !rows.length) {
+    _alertRowsCache = rows || [];
+    const list = _alertRowsCache;
+    const nHard = list.filter((r) => r.status === "hard").length;
+    const nWarn = list.filter((r) => r.status === "warn").length;
+    if (els.overviewAlertMeta) {
+      els.overviewAlertMeta.textContent = list.length
+        ? `${list.length} total · ${nHard} hard · ${nWarn} warn`
+        : "";
+    }
+    if (els.alertStatusFilter) {
+      els.alertStatusFilter.querySelectorAll("[data-alert-filter]").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.alertFilter === _alertFilter);
+      });
+    }
+    if (!list.length) {
       els.alertRows.innerHTML = `<span class="pill pill-ok">No risk alerts</span>`;
       return;
     }
-    els.alertRows.innerHTML = `
-      <table class="tight alert-table"><thead><tr>
-        <th>Status</th><th>Category</th><th>Metric</th><th>Value</th><th>Limit</th><th>Action</th>
-      </tr></thead><tbody>${rows
-        .slice(0, 12)
-        .map((r) => {
-          const limit =
-            r.limit && typeof r.limit === "object"
-              ? `warn ${r.limit.warn}, hard ${r.limit.hard}`
-              : "-";
-          const isSqueeze = String(r.metric || "").startsWith("borrow_squeeze:");
-          const metricSub = formatSqueezeAlertSource(r);
-          const value = isSqueeze
-            ? formatSqueezeAlertValue(r)
-            : typeof r.value === "number"
-            ? r.value.toFixed(3)
-            : safeText(r.value, "-");
-          return `<tr class="${rowStatusClass(r.status)}">
-            <td>${statusPill(r.status)}</td>
-            <td class="dim small">${safeText(r.category_label || r.category, "-")}</td>
-            <td><strong>${safeText(r.label || r.metric)}</strong><div class="dim small">${metricSub}</div></td>
-            <td class="num">${value}</td>
-            <td>${limit}</td>
-            <td>${safeText(r.action, "review")}</td>
-          </tr>`;
-        })
-        .join("")}</tbody></table>`;
+    const filtered =
+      _alertFilter === "hard" ? list.filter((r) => r.status === "hard") : list;
+    if (!filtered.length) {
+      els.alertRows.innerHTML = `<p class="dim small">No hard alerts. Switch filter to All to see warnings.</p>`;
+      return;
+    }
+
+    const byCat = new Map();
+    filtered.forEach((r) => {
+      const key = r.category_label || r.category || "Other";
+      if (!byCat.has(key)) byCat.set(key, []);
+      byCat.get(key).push(r);
+    });
+
+    const groups = [...byCat.entries()].sort((a, b) => {
+      const aHard = a[1].some((r) => r.status === "hard") ? 0 : 1;
+      const bHard = b[1].some((r) => r.status === "hard") ? 0 : 1;
+      if (aHard !== bHard) return aHard - bHard;
+      return b[1].length - a[1].length;
+    });
+
+    els.alertRows.innerHTML = groups
+      .map(([label, groupRows]) => {
+        const hardN = groupRows.filter((r) => r.status === "hard").length;
+        const warnN = groupRows.length - hardN;
+        const hasHard = hardN > 0;
+        const open = hasHard || _alertFilter === "hard" ? " open" : "";
+        const gCls = hasHard ? "hard-group" : "warn-group";
+        return `<details class="alert-group ${gCls}"${open}>
+          <summary>
+            ${statusPill(hasHard ? "hard" : "warn")}
+            <span>${safeText(label)}</span>
+            <span class="alert-group-count">${groupRows.length}${
+          hardN && warnN ? ` · ${hardN} hard / ${warnN} warn` : ""
+        }</span>
+          </summary>
+          <table class="tight alert-table"><thead><tr>
+            <th>Status</th><th>Metric</th><th>Value</th><th>Limit</th><th>Action</th>
+          </tr></thead><tbody>${groupRows.map(alertRowHtml).join("")}</tbody></table>
+        </details>`;
+      })
+      .join("");
+
+    els.alertRows.querySelectorAll(".alert-goto").forEach((btn) => {
+      btn.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        navigateTo(btn.dataset.gotoTab || "book", {
+          sectionId: btn.dataset.gotoSection || "",
+        });
+      });
+    });
+  }
+
+  function bindAlertFilter() {
+    if (!els.alertStatusFilter || els.alertStatusFilter.dataset.bound) return;
+    els.alertStatusFilter.dataset.bound = "1";
+    els.alertStatusFilter.querySelectorAll("[data-alert-filter]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        _alertFilter = btn.dataset.alertFilter || "all";
+        renderAlerts(_alertRowsCache);
+      });
+    });
+  }
+
+  function renderTopActions(queuePayload) {
+    if (!els.overviewTopActions) return;
+    const actions = Array.isArray(queuePayload) ? queuePayload : queuePayload?.items || [];
+    const top = actions.filter((a) => a.status === "hard").slice(0, 3);
+    if (!top.length) {
+      els.overviewTopActions.innerHTML = "";
+      return;
+    }
+    els.overviewTopActions.innerHTML = `
+      <div class="panel-head overview-subhead">
+        <h3>Priority actions</h3>
+        <button type="button" class="btn btn-ghost btn-tiny" id="overview-actions-link">Full queue</button>
+      </div>
+      <div class="top-action-grid">${top
+        .map(
+          (a, i) => `<button type="button" class="top-action-card ${a.status || "hard"}" data-top-action="${i}">
+          <div class="ta-title">${safeText(a.title)}</div>
+          <div class="ta-meta">${safeText(a.sleeve, "-")} · ${safeText(
+            a.breach_category_label || a.category,
+            ""
+          )}</div>
+          <div class="ta-meta">${safeText(
+            (a.detail || "").slice(0, 120) + ((a.detail || "").length > 120 ? "…" : ""),
+            ""
+          )}</div>
+        </button>`
+        )
+        .join("")}</div>`;
+    const link = document.getElementById("overview-actions-link");
+    if (link) {
+      link.addEventListener("click", () => scrollDashSection("actions-section"));
+    }
+    els.overviewTopActions.querySelectorAll("[data-top-action]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const a = top[Number(btn.dataset.topAction)];
+        if (!a) return;
+        const fake = {
+          category: a.breach_category || a.category,
+          metric: a.category,
+        };
+        const nav = alertNavigateTarget(fake);
+        navigateTo(nav.tab, { sectionId: nav.sectionId, bucket: a.sleeve });
+      });
+    });
+  }
+
+  function overviewBucketPeriodHtml(periodData, labels, title) {
+    if (!periodData || !periodData.buckets) {
+      return `<div class="overview-bucket-period"><div class="period-label">${safeText(title)}</div><p class="dim small">No data</p></div>`;
+    }
+    const buckets = {};
+    PNL_RECON_KEYS.forEach((k) => {
+      if (periodData.buckets[k] != null) buckets[k] = periodData.buckets[k];
+    });
+    return `<div class="overview-bucket-period">
+      <div class="period-label">${safeText(title)}</div>
+      <div class="period-total value ${signedClass(periodData.book_usd)}">${fmtUsdSigned(periodData.book_usd)}</div>
+      <div class="dim small" style="margin-bottom:6px">${fmtPct(periodData.book_pct_nav, 2)} of NAV</div>
+      ${pnlBucketBarsHtml(buckets, labels, { caption: "", clickable: true })}
+    </div>`;
+  }
+
+  function bindBucketBarClicks(root) {
+    if (!root) return;
+    root.querySelectorAll(".pnl-bucket-clickable[data-bucket]").forEach((row) => {
+      const go = () => navigateTo("pnl", { bucket: row.dataset.bucket });
+      row.addEventListener("click", go);
+      row.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          go();
+        }
+      });
+    });
+  }
+
+  function renderOverviewBucketPnl(snap) {
+    if (!els.overviewBucketPnl) return;
+    const panel = snap.pnl_panel || {};
+    if (!panel.available) {
+      els.overviewBucketPnl.innerHTML = `<p class="dim">${safeText(
+        panel.reason,
+        "P&amp;L history unavailable"
+      )}</p>`;
+      return;
+    }
+    const labels = panel.bucket_labels || {};
+    const periods = panel.periods || {};
+    els.overviewBucketPnl.innerHTML = `
+      <div class="overview-bucket-pnl-grid">
+        ${overviewBucketPeriodHtml(periods.today, labels, "Today")}
+        ${overviewBucketPeriodHtml(periods.ytd, labels, "YTD")}
+      </div>
+      <p class="dim small" style="margin-top:8px">Click a bucket bar to open name attribution · source ${safeText(
+        panel.source,
+        "pnl history"
+      )}</p>`;
+    bindBucketBarClicks(els.overviewBucketPnl);
+  }
+
+  function renderOverviewBucketRisk(snap) {
+    if (!els.overviewBucketRisk) return;
+    const factor = snap.factor_panel || {};
+    const byBucket = factor.by_bucket || [];
+    const labels = (snap.pnl_panel || {}).bucket_labels || {};
+    const coverage = (factor.totals || {}).beta_coverage_gross_pct;
+    if (!byBucket.length) {
+      els.overviewBucketRisk.innerHTML = `<p class="dim">${safeText(
+        factor.reason,
+        "Bucket beta unavailable"
+      )}</p>`;
+      return;
+    }
+    const rows = byBucket
+      .filter((r) => PNL_RECON_KEYS.includes(r.bucket))
+      .map((r) => {
+        const lbl = r.bucket_label || labels[r.bucket] || r.bucket;
+        return `<tr data-bucket="${safeText(r.bucket)}">
+          <td>${safeText(lbl)}</td>
+          <td class="num ${signedClass(r.net_beta_to_spy)}">${
+          r.net_beta_to_spy == null ? "-" : Number(r.net_beta_to_spy).toFixed(2) + "x"
+        }</td>
+          <td class="num">${fmtUsd(r.gross_notional_usd)}</td>
+          <td class="num ${signedClass(r.net_notional_usd)}">${fmtUsdSigned(r.net_notional_usd)}</td>
+        </tr>`;
+      })
+      .join("");
+    const covNote =
+      coverage == null
+        ? ""
+        : coverage < 0.85
+        ? `<div class="callout warn" style="margin-bottom:8px">Beta coverage ${fmtPct(
+            coverage,
+            0
+          )} — treat net beta as incomplete.</div>`
+        : `<p class="dim small" style="margin-bottom:6px">Beta coverage ${fmtPct(coverage, 0)}</p>`;
+    els.overviewBucketRisk.innerHTML = `${covNote}
+      <table class="tight risk-bucket-table"><thead><tr>
+        <th>Bucket</th><th class="num">Net β SPY</th><th class="num">Gross</th><th class="num">Net</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+      <p class="dim small" style="margin-top:6px">Click a bucket to open Book detail</p>`;
+    els.overviewBucketRisk.querySelectorAll("tr[data-bucket]").forEach((tr) => {
+      tr.addEventListener("click", () => {
+        navigateTo("book", { bucket: tr.dataset.bucket, sectionId: "buckets-section" });
+      });
+    });
+  }
+
+  function bindOverviewLinks() {
+    if (els.overviewPnlLink && !els.overviewPnlLink.dataset.bound) {
+      els.overviewPnlLink.dataset.bound = "1";
+      els.overviewPnlLink.addEventListener("click", () => navigateTo("pnl"));
+    }
+    if (els.overviewBookLink && !els.overviewBookLink.dataset.bound) {
+      els.overviewBookLink.dataset.bound = "1";
+      els.overviewBookLink.addEventListener("click", () =>
+        navigateTo("book", { sectionId: "factor-section" })
+      );
+    }
   }
 
   function scenarioHeatClass(pct) {
@@ -2464,10 +2807,20 @@
         () => renderPnlPanel(snap),
         () => renderMovers(snap),
       ],
+      b5: [
+        () => {
+          const el = document.getElementById("b5-product-content");
+          if (window.Bucket5Product && el) {
+            window.Bucket5Product.mount(el, snap.bucket5_product || null);
+          } else if (el) {
+            el.innerHTML =
+              '<div class="callout dim">Bucket 5 product UI missing. Ensure <code>bucket5_product.js</code> is loaded and <code>bucket5_product.json</code> is in the snapshot.</div>';
+          }
+        },
+      ],
       risk: [
         () => renderSlideRisk(snap.slide_risk_panel || {}),
         () => renderBucket4Sim(snap.bucket4_risk_sim || null),
-        () => renderBucket5Backtest(snap.bucket5_backtest || null),
         () => renderBorrowShock(snap.borrow_shock_panel || {}, snap.nav_usd),
       ],
       book: [
@@ -4391,7 +4744,12 @@
       () => renderFreshness(snap),
       () => renderDataQuality(snap.data_quality || {}),
       () => renderCockpit(snap),
+      () => renderTopActions(snap.action_queue || []),
       () => renderAlerts(snap.alert_rows || []),
+      () => bindAlertFilter(),
+      () => renderOverviewBucketPnl(snap),
+      () => renderOverviewBucketRisk(snap),
+      () => bindOverviewLinks(),
       () => renderActionQueue(snap.action_queue || []),
     ];
     for (const step of coreSteps) {
