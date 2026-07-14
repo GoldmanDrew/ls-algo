@@ -184,6 +184,7 @@ Everything operational reads from this file. **Do not treat the table below as a
 | **`portfolio.sleeves.yieldboost`** | YieldBoost / bucket‑2 sleeve: **`is_yieldboost`** names from the screener only, `rules.min_net_edge_annual`, `weighting`; budget vs core from **`target_weight`**. |
 | **`portfolio.sleeves.inverse_decay_bucket4`** | Inverse decay pairs: **`enabled`**, **`target_weight`** (budget *ceiling*), opt2 + crash-budget rules, ratchet, weighting. See [Bucket 4 sizing](#bucket-4-sizing). |
 | **`portfolio.sleeves.volatility_etp_bucket5`** | Vol ETPs (UVIX/SVIX, …): separate small sleeve under B4 rules block; **`target_weight`** of total gross. |
+| **B5 Product dashboard** | SPX-0DTE-style Overview / Regime / Daily for the insurance research stack: `python scripts/build_bucket5_product_dashboard.py` → `risk_dashboard/data/bucket5_product.json` (also synced to etf-dashboard). Live GTP sleeve remains the tiny book allocation above. |
 | **`portfolio.sleeves.flow_program`** | Flow shorts universe, schedule, **`fixed_usd_per_week`** (or deployment base from YAML), **fixed weights** summing to **1.0**. |
 
 `generate_trade_plan.py` documents sleeve behaviour in its module docstring; keep YAML and that docstring aligned when you change rules.

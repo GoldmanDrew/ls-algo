@@ -2810,12 +2810,30 @@
       b5: [
         () => {
           const el = document.getElementById("b5-product-content");
-          if (window.Bucket5Product && el) {
-            window.Bucket5Product.mount(el, snap.bucket5_product || null);
-          } else if (el) {
+          if (!el) return;
+          if (!window.Bucket5Product) {
             el.innerHTML =
-              '<div class="callout dim">Bucket 5 product UI missing. Ensure <code>bucket5_product.js</code> is loaded and <code>bucket5_product.json</code> is in the snapshot.</div>';
+              '<div class="callout dim">Bucket 5 product UI missing. Ensure <code>bucket5_product.js</code> is loaded.</div>';
+            return;
           }
+          if (snap.bucket5_product) {
+            window.Bucket5Product.mount(el, snap.bucket5_product);
+            return;
+          }
+          el.innerHTML = '<p class="dim">Loading Bucket 5 product dashboard…</p>';
+          const url = "./data/bucket5_product.json";
+          fetch(`${url}?t=${Math.floor(Date.now() / 60000)}`, { cache: "no-store" })
+            .then((r) => {
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              return r.json();
+            })
+            .then((d) => window.Bucket5Product.mount(el, d))
+            .catch((e) => {
+              el.innerHTML =
+                `<div class="callout dim">No Bucket 5 product data (<code>${url}</code>). ` +
+                `Run <code>python scripts/build_bucket5_product_dashboard.py</code> and deploy <code>risk_dashboard/data/bucket5_product.json</code>. ` +
+                `(${e.message || e})</div>`;
+            });
         },
       ],
       risk: [
@@ -4400,337 +4418,6 @@
         <th>Book net $</th><th>Δ</th>
         <th>Sleeve sum</th><th>Gross sum</th>
       </tr></thead><tbody>${rows}</tbody></table>`;
-  }
-
-  function b5SeriesPath(series, width, height, pad, yTransform) {
-    if (!series || series.length < 2) return "";
-    const xs = series.map((_, i) => pad + (i / (series.length - 1)) * (width - 2 * pad));
-    const ys = series.map((pt) => {
-      const v = yTransform(Number(pt[1]));
-      return v;
-    });
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
-    const span = maxY - minY || 1;
-    const coords = xs.map((x, i) => {
-      const y = height - pad - ((ys[i] - minY) / span) * (height - 2 * pad);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    });
-    return coords.join(" ");
-  }
-
-  function b5DualChart(equitySeries, ddSeries, title) {
-    const w = 720;
-    const hEq = 170;
-    const hDd = 100;
-    const padL = 42;
-    const padR = 8;
-    const padT = 18;
-    const padB = 22;
-    const eqVals = (equitySeries || []).map((p) => Number(p[1]) / 1e6);
-    const ddVals = (ddSeries || []).map((p) => Number(p[1]) * 100);
-    const eqMin = Math.min(...eqVals, 0);
-    const eqMax = Math.max(...eqVals, 1);
-    const ddMin = Math.min(...ddVals, -5);
-    const ddMax = Math.max(...ddVals, 0);
-    const yEq = (v) => hEq - padB - ((v - eqMin) / (eqMax - eqMin || 1)) * (hEq - padT - padB);
-    const yDd = (v) => hDd - padB - ((v - ddMin) / (ddMax - ddMin || 1)) * (hDd - padT - padB);
-    const xAt = (i, n, h) => padL + (i / Math.max(1, n - 1)) * (w - padL - padR);
-    const eqPath = eqVals.length >= 2
-      ? eqVals.map((v, i) => `${xAt(i, eqVals.length, hEq).toFixed(1)},${yEq(v).toFixed(1)}`).join(" ")
-      : "";
-    const ddPath = ddVals.length >= 2
-      ? ddVals.map((v, i) => `${xAt(i, ddVals.length, hDd).toFixed(1)},${yDd(v).toFixed(1)}`).join(" ")
-      : "";
-    const eqTicks = dashNiceTicks(eqMin, eqMax, 4);
-    const ddTicks = dashNiceTicks(ddMin, ddMax, 4);
-    const dates = (equitySeries || []).map((p) => p[0]);
-    const xLabels = dates.length >= 2
-      ? [0, Math.floor(dates.length / 2), dates.length - 1].map((i) =>
-          `<text x="${xAt(i, dates.length, hEq).toFixed(1)}" y="${hEq + hDd + 8}" fill="#64748b" font-size="9" text-anchor="middle">${safeText(String(dates[i]).slice(0, 10))}</text>`
-        ).join("")
-      : "";
-    return `
-      <div class="b5bt-chart-block">
-        <h4>${title}</h4>
-        <svg viewBox="0 0 ${w} ${hEq + hDd + 14}" width="100%" style="max-width:${w}px">
-          <text x="${padL}" y="12" class="dim" font-size="11">Equity ($M)</text>
-          ${dashSvgYAxis(padL, hEq, eqTicks, yEq, (v) => v.toFixed(1))}
-          <polyline fill="none" stroke="#0f766e" stroke-width="2" points="${eqPath}"/>
-          <line x1="${padL}" y1="${hEq + 4}" x2="${w - padR}" y2="${hEq + 4}" stroke="#cbd5e1" stroke-width="0.5"/>
-          <text x="${padL}" y="${hEq + 18}" class="dim" font-size="11">Drawdown (%)</text>
-          ${dashSvgYAxis(padL, hDd, ddTicks, (v) => hEq + 6 + yDd(v), (v) => v.toFixed(0))}
-          <polyline fill="none" stroke="#991b1b" stroke-width="1.2" transform="translate(0,${hEq + 6})" points="${ddPath}"/>
-          ${xLabels}
-        </svg>
-      </div>`;
-  }
-
-  function renderAssumptionSections(sections) {
-    if (!sections || !sections.length) return "";
-    return sections.map((sec) => {
-      const rows = (sec.rows || []).map(([k, v]) => `<tr><td>${safeText(k)}</td><td>${safeText(v)}</td></tr>`).join("");
-      return `<details class="callout dim small" style="margin:6px 0"><summary><strong>${safeText(sec.title)}</strong></summary>` +
-        `<table class="tight" style="margin-top:6px"><tbody>${rows}</tbody></table></details>`;
-    }).join("");
-  }
-
-  function b5NearestGridPoint(grid, sleeve, premium, stress) {
-    if (!grid || !grid.points || !grid.points.length) return null;
-    let best = grid.points[0];
-    let bestD = Infinity;
-    for (const p of grid.points) {
-      const d =
-        Math.abs(p.sleeve_frac - sleeve) +
-        Math.abs(p.total_premium - premium) * 10 +
-        Math.abs(p.borrow_stress_mult - stress) * 0.05;
-      if (d < bestD) {
-        bestD = d;
-        best = p;
-      }
-    }
-    return best;
-  }
-
-  function renderBucket5Backtest(panel) {
-    const content = document.getElementById("b5bt-content");
-    const meta = document.getElementById("b5bt-meta");
-    if (!content) return;
-    if (!panel || !panel.variants) {
-      if (meta) meta.innerHTML = statusPill("unknown", "B5 backtest data not available");
-      content.innerHTML =
-        '<div class="callout dim">No Bucket 5 backtest panel. Run <code>python scripts/build_bucket5_backtest_panel.py --with-sensitivity</code> then rebuild the dashboard.</div>';
-      return;
-    }
-    const grid = panel.sensitivity_grid || null;
-    const labCmd = safeText(panel.lab_command, "streamlit run scripts/bucket5_lab.py");
-    if (meta) {
-      meta.innerHTML =
-        `<span class="dim">as of ${safeText(panel.run_date)} · generated ${safeText(panel.generated_at_utc)} · ` +
-        `full parameter lab: <code>${labCmd}</code></span>`;
-    }
-    const variantKeys = Object.keys(panel.variants);
-    const defaultKey = variantKeys.includes("F_extended") ? "F_extended" : variantKeys[0];
-    const options = variantKeys
-      .map((k) => {
-        const v = panel.variants[k];
-        return `<option value="${k}">${safeText(v.label || k)} (${safeText(v.era)})</option>`;
-      })
-      .join("");
-    const axes = (grid && grid.axes) || {};
-    const sleeveOpts = (axes.sleeve_frac || [0.15, 0.20, 0.25])
-      .map((v) => `<option value="${v}">${Math.round(v * 100)}%</option>`)
-      .join("");
-    const premOpts = (axes.total_premium || [0.024, 0.03])
-      .map((v) => `<option value="${v}">${(v * 100).toFixed(1)}%</option>`)
-      .join("");
-    const stressOpts = (axes.borrow_stress_mult || [1.0, 1.5, 2.0])
-      .map((v) => `<option value="${v}">${v.toFixed(1)}×</option>`)
-      .join("");
-
-    content.innerHTML = `
-      <div class="callout dim small">
-        Short UVIX + short SVIX carry with SPX put hedge, T-bill collateral, and liquidate-and-redeploy monetization.
-        <strong>Interactive lab:</strong> run <code>${labCmd}</code> locally for full sweeps, tornado charts, and preset save/load.
-      </div>
-      <div class="b4sim-controls strip" style="margin:10px 0;gap:14px;flex-wrap:wrap">
-        <label class="b4sim-ctl">Variant
-          <select id="b5bt-variant">${options}</select>
-        </label>
-        <label class="b4sim-ctl">Compare to
-          <select id="b5bt-compare"><option value="">— none —</option>${options}</select>
-        </label>
-      </div>
-      ${grid ? `
-      <div class="callout warn small" style="margin:8px 0">
-        <strong>Precomputed sensitivity</strong> (F dynamic deep-skew, ${safeText(grid.era || "extended")}):
-        snap sliders to nearest grid point. For continuous exploration use the Streamlit lab.
-      </div>
-      <div class="b4sim-controls strip" style="margin:0 0 10px;gap:14px;flex-wrap:wrap">
-        <label class="b4sim-ctl">Sleeve gross
-          <select id="b5bt-sleeve">${sleeveOpts}</select>
-        </label>
-        <label class="b4sim-ctl">Premium / roll
-          <select id="b5bt-prem">${premOpts}</select>
-        </label>
-        <label class="b4sim-ctl">Borrow stress
-          <select id="b5bt-stress">${stressOpts}</select>
-        </label>
-      </div>
-      <div id="b5bt-grid-stats" class="strip"></div>
-      <div id="b5bt-grid-charts" class="two-col"></div>
-      <p id="b5bt-grid-takeaway" class="callout dim small" style="margin:6px 0 10px"></p>
-      ` : `<p class="dim small">Rebuild with <code>--with-sensitivity</code> to enable grid sliders here.</p>`}
-      <div id="b5bt-stats" class="strip"></div>
-      <p id="b5bt-takeaway" class="callout dim small" style="margin:6px 0 10px"></p>
-      <div id="b5bt-livebook"></div>
-      <div id="b5bt-regime"></div>
-      <div id="b5bt-charts" class="two-col"></div>
-      <div id="b5bt-crash"></div>
-      <div id="b5bt-assumptions"></div>
-      <div id="b5bt-combined"></div>`;
-
-    const variantEl = document.getElementById("b5bt-variant");
-    const compareEl = document.getElementById("b5bt-compare");
-    variantEl.value = defaultKey;
-
-    function renderVariant(key, compareKey) {
-      const v = panel.variants[key];
-      if (!v) return;
-      const m = v.metrics || {};
-      const statsEl = document.getElementById("b5bt-stats");
-      const chartsEl = document.getElementById("b5bt-charts");
-      const crashEl = document.getElementById("b5bt-crash");
-      const assumEl = document.getElementById("b5bt-assumptions");
-      const liveEl = document.getElementById("b5bt-livebook");
-      const regimeEl = document.getElementById("b5bt-regime");
-      const combinedEl = document.getElementById("b5bt-combined");
-      const ddCls = (v) => (v <= -0.4 ? "stat-neg" : v <= -0.25 ? "stat-warn" : "");
-      const stats = [
-        { label: "CAGR", value: fmtPct(m.combined_CAGR, 1), tip: "Compound annual growth rate of combined equity." },
-        { label: "Vol", value: fmtPct(m.combined_Vol, 1), tip: "Annualized volatility of daily returns." },
-        { label: "Max DD", value: fmtPct(m.combined_MaxDD, 1), cls: ddCls(m.combined_MaxDD), tip: "Worst peak-to-trough drawdown over the backtest." },
-        { label: "Sharpe", value: safeText(m.combined_Sharpe), tip: "Return per unit of volatility (higher is better)." },
-        { label: "Calmar", value: safeText(m.combined_Calmar), tip: "CAGR divided by max drawdown (return per unit of pain)." },
-        { label: "Realized $", value: fmtUsd(m["realized_$"]), tip: "Cash harvested by monetizing the put hedge during vol spikes." },
-      ];
-      statsEl.innerHTML = stats
-        .map((s) => {
-          const valCls = s.cls === "stat-neg" ? "neg" : s.cls === "stat-warn" ? "warn" : "";
-          return `<div class="summary-card ${s.cls || ""}" title="${s.tip || ""}"><div class="label">${s.label}</div><div class="value ${valCls}">${s.value}</div></div>`;
-        })
-        .join("");
-      const takeawayEl = document.getElementById("b5bt-takeaway");
-      if (takeawayEl) {
-        const cg = (m.combined_CAGR != null ? m.combined_CAGR * 100 : null);
-        const dd = (m.combined_MaxDD != null ? m.combined_MaxDD * 100 : null);
-        takeawayEl.innerHTML =
-          `<strong>In plain English:</strong> ${safeText(v.label || key)} compounded at ` +
-          `<strong>${cg == null ? "—" : cg.toFixed(1) + "%/yr"}</strong> with a worst drawdown of ` +
-          `<strong>${dd == null ? "—" : dd.toFixed(1) + "%"}</strong>, harvesting ` +
-          `<strong>${fmtUsd(m["realized_$"])}</strong> from the put hedge. ` +
-          `The crash payoffs below show what it makes when the market gaps down.`;
-      }
-
-      const eq = (v.series || {}).combined_equity || [];
-      const dd = (v.series || {}).drawdown || [];
-      let chartsHtml = b5DualChart(eq, dd, v.label || key);
-      if (compareKey && panel.variants[compareKey]) {
-        const c = panel.variants[compareKey];
-        chartsHtml += b5DualChart(
-          (c.series || {}).combined_equity || [],
-          (c.series || {}).drawdown || [],
-          (c.label || compareKey) + " (compare)"
-        );
-      }
-      chartsEl.innerHTML = chartsHtml;
-
-      const crash = v.crash || {};
-      const crashRows = Object.entries(crash)
-        .map(([k, val]) => `<tr><td>${safeText(k)}</td><td class="num">${fmtPct(val, 1)}</td></tr>`)
-        .join("");
-      crashEl.innerHTML = `<h3>Stylized crash payoffs</h3><table class="tight"><thead><tr><th>Scenario</th><th class="num">Combined P&amp;L</th></tr></thead><tbody>${crashRows}</tbody></table>`;
-
-      const a = v.assumptions || {};
-      assumEl.innerHTML =
-        `<details open class="callout dim small" style="margin-top:12px"><summary><strong>How this backtest works (all assumptions)</strong></summary>` +
-        renderAssumptionSections(v.assumption_sections) +
-        `<p class="dim" style="margin-top:8px">Quick summary: UVIX borrow ${fmtPct(a.borrow_uvix_annual, 2)}/yr · SVIX ${fmtPct(a.borrow_svix_annual, 2)}/yr · ` +
-        `slippage ${safeText(a.uvix_slip_bps)} bps · T-bills ${fmtPct(a.tbill_rate, 2)}/yr · sleeve ${fmtPct(a.sleeve_frac, 0)} · ` +
-        `${safeText(v.meta?.pricing_mode || "")} · ${safeText(v.meta?.start)}→${safeText(v.meta?.end)}` +
-        (v.monetize_summary ? ` · ${v.monetize_summary.event_count} monetize events (${fmtUsd(v.monetize_summary.total_usd)} harvested in sim)` : "") +
-        `</p></details>`;
-
-      if (liveEl && panel.live_book && panel.live_book.rows && panel.live_book.rows.length) {
-        const lb = panel.live_book.rows.map((r) =>
-          `<tr><td>${safeText(r.etf)}</td><td>${safeText(r.underlying)}</td>` +
-          `<td class="num">${fmtUsd(r.proposed_gross_usd)}</td><td class="num">${fmtUsd(r.optimal_gross_usd)}</td>` +
-          `<td class="num">${fmtPct(r.borrow_annual, 1)}</td><td>${r.locate_ok ? "yes" : "no"}</td></tr>`
-        ).join("");
-        liveEl.innerHTML = `<h3>Live B5 book (proposed trades ${safeText(panel.live_book.run_date)})</h3>` +
-          `<table class="tight"><thead><tr><th>ETF</th><th>Und</th><th class="num">Proposed $</th><th class="num">Optimal $</th><th class="num">Borrow</th><th>Locate</th></tr></thead><tbody>${lb}</tbody></table>`;
-      } else if (liveEl) liveEl.innerHTML = "";
-
-      if (regimeEl && panel.regime && panel.regime.label) {
-        regimeEl.innerHTML = `<p class="callout dim small"><strong>VIX regime (latest in backtest):</strong> ${safeText(panel.regime.label)} · ratio ${safeText(panel.regime.ratio)} as of ${safeText(panel.regime.date)}</p>`;
-      } else if (regimeEl) regimeEl.innerHTML = "";
-
-      if (combinedEl) {
-        const b4 = (window.__dashboardSnap && window.__dashboardSnap.bucket4_risk_sim) || null;
-        const crash30 = crash["crash_severe_-30%"];
-        let html = `<details class="callout dim small"><summary><strong>B4 + B5 combined lens</strong></summary>`;
-        if (b4 && b4.reference_mc && b4.reference_mc.block_bootstrap) {
-          const p95 = b4.reference_mc.block_bootstrap.dd_p95;
-          html += `<p>B4 structural tail (ref bootstrap p95 maxDD ~${fmtPct(p95, 0)}) vs B5 crash -30% payoff ${fmtPct(crash30, 0)} on this variant. ` +
-            `Insurance sleeve harvests when vol spikes; size B4 for survivable drawdown and B5 for convex crash payoffs.</p>`;
-        } else {
-          html += `<p>Rebuild B4 risk sim to compare tail drawdown with B5 crash payoffs side by side.</p>`;
-        }
-        html += `<p class="dim">Full exploration: <code>${labCmd}</code></p></details>`;
-        combinedEl.innerHTML = html;
-      }
-    }
-
-    function renderGridPoint() {
-      if (!grid) return;
-      const sleeveEl = document.getElementById("b5bt-sleeve");
-      const premEl = document.getElementById("b5bt-prem");
-      const stressEl = document.getElementById("b5bt-stress");
-      const gStats = document.getElementById("b5bt-grid-stats");
-      const gCharts = document.getElementById("b5bt-grid-charts");
-      const gTake = document.getElementById("b5bt-grid-takeaway");
-      if (!sleeveEl || !gStats) return;
-      const pt = b5NearestGridPoint(
-        grid,
-        parseFloat(sleeveEl.value),
-        parseFloat(premEl.value),
-        parseFloat(stressEl.value)
-      );
-      if (!pt) return;
-      const ddCls = (v) => (v <= -0.4 ? "stat-neg" : v <= -0.25 ? "stat-warn" : "");
-      gStats.innerHTML = [
-        { label: "Grid CAGR", value: fmtPct(pt.CAGR, 1) },
-        { label: "Grid Max DD", value: fmtPct(pt.MaxDD, 1), cls: ddCls(pt.MaxDD) },
-        { label: "Grid Sharpe", value: safeText(pt.Sharpe) },
-        { label: "Grid Calmar", value: safeText(pt.Calmar) },
-        { label: "Realized $", value: fmtUsd(pt.realized_usd) },
-        { label: "Crash -30%", value: fmtPct(pt.crash_severe, 1) },
-      ]
-        .map((s) => `<div class="summary-card ${s.cls || ""}"><div class="label">${s.label}</div><div class="value">${s.value}</div></div>`)
-        .join("");
-      if (gCharts) {
-        const ser = pt.series || {};
-        if (ser.combined_equity && ser.combined_equity.length) {
-          gCharts.innerHTML = b5DualChart(
-            ser.combined_equity,
-            ser.drawdown || [],
-            `Grid point equity (sleeve ${fmtPct(pt.sleeve_frac, 0)}, prem ${fmtPct(pt.total_premium, 1)}, stress ${pt.borrow_stress_mult.toFixed(1)}×)`
-          );
-        } else {
-          gCharts.innerHTML = `<p class="dim small">Rebuild sensitivity grid to include equity curves per grid point.</p>`;
-        }
-      }
-      if (gTake) {
-        gTake.innerHTML =
-          `<strong>Grid point:</strong> sleeve ${fmtPct(pt.sleeve_frac, 0)}, premium ${fmtPct(pt.total_premium, 1)}/roll, ` +
-          `borrow stress ${pt.borrow_stress_mult.toFixed(1)}×. ` +
-          (pt.series && pt.series.combined_equity ? `Equity curve above is from the precomputed grid.` : `Preset variant charts below.`);
-      }
-    }
-
-    function update() {
-      renderVariant(variantEl.value, compareEl.value || null);
-      renderGridPoint();
-    }
-    variantEl.addEventListener("change", update);
-    compareEl.addEventListener("change", update);
-    if (grid) {
-      ["b5bt-sleeve", "b5bt-prem", "b5bt-stress"].forEach((id) => {
-        const el = document.getElementById(id);
-        if (el) el.addEventListener("change", renderGridPoint);
-      });
-    }
-    update();
   }
 
   function renderAll(snap) {

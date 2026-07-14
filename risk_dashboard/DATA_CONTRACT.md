@@ -35,7 +35,16 @@ git SHA, and workflow run id. Snapshots embed this under `manifest` + `data_qual
   (`portfolio.sleeves.*.target_weight`, B4 vol-ETP carve-out). Denominator for
   drift is `capital_usd × gross_leverage` (book target gross), not deployed
   reconcile gross. Bucket 3 (flow overlay) has no % target.
-- **Bucket 5** — shown in UI and email groups; not in B1+B2+B4 reconcile gate.
+- **Bucket 5 (book sleeve)** — shown in UI and email groups; not in B1+B2+B4 reconcile gate.
+- **Bucket 5 Product dashboard** — standalone JSON
+  `risk_dashboard/data/bucket5_product.json`
+  (`schema: bucket5_product_dashboard.v1`) from
+  `scripts/build_bucket5_product_dashboard.py`. Fetched by the **B5 Product**
+  tab (not embedded in `latest.json`). Contains strategy guide, full daily
+  path, sparsified marks, regime panels, and live GTP sleeve day tags.
+  Deploy copies it to `site/data/bucket5_product.json`. Legacy
+  `bucket5_backtest` panel may still exist for rollback but is no longer the
+  primary UI.
 - **NAV % metrics** — `metric / nav_usd` where `nav_usd` is broker-derived when available
   (`flex_positions:percentOfNAV_median` or equity Flex tags).
 

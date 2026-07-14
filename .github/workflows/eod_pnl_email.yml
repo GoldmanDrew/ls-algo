@@ -260,6 +260,8 @@ jobs:
           mkdir -p site/data
           cp risk_dashboard/data/latest.json site/data/latest.json
           cp risk_dashboard/data/index.json site/data/index.json 2>/dev/null || true
+          cp risk_dashboard/data/bucket5_product.json site/data/bucket5_product.json 2>/dev/null || true
+          cp risk_dashboard/data/investors.json site/data/investors.json 2>/dev/null || true
 
       - name: Inject build metadata
         run: |

@@ -62,7 +62,8 @@ def _nav_from_config(config_yml: Path | None = None) -> tuple[float, str]:
 # heavy accounting build) and keyed onto the payload under the same name.
 AUX_PANELS = {
     "bucket4_risk_sim": "bucket4_risk_sim.json",
-    "bucket5_backtest": "bucket5_backtest.json",
+    "bucket5_backtest": "bucket5_backtest.json",  # legacy thin panel (rollback)
+    # bucket5_product.json is fetched separately by the B5 Product tab (too large for latest.json)
 }
 
 

@@ -104,10 +104,16 @@ Flex equity when present. The snapshot records where NAV came from in
 
 * **Freshness badge** — header pill comparing the snapshot's `run_date` to the
   latest accounting run + its age in days (`fresh` / `Nd old` / `stale snapshot`).
-* **Bucket 5 (volatility ETP)** — a first-class sleeve everywhere B1/B2/B4 are:
-  sleeve table, bucket tabs, factor-by-bucket, data-quality scan. It is shown
-  but **not** added to the exposure reconciliation set (which mirrors
+* **Bucket 5 (volatility ETP) sleeve** — a first-class *book* sleeve everywhere
+  B1/B2/B4 are: sleeve table, bucket tabs, factor-by-bucket, data-quality scan.
+  It is shown but **not** added to the exposure reconciliation set (which mirrors
   `ibkr_accounting`: B1+B2+B4 + unbucketed net).
+* **B5 Product tab** — SPX-0DTE-style product dashboard (Overview strategy guide,
+  Regime, Daily marks) for the UVIX/SVIX + SPX put *insurance research* stack.
+  Built by `python scripts/build_bucket5_product_dashboard.py` →
+  `risk_dashboard/data/bucket5_product.json`, deployed as
+  `site/data/bucket5_product.json` and fetched by the tab (not embedded in
+  `latest.json`). Do not confuse with the tiny live GTP vol-ETP sleeve above.
 * **P&L naming** — `pnl_ytd_*` (strategy cumulative) is explicit; `pnl_daily_*`
   is the true day-over-day move vs the prior snapshot. Cockpit shows both.
 * **Performance & drawdown** — daily/YTD P&L, current & max drawdown of the
