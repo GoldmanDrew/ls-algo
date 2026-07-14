@@ -537,3 +537,4 @@ date,symbol,underlying,bucket,pair,type,category,amount_usd,ex_date,description
 2026-07-10,QQQ,QQQ,bucket_1,QQQ (spot),Dividends,dividends,1.63,2026-06-22,QQQ(US46090E1038) CASH DIVIDEND USD 0.81349 PER SHARE (Ordinary Dividend)
 2026-07-10,TSM,TSM,bucket_1,TSM (spot),Dividends,dividends,41.33,2026-06-11,TSM(US8740391003) CASH DIVIDEND USD 0.939325 PER SHARE (Ordinary Div - NRA Withholding Exempt)
 2026-07-10,TSM,TSM,bucket_1,TSM (spot),Withholding Tax,withholding_tax,-8.68,,TSM(US8740391003) CASH DIVIDEND USD 0.939325 PER SHARE - TW TAX
+2026-07-13,BABA,BABA,bucket_2,BABA (spot),Dividends,dividends,246.75,2026-06-11,BABA(US01609W1027) CASH DIVIDEND USD 1.05 PER SHARE (Ordinary Dividend)
