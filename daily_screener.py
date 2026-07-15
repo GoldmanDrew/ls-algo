@@ -376,6 +376,8 @@ BENCHMARK_MAP = {
     "AMD": "AMD", "ASTS": "ASTS", "BMNR": "BMNR", "CBRS": "CBRS", "HOOD": "HOOD", "IONQ": "IONQ",
     "OKLO": "OKLO", "PLTR": "PLTR", "QBTS": "QBTS", "RGTI": "RGTI", "RKLB": "RKLB",
     "SMCI": "SMCI", "TSM": "TSM", "MU": "MU", "SPCX": "SPCX",
+    # Single-stock inverse underlyings (group key == hedge ticker).
+    "SKHY": "SKHY", "AAOI": "AAOI", "ORCL": "ORCL",
     # Volatility pair: UVIX (−2× daily vs SVIX) hedged to SVIX; both legs short in book.
     "SVIX": "SVIX",
 }
