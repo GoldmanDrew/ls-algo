@@ -102,7 +102,9 @@ def test_daily_and_marks_export():
     res = _toy_res()
     daily = export_daily_rows(res)
     assert len(daily) == 5
-    assert {"date", "combined_equity", "rho", "put_mtm", "realized_day"} <= set(daily[0])
+    assert {"date", "combined_equity", "rho", "put_mtm", "realized_day", "u_notional", "s_notional", "uvix_px"} <= set(
+        daily[0]
+    )
     marks = export_day_marks(res)
     assert "2024-01-04" in marks
     kinds = {m["kind"] for m in marks["2024-01-04"]}
@@ -110,6 +112,16 @@ def test_daily_and_marks_export():
     assert "put_overlay" in kinds
     events = export_events_by_date(res)
     assert events["2024-01-04"][0]["kind"] == "profit_3x"
+
+
+def test_product_ui_assets_exist():
+    css = REPO / "site" / "assets" / "css" / "bucket5_product.css"
+    js = REPO / "site" / "assets" / "js" / "bucket5_product.js"
+    assert css.is_file()
+    assert js.is_file()
+    text = css.read_text(encoding="utf-8")
+    assert ".b5p-root" in text and ".b5p-cards" in text and ".b5p-tabs" in text
+    assert "b5p-tabs" in js.read_text(encoding="utf-8")
 
 
 def test_build_run_payload_schema():

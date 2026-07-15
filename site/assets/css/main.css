@@ -150,21 +150,7 @@ pre.raw {
 .dash-subnav a.active { background: var(--accent); color: #fff; }
 
 /* Bucket 5 product dashboard (SPX-0DTE-style) */
-.b5p-root { display: flex; flex-direction: column; gap: 12px; }
-.b5p-guide { line-height: 1.55; }
-.b5p-guide-head .lead { font-size: 1.05rem; color: var(--text-secondary, #cbd5e1); margin: 6px 0 10px; }
-.b5p-guide-sec { margin: 14px 0; }
-.b5p-guide-sec h3 { margin: 0 0 6px; font-size: 1rem; color: var(--accent, #0f766e); }
-.b5p-guide-sec ul { margin: 6px 0 0 1.1rem; padding: 0; }
-.b5p-guide-sec li { margin: 3px 0; }
-.b5p-chart { margin: 10px 0 14px; }
-.b5p-chart h3 { font-size: 0.95rem; margin: 0 0 6px; color: var(--text-secondary, #94a3b8); }
-.b5p-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 6px; font-size: 12px; }
-.b5p-leg i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
-.b5p-controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-bottom: 10px; }
-.b5p-controls label { display: flex; gap: 8px; align-items: center; font-size: 0.9rem; }
-.b5p-controls select { min-width: 220px; }
-.b5p-subnav a { cursor: pointer; }
+/* B5 Product styles live in assets/css/bucket5_product.css */
 
 /* ============================================================ */
 /* Buttons                                                        */

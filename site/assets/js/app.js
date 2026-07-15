@@ -2770,11 +2770,17 @@
     try {
       const params = new URLSearchParams(raw);
       const tab = params.get("tab");
-      const base = { tab: "overview", pnlDate: params.get("date"), pnlBucket: params.get("bucket") };
+      const b5 = params.get("b5");
+      const base = {
+        tab: "overview",
+        pnlDate: params.get("date"),
+        pnlBucket: params.get("bucket"),
+        b5: b5 === "regime" || b5 === "daily" || b5 === "overview" ? b5 : null,
+      };
       if (tab && DASH_TAB_IDS.includes(tab)) return { ...base, tab };
-      if (params.has("b4sim")) return { tab: "risk", pnlDate: null, pnlBucket: null };
+      if (params.has("b4sim")) return { tab: "risk", pnlDate: null, pnlBucket: null, b5: null };
     } catch (_e) { /* ignore */ }
-    return { tab: "overview", pnlDate: null, pnlBucket: null };
+    return { tab: "overview", pnlDate: null, pnlBucket: null, b5: null };
   }
 
   function dashWriteHash(tabId, { keepB4 = true } = {}) {
@@ -2792,6 +2798,10 @@
       if (tabId === "risk" && keepB4) {
         const existing = b4ParseHash();
         if (existing) params.set("b4sim", JSON.stringify(existing));
+      }
+      if (tabId === "b5") {
+        const existing = dashParseHash();
+        if (existing.b5 && existing.b5 !== "overview") params.set("b5", existing.b5);
       }
       const next = params.toString();
       location.hash = next || "";
@@ -2816,8 +2826,9 @@
               '<div class="callout dim">Bucket 5 product UI missing. Ensure <code>bucket5_product.js</code> is loaded.</div>';
             return;
           }
+          const mountOpts = { sub: (dashParseHash().b5) || undefined };
           if (snap.bucket5_product) {
-            window.Bucket5Product.mount(el, snap.bucket5_product);
+            window.Bucket5Product.mount(el, snap.bucket5_product, mountOpts);
             return;
           }
           el.innerHTML = '<p class="dim">Loading Bucket 5 product dashboard…</p>';
@@ -2827,7 +2838,7 @@
               if (!r.ok) throw new Error(`HTTP ${r.status}`);
               return r.json();
             })
-            .then((d) => window.Bucket5Product.mount(el, d))
+            .then((d) => window.Bucket5Product.mount(el, d, mountOpts))
             .catch((e) => {
               el.innerHTML =
                 `<div class="callout dim">No Bucket 5 product data (<code>${url}</code>). ` +

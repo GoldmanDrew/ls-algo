@@ -177,6 +177,11 @@ def export_daily_rows(res: dict[str, Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for dt in bt.index:
         d = pd.Timestamp(dt)
+        c = carry.reindex([dt]).iloc[0] if dt in carry.index else None
+        u_not = float(c["u_notional"]) if c is not None else 0.0
+        s_not = float(c["s_notional"]) if c is not None else 0.0
+        fin = float(c["financing_pnl"]) if c is not None else 0.0
+        denom = max(abs(u_not) + abs(s_not), 1e-9)
         rows.append(
             {
                 "date": d.strftime("%Y-%m-%d"),
@@ -195,6 +200,14 @@ def export_daily_rows(res: dict[str, Any]) -> list[dict[str, Any]]:
                 "gross_frac": round(float(bt.at[dt, "gross_frac"]), 4),
                 "ratio": round(float(bt.at[dt, "ratio"]), 4) if np.isfinite(bt.at[dt, "ratio"]) else None,
                 "rebalance_flag": bool(d in rebal or d.normalize() in rebal),
+                # Carry legs for Daily mark hydration when marks_by_date is sparsified
+                "uvix_px": round(float(c["uvix"]), 4) if c is not None else None,
+                "svix_px": round(float(c["svix"]), 4) if c is not None else None,
+                "u_notional": round(u_not, 2),
+                "s_notional": round(s_not, 2),
+                "financing_pnl": round(fin, 2),
+                "u_financing_pnl": round(fin * (abs(u_not) / denom), 2),
+                "s_financing_pnl": round(fin * (abs(s_not) / denom), 2),
             }
         )
     return rows

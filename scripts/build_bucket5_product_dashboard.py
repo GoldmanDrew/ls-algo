@@ -312,7 +312,23 @@ def main(argv: list[str] | None = None) -> int:
                 legacy = root / "data" / "bucket5_insurance_backtest.json"
                 shutil.copy2(out, legacy)
                 print(f"[b5-product] copied legacy alias -> {legacy}")
+                _sync_product_ui(root)
     return 0
+
+
+def _sync_product_ui(etf_root: Path) -> None:
+    """Copy canonical B5 Product JS/CSS into etf-dashboard assets/."""
+    pairs = [
+        (REPO / "site" / "assets" / "js" / "bucket5_product.js", etf_root / "assets" / "bucket5_product.js"),
+        (REPO / "site" / "assets" / "css" / "bucket5_product.css", etf_root / "assets" / "bucket5_product.css"),
+    ]
+    for src, dest in pairs:
+        if not src.is_file():
+            print(f"[b5-product] skip UI sync (missing {src})")
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        print(f"[b5-product] synced UI -> {dest}")
 
 
 if __name__ == "__main__":
