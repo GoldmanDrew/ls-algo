@@ -1,0 +1,3 @@
+symbol,underlying,description,realized_pnl,unrealized_pnl,dividends,withholding_tax,pil_dividends,borrow_fees,short_credit_interest,other_fees,bond_interest,total_pnl
+UVIX,SVIX,2X LONG VIX FUTURES ETF,0.0,2177.471374,0.0,0.0,0.0,-16.47,70.5225140556181,0.0,0.0,2231.5238880556185
+SVIX,SVIX,-1X SHORT VIX FUTURES ETF,0.0,-1814.77917,0.0,0.0,0.0,-257.07,141.12449625296418,0.0,0.0,-1930.7246737470357
