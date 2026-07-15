@@ -609,18 +609,14 @@ portfolio:
       schedule_time_et: "10:00:00"     # US/Eastern activation time
       universe:
         shorts:
-          - SDS
-          - EWV
           - SQQQ
-          - TQQY
           - LABD
           - SOXS
-          - FAZ
           - DUST
           - ZSL
           - TSLQ
           - TSYY
-          - NVDQ
+          - NVD
           - NVYY
           - AMZO
           - AZYY
@@ -631,22 +627,19 @@ portfolio:
         method: "fixed"
         normalize: true
         weights:
-          SDS: 0.2317
-          EWV: 0.1871
-          SQQQ: 0.1558
-          TQQY: 0.0610
-          LABD: 0.0779
-          SOXS: 0.0482
-          FAZ: 0.0787
-          DUST: 0.0245
+          # DUST/ETHD trimmed; freed weight → SQQQ / LABD / SOXS / NVD / AMZO.
+          SQQQ: 0.2100
+          LABD: 0.1200
+          SOXS: 0.0900
+          DUST: 0.1200
           ZSL: 0.0079
-          TSLQ: 0.0267
+          TSLQ: 0.1231
           TSYY: 0.0145
-          NVDQ: 0.0267
+          NVD: 0.0900
           NVYY: 0.0212
-          AMZO: 0.0207
+          AMZO: 0.0893
           AZYY: 0.0072
-          ETHD: 0.0034
+          ETHD: 0.1000
           PLTZ: 0.0034
           PLYY: 0.0034
 
