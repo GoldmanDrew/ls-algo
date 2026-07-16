@@ -9,24 +9,29 @@ Modes:
   frequency=W  — schedule Adaptive MKT orders via IBKR goodAfterTime
                   for each configured weekday (e.g. Mon + Thu)
 
+Also applies flow kill/flatten when configured:
+  rules.kill_enabled + borrow > kill_borrow_floor AND net_edge_p50 < 0
+  -> immediate BUY cover of live shorts, skip new adds, optional YAML scrub.
+
 Designed to run independently of generate_trade_plan.py / execute_trade_plan.py.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import signal
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Tuple
+from typing import Iterable, Optional, Set
 
 import numpy as np
 import pandas as pd
 from zoneinfo import ZoneInfo
 
-from ib_insync import IB, MarketOrder, Stock, Order, TagValue
+from ib_insync import IB, MarketOrder, Stock, Order
 from strategy_config import load_config
 from execute_trade_plan import configure_ib_error_log_filter
 
@@ -153,6 +158,19 @@ def execute_sell(ib: IB, sym: str, qty: int, order_ref: str) -> None:
     ib.sleep(0.5)
 
 
+def execute_buy(ib: IB, sym: str, qty: int, order_ref: str) -> None:
+    """Cover a short (BUY to flatten)."""
+    if qty <= 0:
+        return
+    sym = norm_sym(sym)
+    c = Stock(sym, "SMART", "USD")
+    ib.qualifyContracts(c)
+    o = MarketOrder("BUY", int(qty))
+    o.orderRef = str(order_ref)
+    ib.placeOrder(c, o)
+    ib.sleep(0.5)
+
+
 # ---------------------------------------------------------------------------
 # IB connection + account
 # ---------------------------------------------------------------------------
@@ -161,6 +179,23 @@ def connect_ib(host: str, port: int, client_id: int) -> IB:
     ib = IB()
     ib.connect(host, port, clientId=client_id)
     return ib
+
+
+def get_ib_short_shares(ib: IB) -> dict[str, int]:
+    """Map symbol -> abs(short shares) for current IB short stock positions."""
+    out: dict[str, int] = {}
+    for p in ib.positions():
+        try:
+            qty = int(p.position)
+        except Exception:
+            continue
+        if qty >= 0:
+            continue
+        sym = norm_sym(getattr(p.contract, "symbol", "") or "")
+        if not sym:
+            continue
+        out[sym] = int(out.get(sym, 0) + abs(qty))
+    return out
 
 
 def get_account_equity(ib: IB) -> float:
@@ -211,6 +246,13 @@ def get_carry_map(df):
         .to_dict()
     )
 
+
+def ledger_tickers(df: pd.DataFrame) -> Set[str]:
+    if df is None or df.empty or "ticker" not in df.columns:
+        return set()
+    return {norm_sym(x) for x in df["ticker"].tolist() if str(x).strip()}
+
+
 def append_ledger(ledger_path: str, ledger_df: pd.DataFrame, rows: list[dict]) -> pd.DataFrame:
     if not rows:
         return ledger_df
@@ -226,6 +268,171 @@ def append_ledger(ledger_path: str, ledger_df: pd.DataFrame, rows: list[dict]) -
     Path(ledger_path).parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(ledger_path, index=False)
     return df
+
+
+# ---------------------------------------------------------------------------
+# Kill / flatten (neg edge AND high borrow)
+# ---------------------------------------------------------------------------
+
+def load_screened_flow_metrics(screened_csv: str | Path) -> pd.DataFrame:
+    """Load screener rows with ETF, net_edge_p50_annual, borrow_current."""
+    path = Path(screened_csv)
+    if not path.exists():
+        return pd.DataFrame(columns=["ETF", "net_edge_p50_annual", "borrow_current"])
+    df = pd.read_csv(path)
+    if "ETF" not in df.columns:
+        return pd.DataFrame(columns=["ETF", "net_edge_p50_annual", "borrow_current"])
+    out = pd.DataFrame({"ETF": df["ETF"].astype(str).map(norm_sym)})
+    out["net_edge_p50_annual"] = pd.to_numeric(
+        df["net_edge_p50_annual"] if "net_edge_p50_annual" in df.columns else np.nan,
+        errors="coerce",
+    )
+    borrow = pd.Series(np.nan, index=df.index, dtype=float)
+    if "borrow_current" in df.columns:
+        borrow = pd.to_numeric(df["borrow_current"], errors="coerce")
+    elif "borrow_fee_annual" in df.columns:
+        borrow = pd.to_numeric(df["borrow_fee_annual"], errors="coerce")
+    out["borrow_current"] = borrow
+    return out.drop_duplicates(subset=["ETF"], keep="last").reset_index(drop=True)
+
+
+def build_flow_kill_set(
+    screened: pd.DataFrame,
+    candidates: Iterable[str],
+    *,
+    borrow_floor: float = 0.40,
+    require_neg_edge: bool = True,
+) -> tuple[Set[str], pd.DataFrame]:
+    """
+    Kill when borrow_current > borrow_floor AND (optionally) net_edge_p50_annual < 0.
+
+    Missing borrow or edge => not killed (fail-closed on incomplete data).
+    Returns (kill_symbols, detail_df).
+    """
+    cands = {norm_sym(x) for x in candidates if str(x).strip()}
+    if not cands:
+        return set(), pd.DataFrame()
+    if screened is None or screened.empty:
+        return set(), pd.DataFrame()
+
+    sub = screened[screened["ETF"].isin(cands)].copy()
+    if sub.empty:
+        return set(), pd.DataFrame()
+
+    edge = pd.to_numeric(sub["net_edge_p50_annual"], errors="coerce")
+    borrow = pd.to_numeric(sub["borrow_current"], errors="coerce")
+    known = edge.notna() & borrow.notna()
+    hi_borrow = borrow > float(borrow_floor)
+    neg_edge = edge < 0.0
+    if require_neg_edge:
+        kill_mask = known & hi_borrow & neg_edge
+    else:
+        kill_mask = known & hi_borrow
+
+    sub["kill"] = kill_mask
+    killed = {norm_sym(x) for x in sub.loc[kill_mask, "ETF"].tolist()}
+    return killed, sub.sort_values("borrow_current", ascending=False).reset_index(drop=True)
+
+
+def load_flow_alumni(path: str | Path, seeds: Iterable[str] | None = None) -> Set[str]:
+    p = Path(path)
+    out: Set[str] = set()
+    if p.exists():
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(raw, list):
+                out |= {norm_sym(x) for x in raw if str(x).strip()}
+            elif isinstance(raw, dict) and isinstance(raw.get("symbols"), list):
+                out |= {norm_sym(x) for x in raw["symbols"] if str(x).strip()}
+        except Exception:
+            pass
+    if seeds:
+        out |= {norm_sym(x) for x in seeds if str(x).strip()}
+    return out
+
+
+def save_flow_alumni(path: str | Path, symbols: Iterable[str]) -> None:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    syms = sorted({norm_sym(x) for x in symbols if str(x).strip()})
+    p.write_text(json.dumps({"symbols": syms}, indent=2) + "\n", encoding="utf-8")
+
+
+def scrub_flow_symbols_from_config(
+    config_path: str | Path,
+    symbols: Iterable[str],
+) -> list[str]:
+    """
+    Remove symbols from flow_program universe.shorts and weighting.weights
+    in strategy_config.yml while preserving surrounding comments/formatting.
+    """
+    path = Path(config_path)
+    syms = {norm_sym(x) for x in symbols if str(x).strip()}
+    if not syms or not path.exists():
+        return []
+
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    out: list[str] = []
+    in_flow = False
+    in_shorts = False
+    in_weights = False
+    removed: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        if stripped == "flow_program:":
+            in_flow = True
+            in_shorts = False
+            in_weights = False
+            out.append(line)
+            continue
+
+        if in_flow and (
+            stripped.startswith("# SPX")
+            or (
+                bool(line)
+                and line[0] not in (" ", "	")
+                and stripped.endswith(":")
+                and not stripped.startswith("#")
+            )
+        ):
+            in_flow = False
+            in_shorts = False
+            in_weights = False
+
+        if in_flow and stripped == "shorts:":
+            in_shorts = True
+            in_weights = False
+            out.append(line)
+            continue
+
+        if in_flow and stripped == "weights:":
+            in_weights = True
+            in_shorts = False
+            out.append(line)
+            continue
+
+        if in_flow and in_shorts:
+            if stripped.startswith("- "):
+                tok = norm_sym(stripped[2:].split("#", 1)[0].strip())
+                if tok in syms:
+                    removed.append(tok)
+                    continue
+            elif stripped.endswith(":") and stripped != "shorts:":
+                in_shorts = False
+
+        if in_flow and in_weights and stripped and not stripped.startswith("#") and ":" in stripped:
+            key = norm_sym(stripped.split(":", 1)[0].strip())
+            if key in syms:
+                removed.append(key)
+                continue
+
+        out.append(line)
+
+    if removed:
+        path.write_text("".join(out), encoding="utf-8")
+    return sorted(set(removed))
 
 
 # ---------------------------------------------------------------------------
@@ -374,13 +581,21 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Flow sleeve allocator (daily or weekly GAT).")
     parser.add_argument("--dry-run", action="store_true", help="No orders placed.")
+    parser.add_argument(
+        "--config",
+        default="config/strategy_config.yml",
+        help="Path to strategy_config.yml",
+    )
     args = parser.parse_args()
 
-    cfg = load_config("config/strategy_config.yml")
+    config_path = str(args.config)
+    cfg = load_config(config_path)
     ibkr_cfg = cfg.get("ibkr", {}) or {}
     exec_cfg = cfg.get("execution", {}) or {}
     strat_cfg = cfg.get("strategy", {}) or {}
     paths_cfg = cfg.get("paths", {}) or {}
+    flow_cfg = ((cfg.get("portfolio") or {}).get("sleeves") or {}).get("flow_program") or {}
+    rules = flow_cfg.get("rules") or {}
 
     host = str(ibkr_cfg.get("host", "127.0.0.1"))
     port = int(ibkr_cfg.get("port", 7497))
@@ -395,11 +610,25 @@ def main() -> None:
     dry_run = args.dry_run or bool(exec_cfg.get("dry_run", False))
 
     ledger_path = str(paths_cfg.get("flow_ledger_csv", "data/flow_ledger.csv"))
+    screened_csv = str(paths_cfg.get("screened_csv", "data/etf_screened_today.csv"))
+
+    hard_borrow_cap = float(rules.get("hard_borrow_cap", 0.30))
+    kill_enabled = bool(rules.get("kill_enabled", True))
+    kill_borrow_floor = float(rules.get("kill_borrow_floor", 0.40))
+    kill_require_neg_edge = bool(rules.get("kill_require_neg_edge", True))
+    kill_scrub_config = bool(rules.get("kill_scrub_config", True))
+    alumni_json = str(rules.get("alumni_json", "data/flow_alumni.json"))
+    seed_alumni = list(rules.get("seed_alumni") or [])
 
     tprint("\n" + "=" * 110)
     tprint("[FLOW] Flow sleeve runner")
     tprint("=" * 110 + "\n")
     tprint(f"[FLOW] dry_run={dry_run} ledger={ledger_path}")
+    tprint(
+        f"[FLOW] add gate: borrow<={hard_borrow_cap:.0%} and net_edge_p50>0 | "
+        f"kill: enabled={kill_enabled} borrow>{kill_borrow_floor:.0%} "
+        f"neg_edge={kill_require_neg_edge} scrub_config={kill_scrub_config}"
+    )
 
     ib = connect_ib(host, port, client_id)
 
@@ -407,10 +636,126 @@ def main() -> None:
         equity = get_account_equity(ib)
         tprint(f"[FLOW] NetLiquidation (USD): {equity:,.2f}")
 
+        ledger_df = load_ledger(ledger_path)
+        universe, _ = _parse_universe_and_weights(flow_cfg)
+        universe_set = set(universe)
+
+        # ---------------------------------------------------------------
+        # Kill / flatten: neg edge AND borrow above floor
+        # Candidates = config universe U ledger history (catches orphans)
+        # ---------------------------------------------------------------
+        kill_set: set[str] = set()
+        screened = load_screened_flow_metrics(screened_csv)
+        short_shares = get_ib_short_shares(ib)
+
+        if kill_enabled:
+            alumni = load_flow_alumni(alumni_json, seeds=seed_alumni)
+            alumni |= set(universe_set) | ledger_tickers(ledger_df)
+            save_flow_alumni(alumni_json, alumni)
+            # Config universe + ledger + alumni (orphans after YAML removal).
+            candidates = set(alumni)
+            kill_set, kill_detail = build_flow_kill_set(
+                screened,
+                candidates,
+                borrow_floor=kill_borrow_floor,
+                require_neg_edge=kill_require_neg_edge,
+            )
+            if kill_detail is not None and not kill_detail.empty:
+                for _, row in kill_detail.iterrows():
+                    flag = "KILL" if bool(row.get("kill")) else "ok"
+                    edge = row.get("net_edge_p50_annual")
+                    br = row.get("borrow_current")
+                    tprint(
+                        f"[FLOW][SCAN] {row['ETF']}: edge={edge} borrow={br} -> {flag}"
+                    )
+            if kill_set:
+                tprint(f"[FLOW][KILL] Flatten candidates: {', '.join(sorted(kill_set))}")
+            else:
+                tprint("[FLOW][KILL] No names meet kill criteria.")
+
+            # Immediate BUY covers for live shorts in kill_set
+            flatten_rows: list[dict] = []
+            for sym in sorted(kill_set):
+                qty = int(short_shares.get(sym, 0) or 0)
+                if qty <= 0:
+                    tprint(f"[FLOW][KILL] {sym}: no IB short to cover")
+                    continue
+                tprint(f"[FLOW][KILL] COVER {sym}: BUY {qty} sh (flatten)")
+                if not dry_run:
+                    try:
+                        execute_buy(
+                            ib,
+                            sym,
+                            qty,
+                            order_ref=f"{strategy_tag}|FLOW_KILL|{sym}|{today_str()}",
+                        )
+                    except Exception as e:
+                        tprint(f"[FLOW][KILL] ORDER FAIL {sym}: {type(e).__name__}: {e}")
+                        continue
+                flatten_rows.append(
+                    {
+                        "date": today_str(),
+                        "ticker": sym,
+                        "delta_usd": 0.0,
+                        "carry_usd": 0.0,
+                    }
+                )
+            if flatten_rows:
+                ledger_df = append_ledger(ledger_path, ledger_df, flatten_rows)
+                tprint(f"[FLOW][KILL] Ledger carry zeroed for {len(flatten_rows)} name(s)")
+
+            if kill_set and kill_scrub_config and not dry_run:
+                removed = scrub_flow_symbols_from_config(config_path, kill_set)
+                if removed:
+                    tprint(
+                        f"[FLOW][KILL] Scrubbed from config: {', '.join(removed)}"
+                    )
+                else:
+                    tprint(
+                        "[FLOW][KILL] Config scrub: nothing to remove "
+                        "(already absent from universe/weights)"
+                    )
+            elif kill_set and kill_scrub_config and dry_run:
+                tprint(
+                    f"[FLOW][KILL] dry-run: would scrub from config: "
+                    f"{', '.join(sorted(kill_set))}"
+                )
+
+        # ---------------------------------------------------------------
+        # Adds: gated by hard_borrow_cap + positive edge; skip kill names
+        # ---------------------------------------------------------------
         alloc, freq, schedule_days, schedule_time = compute_flow_allocations_usd(cfg, equity)
         if alloc.empty:
             tprint("[FLOW] No allocation (empty config or zero budget).")
             return
+
+        metrics = screened.set_index("ETF") if not screened.empty else pd.DataFrame()
+        kept_rows = []
+        for _, r in alloc.iterrows():
+            sym = norm_sym(r["ticker"])
+            if sym in kill_set:
+                tprint(f"[FLOW] SKIP ADD {sym}: on kill list")
+                continue
+            edge = br = float("nan")
+            if not metrics.empty and sym in metrics.index:
+                edge = float(pd.to_numeric(metrics.loc[sym, "net_edge_p50_annual"], errors="coerce"))
+                br = float(pd.to_numeric(metrics.loc[sym, "borrow_current"], errors="coerce"))
+            if not (edge == edge) or edge <= 0:
+                tprint(f"[FLOW] SKIP ADD {sym}: net_edge_p50={edge} (need > 0)")
+                continue
+            if not (br == br) or br > hard_borrow_cap:
+                tprint(
+                    f"[FLOW] SKIP ADD {sym}: borrow={br} "
+                    f"(need known and <= {hard_borrow_cap:.0%})"
+                )
+                continue
+            kept_rows.append(r)
+
+        if not kept_rows:
+            tprint("[FLOW] No eligible adds after kill/edge/borrow gates.")
+            return
+
+        alloc = pd.DataFrame(kept_rows).reset_index(drop=True)
 
         # Price + share sizing (done once, reused for all scheduled days)
         prices: dict[str, float] = {}
@@ -443,30 +788,19 @@ def main() -> None:
             tprint("[FLOW] No actionable orders after pricing/sizing.")
             return
 
-        # ---------------------------------------------------------------
-        # Determine execution schedule
-        # ---------------------------------------------------------------
         if freq == "W":
             schedule = next_schedule_dates(schedule_days, schedule_time)
             tprint(f"[FLOW] Weekly mode: scheduling {len(schedule)} days")
             for date_str, gat_str in schedule:
                 tprint(f"  -> {date_str}  GAT={gat_str}")
         else:
-            # Daily: single immediate execution (no GAT)
             schedule = [(today_str(), "")]
 
         per_day_total = float(sum(o["delta_usd"] for o in sized))
         tprint(f"[FLOW] Per-day budget: ${per_day_total:,.2f}  x {len(schedule)} day(s)")
 
-        # ---------------------------------------------------------------
-        # Submit orders for each scheduled day, properly handling carry
-        # ---------------------------------------------------------------
-        ledger_df = load_ledger(ledger_path)
-        # ---------------------------------------------------------------
-        # Submit orders and update ledger in one pass
-        # ---------------------------------------------------------------
         ledger_rows: list[dict] = []
-        carry_map = get_carry_map(load_ledger(ledger_path))  # existing carry from ledger
+        carry_map = get_carry_map(load_ledger(ledger_path))
 
         for target_date, gat_str in schedule:
             tprint(f"\n{'─'*110}")
@@ -480,7 +814,6 @@ def main() -> None:
                 prior_carry = carry_map.get(sym, 0.0)
                 effective_usd = delta_usd + prior_carry
 
-                # Get price (cached if already fetched)
                 if sym not in prices:
                     try:
                         px = get_price_fallback_ib(ib, sym, prefer_delayed=prefer_delayed)
@@ -496,7 +829,6 @@ def main() -> None:
                 carry_usd = effective_usd - trade_usd
 
                 if shares == 0:
-                    # Nothing to trade, record carry
                     tprint(f"[FLOW] CARRY {sym}: +${delta_usd:.0f} (total carry=${effective_usd:.0f})")
                     ledger_rows.append({
                         "date": target_date,
@@ -507,7 +839,6 @@ def main() -> None:
                     carry_map[sym] = effective_usd
                     continue
 
-                # Record the trade
                 tprint(f"{sym}: SELL {shares} sh (~${trade_usd:,.0f} @ {px:.2f})")
 
                 if not dry_run:
@@ -527,7 +858,6 @@ def main() -> None:
                         tprint(f"  ORDER FAIL {sym}: {type(e).__name__}: {e}")
                         continue
 
-                # Update ledger
                 ledger_rows.append({
                     "date": target_date,
                     "ticker": sym,
@@ -536,7 +866,6 @@ def main() -> None:
                 })
                 carry_map[sym] = carry_usd
 
-        # Append all ledger rows at once
         ledger_df = load_ledger(ledger_path)
         append_ledger(ledger_path, ledger_df, ledger_rows)
         tprint(f"\n[FLOW] Ledger updated: {ledger_path}")

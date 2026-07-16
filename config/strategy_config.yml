@@ -602,6 +602,19 @@ portfolio:
     flow_program:
       rules:
         hard_borrow_cap: 0.30        # weekly flow adds only when borrow <= 30% and net_edge_p50 > 0
+        # Kill / flatten: cover live shorts when BOTH neg edge and borrow above floor.
+        # Also skips new adds for those names. Optional YAML scrub removes them from
+        # universe + weights so they leave the flow sleeve permanently.
+        kill_enabled: true
+        kill_borrow_floor: 0.40      # borrow_current > this (annual cost)
+        kill_require_neg_edge: true  # net_edge_p50_annual < 0
+        kill_scrub_config: true      # drop killed names from strategy_config.yml
+        # Persisted ever-flow tickers (for orphan flatten after YAML removal).
+        alumni_json: data/flow_alumni.json
+        # One-time seeds for names already dropped from YAML but still short.
+        seed_alumni:
+          - TQQY
+          - NVDQ
       frequency: "W"
       deployment_base: "fixed_usd_per_week"
       fixed_usd_per_week: 1300
