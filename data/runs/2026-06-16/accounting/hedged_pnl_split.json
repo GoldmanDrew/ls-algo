@@ -1,0 +1,23 @@
+{
+  "run_date": "2026-06-16",
+  "prev_run_date": "2026-06-13",
+  "seeded": false,
+  "hedged_pnl_ytd": 93156.1053529407,
+  "unhedged_pnl_ytd": 14159.840435679263,
+  "hedged_daily": -10216.422158292067,
+  "unhedged_daily": 10831.866596872062,
+  "total_pnl_ytd": 107315.94578862,
+  "total_daily": 615.444438579994,
+  "components": {
+    "b12_daily": -15127.180904836656,
+    "b3_daily": 3026.1296892939527,
+    "b5_daily": 100.84956320341789,
+    "b4_hedged_daily": 4910.758746544589,
+    "b4_unhedged_daily": 7704.887344374691
+  },
+  "reconciliation": {
+    "residual_daily": -3.410605131648481e-13,
+    "ytd_gap_vs_total": 2.9103830456733704e-11,
+    "ok": true
+  }
+}

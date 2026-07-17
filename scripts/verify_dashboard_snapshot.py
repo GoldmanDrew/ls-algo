@@ -138,6 +138,20 @@ def verify_snapshot(
     if str(dq.get("status", "")).lower() == "hard":
         _fail("data_quality.status is hard", errors)
 
+    # Hedged/unhedged lens: only gate when the panel is present and populated.
+    hedged_panel = snap.get("hedged_pnl_panel") or {}
+    if hedged_panel.get("available"):
+        h = hedged_panel.get("hedged_ytd_usd")
+        u = hedged_panel.get("unhedged_ytd_usd")
+        t = hedged_panel.get("total_ytd_usd")
+        if h is not None and u is not None and t is not None:
+            gap = float(t) - (float(h) + float(u))
+            if abs(gap) > 1.0:
+                _fail(
+                    f"hedged_pnl_panel does not tie out: hedged+unhedged differs from total by {gap:,.2f}",
+                    errors,
+                )
+
     exp_recon = snap.get("exposure_reconciliation") or {}
     if exp_recon and not exp_recon.get("reconciles", True):
         _fail("snapshot exposure_reconciliation.reconciles is false", errors)

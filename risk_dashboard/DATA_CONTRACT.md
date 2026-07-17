@@ -12,6 +12,7 @@ metrics relate to the EOD email.
 | Exposures | `totals.json` gross/net fields + `net_exposure_<bucket>.csv` |
 | Broker positions / borrow | `data/runs/<date>/ibkr_flex/*.xml` |
 | Daily PnL move | `data/ledger/pnl_history.csv` consecutive `total_pnl` rows |
+| Hedged vs unhedged PnL lens | `data/runs/<date>/accounting/hedged_pnl_split.json`, `hedged_pnl_b4_by_pair.csv` + `data/ledger/hedged_pnl_history.csv` (written by `hedged_pnl.py`) |
 | NAV denominator | `totals.json` → `nav_usd` / `nav_source` (broker Flex preferred) |
 | Screener borrow overlay | `data/runs/<date>/etf_screened_today.csv` (pinned copy) |
 
@@ -47,6 +48,13 @@ git SHA, and workflow run id. Snapshots embed this under `manifest` + `data_qual
   primary UI.
 - **NAV % metrics** — `metric / nav_usd` where `nav_usd` is broker-derived when available
   (`flex_positions:percentOfNAV_median` or equity Flex tags).
+- **Hedged vs unhedged PnL (`hedged_pnl_panel`)** — additional lens on top of
+  bucket accounting (buckets unchanged). Hedged = B1 + B2 + the matched slice
+  of each B4 pair (short underlying offsetting the short inverse ETF up to the
+  realized book hedge ratio); unhedged = B3 + B5 + the B4 slice above each
+  pair's hedge ratio. YTD values are daily-accumulated in
+  `data/ledger/hedged_pnl_history.csv`; hedged + unhedged must tie to the
+  bucket-sum total (checked as a publish gate when the panel is present).
 
 ## Publish gates (`scripts/verify_dashboard_snapshot.py`)
 
@@ -59,6 +67,8 @@ A snapshot is publishable only when:
 5. Each bucket CSV sum matches `bucket_pnl` and snapshot rows.
 6. `data_quality.status` is not `hard`.
 7. `latest.json` matches the built `run_date`.
+8. When `hedged_pnl_panel` is available: hedged + unhedged YTD ties to the
+   bucket-sum total within $1.
 
 ## Pipeline order (production)
 

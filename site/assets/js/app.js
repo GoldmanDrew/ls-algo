@@ -46,6 +46,10 @@
     pnlDividendWarnings: document.getElementById("pnl-dividend-warnings"),
     pnlDividendDetail: document.getElementById("pnl-dividend-detail"),
     pnlTableTitle: document.getElementById("pnl-table-title"),
+    hedgedPnlMeta: document.getElementById("hedged-pnl-meta"),
+    hedgedPnlSummary: document.getElementById("hedged-pnl-summary"),
+    hedgedPnlChart: document.getElementById("hedged-pnl-chart"),
+    hedgedPnlNote: document.getElementById("hedged-pnl-note"),
     moversControls: document.getElementById("movers-controls"),
     moversWinnersTitle: document.getElementById("movers-winners-title"),
     moversLosersTitle: document.getElementById("movers-losers-title"),
@@ -2667,6 +2671,36 @@
         <th>Underlying</th><th>Symbol</th><th>Leg</th><th>Net $</th><th>Gross $</th>
       </tr></thead><tbody>${legTbl}</tbody></table>`
         : "";
+    const hedgedRows =
+      bucketKey === "bucket_4"
+        ? ((_lastSnap && _lastSnap.hedged_pnl_panel) || {}).b4_pair_rows || []
+        : [];
+    const hedgedTbl = hedgedRows
+      .slice(0, 80)
+      .map(
+        (r) => `<tr>
+          <td><strong>${safeText(r.underlying)}</strong></td>
+          <td>${safeText(r.symbol)}</td>
+          <td class="dim">${safeText(r.leg_type)}</td>
+          <td class="num">${r.f_hedged != null ? fmtPct(r.f_hedged, 0) : "-"}</td>
+          <td class="dim">${safeText(r.f_source)}</td>
+          <td class="num">${r.matched_usd != null ? fmtUsd(r.matched_usd) : "-"}</td>
+          <td class="num">${r.gross_usd != null ? fmtUsd(r.gross_usd) : "-"}</td>
+          <td class="num ${signedClass(r.daily_pnl)}">${fmtUsdSigned(r.daily_pnl)}</td>
+          <td class="num ${signedClass(r.hedged_daily)}">${fmtUsdSigned(r.hedged_daily)}</td>
+          <td class="num ${signedClass(r.unhedged_daily)}">${fmtUsdSigned(r.unhedged_daily)}</td>
+        </tr>`
+      )
+      .join("");
+    const hedgedSection =
+      bucketKey === "bucket_4" && hedgedRows.length
+        ? `<h3>Hedged vs unhedged split by leg (${hedgedRows.length})</h3>
+      <p class="dim">Hedged fraction = short underlying offsetting the short inverse ETF up to the realized book hedge ratio (matched = min(|und|, |β|·|ETF|)). The residual above each pair's hedge ratio is unhedged. Source: hedged_pnl_b4_by_pair.csv.</p>
+      <table class="tight sortable"><thead><tr>
+        <th>Underlying</th><th>Symbol</th><th>Leg</th><th>Hedged f</th><th>f source</th>
+        <th>Matched $</th><th>Gross $</th><th>Daily P&amp;L</th><th>Hedged $</th><th>Unhedged $</th>
+      </tr></thead><tbody>${hedgedTbl}</tbody></table>`
+        : "";
     const hdr = bucket.exposure_header || {};
     const hdrBlock = hdr.attribution_net_usd != null
       ? `<div class="strip" style="margin-bottom:10px;">
@@ -2699,8 +2733,9 @@
       <h3>Exposure by underlying (top 25 of ${bucket.n_exposure_rows})</h3>
       <table class="tight"><thead><tr>
         <th>Underlying</th><th>Symbols</th><th>Legs</th><th>Net $</th><th>Gross $</th>
-      </tr></thead><tbody>${expoTbl || "<tr><td colspan=5 class=dim>(none)</td></tr>"}</tbody></table>
+      </tr></thead><tbody>${expoTbl || "      <tr><td colspan=5 class=dim>(none)</td></tr>"}</tbody></table>
       ${legSection}
+      ${hedgedSection}
     `;
   }
 
@@ -2814,6 +2849,7 @@
     const steps = {
       pnl: [
         () => renderPerformance(snap),
+        () => renderHedgedPnlPanel(snap),
         () => renderPnlPanel(snap),
         () => renderMovers(snap),
       ],
@@ -4207,6 +4243,146 @@
 
     _pnlRepaint = paint;
     paint();
+  }
+
+  function hedgedPnlLinesChartSvg(series, opts) {
+    const rows = (series || []).filter(
+      (r) => r && (r.hedged_pnl != null || r.unhedged_pnl != null)
+    );
+    if (rows.length < 2) return `<p class="dim">Not enough hedged-PnL history to chart.</p>`;
+    const width = opts?.width || 720;
+    const height = opts?.height || 200;
+    const padL = 8;
+    const padR = 8;
+    const padT = 10;
+    const padB = 18;
+    const keys = [
+      { key: "hedged_pnl", label: "Hedged", stroke: "#1f7a3d" },
+      { key: "unhedged_pnl", label: "Unhedged", stroke: "#b3541e" },
+      { key: "total_pnl", label: "Total", stroke: "#16537e" },
+    ];
+    const vals = [];
+    rows.forEach((r) => {
+      keys.forEach(({ key }) => {
+        const v = r[key];
+        if (v != null && !Number.isNaN(Number(v))) vals.push(Number(v));
+      });
+    });
+    if (!vals.length) return `<p class="dim">No hedged-PnL values to chart.</p>`;
+    const min = Math.min(0, ...vals);
+    const max = Math.max(0, ...vals);
+    const span = max - min || 1;
+    const x = (i) => padL + (i / (rows.length - 1)) * (width - padL - padR);
+    const y = (v) => padT + (1 - (v - min) / span) * (height - padT - padB);
+    const zeroY = y(0);
+    const lines = keys
+      .map(({ key, stroke }) => {
+        const pts = rows
+          .map((r, i) => {
+            const v = r[key];
+            if (v == null || Number.isNaN(Number(v))) return null;
+            return `${x(i).toFixed(1)},${y(Number(v)).toFixed(1)}`;
+          })
+          .filter(Boolean);
+        if (pts.length < 2) return "";
+        return `<polyline fill="none" stroke="${stroke}" stroke-width="1.8" points="${pts.join(" ")}"/>`;
+      })
+      .join("");
+    const firstDate = safeText(rows[0].date, "");
+    const lastDate = safeText(rows[rows.length - 1].date, "");
+    const legend = keys
+      .map(
+        ({ label, stroke }) =>
+          `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;">
+            <span style="display:inline-block;width:14px;height:3px;background:${stroke};"></span>
+            <span class="dim small">${label}</span>
+          </span>`
+      )
+      .join("");
+    return `
+      <div class="hedged-pnl-legend" style="margin:4px 0;">${legend}
+        <span class="dim small">${firstDate} → ${lastDate} · cumulative $ (daily-accumulated)</span>
+      </div>
+      <svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}" preserveAspectRatio="none">
+        <line x1="${padL}" y1="${zeroY.toFixed(1)}" x2="${width - padR}" y2="${zeroY.toFixed(1)}"
+          stroke="#999" stroke-width="0.8" stroke-dasharray="4 3"/>
+        ${lines}
+      </svg>`;
+  }
+
+  function renderHedgedPnlPanel(snap) {
+    const panel = snap.hedged_pnl_panel || {};
+    if (!els.hedgedPnlSummary) return;
+    if (!panel.available) {
+      if (els.hedgedPnlMeta) {
+        els.hedgedPnlMeta.innerHTML = `<span class="dim small">${safeText(
+          panel.reason,
+          "Hedged/unhedged split unavailable"
+        )}</span>`;
+      }
+      ["hedgedPnlSummary", "hedgedPnlChart", "hedgedPnlNote"].forEach((k) => {
+        if (els[k]) els[k].innerHTML = "";
+      });
+      return;
+    }
+
+    const recon = panel.reconciliation || {};
+    if (els.hedgedPnlMeta) {
+      const tie = recon.ties_out === false
+        ? ` · <span class="bad">does not tie to total (gap ${fmtUsdSigned(recon.ytd_gap_vs_total)})</span>`
+        : " · ties to total";
+      els.hedgedPnlMeta.innerHTML = `<span class="dim small">Source: ${safeText(
+        panel.source
+      )} · ${panel.series?.length || 0} sessions${tie}</span>`;
+    }
+
+    const items = [
+      {
+        label: "Hedged PnL (YTD)",
+        value: fmtUsdSigned(panel.hedged_ytd_usd),
+        sub: `${fmtUsdSigned(panel.hedged_daily_usd)} today · ${fmtPct(
+          panel.hedged_ytd_pct_nav,
+          2
+        )} of NAV · B1 + B2 + B4 matched`,
+        cls: signedClass(panel.hedged_ytd_usd),
+      },
+      {
+        label: "Unhedged PnL (YTD)",
+        value: fmtUsdSigned(panel.unhedged_ytd_usd),
+        sub: `${fmtUsdSigned(panel.unhedged_daily_usd)} today · ${fmtPct(
+          panel.unhedged_ytd_pct_nav,
+          2
+        )} of NAV · B3 + B5 + B4 unmatched`,
+        cls: signedClass(panel.unhedged_ytd_usd),
+      },
+      {
+        label: "Total PnL (YTD)",
+        value: fmtUsdSigned(panel.total_ytd_usd),
+        sub: `${fmtUsdSigned(panel.total_daily_usd)} today`,
+        cls: signedClass(panel.total_ytd_usd),
+      },
+    ];
+    els.hedgedPnlSummary.innerHTML = items
+      .map(
+        (it) => `<div class="stat">
+        <div class="label">${it.label}</div>
+        <div class="value ${it.cls || ""}">${it.value}</div>
+        ${it.sub ? `<div class="sub">${it.sub}</div>` : ""}
+      </div>`
+      )
+      .join("");
+
+    if (els.hedgedPnlChart) {
+      els.hedgedPnlChart.innerHTML = hedgedPnlLinesChartSvg(panel.series || []);
+    }
+    if (els.hedgedPnlNote) {
+      const defs = panel.definitions || {};
+      els.hedgedPnlNote.textContent =
+        `Additional lens on top of bucket accounting (buckets unchanged). ` +
+        `Hedged = ${defs.hedged || "B1 + B2 + B4 matched"}. ` +
+        `Unhedged = ${defs.unhedged || "B3 + B5 + B4 unmatched"}. ` +
+        `YTD accumulates each session's split at that day's realized hedge ratios.`;
+    }
   }
 
   function renderBucketMovers(snap) {

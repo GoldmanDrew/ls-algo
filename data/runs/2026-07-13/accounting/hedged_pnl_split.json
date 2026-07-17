@@ -1,0 +1,23 @@
+{
+  "run_date": "2026-07-13",
+  "prev_run_date": "2026-07-11",
+  "seeded": false,
+  "hedged_pnl_ytd": 117245.96073184408,
+  "unhedged_pnl_ytd": -19802.647669114027,
+  "hedged_daily": 6.117772954894463e-12,
+  "unhedged_daily": -6.608047442568932e-13,
+  "total_pnl_ytd": 97443.31306273001,
+  "total_daily": 5.4569682106375694e-12,
+  "components": {
+    "b12_daily": 0.09735422547237249,
+    "b3_daily": 0.0,
+    "b5_daily": 0.0,
+    "b4_hedged_daily": -0.09735422546625472,
+    "b4_unhedged_daily": -6.608047442568932e-13
+  },
+  "reconciliation": {
+    "residual_daily": 0.0,
+    "ytd_gap_vs_total": -4.3655745685100555e-11,
+    "ok": true
+  }
+}

@@ -1,0 +1,9 @@
+leg_type,symbol,underlying,pair,gross_usd,matched_usd,f_hedged,f_source,daily_pnl,hedged_daily,unhedged_daily,ytd_pnl
+etf,BKNU,BKNG,BKNU|BKNG,,,0.0,carry,0.0,0.0,0.0,-42.80836925
+etf,DXD,DIA,DXD|DIA,,,0.48393330325895,carry,0.0,0.0,0.0,-26.10723037
+etf,SDOW,DIA,SDOW|DIA,,,0.3220005223329034,carry,0.0,0.0,0.0,-27.79841554
+underlying,DIA,DIA,DIA (spot),,,1.0,carry,0.0,0.0,0.0,-0.525
+etf,BTFL,KEEL,BTFL|KEEL,8325.0,0.0,0.0,book,-920.220784706555,-0.0,-920.220784706555,-918.657098110486
+etf,QID,QQQ,QID|QQQ,,,0.0,carry,0.0,0.0,0.0,71.65317078
+etf,WEBS,XLK,WEBS|XLK,,,0.445622099527117,carry,0.0,0.0,0.0,312.20477971
+underlying,XLK,XLK,XLK (spot),,,1.0,carry,0.0,0.0,0.0,-0.51

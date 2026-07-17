@@ -674,17 +674,50 @@ def format_bucket_daily_headline(daily_buckets: dict[str, float]) -> str:
     return "Daily PnL change: " + " | ".join(parts)
 
 
+def format_hedged_unhedged_lines(hedged_split: dict, *, total_pnl: float) -> list[str]:
+    """Aligned hedged/unhedged/total headline rows from a hedged_pnl split dict."""
+    rows = [
+        (
+            "Hedged PnL:",
+            float(hedged_split.get("hedged_pnl_ytd", 0.0) or 0.0),
+            float(hedged_split.get("hedged_daily", 0.0) or 0.0),
+            "B1 + B2 + B4 matched",
+        ),
+        (
+            "Unhedged PnL:",
+            float(hedged_split.get("unhedged_pnl_ytd", 0.0) or 0.0),
+            float(hedged_split.get("unhedged_daily", 0.0) or 0.0),
+            "B3 + B5 + B4 unmatched",
+        ),
+        (
+            "Total PnL:",
+            float(total_pnl),
+            float(hedged_split.get("total_daily", 0.0) or 0.0),
+            "",
+        ),
+    ]
+    sep = "  " + "-" * 58
+    lines = [sep]
+    for label, ytd, daily, note in rows:
+        suffix = f"   [{note}]" if note else ""
+        lines.append(f"  {label:<14}{ytd:>14,.2f}   ({daily:+,.0f} today){suffix}")
+    lines.append(sep)
+    return lines
+
+
 def format_headline_pnl_block(
     bucket_pnl: dict[str, float],
     *,
     total_pnl: float,
     daily_buckets: dict[str, float] | None = None,
+    hedged_split: dict | None = None,
 ) -> str:
-    """Email headline: YTD per bucket + optional daily deltas."""
-    lines = [
-        "HEADLINE YTD PnL",
-        f"  Total: {total_pnl:,.2f}",
-    ]
+    """Email headline: hedged/unhedged lens + YTD per bucket + optional daily deltas."""
+    lines = ["HEADLINE YTD PnL"]
+    if hedged_split is not None:
+        lines.extend(format_hedged_unhedged_lines(hedged_split, total_pnl=total_pnl))
+    else:
+        lines.append(f"  Total: {total_pnl:,.2f}")
     for bucket in BUCKET_KEYS:
         pnl = float(bucket_pnl.get(bucket, 0.0) or 0.0)
         short = SUBJECT_BUCKET_SHORT[bucket]
@@ -693,6 +726,12 @@ def format_headline_pnl_block(
     lines.append(f"  Stock sleeves (B1+B2+B4+B5): {stock:,.2f}")
     if daily_buckets is not None:
         lines.append(format_bucket_daily_headline(daily_buckets))
+    if hedged_split is not None:
+        lines.append(
+            "  Hedged = B1 + B2 + the B4 slice where the short underlying offsets the "
+            "short inverse ETF (realized book hedge ratio, accumulated daily); "
+            "Unhedged = B3 + B5 + the B4 slice above each pair's hedge ratio."
+        )
     return "\n".join(lines)
 
 
@@ -2804,10 +2843,22 @@ def main() -> int:
     total_pnl = float(totals.get("total_pnl", 0.0))
     headline_bucket_pnl = _bucket_pnl_from_totals(totals)
     daily_bucket_pnl = compute_bucket_daily_deltas(run_date, headline_bucket_pnl)
+
+    # Hedged vs unhedged lens (additional view; buckets are unchanged). Fail-soft:
+    # a bad split must never block the EOD email.
+    hedged_split: dict | None = None
+    try:
+        from hedged_pnl import compute_hedged_split
+
+        hedged_split = compute_hedged_split(run_date)
+    except Exception as exc:
+        print(f"[EOD] WARN hedged/unhedged split unavailable: {exc}")
+
     headline_block = format_headline_pnl_block(
         headline_bucket_pnl,
         total_pnl=total_pnl,
         daily_buckets=daily_bucket_pnl,
+        hedged_split=hedged_split,
     )
     accounting_method_line = format_accounting_method_line(totals)
 
@@ -2900,6 +2951,17 @@ def main() -> int:
         if b4_pair_chart_path is not None and "bucket_4" in BUCKET_KEYS:
             bucket_email_sections[BUCKET_KEYS.index("bucket_4")] += (
                 f"\nPer-pair PnL + hedge-ratio PDF attached: {b4_pair_chart_path.name}\n"
+            )
+
+    hedged_b4_pair_csv: Path | None = None
+    if hedged_split is not None:
+        from hedged_pnl import B4_PAIR_CSV_NAME as _HEDGED_B4_CSV_NAME
+
+        _candidate = outdir / _HEDGED_B4_CSV_NAME
+        if _candidate.exists():
+            hedged_b4_pair_csv = _candidate
+            bucket_email_sections[BUCKET_KEYS.index("bucket_4")] += (
+                f"Hedged/unhedged per-leg split CSV attached: {_candidate.name}\n"
             )
 
     discrepancy_df = load_position_discrepancies(run_date)
@@ -3018,6 +3080,14 @@ def main() -> int:
             if b4_pair_chart_path is not None else ""
         )
         + (f"- {b4_pair_csv_path.name}\n" if b4_pair_csv_path is not None else "")
+        + (
+            f"- {hedged_b4_pair_csv.name}  (B4 per-leg hedged/unhedged split: fractions, matched USD, daily $)\n"
+            if hedged_b4_pair_csv is not None else ""
+        )
+        + (
+            "- hedged_pnl_history.csv  (hedged vs unhedged PnL ledger, daily-accumulated)\n"
+            if hedged_split is not None else ""
+        )
     )
 
     # 7) Send (attach consolidated CSVs + totals + plots)
@@ -3038,9 +3108,14 @@ def main() -> int:
     net_exp_under_csv = outdir / "net_exposure_by_underlying.csv"
     if net_exp_under_csv.exists():
         attachments.append(net_exp_under_csv)
-    for extra in (b4_pair_chart_path, b4_pair_csv_path):
+    for extra in (b4_pair_chart_path, b4_pair_csv_path, hedged_b4_pair_csv):
         if extra is not None and extra.exists():
             attachments.append(extra)
+    if hedged_split is not None:
+        from hedged_pnl import HEDGED_PNL_HISTORY_CSV as _HEDGED_LEDGER_CSV
+
+        if _HEDGED_LEDGER_CSV.exists():
+            attachments.append(_HEDGED_LEDGER_CSV)
     seen: set[Path] = set()
     for csv_path in bucket_attachment_csvs:
         if csv_path not in seen:

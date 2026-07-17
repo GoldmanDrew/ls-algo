@@ -1,0 +1,3 @@
+leg_type,symbol,underlying,pair,gross_usd,matched_usd,f_hedged,f_source,daily_pnl,hedged_daily,unhedged_daily,ytd_pnl
+etf,SOLT,SOEZ,SOLT|SOEZ,13777.475733,9656.12,0.24189995395501043,book,1729.2898110404858,418.3151256655622,1310.9746853749236,1729.2898110404858
+underlying,SOEZ,SOEZ,SOEZ (spot),9656.12,9656.12,1.0,book,0.0,0.0,0.0,0.0

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -863,6 +864,15 @@ def _clean_str(value: Any) -> str:
         return ""
     text = str(value).strip()
     return "" if text.lower() in {"nan", "none"} else text
+
+
+def _safe_num(value: Any) -> float | None:
+    """Float or None; NaN/inf become None so snapshots stay valid JSON."""
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if math.isfinite(out) else None
 
 
 def _first_nonblank(*values: Any) -> str:
@@ -5065,6 +5075,146 @@ def compute_pnl_panel(
 
 
 # ---------------------------------------------------------------------------
+# Hedged vs unhedged PnL lens (additional view on top of bucket accounting)
+
+HEDGED_PNL_SERIES_LOOKBACK = 90
+HEDGED_PNL_SPLIT_JSON = "hedged_pnl_split.json"
+HEDGED_PNL_B4_PAIR_CSV = "hedged_pnl_b4_by_pair.csv"
+
+
+def compute_hedged_pnl_panel(
+    accounting_dir: Path,
+    *,
+    hedged_history_csv: Path,
+    nav_usd: float,
+    run_date: str | None = None,
+    series_lookback: int = HEDGED_PNL_SERIES_LOOKBACK,
+) -> dict[str, Any]:
+    """Hedged vs unhedged PnL lens from ``hedged_pnl.py`` artifacts.
+
+    Hedged = B1 + B2 + the matched slice of each B4 pair (short underlying
+    offsetting the short inverse ETF up to the realized book hedge ratio);
+    unhedged = B3 + B5 + the B4 slice above each pair's hedge ratio. YTD values
+    are daily-accumulated in ``data/ledger/hedged_pnl_history.csv`` so hedge
+    ratio drift is respected. Purely a lens: bucket PnL is unchanged and
+    hedged + unhedged ties to the bucket-sum total.
+    """
+    split = _read_json_or_empty(accounting_dir / HEDGED_PNL_SPLIT_JSON)
+    hist = _read_csv_or_empty(hedged_history_csv)
+    if hist.empty and not split:
+        return {
+            "available": False,
+            "reason": f"missing {HEDGED_PNL_SPLIT_JSON} and {hedged_history_csv.name}",
+        }
+
+    series: list[dict[str, Any]] = []
+    last_row: dict[str, Any] | None = None
+    if not hist.empty and {"date", "hedged_pnl", "unhedged_pnl"}.issubset(hist.columns):
+        hist = hist.copy()
+        hist["date"] = hist["date"].astype(str)
+        if run_date:
+            hist = hist[hist["date"] <= str(run_date)]
+        hist = hist.sort_values("date").reset_index(drop=True)
+        for _, r in hist.tail(series_lookback).iterrows():
+            series.append(
+                {
+                    "date": str(r["date"]),
+                    "hedged_pnl": _safe_num(r.get("hedged_pnl")),
+                    "unhedged_pnl": _safe_num(r.get("unhedged_pnl")),
+                    "hedged_daily": _safe_num(r.get("hedged_daily")),
+                    "unhedged_daily": _safe_num(r.get("unhedged_daily")),
+                    "total_pnl": _safe_num(r.get("total_pnl")),
+                }
+            )
+        if not hist.empty:
+            last_row = hist.iloc[-1].to_dict()
+
+    # Headline numbers: prefer the run's split artifact; fall back to the ledger.
+    if split and (not run_date or str(split.get("run_date")) == str(run_date)):
+        hedged_ytd = _safe_num(split.get("hedged_pnl_ytd"))
+        unhedged_ytd = _safe_num(split.get("unhedged_pnl_ytd"))
+        hedged_daily = _safe_num(split.get("hedged_daily"))
+        unhedged_daily = _safe_num(split.get("unhedged_daily"))
+        total_ytd = _safe_num(split.get("total_pnl_ytd"))
+        total_daily = _safe_num(split.get("total_daily"))
+        components = dict(split.get("components") or {})
+        reconciliation = dict(split.get("reconciliation") or {})
+        source = HEDGED_PNL_SPLIT_JSON
+    elif last_row is not None:
+        hedged_ytd = _safe_num(last_row.get("hedged_pnl"))
+        unhedged_ytd = _safe_num(last_row.get("unhedged_pnl"))
+        hedged_daily = _safe_num(last_row.get("hedged_daily"))
+        unhedged_daily = _safe_num(last_row.get("unhedged_daily"))
+        total_ytd = _safe_num(last_row.get("total_pnl"))
+        total_daily = (
+            (hedged_daily + unhedged_daily)
+            if hedged_daily is not None and unhedged_daily is not None
+            else None
+        )
+        components = {
+            k: _safe_num(last_row.get(k))
+            for k in ("b12_daily", "b3_daily", "b5_daily", "b4_hedged_daily", "b4_unhedged_daily")
+        }
+        reconciliation = {"residual_daily": _safe_num(last_row.get("recon_residual"))}
+        source = hedged_history_csv.name
+    else:
+        return {"available": False, "reason": "no hedged split rows on/before run_date"}
+
+    ytd_gap = None
+    if total_ytd is not None and hedged_ytd is not None and unhedged_ytd is not None:
+        ytd_gap = total_ytd - (hedged_ytd + unhedged_ytd)
+    reconciliation.setdefault("ytd_gap_vs_total", ytd_gap)
+    reconciliation["ties_out"] = ytd_gap is not None and abs(ytd_gap) <= 1.0
+
+    b4_pair_rows: list[dict[str, Any]] = []
+    pair_df = _read_csv_or_empty(accounting_dir / HEDGED_PNL_B4_PAIR_CSV)
+    if not pair_df.empty:
+        for _, r in pair_df.iterrows():
+            b4_pair_rows.append(
+                {
+                    "leg_type": _clean_str(r.get("leg_type")),
+                    "symbol": _clean_str(r.get("symbol")),
+                    "underlying": _clean_str(r.get("underlying")),
+                    "pair": _clean_str(r.get("pair")),
+                    "gross_usd": _safe_num(r.get("gross_usd")),
+                    "matched_usd": _safe_num(r.get("matched_usd")),
+                    "f_hedged": _safe_num(r.get("f_hedged")),
+                    "f_source": _clean_str(r.get("f_source")),
+                    "daily_pnl": _safe_num(r.get("daily_pnl")),
+                    "hedged_daily": _safe_num(r.get("hedged_daily")),
+                    "unhedged_daily": _safe_num(r.get("unhedged_daily")),
+                    "ytd_pnl": _safe_num(r.get("ytd_pnl")),
+                }
+            )
+
+    nav = float(nav_usd) if nav_usd and nav_usd > 0 else 0.0
+    return {
+        "available": True,
+        "source": source,
+        "run_date": str(run_date) if run_date else None,
+        "hedged_ytd_usd": hedged_ytd,
+        "unhedged_ytd_usd": unhedged_ytd,
+        "hedged_daily_usd": hedged_daily,
+        "unhedged_daily_usd": unhedged_daily,
+        "total_ytd_usd": total_ytd,
+        "total_daily_usd": total_daily,
+        "hedged_ytd_pct_nav": (hedged_ytd / nav) if nav > 0 and hedged_ytd is not None else None,
+        "unhedged_ytd_pct_nav": (unhedged_ytd / nav) if nav > 0 and unhedged_ytd is not None else None,
+        "components": {k: _safe_num(v) for k, v in components.items()},
+        "reconciliation": {
+            k: (_safe_num(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else v)
+            for k, v in reconciliation.items()
+        },
+        "series": series,
+        "b4_pair_rows": b4_pair_rows,
+        "definitions": {
+            "hedged": "B1 + B2 + B4 matched (short underlying offsets short inverse ETF up to realized book hedge ratio)",
+            "unhedged": "B3 + B5 + B4 unmatched (slice above each pair's hedge ratio)",
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
 # Shared-underlying map (names that appear in more than one accounting bucket)
 
 
@@ -5929,6 +6079,7 @@ class RiskSnapshot:
     borrow_shock_panel: dict[str, Any] = field(default_factory=dict)
     drawdown_panel: dict[str, Any] = field(default_factory=dict)
     pnl_panel: dict[str, Any] = field(default_factory=dict)
+    hedged_pnl_panel: dict[str, Any] = field(default_factory=dict)
     shared_underlying_panel: dict[str, Any] = field(default_factory=dict)
     movers_panel: dict[str, Any] = field(default_factory=dict)
     bucket_movers_panel: dict[str, Any] = field(default_factory=dict)
@@ -5989,6 +6140,7 @@ class RiskSnapshot:
             "borrow_shock_panel": self.borrow_shock_panel,
             "drawdown_panel": self.drawdown_panel,
             "pnl_panel": self.pnl_panel,
+            "hedged_pnl_panel": self.hedged_pnl_panel,
             "shared_underlying_panel": self.shared_underlying_panel,
             "movers_panel": self.movers_panel,
             "bucket_movers_panel": self.bucket_movers_panel,
@@ -6236,6 +6388,12 @@ def build_snapshot(
         nav_usd=nav_usd,
         run_date=run_date,
     )
+    hedged_pnl_panel = compute_hedged_pnl_panel(
+        accounting,
+        hedged_history_csv=repo_root / "data" / "ledger" / "hedged_pnl_history.csv",
+        nav_usd=nav_usd,
+        run_date=run_date,
+    )
     bucket_underlying_history = repo_root / "data" / "ledger" / "pnl_bucket_underlying_history.csv"
     bucket_movers_panel = compute_bucket_movers_panel(
         accounting,
@@ -6312,6 +6470,7 @@ def build_snapshot(
         borrow_shock_panel=borrow_shock_panel,
         drawdown_panel=drawdown_panel,
         pnl_panel=pnl_panel,
+        hedged_pnl_panel=hedged_pnl_panel,
         shared_underlying_panel=shared_underlying_panel,
         movers_panel=movers_panel,
         bucket_movers_panel=bucket_movers_panel,
