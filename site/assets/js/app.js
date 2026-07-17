@@ -912,6 +912,37 @@
     return `<span class="delta ${cls}">${display}</span>`;
   }
 
+  function hedgedHeadlineItems(panel) {
+    /** Shared Hedged / Unhedged / Total YTD cards for Overview + P&L tab. */
+    if (!panel || !panel.available) return null;
+    return [
+      {
+        label: "Hedged PnL (YTD)",
+        value: fmtUsdSigned(panel.hedged_ytd_usd),
+        sub: `${fmtUsdSigned(panel.hedged_daily_usd)} today · ${fmtPct(
+          panel.hedged_ytd_pct_nav,
+          2
+        )} of NAV · B1 + B2 + B4 matched`,
+        cls: signedClass(panel.hedged_ytd_usd),
+      },
+      {
+        label: "Unhedged PnL (YTD)",
+        value: fmtUsdSigned(panel.unhedged_ytd_usd),
+        sub: `${fmtUsdSigned(panel.unhedged_daily_usd)} today · ${fmtPct(
+          panel.unhedged_ytd_pct_nav,
+          2
+        )} of NAV · B3 + B5 + B4 unmatched`,
+        cls: signedClass(panel.unhedged_ytd_usd),
+      },
+      {
+        label: "Total PnL (YTD)",
+        value: fmtUsdSigned(panel.total_ytd_usd),
+        sub: `${fmtUsdSigned(panel.total_daily_usd)} today`,
+        cls: signedClass(panel.total_ytd_usd),
+      },
+    ];
+  }
+
   function renderCockpit(snap) {
     const book = snap.book || {};
     const worst = snap.worst_shock || {};
@@ -931,22 +962,8 @@
     const staleDays = freshness.data_age_days;
     const stale = staleDays != null && staleDays > 1;
 
-    const items = [
-      {
-        label: "NAV",
-        value: fmtUsd(book.nav_usd),
-        sub: [
-          snap.nav_source ? `source: ${snap.nav_source}` : "",
-          stale ? `data age ${staleDays}d` : "",
-        ]
-          .filter(Boolean)
-          .join(" · "),
-        spark: sparklineSvg(series("nav_usd"), {
-          dates,
-          format: (v) => fmtUsd(v),
-        }),
-        cls: stale ? "stale" : "neutral",
-      },
+    const hedgedCards = hedgedHeadlineItems(snap.hedged_pnl_panel);
+    const pnlCards = hedgedCards || [
       {
         label: "P&L today",
         value: fmtUsdSigned(book.pnl_daily_usd),
@@ -972,6 +989,25 @@
         )} of NAV (cumulative)`,
         cls: signedClass(book.pnl_ytd_usd ?? book.pnl_today_usd),
       },
+    ];
+
+    const items = [
+      {
+        label: "NAV",
+        value: fmtUsd(book.nav_usd),
+        sub: [
+          snap.nav_source ? `source: ${snap.nav_source}` : "",
+          stale ? `data age ${staleDays}d` : "",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        spark: sparklineSvg(series("nav_usd"), {
+          dates,
+          format: (v) => fmtUsd(v),
+        }),
+        cls: stale ? "stale" : "neutral",
+      },
+      ...pnlCards,
       {
         label: "Gross / NAV",
         value: fmtPct(book.gross_exposure_pct_nav, 0),
@@ -4336,32 +4372,7 @@
       )} · ${panel.series?.length || 0} sessions${tie}</span>`;
     }
 
-    const items = [
-      {
-        label: "Hedged PnL (YTD)",
-        value: fmtUsdSigned(panel.hedged_ytd_usd),
-        sub: `${fmtUsdSigned(panel.hedged_daily_usd)} today · ${fmtPct(
-          panel.hedged_ytd_pct_nav,
-          2
-        )} of NAV · B1 + B2 + B4 matched`,
-        cls: signedClass(panel.hedged_ytd_usd),
-      },
-      {
-        label: "Unhedged PnL (YTD)",
-        value: fmtUsdSigned(panel.unhedged_ytd_usd),
-        sub: `${fmtUsdSigned(panel.unhedged_daily_usd)} today · ${fmtPct(
-          panel.unhedged_ytd_pct_nav,
-          2
-        )} of NAV · B3 + B5 + B4 unmatched`,
-        cls: signedClass(panel.unhedged_ytd_usd),
-      },
-      {
-        label: "Total PnL (YTD)",
-        value: fmtUsdSigned(panel.total_ytd_usd),
-        sub: `${fmtUsdSigned(panel.total_daily_usd)} today`,
-        cls: signedClass(panel.total_ytd_usd),
-      },
-    ];
+    const items = hedgedHeadlineItems(panel) || [];
     els.hedgedPnlSummary.innerHTML = items
       .map(
         (it) => `<div class="stat">
