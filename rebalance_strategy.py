@@ -278,8 +278,31 @@ def load_plan(
     plan["Underlying"] = plan["Underlying"].astype(str).map(norm_sym)
     plan["purgatory"]  = plan.get("purgatory", False).fillna(False).astype(bool) \
                          if "purgatory" in plan.columns else False
-    plan["sleeve"]     = plan.get("sleeve", "core_leveraged") \
-                         if "sleeve" in plan.columns else "core_leveraged"
+    raw_sleeve = (
+        plan["sleeve"]
+        if "sleeve" in plan.columns
+        else pd.Series("core_leveraged", index=plan.index)
+    )
+    sleeve_text = raw_sleeve.fillna("").astype(str).str.strip()
+    delta = pd.to_numeric(
+        plan.get("Delta", pd.Series(float("nan"), index=plan.index)),
+        errors="coerce",
+    )
+    missing_inverse_owner = plan["purgatory"] & delta.lt(0) & sleeve_text.isin(
+        {"", "nan", "None"}
+    )
+    if bool(missing_inverse_owner.any()):
+        pairs = ", ".join(
+            f"{row.ETF}/{row.Underlying}"
+            for row in plan.loc[
+                missing_inverse_owner, ["ETF", "Underlying"]
+            ].itertuples(index=False)
+        )
+        raise ValueError(
+            "Trade plan is unsafe: purgatory inverse pair(s) missing sleeve identity: "
+            f"{pairs}. Regenerate proposed_trades before rebalancing."
+        )
+    plan["sleeve"] = sleeve_text
     plan["long_usd"]   = pd.to_numeric(plan.get("long_usd", 0), errors="coerce").fillna(0.0)
     plan["short_usd"]  = pd.to_numeric(plan.get("short_usd", 0), errors="coerce").fillna(0.0)
     # Optional optimal-target columns from generate_trade_plan dual pipeline. These let
@@ -3430,6 +3453,21 @@ def main() -> None:
                         f"interval={dec.interval_days}d h={dec.hedge_ratio} "
                         f"({since}; {dec.reason})"
                     )
+                cadence_context: Dict[Tuple[str, str], Dict[str, object]] = {}
+                for _, row in resize_df.iterrows():
+                    if str(row.get("sleeve", "")).strip().lower() != "inverse_decay_bucket4":
+                        continue
+                    key = (
+                        norm_sym(str(row.get("ETF", ""))),
+                        norm_sym(str(row.get("Underlying", ""))),
+                    )
+                    is_purgatory = bool(row.get("purgatory", False))
+                    policy = str(row.get("execution_policy", "normal") or "normal")
+                    cadence_context[key] = {
+                        "purgatory": is_purgatory,
+                        "execution_policy": policy,
+                        "pair_status": "purgatory" if is_purgatory else "active",
+                    }
                 cadence_csv = rb_dir / "b4_cadence_decisions.csv"
                 pd.DataFrame([{
                     "run_date": run_date,
@@ -3441,6 +3479,23 @@ def main() -> None:
                     "trading_days_since_last": d.trading_days_since_last,
                     "last_rebalance": d.last_rebalance,
                     "hedge_ratio": d.hedge_ratio,
+                    **cadence_context.get((d.etf, d.underlying), {
+                        "purgatory": False,
+                        "execution_policy": "normal",
+                        "pair_status": "active",
+                    }),
+                    "cadence_effect": (
+                        "reduce_only_allowed"
+                        if d.due
+                        and bool(
+                            cadence_context.get((d.etf, d.underlying), {}).get(
+                                "purgatory", False
+                            )
+                        )
+                        else "resize_allowed"
+                        if d.due
+                        else "pair_frozen"
+                    ),
                 } for d in b4_cadence_decisions]).to_csv(cadence_csv, index=False)
                 tprint(f"[PHASE2B][B4-CADENCE] Wrote {cadence_csv}")
                 resize_plan = filter_resize_plan_for_b4_cadence(resize_df, b4_due_keys)

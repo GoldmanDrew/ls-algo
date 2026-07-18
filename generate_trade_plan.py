@@ -540,6 +540,33 @@ def _b2_b4_universe_masks(
     return is_yieldboost, in_b2_universe, in_flow_program
 
 
+def _execution_sleeves_for_screened(
+    screened: pd.DataFrame,
+    *,
+    flow_program_etfs: set[str],
+) -> pd.Series:
+    """Classify stable execution ownership before eligibility/purgatory filters.
+
+    Purgatory changes whether a pair may be sized, not which sleeve owns its
+    held inventory.  Keeping this identity on every output row ensures B4
+    cadence still sees inverse pairs while they are reduce-only.
+    """
+    sleeves = pd.Series("", index=screened.index, dtype=object)
+    delta = pd.to_numeric(screened.get("Delta"), errors="coerce")
+    is_yieldboost, _, in_flow_program = _b2_b4_universe_masks(
+        screened,
+        flow_program_etfs=flow_program_etfs,
+    )
+    is_volatility_etp = _volatility_etp_rows_mask(screened)
+
+    sleeves.loc[delta.gt(0)] = "core_leveraged"
+    sleeves.loc[delta.gt(0) & is_yieldboost] = "yieldboost"
+    sleeves.loc[delta.lt(0)] = "inverse_decay_bucket4"
+    sleeves.loc[is_volatility_etp] = VOL_ETP_BUCKET5_SLEEVE
+    sleeves.loc[in_flow_program] = "flow_program"
+    return sleeves
+
+
 def _load_core_decay_state(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"version": 1, "by_etf": {}}
@@ -2913,6 +2940,7 @@ def main() -> None:
     # KEEP set: full screened rows. Final output is filtered to
     # non-zero targets plus purgatory rows.
     keep = screened.copy()
+    flow_program_etfs = {_norm_sym(x) for x in (flow_shorts or [])}
 
     # Initialize outputs on KEEP
     keep["strategy_tag"] = tag
@@ -2924,7 +2952,10 @@ def main() -> None:
     keep["underlying_target_from_b4_usd"] = 0.0
     keep["underlying_internalized_usd"] = 0.0
     keep["underlying_external_trade_usd"] = 0.0
-    keep["sleeve"] = ""
+    keep["sleeve"] = _execution_sleeves_for_screened(
+        keep,
+        flow_program_etfs=flow_program_etfs,
+    )
     keep["b1_trend_xsec_pctile"] = np.nan
     keep["b1_trend_multiplier"] = np.nan
 
@@ -3041,6 +3072,9 @@ def main() -> None:
         cols_to_drop = ["Leverage", "ExpectedLeverage", "cagr_positive", "delta_abs"]
         proposed = proposed.drop(columns=[c for c in cols_to_drop if c in proposed.columns], errors="ignore")
 
+        from scripts.b4_plan_contract import validate_purgatory_inverse_sleeves
+        validate_purgatory_inverse_sleeves(proposed)
+
         dated_path = run_dir(args.run_date) / "proposed_trades.csv"
         dated_path.parent.mkdir(parents=True, exist_ok=True)
         proposed.to_csv(dated_path, index=False)
@@ -3054,7 +3088,6 @@ def main() -> None:
         # -----------------------------
         # core_leveraged: high-delta bucket-1 path only (~not ``is_yieldboost``).
         # yieldboost: ``is_yieldboost`` rows that pass borrow + min_net_edge on net_edge_p50.
-        flow_program_etfs = {_norm_sym(x) for x in (flow_shorts or [])}
         is_yieldboost, in_b2_universe, in_flow_program = _b2_b4_universe_masks(
             eligible, flow_program_etfs=flow_program_etfs
         )
@@ -4644,6 +4677,9 @@ def main() -> None:
 
         cols_to_drop = ["Leverage", "ExpectedLeverage", "cagr_positive", "delta_abs"]
         proposed = proposed.drop(columns=[c for c in cols_to_drop if c in proposed.columns], errors="ignore")
+
+        from scripts.b4_plan_contract import validate_purgatory_inverse_sleeves
+        validate_purgatory_inverse_sleeves(proposed)
 
         dated_path = run_dir(args.run_date) / "proposed_trades.csv"
         dated_path.parent.mkdir(parents=True, exist_ok=True)

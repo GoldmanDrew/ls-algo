@@ -37,15 +37,38 @@ def test_due_on_first_rebalance():
     assert dec.reason == "no_prior_rebalance"
 
 
-def test_filter_resize_plan_drops_deferred_b4():
+def test_filter_resize_plan_marks_deferred_b4_without_dropping_netting_row():
     df = pd.DataFrame([
         {"sleeve": "core_leveraged", "ETF": "TQQQ", "Underlying": "QQQ", "long_usd": 1000, "short_usd": -500},
         {"sleeve": "inverse_decay_bucket4", "ETF": "CLSZ", "Underlying": "CLSK", "long_usd": -200, "short_usd": -800},
         {"sleeve": "inverse_decay_bucket4", "ETF": "MSTZ", "Underlying": "MSTR", "long_usd": -100, "short_usd": -400},
     ])
     out = filter_resize_plan_for_b4_cadence(df, {("CLSZ", "CLSK")})
-    assert len(out) == 2
-    assert set(out["ETF"]) == {"TQQQ", "CLSZ"}
+    assert len(out) == 3
+    assert bool(out.loc[out["ETF"] == "CLSZ", "b4_cadence_due"].iloc[0]) is True
+    assert bool(out.loc[out["ETF"] == "MSTZ", "b4_cadence_due"].iloc[0]) is False
+
+
+def test_purgatory_reduce_only_does_not_bypass_cadence():
+    df = pd.DataFrame([
+        {
+            "sleeve": "inverse_decay_bucket4",
+            "ETF": "ASTN",
+            "Underlying": "ASTS",
+            "purgatory": True,
+            "execution_policy": "reduce_only",
+        },
+        {
+            "sleeve": "inverse_decay_bucket4",
+            "ETF": "IREZ",
+            "Underlying": "IREN",
+            "purgatory": True,
+            "execution_policy": "reduce_only",
+        },
+    ])
+    out = filter_resize_plan_for_b4_cadence(df, {("IREZ", "IREN")})
+    assert bool(out.loc[out["ETF"] == "ASTN", "b4_cadence_due"].iloc[0]) is False
+    assert bool(out.loc[out["ETF"] == "IREZ", "b4_cadence_due"].iloc[0]) is True
 
 
 def test_mark_pairs_rebalanced_updates_state():
