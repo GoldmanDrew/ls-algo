@@ -566,3 +566,4 @@ date,symbol,underlying,bucket,pair,type,category,amount_usd,ex_date,description
 2026-07-15,CSU,CSU,,,Withholding Tax,withholding_tax,-45.4150809,,CSU(CA21037X1006) CASH DIVIDEND CAD 1.4171 PER SHARE - CA TAX
 2026-07-15,HEI.A,HEI.A,,,Dividends,dividends,436.28,2026-07-01,HEI A(US4228062083) CASH DIVIDEND USD 0.13 PER SHARE (Ordinary Dividend)
 2026-07-15,MPWR,MPWR,bucket_1,MPWR (spot),Payment In Lieu Of Dividends,pil_dividends,4.0,2026-06-30,MPWR(US6098391054) PAYMENT IN LIEU OF DIVIDEND (Ordinary Dividend)
+2026-07-17,BRKC,BRKC,,,Payment In Lieu Of Dividends,pil_dividends,-14.82,2026-07-16,BRKC(US88634T8320) PAYMENT IN LIEU OF DIVIDEND (Ordinary Dividend)
