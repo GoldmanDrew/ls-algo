@@ -547,12 +547,12 @@ def test_sleeve_target_weights_from_strategy_config():
 
     cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
     weights, book_gross = compute_sleeve_target_weights(cfg)
-    assert book_gross == pytest.approx(1_050_000 * 4)
-    assert weights["bucket_1"] == pytest.approx(0.51)
-    assert weights["bucket_2"] == pytest.approx(0.46)
+    assert book_gross == pytest.approx(1_200_000 * 4)
+    assert weights["bucket_1"] == pytest.approx(2_737_000 / 4_800_000)
+    assert weights["bucket_2"] == pytest.approx(1_900_000 / 4_800_000)
     assert weights["bucket_3"] is None
-    assert weights["bucket_4"] == pytest.approx(0.0275)
-    assert weights["bucket_5"] == pytest.approx(0.0025)
+    assert weights["bucket_4"] == pytest.approx(115_000 / 4_800_000)
+    assert weights["bucket_5"] == pytest.approx(0.01)
     fixed = sum(v for k, v in weights.items() if v is not None and k != "bucket_3")
     assert fixed == pytest.approx(1.0, rel=1e-6)
 
@@ -561,9 +561,9 @@ def test_load_risk_limits_uses_yaml_sleeve_targets():
     repo_root = Path(__file__).resolve().parents[2]
     ctx = load_risk_limits(repo_root / "config" / "strategy_config.yml")
     assert ctx.sleeve_target_source == "config:strategy_config.yml"
-    assert ctx.book_target_gross_usd == pytest.approx(4_200_000.0)
-    assert ctx.sleeve_target_weights["bucket_1"] == pytest.approx(0.51)
-    assert ctx.sleeve_target_weights["bucket_4"] == pytest.approx(0.0275)
+    assert ctx.book_target_gross_usd == pytest.approx(4_800_000.0)
+    assert ctx.sleeve_target_weights["bucket_1"] == pytest.approx(2_737_000 / 4_800_000)
+    assert ctx.sleeve_target_weights["bucket_4"] == pytest.approx(115_000 / 4_800_000)
     # Legacy fallback kept for missing-config paths only.
     fixed = sum(
         v for k, v in FALLBACK_SLEEVE_TARGET_WEIGHTS.items() if v is not None and k != "bucket_3"

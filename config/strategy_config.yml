@@ -695,7 +695,7 @@ production_actual_backtest:
     remaining_gap_rate: 0.25           # ~4 operator sessions to ~68% of gap; ~8 to ~90%
     target_blend_alpha: 0.25           # blend destination toward new plan each rebal
     stock_midweek_mode: rebal_only     # freeze structural gross between operator days
-    midweek_hedge_repair: true         # Phase-3 residual repair midweek (keep hedged)
+    midweek_hedge_repair: false        # share-hold midweek; hedge only on operator days
     hedge_reserve_frac: 0.15
     max_daily_turnover_pct: 0.10
     adv_participation_pct: 0.10

@@ -1767,7 +1767,7 @@ def test_config_defaults_to_versioned_hedge_safe_controller():
     assert knobs["remaining_gap_rate"] == pytest.approx(0.25)
     assert knobs["target_blend_alpha"] == pytest.approx(0.25)
     assert knobs["stock_midweek_mode"] == "rebal_only"
-    assert knobs["midweek_hedge_repair"] is True
+    assert knobs["midweek_hedge_repair"] is False
     assert knobs["hedge_reserve_frac"] == pytest.approx(0.15)
     assert knobs["max_daily_turnover_pct"] == pytest.approx(0.10)
     assert knobs["legacy_max_daily_turnover_pct"] == pytest.approx(0.15)

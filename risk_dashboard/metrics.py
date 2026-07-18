@@ -229,6 +229,26 @@ def compute_sleeve_target_weights(cfg: dict[str, Any]) -> tuple[dict[str, float 
     else:
         vol_etp_book_weight = _clamp01(b4_w * float(vol_cfg.get("share_of_b4_budget", 0.0) or 0.0))
 
+    # Production uses explicit dollar ceilings when present: B2 and B4 are fixed,
+    # B5 is independent, and B1 receives the residual. Keep the legacy normalized
+    # weight path for configs that do not provide those ceilings.
+    yb_fixed = float(yb.get("target_gross_usd", 0.0) or 0.0)
+    b4_fixed = float(b4.get("target_gross_usd", 0.0) or 0.0)
+    if book_target_gross_usd > 0 and (yb_fixed > 0 or b4_fixed > 0):
+        b2_weight = _clamp01(yb_fixed / book_target_gross_usd) if yb_fixed > 0 else stock_nominal_w * yb_stock_frac
+        b4_core_weight = _clamp01(b4_fixed / book_target_gross_usd) if b4_fixed > 0 else 0.0
+        vol_weight = vol_etp_book_weight if (vol_enabled and vol_etp_book_weight > 0) else None
+        b5_weight = float(vol_weight or 0.0)
+        b1_weight = max(0.0, 1.0 - b2_weight - b4_core_weight - b5_weight)
+        weights: dict[str, float | None] = {
+            "bucket_1": b1_weight,
+            "bucket_2": b2_weight,
+            "bucket_3": None,
+            "bucket_4": b4_core_weight if b4_core_weight > 0 else None,
+            "bucket_5": vol_weight,
+        }
+        return weights, book_target_gross_usd
+
     b4_core_weight = max(0.0, b4_w - vol_etp_book_weight) if (b4_enabled and b4_w > 0) else 0.0
     vol_weight = vol_etp_book_weight if (b4_enabled and vol_enabled and vol_etp_book_weight > 0) else None
 

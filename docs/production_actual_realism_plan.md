@@ -702,8 +702,9 @@ new entry from an ordinary reduction. It remains available as
 `stock_rebalance_clock: operator_5d`. Each operator session closes
 `remaining_gap_rate` of the *remaining* gap with `_advance_pair_atomic` (both legs
 together, hedge ratio preserved). Between sessions, freeze shares; set
-`midweek_hedge_repair: true` so Phase-3 residual repair keeps pairs delta-hedged
-without mark-chasing gross. Destination itself also blends via `target_blend_alpha`.
+`midweek_hedge_repair: false` for pure share-hold between sessions (hedge
+rebalanced only when gross steps on the operator clock). Destination itself also
+blends via `target_blend_alpha`.
 
 ```yaml
 production_actual_backtest:
@@ -717,7 +718,7 @@ production_actual_backtest:
     remaining_gap_rate: 0.25      # ~4 operator sessions → ~68% of gap closed
     target_blend_alpha: 0.25
     stock_midweek_mode: rebal_only
-    midweek_hedge_repair: true    # Phase-3 midweek; no structural gross midweek
+    midweek_hedge_repair: false   # share-hold midweek; hedge on operator days only
     hedge_reserve_frac: 0.15
     max_daily_turnover_pct: 0.10
     adv_participation_pct: 0.10

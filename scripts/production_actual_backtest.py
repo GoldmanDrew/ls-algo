@@ -395,7 +395,7 @@ def _turnover_pace_knobs(cfg: dict) -> dict[str, Any]:
         ).strip().lower(),
         # When true with rebal_only: restore delta hedge midweek without
         # changing structural gross (share-hold size, repair residual only).
-        "midweek_hedge_repair": bool(pace.get("midweek_hedge_repair", True)),
+        "midweek_hedge_repair": bool(pace.get("midweek_hedge_repair", False)),
         "hedge_reserve_frac": float(pace.get("hedge_reserve_frac", 0.15) or 0.15),
         "adv_participation_pct": float(pace.get("adv_participation_pct", 0.10) or 0.10),
         "sleeve_gross_ema_alpha": float(pace.get("sleeve_gross_ema_alpha", 0.35) or 0.35),
@@ -2581,7 +2581,7 @@ def simulate_book_from_plan_timeline(
     remaining_gap_rate: float = 0.25,
     target_blend_alpha: float = 0.25,
     stock_midweek_mode: str = "ramp_and_hedge",
-    midweek_hedge_repair: bool = True,
+    midweek_hedge_repair: bool = False,
     hedge_reserve_frac: float = 0.20,
     adv_participation_pct: float = 0.10,
     sleeve_gross_ema_alpha: float = 0.35,
@@ -3473,8 +3473,7 @@ def simulate_book_from_plan_timeline(
             )
             anticipated_hedge_turnover = 0.0
             # rebal_only freezes structural gross off-clock. Phase-3 residual
-            # repair still runs when midweek_hedge_repair is on (default), so
-            # pairs stay delta-hedged between operator sessions.
+            # repair midweek only when midweek_hedge_repair is on.
             allow_stock_hedge_repair = bool(
                 hedge_safe
                 and (
@@ -5405,7 +5404,7 @@ def run_replay_backtest(
         remaining_gap_rate=float(rknobs.get('remaining_gap_rate', 0.25)),
         target_blend_alpha=float(rknobs.get('target_blend_alpha', 0.25)),
         stock_midweek_mode=str(rknobs.get('stock_midweek_mode', 'rebal_only')),
-        midweek_hedge_repair=bool(rknobs.get('midweek_hedge_repair', True)),
+        midweek_hedge_repair=bool(rknobs.get('midweek_hedge_repair', False)),
         hedge_reserve_frac=float(rknobs.get('hedge_reserve_frac', 0.20)),
         adv_participation_pct=float(rknobs.get('adv_participation_pct', 0.10)),
         sleeve_gross_ema_alpha=float(rknobs.get('sleeve_gross_ema_alpha', 0.35)),
@@ -5633,7 +5632,7 @@ def run_prod_replay_backtest(
         remaining_gap_rate=float(rknobs.get('remaining_gap_rate', 0.25)),
         target_blend_alpha=float(rknobs.get('target_blend_alpha', 0.25)),
         stock_midweek_mode=str(rknobs.get('stock_midweek_mode', 'rebal_only')),
-        midweek_hedge_repair=bool(rknobs.get('midweek_hedge_repair', True)),
+        midweek_hedge_repair=bool(rknobs.get('midweek_hedge_repair', False)),
         hedge_reserve_frac=float(rknobs.get('hedge_reserve_frac', 0.20)),
         adv_participation_pct=float(rknobs.get('adv_participation_pct', 0.10)),
         sleeve_gross_ema_alpha=float(rknobs.get('sleeve_gross_ema_alpha', 0.35)),
@@ -5854,7 +5853,7 @@ def run_gtp_approx_backtest(
         remaining_gap_rate=float(rknobs.get('remaining_gap_rate', 0.25)),
         target_blend_alpha=float(rknobs.get('target_blend_alpha', 0.25)),
         stock_midweek_mode=str(rknobs.get('stock_midweek_mode', 'rebal_only')),
-        midweek_hedge_repair=bool(rknobs.get('midweek_hedge_repair', True)),
+        midweek_hedge_repair=bool(rknobs.get('midweek_hedge_repair', False)),
         hedge_reserve_frac=float(rknobs.get('hedge_reserve_frac', 0.20)),
         adv_participation_pct=float(rknobs.get('adv_participation_pct', 0.10)),
         sleeve_gross_ema_alpha=float(rknobs.get('sleeve_gross_ema_alpha', 0.35)),
@@ -6022,7 +6021,7 @@ def run_recompute_backtest(
         remaining_gap_rate=float(rknobs.get('remaining_gap_rate', 0.25)),
         target_blend_alpha=float(rknobs.get('target_blend_alpha', 0.25)),
         stock_midweek_mode=str(rknobs.get('stock_midweek_mode', 'rebal_only')),
-        midweek_hedge_repair=bool(rknobs.get('midweek_hedge_repair', True)),
+        midweek_hedge_repair=bool(rknobs.get('midweek_hedge_repair', False)),
         hedge_reserve_frac=float(rknobs.get('hedge_reserve_frac', 0.20)),
         adv_participation_pct=float(rknobs.get('adv_participation_pct', 0.10)),
         sleeve_gross_ema_alpha=float(rknobs.get('sleeve_gross_ema_alpha', 0.35)),
