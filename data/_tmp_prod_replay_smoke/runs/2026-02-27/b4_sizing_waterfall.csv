@@ -1,0 +1,3 @@
+ETF,Underlying,source,weight_solved,weight_capped,weight_smoothed,gross_decay_score_usd,gross_after_caps_usd,gross_after_smooth_usd,crash_cap_usd,gross_after_crash_usd,gross_final_usd,inverse_short_final_usd,underlying_short_final_usd,L,C,crash_l_source,rho_effective,book_cap_mult
+CLSZ,CLSK,fallback,,,,63000.0,,,2808.2636081656124,2808.2636081656124,1123.305443266245,-586.1454847820479,-537.1599584841972,,,missing,,0.4
+MSTZ,MSTR,fallback,,,,63000.0,,,2808.2636081656124,2808.2636081656124,1123.305443266245,-593.6102017314992,-529.6952415347458,0.3365068710972201,0.6142818500991925,signal,0.003,0.4

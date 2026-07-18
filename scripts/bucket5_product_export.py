@@ -64,8 +64,8 @@ def build_b5_insurance_strategy_guide(
                     ),
                     (
                         "This product dashboard shows the research insurance stack (dual-short + puts). "
-                        "The live GTP book only holds a tiny volatility-ETP sleeve (~0.25% of gross) "
-                        "as a placeholder risk budget — not the full dual-short + put product."
+                        "The live GTP book reserves an independent 1% of total gross as true "
+                        "two-leg B5 pair gross; put execution remains staged and separately gated."
                     ),
                 ],
             },
@@ -100,9 +100,10 @@ def build_b5_insurance_strategy_guide(
                 "paragraphs": [
                     (
                         "Carry alone is not insurance. Part of sleeve + bill income buys a ladder of "
-                        "longer-dated SPX puts (buy ~6M DTE, roll ~3M). Production spends about 2.4% "
-                        "of equity in premium per roll across 10% / 20% / 30% OTM rungs, with a dynamic "
-                        "budget that spends more when puts are cheap."
+                        "longer-dated SPX puts (buy ~6M DTE, roll ~3M). Production B doubles each "
+                        "rung's prior integer quantity exactly across 10% / 20% / 30% OTM rungs. "
+                        "Full rollout is blocked when indivisible contracts push modeled premium "
+                        "above the nominal dynamic budget."
                     ),
                 ],
             },
@@ -340,7 +341,14 @@ def build_run_payload(
         "hedge_kind": cfg.hedge_kind,
         "uvix_slip_bps": cfg.uvix_slip_bps,
         "fee_bps": cfg.fee_bps,
-        "rungs": [{"otm_pct": r.otm_pct, "per_roll_frac": r.per_roll_frac} for r in cfg.rungs],
+        "rungs": [
+            {
+                "otm_pct": r.otm_pct,
+                "per_roll_frac": r.per_roll_frac,
+                "quantity_multiplier": r.quantity_multiplier,
+            }
+            for r in cfg.rungs
+        ],
         "regime": {
             "rho_contango": cfg.regime.rho_contango,
             "rho_backwardation": cfg.regime.rho_backwardation,

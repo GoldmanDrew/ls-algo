@@ -1,0 +1,15 @@
+{
+  "era": "live",
+  "start": "2022-03-30",
+  "end": "2026-07-13",
+  "spy_idle_frac": 0.5,
+  "interpretation": {
+    "B": "Same B5 short-vol sleeve + SPX puts; idle cash split 50% SPY / 50% T-bill collateral",
+    "C": "50% capital buy-and-hold SPY + 50% capital running full B5 insurance"
+  },
+  "paths": {
+    "summary": "C:\\Users\\drewg\\Projects\\quant\\ls-algo\\data\\runs\\2026-07-13\\bucket5\\spy_hybrid\\spy_hybrid_summary.csv",
+    "series": "C:\\Users\\drewg\\Projects\\quant\\ls-algo\\data\\runs\\2026-07-13\\bucket5\\spy_hybrid\\spy_hybrid_equity.csv",
+    "plot": "C:\\Users\\drewg\\Projects\\quant\\ls-algo\\data\\runs\\2026-07-13\\bucket5\\spy_hybrid\\spy_hybrid_equity.png"
+  }
+}

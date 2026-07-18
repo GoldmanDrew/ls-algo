@@ -1,0 +1,28 @@
+symbol,last_trade_date,reason,settlement_mode,note
+AURU,2026-03-03,liquidation,last_print,Tradr AUR closed
+AXUP,2026-03-16,liquidation,last_print,Tradr AXON closed
+BKNU,2026-03-16,liquidation,last_print,Tradr BKNG closed
+BLSX,2026-02-19,liquidation,last_print,Tradr BLSH closed
+CELT,2026-01-23,liquidation,last_print,Tradr CELH closed
+DASX,2026-02-19,liquidation,last_print,Tradr DASH closed
+DKUP,2026-03-16,liquidation,last_print,Tradr DKNG closed
+ARMU,2026-03-23,stale,last_print,Tradr ARM stale/no-trade
+BULU,2026-03-23,stale,last_print,Tradr BULL stale/no-trade
+LYFX,2026-03-03,liquidation,last_print,Tradr LYFT closed
+NETX,2026-03-13,liquidation,last_print,Tradr NET closed
+NWMX,2026-01-30,liquidation,last_print,Tradr NEM closed
+NNEX,2026-01-15,delisted,last_print,NNE delisted (approx)
+OKTX,2026-02-04,liquidation,last_print,Tradr OKTA closed
+PXIU,2026-03-16,liquidation,last_print,Tradr UPXI closed
+QSX,2026-01-30,liquidation,last_print,Tradr QS closed
+FRDU,2026-03-16,liquidation,last_print,Tradr FRDU closed
+DOGD,2026-04-27,liquidation,last_print,Tradr DDOG liquidated
+ENPX,2026-04-27,liquidation,last_print,Tradr ENPH liquidated
+MDBX,2026-04-27,liquidation,last_print,Tradr MDB liquidated
+SNPX,2026-04-27,liquidation,last_print,Tradr SNPS liquidated
+VOYX,2026-04-27,liquidation,last_print,Tradr VOYG liquidated
+MSDD,2026-06-23,delist_announced,last_print,Operator early-exit flag; still trading into late June in plans
+SOLX,2026-05-11,liquidation,last_print,T-REX GSOL last trade ~2026-05-04; final dist ~2026-05-11
+XRPK,2026-05-11,liquidation,last_print,T-REX XRPZ liquidated
+PAAU,2026-07-10,liquidation,last_print,T-REX PAAS last trade 2026-07-10
+CLSZ,2026-06-18,quote_dead,last_print,Yahoo ETF quotes stop mid-June; und CLSK continues

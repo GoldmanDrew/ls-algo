@@ -98,11 +98,16 @@ def load_universe(run_date: str) -> pd.DataFrame:
     return sel
 
 
-def load_price_panel(run_date: str) -> dict[str, pd.DataFrame]:
-    """Per-ETF aligned prices from the run parquet (flex split-adjusted)."""
+def load_price_panel(run_date: str, **kwargs) -> dict[str, pd.DataFrame]:
+    """Per-ETF aligned prices from the run parquet (flex split-adjusted).
+
+    Extra kwargs are forwarded to ``load_run_price_panel`` (e.g. ``extend_yahoo``,
+    ``extend_to``, ``underlying_by_etf``).
+    """
     from scripts.pair_price_panel import load_run_price_panel
 
-    return load_run_price_panel(run_date, min_days=MIN_PRICE_PANEL_DAYS)
+    kwargs.setdefault("min_days", MIN_PRICE_PANEL_DAYS)
+    return load_run_price_panel(run_date, **kwargs)
 
 
 def tr_est_series(prices_b: pd.Series, window: int = 60) -> pd.Series:

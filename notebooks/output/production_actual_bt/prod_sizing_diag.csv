@@ -1,110 +1,116 @@
-date,source,n_pairs,n_keep_open,gross_sum,gross_b4,n_b4,n_held_in,n_screened,edge_source,n_edge_fallback,ok,error
-2026-02-27,prod_replay,24,37,4076246.610886531,2246.61088653249,2,0,392,net_decay_annual,391,True,
-2026-02-28,prod_replay,24,33,4076245.4043278303,2245.404327830586,2,2,392,net_decay_annual,391,True,
-2026-03-02,prod_replay,38,40,4076245.4810710503,2245.4810710500965,2,2,392,net_decay_annual,391,True,
-2026-03-03,prod_replay,29,32,4076244.5080473227,2244.5080473230396,2,2,392,net_decay_annual,392,True,
-2026-03-04,prod_replay,124,26,4076245.095363386,2245.095363386398,2,2,392,net_decay_annual,392,True,
-2026-03-05,prod_replay,129,26,4200000.0,126000.0,1,2,392,net_decay_annual,392,True,
-2026-03-06,prod_replay,134,28,4076218.0367895267,2218.0367895270806,2,1,392,net_decay_annual,392,True,
-2026-03-10,prod_replay,123,30,4076186.268149239,2186.2681492401375,2,2,392,net_decay_annual,392,True,
-2026-03-11,prod_replay,134,27,4200000.0,126000.0,1,2,392,net_decay_annual,392,True,
-2026-03-12,prod_replay,130,28,4075208.135694308,1208.1356943082026,2,1,392,net_decay_annual,392,True,
-2026-03-18,prod_replay,133,23,4200000.0,126000.0,1,2,395,net_decay_annual,395,True,
-2026-03-20,prod_replay,118,32,4200000.0,126000.0,1,1,395,net_decay_annual,395,True,
-2026-03-21,prod_replay,124,27,4200000.0,126000.0,1,1,396,net_decay_annual,396,True,
-2026-03-23,prod_replay,168,25,4200000.000000001,126000.0,1,1,383,net_decay_annual,383,True,
-2026-03-24,prod_replay,172,21,4200000.000000001,126000.0,1,1,383,net_decay_annual,383,True,
-2026-03-25,prod_replay,168,24,4200000.000000001,126000.0,1,1,383,net_decay_annual,383,True,
-2026-03-26,prod_replay,170,22,4200000.0,126000.0,1,1,383,net_decay_annual,383,True,
-2026-03-27,prod_replay,167,31,4200000.000000001,126000.0,1,1,383,net_decay_annual,383,True,
-2026-03-28,prod_replay,174,25,4200000.0,126000.0,1,1,383,net_decay_annual,383,True,
-2026-03-31,prod_replay,167,27,4200000.0,126000.0,1,1,388,net_decay_annual,388,True,
-2026-04-01,prod_replay,203,20,3915801.2140690545,1244.9218642731887,2,1,389,net_decay_annual,388,True,
-2026-04-02,prod_replay,203,20,3932643.510760885,1266.3404268187096,2,2,389,net_decay_annual,388,True,
-2026-04-03,prod_replay,202,20,4002992.3571899133,2867.9089468535917,3,2,393,net_decay_annual,392,True,
-2026-04-04,prod_replay,202,20,4002999.3443293544,2874.8977252027285,3,3,393,net_decay_annual,392,True,
-2026-04-07,prod_replay,217,13,3983240.9298679694,8025.464353403149,5,3,396,net_decay_annual,392,True,
-2026-04-08,prod_replay,218,14,3992860.653939441,8025.871504567211,5,5,396,net_decay_annual,392,True,
-2026-04-09,prod_replay,219,11,3694492.627583678,5836.708430826468,4,5,396,net_decay_annual,392,True,
-2026-04-10,prod_replay,217,15,3783353.2236120906,5836.316764010027,4,4,396,net_decay_annual,395,True,
-2026-04-11,prod_replay,220,16,3575865.8244990045,3660.385245307438,3,4,399,net_decay_annual,398,True,
-2026-04-14,prod_replay,217,19,3847007.8620215235,3660.995562267496,3,3,399,net_decay_annual,398,True,
-2026-04-15,prod_replay,219,14,4035510.7892344245,3635.6832013502762,3,3,399,net_decay_annual,398,True,
-2026-04-16,prod_replay,216,15,3851418.361880147,2179.591090363702,2,3,398,net_decay_annual,397,True,
-2026-04-17,archived_proposed_fallback,259,17,3746529.9349503247,1871529.9349503247,8,8,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-04-18,archived_proposed_fallback,258,18,3746529.9349503247,1871529.9349503247,8,8,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-04-20,archived_proposed_fallback,287,18,3745864.8485947917,1870864.8485947915,14,14,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-04-21,archived_proposed_fallback,290,18,3737224.837551253,1862224.8375512536,15,15,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-04-22,prod_replay,240,17,4027033.6149526755,9304.67171094376,6,2,444,net_decay_annual,440,True,
-2026-04-23,archived_proposed_fallback,245,19,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-04-24,archived_proposed_fallback,241,17,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-04-25,prod_replay,248,6,3553025.9645362357,111784.21680500293,8,6,421,net_edge_p50_annual,0,True,
-2026-04-26,prod_replay,235,6,3289027.7021905063,110252.85770064713,8,8,419,net_edge_p50_annual,0,True,
-2026-04-27,prod_replay,230,6,2736990.2688924195,9450.845617703266,6,8,420,net_edge_p50_annual,0,True,
-2026-04-28,archived_proposed_fallback,254,5,2500000.0000000005,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-04-29,archived_proposed_fallback,252,2,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-04-30,archived_proposed_fallback,258,4,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-01,archived_proposed_fallback,209,38,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-02,archived_proposed_fallback,210,38,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-03,archived_proposed_fallback,209,39,2500000.0000000005,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-04,archived_proposed_fallback,219,37,2500000.0000000005,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-05,archived_proposed_fallback,230,39,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-06,archived_proposed_fallback,233,35,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-07,archived_proposed_fallback,232,37,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-08,archived_proposed_fallback,234,38,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-09,archived_proposed_fallback,234,38,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-11,archived_proposed_fallback,246,43,2985008.8253023606,208508.2516029302,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-12,archived_proposed_fallback,249,45,2964176.4445111398,208217.3775184317,12,12,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-13,archived_proposed_fallback,242,83,330282.7681931632,16682.76819316318,9,9,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-14,archived_proposed_fallback,244,87,2621629.4753801106,163398.19490549172,8,8,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-15,archived_proposed_fallback,246,81,1950136.9889938524,59634.00001525879,11,11,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-16,archived_proposed_fallback,239,85,1982836.9253062648,64000.0,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-18,archived_proposed_fallback,235,87,2298556.5046077003,64000.00000000001,12,12,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-19,archived_proposed_fallback,239,74,287030.8173740312,6400.000000000001,12,12,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-20,archived_proposed_fallback,252,62,2197098.6875801994,65999.99999999997,11,11,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-21,archived_proposed_fallback,248,57,2200591.748046066,65999.99999999999,12,12,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-22,archived_proposed_fallback,238,74,2216442.1639727633,60465.00012874603,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-23,archived_proposed_fallback,233,78,2159632.11340764,60540.00005722045,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-24,archived_proposed_fallback,234,78,2162532.1357694985,60540.00005722045,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-25,archived_proposed_fallback,231,78,2156270.414722611,60540.00005722046,11,11,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-26,archived_proposed_fallback,240,65,2313704.406004214,66000.0,11,11,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-27,archived_proposed_fallback,240,73,2174367.57000144,66000.0,11,11,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-28,archived_proposed_fallback,234,97,1937248.397080582,59300.00004768371,11,11,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-29,archived_proposed_fallback,243,88,1955915.0772180767,65999.99999999997,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-05-30,archived_proposed_fallback,235,92,2367144.41161189,65999.99999999999,11,11,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-01,archived_proposed_fallback,245,81,2033024.1492871055,66000.0,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-02,archived_proposed_fallback,242,91,1822344.6231956093,50709.399890899665,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-03,archived_proposed_fallback,250,87,1875730.059364147,56471.0000038147,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-04,archived_proposed_fallback,245,77,2124646.162233953,66000.0,9,9,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-05,archived_proposed_fallback,250,76,2202335.469614146,66000.00000000001,12,12,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-06,archived_proposed_fallback,241,90,2395917.053361078,65999.99999999999,12,12,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-09,archived_proposed_fallback,251,69,1986618.451555675,64225.38515623923,13,13,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-10,archived_proposed_fallback,251,68,1998804.100616593,65999.99999999999,13,13,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-11,archived_proposed_fallback,253,59,2091672.9804645332,66000.0,13,13,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-12,archived_proposed_fallback,257,59,2209275.689952206,67999.99999999999,13,13,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-13,archived_proposed_fallback,246,72,2181066.352460035,68000.0,12,12,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-14,archived_proposed_fallback,251,65,2208448.6951816543,67999.99999999999,12,12,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-16,archived_proposed_fallback,254,83,2188392.6591911823,68000.0,13,13,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-17,archived_proposed_fallback,254,80,2166284.304700611,68000.00000000001,14,14,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-18,archived_proposed_fallback,254,91,1945399.5117083015,68000.0,13,13,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-19,archived_proposed_fallback,253,84,2127879.4545430844,68000.0,14,14,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-20,archived_proposed_fallback,254,87,2129969.2865846646,68000.0,15,15,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-22,archived_proposed_fallback,256,76,2377188.7890038276,71249.52726798496,14,14,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-23,archived_proposed_fallback,260,83,2229447.9323757906,70771.30960343534,13,13,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-24,archived_proposed_fallback,241,110,2306758.1829370824,97277.72362971675,13,13,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-25,prod_replay,239,80,2630560.042283895,65651.25076072384,10,6,453,net_edge_p50_annual,0,True,
-2026-06-26,archived_proposed_fallback,235,107,2561556.3561156783,107599.20293707213,9,9,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-27,archived_proposed_fallback,233,105,2482750.596092183,109108.0377591148,9,9,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-29,archived_proposed_fallback,237,130,2902045.1211597607,112333.56142424465,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
-2026-06-30,prod_replay,228,154,2316077.0248099677,90741.3994790065,8,10,540,net_edge_p50_annual,0,True,
-2026-07-01,prod_replay,250,119,2513753.7683468065,99764.92710645699,10,8,540,net_edge_p50_annual,0,True,
-2026-07-02,prod_replay,250,115,2757775.706294615,91632.97333766917,11,10,540,net_edge_p50_annual,0,True,
-2026-07-03,prod_replay,247,121,2765199.032416732,95580.46349288954,11,11,540,net_edge_p50_annual,0,True,
-2026-07-04,prod_replay,246,122,2767028.2086371295,97389.33528684461,11,11,540,net_edge_p50_annual,0,True,
-2026-07-05,prod_replay,245,122,2767484.3342178,97615.79413348739,11,11,540,net_edge_p50_annual,0,True,
-2026-07-06,prod_replay,246,114,2507947.5948063536,93898.51590544412,10,11,540,net_edge_p50_annual,0,True,
-2026-07-07,prod_replay,249,120,2893268.004325634,97796.44650341485,11,10,548,net_edge_p50_annual,0,True,
-2026-07-08,prod_replay,249,122,2610424.039661077,99695.66068368629,10,11,547,net_edge_p50_annual,0,True,
-2026-07-09,prod_replay,249,123,2522873.677906788,99354.22823582303,11,10,547,net_edge_p50_annual,0,True,
-2026-07-10,prod_replay,252,118,2791657.10734051,96876.28591226772,11,11,550,net_edge_p50_annual,0,True,
-2026-07-11,prod_replay,253,117,2667622.3730790946,97687.10793341324,11,11,550,net_edge_p50_annual,0,True,
+date,source,n_pairs,n_keep_open,n_reduce_only,gross_sum,gross_b4,n_b4,n_held_in,n_screened,edge_source,n_edge_fallback,ok,error
+2026-02-27,prod_replay,25,0,37,4074973.789297018,973.7892970176747,2,0,392,net_decay_annual,391,True,
+2026-02-28,prod_replay,25,0,33,4074977.2727098297,977.272709830599,2,2,392,net_decay_annual,391,True,
+2026-03-02,prod_replay,39,0,40,4074979.5742850383,979.5742850382826,2,2,392,net_decay_annual,391,True,
+2026-03-03,prod_replay,30,0,32,4074982.306806947,982.306806945671,2,2,392,net_decay_annual,392,True,
+2026-03-04,prod_replay,127,0,26,4074985.109087117,985.109087116835,2,2,392,net_decay_annual,392,True,
+2026-03-05,prod_replay,133,0,26,4074984.7024081354,984.702408136012,2,2,392,net_decay_annual,392,True,
+2026-03-06,prod_replay,137,0,28,4074984.049048192,984.0490481921394,2,2,392,net_decay_annual,392,True,
+2026-03-10,prod_replay,125,0,30,4074971.0064589977,971.0064589989184,2,2,392,net_decay_annual,392,True,
+2026-03-11,prod_replay,138,0,27,4074966.847537118,966.8475371180648,2,2,392,net_decay_annual,392,True,
+2026-03-12,prod_replay,134,0,28,4076392.3071559337,2392.3071559331406,3,2,392,net_decay_annual,392,True,
+2026-03-18,prod_replay,135,0,25,4199999.999999999,126000.0,1,3,395,net_decay_annual,395,True,
+2026-03-20,prod_replay,121,0,32,4074984.3057713252,984.3057713243082,2,1,395,net_decay_annual,395,True,
+2026-03-21,prod_replay,126,0,28,4200000.0,126000.0,1,2,396,net_decay_annual,396,True,
+2026-03-23,prod_replay,172,0,25,4075004.310478206,1004.3104782052704,2,1,383,net_decay_annual,383,True,
+2026-03-24,prod_replay,175,0,22,4075021.754522889,1021.754522889203,2,2,383,net_decay_annual,383,True,
+2026-03-25,prod_replay,172,0,24,4075037.634268544,1037.6342685425573,2,2,383,net_decay_annual,383,True,
+2026-03-26,prod_replay,174,0,22,4075050.5603516623,1050.560351661928,2,2,383,net_decay_annual,383,True,
+2026-03-27,prod_replay,171,0,31,4075058.8565762625,1058.8565762633318,2,2,383,net_decay_annual,383,True,
+2026-03-28,prod_replay,178,0,25,4075063.69846357,1063.6984635696615,2,2,383,net_decay_annual,383,True,
+2026-03-31,prod_replay,168,0,29,4199999.999999999,126000.0,1,2,388,net_decay_annual,388,True,
+2026-04-01,prod_replay,205,0,20,3924545.760140147,1039.1357726425015,2,1,389,net_decay_annual,388,True,
+2026-04-02,prod_replay,205,0,20,3942356.3639414078,1031.2801096325356,2,2,389,net_decay_annual,388,True,
+2026-04-03,prod_replay,206,0,20,4010772.0076946877,6798.847940476885,5,2,393,net_decay_annual,392,True,
+2026-04-04,prod_replay,206,0,20,4010772.006157691,6798.847932113613,5,5,393,net_decay_annual,392,True,
+2026-04-07,prod_replay,219,0,13,3986686.5795755265,7053.801403310738,5,5,396,net_decay_annual,392,True,
+2026-04-08,prod_replay,221,0,14,3997785.9788520103,7062.608194125737,5,5,396,net_decay_annual,392,True,
+2026-04-09,prod_replay,222,0,12,3708106.8193112183,5374.269779367516,4,5,396,net_decay_annual,392,True,
+2026-04-10,prod_replay,221,0,15,3791566.429805311,7074.769734094341,5,4,396,net_decay_annual,395,True,
+2026-04-11,prod_replay,224,0,16,3591033.7679086914,5257.57881011471,4,5,399,net_decay_annual,398,True,
+2026-04-14,prod_replay,221,0,19,3848612.8275840897,5265.961124835094,4,4,399,net_decay_annual,398,True,
+2026-04-15,prod_replay,224,0,14,4042825.3391551273,7186.057564912312,5,4,399,net_decay_annual,398,True,
+2026-04-16,prod_replay,221,0,15,3871174.5839591394,5261.261179874539,4,5,398,net_decay_annual,397,True,
+2026-04-17,archived_proposed_fallback,259,0,17,3746529.9349503247,1871529.9349503247,8,8,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-04-18,archived_proposed_fallback,258,0,18,3746529.9349503247,1871529.9349503247,8,8,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-04-20,archived_proposed_fallback,287,0,18,3745864.8485947917,1870864.8485947915,14,14,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-04-21,archived_proposed_fallback,290,0,18,3737224.837551253,1862224.8375512536,15,15,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-04-22,prod_replay,243,0,19,4029682.13835328,9207.93773079208,6,4,444,net_decay_annual,440,True,
+2026-04-23,archived_proposed_fallback,245,0,19,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-04-24,archived_proposed_fallback,241,0,17,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-04-25,prod_replay,253,0,6,3560846.288261407,115499.99999999997,10,6,421,net_edge_p50_annual,0,True,
+2026-04-26,prod_replay,240,0,6,3306454.313152143,114420.01619097989,10,10,419,net_edge_p50_annual,0,True,
+2026-04-27,prod_replay,235,0,6,2846887.5765796956,113765.00619375095,8,10,420,net_edge_p50_annual,0,True,
+2026-04-28,archived_proposed_fallback,254,0,5,2500000.0000000005,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-04-29,archived_proposed_fallback,252,0,2,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-04-30,archived_proposed_fallback,258,0,4,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-01,archived_proposed_fallback,209,0,38,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-02,archived_proposed_fallback,210,0,38,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-03,archived_proposed_fallback,209,0,39,2500000.0000000005,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-04,archived_proposed_fallback,219,0,37,2500000.0000000005,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-05,archived_proposed_fallback,230,0,39,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-06,archived_proposed_fallback,233,0,35,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-07,archived_proposed_fallback,232,0,37,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-08,archived_proposed_fallback,234,0,38,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-09,archived_proposed_fallback,234,0,38,2500000.0,0.0,0,0,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-11,archived_proposed_fallback,246,0,43,2985008.8253023606,208508.2516029302,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-12,archived_proposed_fallback,249,0,45,2964176.4445111398,208217.3775184317,12,12,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-13,archived_proposed_fallback,242,0,83,330282.7681931632,16682.76819316318,9,9,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-14,archived_proposed_fallback,244,0,87,2621629.4753801106,163398.19490549172,8,8,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-15,archived_proposed_fallback,246,0,81,1950136.9889938524,59634.00001525879,11,11,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-16,archived_proposed_fallback,239,0,85,1982836.9253062648,64000.0,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-18,archived_proposed_fallback,235,0,87,2298556.5046077003,64000.00000000001,12,12,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-19,archived_proposed_fallback,239,0,74,287030.8173740312,6400.000000000001,12,12,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-20,archived_proposed_fallback,252,0,62,2197098.6875801994,65999.99999999997,11,11,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-21,archived_proposed_fallback,248,0,57,2200591.748046066,65999.99999999999,12,12,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-22,archived_proposed_fallback,238,0,74,2216442.1639727633,60465.00012874603,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-23,archived_proposed_fallback,233,0,78,2159632.11340764,60540.00005722045,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-24,archived_proposed_fallback,234,0,78,2162532.1357694985,60540.00005722045,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-25,archived_proposed_fallback,231,0,78,2156270.414722611,60540.00005722046,11,11,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-26,archived_proposed_fallback,240,0,65,2313704.406004214,66000.0,11,11,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-27,archived_proposed_fallback,240,0,73,2174367.57000144,66000.0,11,11,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-28,archived_proposed_fallback,234,0,97,1937248.397080582,59300.00004768371,11,11,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-29,archived_proposed_fallback,243,0,88,1955915.0772180767,65999.99999999997,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-05-30,archived_proposed_fallback,235,0,92,2367144.41161189,65999.99999999999,11,11,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-01,archived_proposed_fallback,245,0,81,2033024.1492871055,66000.0,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-02,archived_proposed_fallback,242,0,91,1822344.6231956093,50709.399890899665,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-03,archived_proposed_fallback,250,0,87,1875730.059364147,56471.0000038147,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-04,archived_proposed_fallback,245,0,77,2124646.162233953,66000.0,9,9,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-05,archived_proposed_fallback,250,0,76,2202335.469614146,66000.00000000001,12,12,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-06,archived_proposed_fallback,241,0,90,2395917.053361078,65999.99999999999,12,12,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-09,archived_proposed_fallback,251,0,69,1986618.451555675,64225.38515623923,13,13,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-10,archived_proposed_fallback,251,0,68,1998804.100616593,65999.99999999999,13,13,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-11,archived_proposed_fallback,253,0,59,2091672.9804645332,66000.0,13,13,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-12,archived_proposed_fallback,257,0,59,2209275.689952206,67999.99999999999,13,13,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-13,archived_proposed_fallback,246,0,72,2181066.352460035,68000.0,12,12,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-14,archived_proposed_fallback,251,0,65,2208448.6951816543,67999.99999999999,12,12,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-16,archived_proposed_fallback,254,0,83,2188392.6591911823,68000.0,13,13,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-17,archived_proposed_fallback,254,0,80,2166284.304700611,68000.00000000001,14,14,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-18,archived_proposed_fallback,254,0,91,1945399.5117083015,68000.0,13,13,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-19,archived_proposed_fallback,253,0,84,2127879.4545430844,68000.0,14,14,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-20,archived_proposed_fallback,254,0,87,2129969.2865846646,68000.0,15,15,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-22,archived_proposed_fallback,256,0,76,2377188.7890038276,71249.52726798496,14,14,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-23,archived_proposed_fallback,260,0,83,2229447.9323757906,70771.30960343534,13,13,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-24,archived_proposed_fallback,241,0,110,2306758.1829370824,97277.72362971675,13,13,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-25,prod_replay,243,0,80,2609468.39746306,78825.41886259035,11,8,453,net_edge_p50_annual,0,True,
+2026-06-26,archived_proposed_fallback,235,0,107,2561556.3561156783,107599.20293707213,9,9,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-27,archived_proposed_fallback,233,0,105,2482750.596092183,109108.0377591148,9,9,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-29,archived_proposed_fallback,237,0,130,2902045.1211597607,112333.56142424465,10,10,0,archived_proposed_trades,0,True,plan-only archive (no screened CSV)
+2026-06-30,prod_replay,233,0,154,2345237.9457979584,113194.26102166201,10,11,540,net_edge_p50_annual,0,True,
+2026-07-01,prod_replay,254,0,119,2530977.075549076,116988.23430872629,11,10,540,net_edge_p50_annual,0,True,
+2026-07-02,prod_replay,252,0,116,2790248.383567743,123653.73446747774,10,11,540,net_edge_p50_annual,0,True,
+2026-07-03,prod_replay,247,0,122,2801489.896361799,131322.6631974185,8,10,540,net_edge_p50_annual,0,True,
+2026-07-04,prod_replay,246,0,123,2809660.193161413,139473.97748658224,8,8,540,net_edge_p50_annual,0,True,
+2026-07-05,prod_replay,245,0,123,2809937.223428062,139515.8303048027,8,8,540,net_edge_p50_annual,0,True,
+2026-07-06,prod_replay,250,0,114,2557798.5141161224,139815.26575808486,11,8,540,net_edge_p50_annual,0,True,
+2026-07-07,prod_replay,253,0,120,2932581.16273735,136516.6369146436,12,11,548,net_edge_p50_annual,0,True,
+2026-07-08,prod_replay,254,0,122,2640241.2265045824,129512.84752719276,12,12,547,net_edge_p50_annual,0,True,
+2026-07-09,prod_replay,253,0,123,2562067.278462486,133692.8986243983,12,12,547,net_edge_p50_annual,0,True,
+2026-07-10,prod_replay,257,0,118,2822699.6454718686,127918.82404362671,13,12,550,net_edge_p50_annual,0,True,
+2026-07-11,prod_replay,258,0,117,2703742.5405747006,129945.43986823535,13,13,550,net_edge_p50_annual,0,True,
+2026-07-13,prod_replay,262,0,115,2695376.85873456,124842.8849938316,14,13,550,net_edge_p50_annual,0,True,
+2026-07-14,prod_replay,262,0,119,2760749.561189315,175338.53103840802,13,14,557,net_edge_p50_annual,0,True,
+2026-07-15,prod_replay,263,0,117,2772909.395921128,189963.81745597732,13,13,562,net_edge_p50_annual,0,True,
+2026-07-16,prod_replay,263,0,119,2813733.926105925,200888.32414330178,12,13,562,net_edge_p50_annual,0,True,
+2026-07-17,prod_replay,263,0,108,2570361.5640984727,226590.84003968115,13,12,562,net_edge_p50_annual,0,True,
+2026-07-18,prod_replay,258,0,111,2696605.2881793603,248541.97783841676,11,13,562,net_edge_p50_annual,0,True,

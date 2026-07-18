@@ -768,7 +768,28 @@ def main() -> int:
 
     blacklist = {canonical_symbol(str(s)) for s in load_blacklist(cfg)}
     blocked_by_under = {etf for etf, und in etf_to_under.items() if und in blacklist}
-    blocked_symbols = blacklist | blocked_by_under
+    purgatory_symbols: set[str] = set()
+    try:
+        screened_policy = pd.read_csv(screened_csv)
+        if "ETF" in screened_policy.columns:
+            policy_block = pd.Series(False, index=screened_policy.index)
+            for col in ("purgatory", "hard_exit_borrow"):
+                if col in screened_policy.columns:
+                    policy_block = policy_block | to_bool_series(screened_policy[col])
+            purgatory_symbols |= set(
+                screened_policy.loc[policy_block, "ETF"].astype(str).map(canonical_symbol)
+            )
+        plan_policy = pd.read_csv(proposed_path)
+        if "ETF" in plan_policy.columns:
+            plan_block = plan_policy.get(
+                "execution_policy", pd.Series("", index=plan_policy.index)
+            ).astype(str).str.lower().isin({"reduce_only", "hard_exit", "hold"})
+            purgatory_symbols |= set(
+                plan_policy.loc[plan_block, "ETF"].astype(str).map(canonical_symbol)
+            )
+    except Exception as ex:
+        tprint(f"[HARVEST] WARNING: purgatory policy load failed ({ex}); using plan blockers only.")
+    blocked_symbols = blacklist | blocked_by_under | purgatory_symbols
 
     cands = build_harvest_candidates(
         disc,

@@ -141,6 +141,7 @@ class RegimePolicy:
 class LadderRung:
     otm_pct: float
     per_roll_frac: float   # premium budget for this rung, fraction of equity per roll
+    quantity_multiplier: int = 1  # production can scale the pre-existing integer quantity exactly
 
 
 def build_ladder(strikes_weights: list[tuple[float, float]], total_per_roll: float) -> list[LadderRung]:
@@ -401,7 +402,8 @@ def run_monetizing_put(
             px_buy = bs_put(s, k, t_buy, effective_iv(atm, pcfg.otm_pct, pcfg), pcfg.risk_free)
         if px_buy <= 1e-6:
             return
-        n = max(1, int(budget / (px_buy * pcfg.contract_multiplier)))
+        base_n = max(1, int(budget / (px_buy * pcfg.contract_multiplier)))
+        n = base_n * max(1, int(rung.quantity_multiplier))
         contracts = n
         entry_contracts = n
         strike = k
@@ -914,14 +916,90 @@ LADDER_2P4 = [
     LadderRung(0.30, 0.008),
 ]
 
+LADDER_2X = [
+    LadderRung(0.10, 0.008, quantity_multiplier=2),
+    LadderRung(0.20, 0.008, quantity_multiplier=2),
+    LadderRung(0.30, 0.008, quantity_multiplier=2),
+]
+
 EXTENDED_START = "2008-01-01"
 
 
 def production_config(**overrides) -> InsuranceConfig:
-    """Production insurance product (variant B: dynamic budget ladder 2.4%/roll)."""
-    defaults = dict(hedge_budget=HedgeBudgetPolicy())
+    """Production B insurance product: exactly 2x each prior integer put quantity."""
+    defaults = dict(hedge_budget=HedgeBudgetPolicy(), rungs=LADDER_2X)
     defaults.update(overrides)
     return replace(InsuranceConfig(), **defaults)
+
+
+def reverse_solve_put_contracts(
+    *,
+    equity_usd: float,
+    spx_spot: float,
+    atm_iv: float,
+    rungs: list[LadderRung],
+    hedge_budget: HedgeBudgetPolicy | None = None,
+    ratio: float = float("nan"),
+    vix: float = float("nan"),
+    buy_dte: int = 126,
+    risk_free: float = 0.04,
+    contract_multiplier: float = 100.0,
+) -> dict:
+    """Reverse-solve integer SPX contracts from the production premium budget.
+
+    Prices use the backtest's Black-Scholes + skew fallback. Live execution must
+    substitute executable asks and recompute the displayed floor formula.
+    """
+    equity_usd = max(0.0, float(equity_usd))
+    spx_spot = max(0.0, float(spx_spot))
+    atm_iv = float(np.clip(atm_iv, 0.08, 1.5))
+    mult = 1.0
+    if hedge_budget is not None and hedge_budget.enabled:
+        mult = float(hedge_budget.multiplier(float(ratio), float(vix)))
+    t = max(float(buy_dte) / 252.0, 1.0 / 252.0)
+    rows: list[dict] = []
+    for rung in rungs:
+        strike = spx_spot * (1.0 - float(rung.otm_pct))
+        pcfg = PutOverlayConfig(otm_pct=float(rung.otm_pct), risk_free=risk_free)
+        px = bs_put(
+            spx_spot,
+            strike,
+            t,
+            effective_iv(atm_iv, float(rung.otm_pct), pcfg),
+            risk_free,
+        )
+        unit = max(0.0, float(px) * float(contract_multiplier))
+        baseline_budget = equity_usd * float(rung.per_roll_frac) * mult
+        baseline_contracts = max(1, int(baseline_budget // unit)) if unit > 0 else 0
+        contracts = baseline_contracts * max(1, int(rung.quantity_multiplier))
+        budget = baseline_budget * max(1, int(rung.quantity_multiplier))
+        rows.append({
+            "otm_pct": float(rung.otm_pct),
+            "strike": float(strike),
+            "modeled_put_price": float(px),
+            "contract_multiplier": float(contract_multiplier),
+            "dynamic_budget_multiplier": mult,
+            "baseline_budget_usd": baseline_budget,
+            "target_budget_usd": budget,
+            "baseline_contracts": baseline_contracts,
+            "target_contracts": contracts,
+            "premium_used_usd": contracts * unit,
+            "unspent_budget_usd": budget - contracts * unit,
+        })
+    return {
+        "method": "premium_budget_reverse_solve_modeled_quotes",
+        "equity_usd": equity_usd,
+        "spx_spot": spx_spot,
+        "atm_iv": atm_iv,
+        "buy_dte": int(buy_dte),
+        "dynamic_budget_multiplier": mult,
+        "baseline_total_contracts": sum(r["baseline_contracts"] for r in rows),
+        "target_total_contracts": sum(r["target_contracts"] for r in rows),
+        "target_total_budget_usd": sum(r["target_budget_usd"] for r in rows),
+        "premium_used_usd": sum(r["premium_used_usd"] for r in rows),
+        "rungs": rows,
+        "execution_formula": "target contracts = 2 * max(1, floor(baseline rung budget / (executable ask * 100)))",
+    }
 
 
 def save_insurance_plots(res: dict, dest: Path, *, tag: str = "insurance") -> list[Path]:

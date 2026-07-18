@@ -44,7 +44,9 @@ def plan_csv(tmp_path):
         # Purgatory row — must be excluded from BOTH hedgeable and resize.
         {"strategy_tag": "ls", "sleeve": "core_leveraged",
          "Underlying": "MSFT", "ETF": "MSFU",
-         "long_usd":  2_000, "short_usd": -1_000, "purgatory": True},
+         "long_usd":  0, "short_usd": 0, "purgatory": True,
+         "execution_policy": "reduce_only",
+         "model_long_usd": 2_000, "model_short_usd": -1_000},
         # Flow-program row — excluded from hedgeable AND resize via flow_etfs.
         {"strategy_tag": "ls", "sleeve": "flow_program",
          "Underlying": "GOOG", "ETF": "GOOGS",
@@ -99,10 +101,9 @@ class TestLoadPlanContract:
             f"resize_df must include all three live sleeves; got {sleeves}"
         )
 
-    def test_resize_excludes_purgatory_and_flow(self, plan_csv):
+    def test_resize_includes_reduce_only_purgatory_but_excludes_flow(self, plan_csv):
         _, _, resize = load_plan(plan_csv, "ls", flow_etfs={"GOOGS"})
-        # Purgatory row excluded.
-        assert "MSFT" not in set(resize["Underlying"])
+        assert "MSFT" in set(resize["Underlying"])
         # Flow ETF excluded.
         assert "GOOGS" not in set(resize["ETF"])
 

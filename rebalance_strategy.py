@@ -93,6 +93,12 @@ from phase2b_resize import (
     print_resize_summary,
     write_resize_decisions,
 )
+from rebalance_intents import (
+    SameRunIntentLedger,
+    clip_against_opposing_intents,
+    coalesce_intents,
+    project_positions,
+)
 from scripts.bucket4_cadence_gate import (
     filter_resize_plan_for_b4_cadence,
     load_cadence_state,
@@ -285,7 +291,8 @@ def load_plan(
         plan["optimal_short_usd"] = pd.to_numeric(plan["optimal_short_usd"], errors="coerce").fillna(plan["short_usd"])
     plan = plan.reset_index(drop=True)
 
-    common_mask = (~plan["purgatory"]) & (~plan["ETF"].isin(flow_etfs))
+    non_flow = ~plan["ETF"].isin(flow_etfs)
+    common_mask = (~plan["purgatory"]) & non_flow
 
     hedge_sleeves = frozenset({"core_leveraged", "yieldboost"})
     hedgeable_df = plan[
@@ -295,7 +302,13 @@ def load_plan(
     # Phase 2b's underlying-leg target is the SIGNED sum of long_usd per
     # Underlying. Including all sleeves here is what nets B1 vs B4 on the
     # same ticker into a single signed underlying decision.
-    resize_df = plan[common_mask].copy().reset_index(drop=True)
+    execution_policy = plan.get(
+        "execution_policy", pd.Series("normal", index=plan.index)
+    ).astype(str).str.strip().str.lower()
+    resize_mask = non_flow & (
+        (~plan["purgatory"]) | execution_policy.eq("reduce_only")
+    )
+    resize_df = plan[resize_mask].copy().reset_index(drop=True)
 
     return plan, hedgeable_df, resize_df
 
@@ -1714,6 +1727,14 @@ def execute_hedge_pass_serial(
                 f"HEDGE_{action} status={res.status} "
                 f"correction_usd={trade_info['correction_usd']:+,.0f}"
             ),
+            "intent_id": str(trade_info.get("intent_id", "") or ""),
+            "source_phases": str(
+                trade_info.get("source_phases", trade_info.get("source_phase", "phase3"))
+                or ""
+            ),
+            "projected_terminal_shares": trade_info.get("projected_terminal_shares"),
+            "netted_qty": float(trade_info.get("netted_qty", 0.0) or 0.0),
+            "override_reason": str(trade_info.get("risk_override_reason", "") or ""),
         })
         n_traded += 1
 
@@ -1965,6 +1986,14 @@ def _hedge_worker(
                 f"status={res.status} "
                 f"correction_usd={trade_info['correction_usd']:+,.0f}"
             ),
+            "intent_id": str(trade_info.get("intent_id", "") or ""),
+            "source_phases": str(
+                trade_info.get("source_phases", trade_info.get("source_phase", "phase3"))
+                or ""
+            ),
+            "projected_terminal_shares": trade_info.get("projected_terminal_shares"),
+            "netted_qty": float(trade_info.get("netted_qty", 0.0) or 0.0),
+            "override_reason": str(trade_info.get("risk_override_reason", "") or ""),
         }
         return [fill_rec], True, True
 
@@ -2360,6 +2389,301 @@ def build_reconciliation_trades(
     return trades
 
 
+def project_phase3_terminal_intents(
+    *,
+    strat_pos: Dict[str, float],
+    prices: Dict[str, float],
+    account_equity: float,
+    gross_leverage: float,
+    hedgeable_plan: pd.DataFrame,
+    long_trigger_net_pct: float,
+    short_trigger_net_pct: float,
+    long_target_net_pct: float,
+    short_target_net_pct: float,
+    min_trade_usd: float,
+    etf_to_under: Dict[str, str],
+    etf_to_delta: Dict[str, float],
+    short_map: Dict[str, dict],
+    screener_avail_map: Dict[str, int],
+    blocked_short_etfs: Set[str],
+    flow_etfs: Set[str],
+    blacklist: Set[str],
+    max_passes: int = 3,
+) -> Tuple[List[dict], Dict[str, float]]:
+    """Project the existing Phase 3 algorithm without submitting orders."""
+    projected = dict(strat_pos)
+    intents: List[dict] = []
+    for pass_no in range(1, max(1, int(max_passes)) + 1):
+        pass_trades = build_hedge_trades(
+            hedgeable_plan=hedgeable_plan,
+            strat_pos=projected,
+            prices=prices,
+            account_equity=account_equity,
+            gross_leverage=gross_leverage,
+            long_trigger_net_pct=long_trigger_net_pct,
+            short_trigger_net_pct=short_trigger_net_pct,
+            long_target_net_pct=long_target_net_pct,
+            short_target_net_pct=short_target_net_pct,
+            min_trade_usd=min_trade_usd,
+            etf_to_under=etf_to_under,
+            etf_to_delta=etf_to_delta,
+            short_map=short_map,
+            screener_avail_map=screener_avail_map,
+            blocked_short_etfs=blocked_short_etfs,
+            flow_etfs=flow_etfs,
+            blacklist=blacklist,
+        )
+        pass_trades = coalesce_intents(
+            {
+                **trade,
+                "source_phase": f"phase3_projected_pass_{pass_no}",
+                "intent_id": f"phase3-project-{pass_no}-{trade.get('symbol', '')}",
+            }
+            for trade in pass_trades
+        )
+        if not pass_trades:
+            break
+        next_positions = project_positions(projected, pass_trades)
+        intents.extend(pass_trades)
+        if next_positions == projected:
+            break
+        projected = next_positions
+
+    reconcile = build_reconciliation_trades(
+        strat_pos=projected,
+        prices=prices,
+        account_equity=account_equity,
+        gross_leverage=gross_leverage,
+        hedgeable_plan=hedgeable_plan,
+        long_trigger_net_pct=long_trigger_net_pct,
+        short_trigger_net_pct=short_trigger_net_pct,
+        long_target_net_pct=long_target_net_pct,
+        short_target_net_pct=short_target_net_pct,
+        min_trade_usd=min_trade_usd,
+        etf_to_under=etf_to_under,
+        etf_to_delta=etf_to_delta,
+        flow_etfs=flow_etfs,
+        blacklist=blacklist,
+    )
+    reconcile = [
+        {
+            **trade,
+            "source_phase": "phase3_projected_reconciliation",
+            "intent_id": f"phase3-project-reconcile-{trade.get('symbol', '')}",
+        }
+        for trade in reconcile
+    ]
+    intents.extend(reconcile)
+    projected = project_positions(projected, reconcile)
+    return intents, projected
+
+
+def gate_resize_against_projected_phase3(
+    *,
+    resize_trades: List[dict],
+    strat_pos: Dict[str, float],
+    max_rounds: int,
+    project_phase3: Callable[[Dict[str, float]], Tuple[List[dict], Dict[str, float]]],
+) -> Tuple[List[dict], Dict[str, float], List[dict]]:
+    """Remove predictable resize/Phase-3 reversals before resize submission."""
+    adjusted = [
+        {
+            **trade,
+            "source_phase": str(trade.get("source_phase", "phase2b")),
+            "intent_id": str(
+                trade.get(
+                    "intent_id",
+                    f"phase2b-{trade.get('symbol', '')}-{index}",
+                )
+            ),
+        }
+        for index, trade in enumerate(resize_trades)
+    ]
+    audit_rows: List[dict] = [
+        {
+            "event": "ORIGINAL_INTENT",
+            "phase": "phase2b",
+            "symbol": str(trade.get("symbol", "")),
+            "action": str(trade.get("action", "")),
+            "qty": float(trade.get("qty", 0.0) or 0.0),
+            "intent_id": str(trade.get("intent_id", "") or ""),
+        }
+        for trade in adjusted
+    ]
+    terminal = dict(strat_pos)
+    for round_no in range(max(1, int(max_rounds))):
+        post_resize = project_positions(strat_pos, adjusted)
+        projected_phase3, terminal = project_phase3(post_resize)
+        if round_no == 0:
+            audit_rows.extend(
+                {
+                    "event": "PROJECTED_INTENT",
+                    "phase": str(trade.get("source_phase", "phase3_projected")),
+                    "symbol": str(trade.get("symbol", "")),
+                    "action": str(trade.get("action", "")),
+                    "qty": float(trade.get("qty", 0.0) or 0.0),
+                    "intent_id": str(trade.get("intent_id", "") or ""),
+                }
+                for trade in projected_phase3
+            )
+        next_adjusted, rows = clip_against_opposing_intents(
+            adjusted, projected_phase3
+        )
+        audit_rows.extend(rows)
+        adjusted = next_adjusted
+        if not rows:
+            break
+    else:
+        post_resize = project_positions(strat_pos, adjusted)
+        _, terminal = project_phase3(post_resize)
+    return adjusted, terminal, audit_rows
+
+
+def record_execution_fills(
+    ledger: SameRunIntentLedger,
+    fills: Iterable[dict],
+    *,
+    phase: str,
+) -> None:
+    """Normalize legacy pair fill rows into symbol-level signed fills."""
+    for row in fills:
+        for symbol_key, fill_key in (
+            ("underlying", "filled_sh_under"),
+            ("etf", "filled_sh_etf"),
+        ):
+            symbol = norm_sym(str(row.get(symbol_key, "")))
+            try:
+                filled = float(row.get(fill_key, 0.0) or 0.0)
+            except (TypeError, ValueError):
+                filled = 0.0
+            notes = str(row.get("notes", "") or "").upper()
+            if "HEDGE_SELL" in notes or "ORPHAN_CLOSE_SELL" in notes:
+                filled = -abs(filled)
+            elif "HEDGE_BUY" in notes or "ORPHAN_CLOSE_BUY" in notes:
+                filled = abs(filled)
+            if not symbol or abs(filled) < 1.0:
+                continue
+            trade = {
+                "symbol": symbol,
+                "action": "BUY" if filled > 0 else "SELL",
+                "qty": abs(filled),
+                "reason": str(row.get("notes", "") or ""),
+            }
+            status = "PARTIAL" if "PARTIAL" in trade["reason"].upper() else "FILLED"
+            ledger.record(
+                trade,
+                phase=phase,
+                status=status,
+                qty=abs(filled),
+            )
+
+
+def guard_phase3_against_same_run_churn(
+    *,
+    trades: Iterable[dict],
+    ledger: SameRunIntentLedger,
+    phase: str,
+    actual_positions: Dict[str, float],
+    prices: Dict[str, float],
+    etf_to_under: Dict[str, str],
+    etf_to_delta: Dict[str, float],
+    blocked_short_etfs: Set[str],
+    drift_usd_tolerance: float,
+    drift_share_tolerance: float,
+) -> Tuple[List[dict], List[dict]]:
+    """Block reversals unless refreshed state proves a risk-reducing override."""
+    approved: List[dict] = []
+    audit: List[dict] = []
+    expected = ledger.projected_positions
+    for index, raw in enumerate(trades):
+        trade = dict(raw)
+        symbol = norm_sym(str(trade.get("symbol", "")))
+        under = norm_sym(str(trade.get("underlying", symbol)))
+        trade.setdefault("source_phase", phase)
+        trade.setdefault(
+            "intent_id",
+            f"{phase}-{symbol}-{str(trade.get('action', '')).lower()}-{index}",
+        )
+        signed_terminal = float(trade.get("qty", 0.0) or 0.0)
+        if str(trade.get("action", "")).upper() == "SELL":
+            signed_terminal = -signed_terminal
+        trade.setdefault(
+            "projected_terminal_shares",
+            float(expected.get(symbol, actual_positions.get(symbol, 0.0)))
+            + signed_terminal,
+        )
+        group_symbols = {under} | {
+            etf for etf, mapped in etf_to_under.items() if mapped == under
+        }
+        group_drift_usd = 0.0
+        max_share_drift = 0.0
+        for member in group_symbols:
+            drift_shares = abs(
+                float(actual_positions.get(member, 0.0))
+                - float(expected.get(member, actual_positions.get(member, 0.0)))
+            )
+            max_share_drift = max(max_share_drift, drift_shares)
+            px = float(prices.get(member, 0.0) or 0.0)
+            beta = 1.0 if member == under else abs(float(etf_to_delta.get(member, 1.0) or 1.0))
+            group_drift_usd += drift_shares * px * beta
+
+        try:
+            net_before = float(trade.get("net_notional_before", 0.0) or 0.0)
+            correction = float(trade.get("correction_usd", 0.0) or 0.0)
+            px = float(trade.get("ref_price", prices.get(symbol, 0.0)) or 0.0)
+            beta = 1.0 if symbol == under else float(etf_to_delta.get(symbol, 1.0) or 1.0)
+            signed = float(trade.get("qty", 0.0) or 0.0)
+            signed = signed if str(trade.get("action", "")).upper() == "BUY" else -signed
+            desired_net = net_before + correction
+            net_after = net_before + signed * px * beta
+            improves_risk = abs(net_after - desired_net) < abs(net_before - desired_net)
+        except (TypeError, ValueError):
+            improves_risk = False
+
+        is_orphan = bool(trade.get("orphan_close", False))
+        is_hard_exit = (
+            bool(trade.get("hard_exit", False))
+            or str(trade.get("execution_policy", "")).strip().lower() == "hard_exit"
+        )
+        material_drift = (
+            group_drift_usd >= drift_usd_tolerance
+            or max_share_drift >= drift_share_tolerance
+        )
+        blocked_in_group = any(member in blocked_short_etfs for member in group_symbols)
+        override_reason = (
+            "orphan"
+            if is_orphan
+            else "hard_exit"
+            if is_hard_exit
+            else "reject_or_no_locate"
+            if blocked_in_group
+            else "partial_fill"
+            if material_drift
+            else ""
+        )
+        allow, guarded, row = ledger.guard(
+            trade,
+            phase=phase,
+            allow_risk_override=(
+                is_orphan
+                or is_hard_exit
+                or (material_drift and improves_risk)
+            ),
+            override_reason=override_reason,
+            evidence={
+                "group_drift_usd": group_drift_usd,
+                "max_share_drift": max_share_drift,
+                "strictly_reduces_risk": improves_risk,
+                "underlying": under,
+            },
+        )
+        if row:
+            audit.append(row)
+        if allow:
+            approved.append(guarded)
+    return approved, audit
+
+
 # ---------------------------------------------------------------------------
 # Unmapped position detection + user-prompted close
 # ---------------------------------------------------------------------------
@@ -2674,12 +2998,18 @@ def main() -> None:
     requeue_rel_tolerance     = float(reb_cfg.get("requeue_rel_tolerance", 0.10))
     post_pass_unresolved_usd  = float(reb_cfg.get("post_pass_unresolved_usd", min_trade_usd))
     establish_threshold_usd = float(reb_cfg.get("establish_threshold_usd", 100.0))
+    churn_cfg = reb_cfg.get("same_run_churn", {}) or {}
+    churn_enabled = bool(churn_cfg.get("enabled", True))
+    churn_projection_rounds = max(1, int(churn_cfg.get("projection_rounds", 3)))
+    churn_drift_usd = float(churn_cfg.get("projection_drift_usd", 500.0))
+    churn_drift_shares = float(churn_cfg.get("projection_drift_shares", 2.0))
 
     run_date = args.run_date or today_str()
     rb_dir   = rebalance_dir(run_date)
     exposure_csv   = rb_dir / "exposure_log.csv"
     exposure_jsonl = rb_dir / "exposure_log.jsonl"
     fills_path     = rb_dir / "fills.csv"
+    intent_audit_path = rb_dir / "trade_intent_audit.csv"
 
     # Flow ETFs (excluded from Phase 3)
     flow_etfs: Set[str] = set(
@@ -2711,7 +3041,33 @@ def main() -> None:
     screened["ETF"]        = screened["ETF"].astype(str).map(norm_sym)
     screened["Underlying"] = screened["Underlying"].astype(str).map(norm_sym)
 
-    purgatory_etfs       = build_purgatory_set(screened)
+    screened_purgatory = build_purgatory_set(screened)
+    plan_purgatory = set(
+        plan.loc[plan["purgatory"].fillna(False).astype(bool), "ETF"].astype(str)
+    ) if not plan.empty and "purgatory" in plan.columns else set()
+    purgatory_etfs = screened_purgatory | plan_purgatory
+    if screened_purgatory != plan_purgatory:
+        tprint(
+            "[PLAN] WARNING: screened/plan purgatory sets differ; using conservative union "
+            f"(screened={len(screened_purgatory)} plan={len(plan_purgatory)} union={len(purgatory_etfs)})."
+        )
+    purgatory_execution_mode = str(
+        reb_cfg.get("purgatory_execution", "reduce_only")
+    ).strip().lower()
+    if purgatory_etfs and not plan.empty and purgatory_execution_mode == "reduce_only":
+        purg_mask = plan["ETF"].isin(purgatory_etfs)
+        plan.loc[purg_mask, "purgatory"] = True
+        if "execution_policy" not in plan.columns:
+            plan["execution_policy"] = "normal"
+        plan.loc[purg_mask, "execution_policy"] = "reduce_only"
+        hedgeable_df = hedgeable_df[~hedgeable_df["ETF"].isin(purgatory_etfs)].reset_index(drop=True)
+        resize_df = plan[
+            (~plan["ETF"].isin(flow_etfs))
+            & (
+                ~plan["purgatory"].fillna(False).astype(bool)
+                | plan["execution_policy"].astype(str).str.lower().eq("reduce_only")
+            )
+        ].copy().reset_index(drop=True)
     borrow_by_etf        = build_borrow_by_etf(screened)
     screener_avail_map   = build_screener_avail_by_etf(screened)
     n_screener_no_locate = sum(1 for v in screener_avail_map.values() if v <= 0)
@@ -2771,6 +3127,7 @@ def main() -> None:
     prices:    Dict[str, float] = {}
     blocked_short_etfs: Set[str] = set()
     all_fills: List[dict] = []
+    intent_ledger = SameRunIntentLedger(enabled=churn_enabled)
 
     try:
         ib_pos    = current_ib_positions(ib)
@@ -2943,6 +3300,9 @@ def main() -> None:
                     short_first=short_first, log_lock=log_lock,
                 )
                 all_fills.extend(fills2)
+                record_execution_fills(
+                    intent_ledger, fills2, phase="phase2_establish"
+                )
                 _sync_positions_after_external_trades(ib, timeout_s=10.0)
             else:
                 tprint("[ESTABLISH] No new pairs to establish.")
@@ -3107,6 +3467,66 @@ def main() -> None:
                 b4_allow_inverse_cover=b4_allow_inverse_cover,
             )
 
+            if churn_enabled and resize_trades and not args.skip_phase_3:
+                projection_equity = get_account_equity(ib)
+
+                def _project_phase3(
+                    projected_positions: Dict[str, float],
+                ) -> Tuple[List[dict], Dict[str, float]]:
+                    return project_phase3_terminal_intents(
+                        strat_pos=projected_positions,
+                        prices=prices,
+                        account_equity=projection_equity,
+                        gross_leverage=gross_leverage,
+                        hedgeable_plan=hedgeable_df,
+                        long_trigger_net_pct=long_trigger_net_pct,
+                        short_trigger_net_pct=short_trigger_net_pct,
+                        long_target_net_pct=long_target_net_pct,
+                        short_target_net_pct=short_target_net_pct,
+                        min_trade_usd=min_trade_usd,
+                        etf_to_under=etf_to_under,
+                        etf_to_delta=etf_to_delta,
+                        short_map=short_map,
+                        screener_avail_map=screener_avail_map,
+                        blocked_short_etfs=blocked_short_etfs,
+                        flow_etfs=flow_etfs,
+                        blacklist=set(blacklist),
+                        max_passes=churn_projection_rounds,
+                    )
+
+                original_resize_count = len(resize_trades)
+                resize_trades, projected_terminal, projection_audit = (
+                    gate_resize_against_projected_phase3(
+                        resize_trades=resize_trades,
+                        strat_pos=strat_pos,
+                        max_rounds=churn_projection_rounds,
+                        project_phase3=_project_phase3,
+                    )
+                )
+                intent_ledger.records.extend(projection_audit)
+                for trade in resize_trades:
+                    trade["projected_terminal_shares"] = float(
+                        projected_terminal.get(
+                            str(trade.get("symbol", "")),
+                            strat_pos.get(str(trade.get("symbol", "")), 0.0),
+                        )
+                    )
+                intent_ledger.set_projected_positions(
+                    project_positions(strat_pos, resize_trades)
+                )
+                avoided_shares = sum(
+                    float(row.get("netted_qty", 0.0) or 0.0)
+                    for row in projection_audit
+                )
+                tprint(
+                    f"[CHURN-GUARD] Resize feasibility: {original_resize_count} -> "
+                    f"{len(resize_trades)} orders; netted {avoided_shares:,.0f} "
+                    f"predictably reversing shares."
+                )
+            else:
+                projected_terminal = dict(strat_pos)
+                intent_ledger.set_projected_positions(strat_pos)
+
             decisions_csv = rb_dir / "resize_decisions.csv"
             n_dec = write_resize_decisions(
                 resize_decisions, decisions_csv,
@@ -3126,6 +3546,10 @@ def main() -> None:
                     do_resize = (ans == "y")
 
                 if do_resize:
+                    for trade in resize_trades:
+                        intent_ledger.record(
+                            trade, phase="phase2b", status="SUBMITTED"
+                        )
                     fills_p2b = execute_resize_serial(
                         ib=ib,
                         trades=resize_trades,
@@ -3144,6 +3568,9 @@ def main() -> None:
                         short_first=short_first,
                     )
                     all_fills.extend(fills_p2b)
+                    record_execution_fills(
+                        intent_ledger, fills_p2b, phase="phase2b"
+                    )
 
                     # Persist any successful loss-harvest swaps
                     if sub_engine is not None and fills_p2b:
@@ -3179,6 +3606,7 @@ def main() -> None:
                             )
                 else:
                     tprint("[PHASE2B] Skipped by user.")
+                    intent_ledger.set_projected_positions(strat_pos)
             else:
                 tprint("[PHASE2B] No resize trades needed (all legs within band).")
         elif args.skip_phase_2b:
@@ -3392,6 +3820,30 @@ def main() -> None:
                 # ── 3a: Execute short legs first ─────────────────────────────
                 # Short first so we know actual coverage before sizing longs.
                 if short_corrections and not stop_requested():
+                    short_corrections, _ = guard_phase3_against_same_run_churn(
+                        trades=short_corrections,
+                        ledger=intent_ledger,
+                        phase=f"phase3_pass_{hedge_pass}a",
+                        actual_positions=strat_pos,
+                        prices=prices,
+                        etf_to_under=etf_to_under,
+                        etf_to_delta=etf_to_delta,
+                        blocked_short_etfs=blocked_short_etfs,
+                        drift_usd_tolerance=churn_drift_usd,
+                        drift_share_tolerance=churn_drift_shares,
+                    )
+                    for trade in short_corrections:
+                        intent_ledger.record(
+                            trade,
+                            phase=f"phase3_pass_{hedge_pass}a",
+                            status="SUBMITTED",
+                        )
+                    intent_ledger.set_projected_positions(
+                        project_positions(
+                            intent_ledger.projected_positions,
+                            short_corrections,
+                        )
+                    )
                     for t in short_corrections:
                         recent_attempts[(t["symbol"], t["action"])] = float(t.get("correction_usd", 0.0))
                     fills3a, n_trig_a, n_trade_a = execute_hedge_pass_parallel(
@@ -3415,6 +3867,11 @@ def main() -> None:
                         log_lock=log_lock,
                     )
                     all_fills.extend(fills3a)
+                    record_execution_fills(
+                        intent_ledger,
+                        fills3a,
+                        phase=f"phase3_pass_{hedge_pass}a",
+                    )
                     newly_blocked = blocked_short_symbols_from_fills(fills3a)
                     if newly_blocked - blocked_short_etfs:
                         just_added = sorted(newly_blocked - blocked_short_etfs)
@@ -3467,9 +3924,34 @@ def main() -> None:
                     )
 
                     if long_corrections_b:
+                        long_corrections_b, _ = guard_phase3_against_same_run_churn(
+                            trades=long_corrections_b,
+                            ledger=intent_ledger,
+                            phase=f"phase3_pass_{hedge_pass}b",
+                            actual_positions=strat_pos,
+                            prices=prices,
+                            etf_to_under=etf_to_under,
+                            etf_to_delta=etf_to_delta,
+                            blocked_short_etfs=blocked_short_etfs,
+                            drift_usd_tolerance=churn_drift_usd,
+                            drift_share_tolerance=churn_drift_shares,
+                        )
+                    if long_corrections_b:
                         tprint(
                             f"[HEDGE] Pass {hedge_pass}b: {len(long_corrections_b)} long "
                             f"corrections sized to actual short fills."
+                        )
+                        for trade in long_corrections_b:
+                            intent_ledger.record(
+                                trade,
+                                phase=f"phase3_pass_{hedge_pass}b",
+                                status="SUBMITTED",
+                            )
+                        intent_ledger.set_projected_positions(
+                            project_positions(
+                                intent_ledger.projected_positions,
+                                long_corrections_b,
+                            )
                         )
                         for t in long_corrections_b:
                             recent_attempts[(t["symbol"], t["action"])] = float(t.get("correction_usd", 0.0))
@@ -3494,6 +3976,11 @@ def main() -> None:
                             log_lock=log_lock,
                         )
                         all_fills.extend(fills3b)
+                        record_execution_fills(
+                            intent_ledger,
+                            fills3b,
+                            phase=f"phase3_pass_{hedge_pass}b",
+                        )
                         newly_blocked = blocked_short_symbols_from_fills(fills3b)
                         if newly_blocked - blocked_short_etfs:
                             just_added = sorted(newly_blocked - blocked_short_etfs)
@@ -3568,11 +4055,36 @@ def main() -> None:
                 )
 
                 if reconcile_trades:
+                    reconcile_trades, _ = guard_phase3_against_same_run_churn(
+                        trades=reconcile_trades,
+                        ledger=intent_ledger,
+                        phase="phase3_reconciliation",
+                        actual_positions=strat_pos,
+                        prices=prices,
+                        etf_to_under=etf_to_under,
+                        etf_to_delta=etf_to_delta,
+                        blocked_short_etfs=blocked_short_etfs,
+                        drift_usd_tolerance=churn_drift_usd,
+                        drift_share_tolerance=churn_drift_shares,
+                    )
+                if reconcile_trades:
                     tprint(
                         f"\n{'-'*60}\n"
                         f"  PHASE 3 RECONCILIATION — "
                         f"{len(reconcile_trades)} underlying-side corrections\n"
                         f"{'-'*60}"
+                    )
+                    for trade in reconcile_trades:
+                        intent_ledger.record(
+                            trade,
+                            phase="phase3_reconciliation",
+                            status="SUBMITTED",
+                        )
+                    intent_ledger.set_projected_positions(
+                        project_positions(
+                            intent_ledger.projected_positions,
+                            reconcile_trades,
+                        )
                     )
                     fills_rec, n_trig_rec, n_trade_rec = execute_hedge_pass_parallel(
                         hedge_trades=reconcile_trades,
@@ -3596,6 +4108,11 @@ def main() -> None:
                         log_lock=log_lock,
                     )
                     all_fills.extend(fills_rec)
+                    record_execution_fills(
+                        intent_ledger,
+                        fills_rec,
+                        phase="phase3_reconciliation",
+                    )
                     total_traded += n_trade_rec
 
                     if fills_rec:
@@ -3645,6 +4162,52 @@ def main() -> None:
             underlying="", etf="", symbol="PORTFOLIO",
             delta_sh=0, filled_sh=0, trade=None,
         )
+
+        if intent_ledger.records:
+            pd.DataFrame(intent_ledger.records).to_csv(
+                intent_audit_path, index=False
+            )
+            submitted_directions: Dict[str, Set[str]] = {}
+            for row in intent_ledger.records:
+                if row.get("event") != "SUBMITTED":
+                    continue
+                submitted_directions.setdefault(
+                    str(row.get("symbol", "")), set()
+                ).add(str(row.get("action", "")))
+            conflicts = {
+                symbol: directions
+                for symbol, directions in submitted_directions.items()
+                if len(directions) > 1
+            }
+            if conflicts:
+                tprint(
+                    "[CHURN-GUARD] WARNING: submitted both directions for "
+                    f"{sorted(conflicts)}; inspect RISK_OVERRIDE rows."
+                )
+            final_positions = strategy_position_only(
+                current_ib_positions(ib), baseline
+            )
+            drift_symbols = []
+            for symbol in set(final_positions) | set(intent_ledger.projected_positions):
+                drift_shares = abs(
+                    float(final_positions.get(symbol, 0.0))
+                    - float(intent_ledger.projected_positions.get(symbol, 0.0))
+                )
+                drift_usd = drift_shares * float(prices.get(symbol, 0.0) or 0.0)
+                if (
+                    drift_shares >= churn_drift_shares
+                    or drift_usd >= churn_drift_usd
+                ):
+                    drift_symbols.append(symbol)
+            if drift_symbols:
+                tprint(
+                    "[CHURN-GUARD] WARNING: final positions differ from projected "
+                    f"terminal positions for {len(drift_symbols)} symbols."
+                )
+            tprint(
+                f"[CHURN-GUARD] Wrote {len(intent_ledger.records)} intent rows -> "
+                f"{intent_audit_path}"
+            )
 
         if all_fills:
             append_fills(all_fills, fills_path)

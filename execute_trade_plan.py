@@ -1264,8 +1264,21 @@ def strategy_position_only(ib_pos: Dict[str, float], baseline: Dict[str, float])
 def append_fills(rows: List[dict], fills_path: Path) -> None:
     fills_path.parent.mkdir(parents=True, exist_ok=True)
     df_new = pd.DataFrame(rows)
+    intent_defaults = {
+        "intent_id": "",
+        "source_phases": "",
+        "projected_terminal_shares": None,
+        "netted_qty": 0.0,
+        "override_reason": "",
+    }
+    for column, default in intent_defaults.items():
+        if column not in df_new.columns:
+            df_new[column] = default
     if fills_path.exists():
         df_old = pd.read_csv(fills_path)
+        for column, default in intent_defaults.items():
+            if column not in df_old.columns:
+                df_old[column] = default
         df_out = pd.concat([df_old, df_new], ignore_index=True)
     else:
         df_out = df_new

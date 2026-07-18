@@ -92,9 +92,20 @@ def held_from_plan(plan: pd.DataFrame) -> dict[tuple[str, str], dict[str, float]
         und = _norm_sym(r.get("Underlying"))
         if not etf or not und:
             continue
-        inv = abs(float(pd.to_numeric(r.get("etf_target_usd", r.get("short_usd")), errors="coerce") or 0.0))
+        reduce_only = str(r.get("execution_policy", "")).strip().lower() == "reduce_only"
+        etf_value = (
+            r.get("model_short_usd")
+            if reduce_only and "model_short_usd" in r.index
+            else r.get("etf_target_usd", r.get("short_usd"))
+        )
+        under_value = (
+            r.get("model_long_usd")
+            if reduce_only and "model_long_usd" in r.index
+            else r.get("underlying_target_usd", r.get("long_usd"))
+        )
+        inv = abs(float(pd.to_numeric(etf_value, errors="coerce") or 0.0))
         und_s = abs(
-            float(pd.to_numeric(r.get("underlying_target_usd", r.get("long_usd")), errors="coerce") or 0.0)
+            float(pd.to_numeric(under_value, errors="coerce") or 0.0)
         )
         if inv <= 0.0 and und_s <= 0.0:
             continue

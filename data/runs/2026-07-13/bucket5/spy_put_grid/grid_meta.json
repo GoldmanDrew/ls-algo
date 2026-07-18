@@ -1,0 +1,50 @@
+{
+  "era": "extended",
+  "start": "2008-01-02",
+  "end": "2026-07-13",
+  "n_days": 4643,
+  "spy_fracs": [
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5
+  ],
+  "put_mults": [
+    1.0,
+    1.25,
+    1.5
+  ],
+  "baseline_ladder_per_roll": 0.024,
+  "elapsed_sec": 864.2,
+  "best_sharpe": {
+    "label": "spy40_puts1.50x",
+    "CAGR": 0.15782120641203612,
+    "Sharpe": 0.7495571562415665,
+    "MaxDD": -0.39343851880116143
+  },
+  "best_cagr": {
+    "label": "spy50_puts1.50x",
+    "CAGR": 0.160342559198986,
+    "Sharpe": 0.7441618568008898,
+    "MaxDD": -0.39346718105905065
+  },
+  "best_calmar": {
+    "label": "spy50_puts1.50x",
+    "CAGR": 0.160342559198986,
+    "Sharpe": 0.7441618568008898,
+    "MaxDD": -0.39346718105905065,
+    "Calmar": 0.40751190167223156
+  },
+  "best_maxdd": {
+    "label": "spy40_puts1.50x",
+    "CAGR": 0.15782120641203612,
+    "Sharpe": 0.7495571562415665,
+    "MaxDD": -0.39343851880116143
+  },
+  "paths": {
+    "summary": "C:\\Users\\drewg\\Projects\\quant\\ls-algo\\data\\runs\\2026-07-13\\bucket5\\spy_put_grid\\grid_summary.csv",
+    "series": "C:\\Users\\drewg\\Projects\\quant\\ls-algo\\data\\runs\\2026-07-13\\bucket5\\spy_put_grid\\grid_equity.csv",
+    "selected_plot": "C:\\Users\\drewg\\Projects\\quant\\ls-algo\\data\\runs\\2026-07-13\\bucket5\\spy_put_grid\\grid_selected_equity.png"
+  }
+}

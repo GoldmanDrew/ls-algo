@@ -12,7 +12,7 @@ ibkr:
 
 strategy:
   tag: ETF_LS
-  capital_usd: 1050000
+  capital_usd: 1200000
   gross_leverage: 4
   blacklist:
     - JPM
@@ -323,7 +323,7 @@ portfolio:
 
   sleeves:
     core_leveraged:
-      # Share of gross after inverse_decay_bucket4, split vs ``yieldboost`` (normalized together).
+      # Residual sleeve: receives total target gross after fixed B2/B4 and independent B5.
       target_weight: 0.51
       rules:
         min_delta_used: 1.50
@@ -364,9 +364,9 @@ portfolio:
 
     yieldboost:
       enabled: true
-      # Bucket-2 sleeve: screened rows with ``is_yieldboost`` only (see daily_screener). Split vs core
-      # is relative — core.target_weight + yieldboost.target_weight is normalized after B4.
+      # Bucket-2 sleeve: fixed-dollar gross; B1 receives the remaining book gross.
       target_weight: 0.46
+      target_gross_usd: 1900000      # rounded down from the prior ~$1.932m B2 allocation
       rules:
         min_net_edge_annual: 0.25     # gate on ``net_edge_p50_annual`` for YieldBoost names
       weighting:
@@ -379,6 +379,7 @@ portfolio:
     inverse_decay_bucket4:
       enabled: true                  # sleeve split vs stock: inverse_decay_bucket4.target_weight remainder → stock
       target_weight: 0.03
+      target_gross_usd: 115000       # rounded down from the prior $115.5k B4 core allocation
       # B4 universe = every inverse (β<0, ``inverse_shortable``) ticker in the screener,
       # MINUS ``rules.excluded_etfs`` (per-name overrides like KOLD)
       # MINUS ``flow_program.universe.shorts`` (those are sized in the weekly flow sleeve).
@@ -595,12 +596,12 @@ portfolio:
           - SCO
         max_shares_outstanding_frac: 0.3
         # Volatility ETPs (UVIX/SVIX, etc.) often have beta >= 0 so they miss ``negative_beta`` B4.
-        # Bucket-5 sleeve: same B4 gates except beta < 0; target_weight is total gross book share.
+        # Bucket-5 sleeve: independent of B4. target_weight is true two-leg pair gross
+        # (|vol-ETP short| + |underlying short|) as a share of total target gross.
         volatility_etp_bucket5:
-          # Dedicated sleeve budget (fraction of total gross). When target_weight
-          # is absent, generate_trade_plan falls back to share_of_b4_budget.
+          # Dedicated pair-gross budget reserved directly from the whole book.
           enabled: true
-          target_weight: 0.0025       # 0.25% of total gross book when vol rows exist
+          target_weight: 0.01         # 1.00% of total gross book when vol rows exist
       weighting:
         <<: *weighting_defaults
         max_name_weight: 0.20        # raised with WS4 concentration (was 0.15)
@@ -673,6 +674,33 @@ portfolio:
           ETHD: 0.1000
           PLTZ: 0.0034
           PLYY: 0.0034
+
+# Production-actual backtest / notebook prod mode only (does not change live Phase-2b).
+# Policy: keep each pair delta-hedged, step structural gross toward plan only every
+# operator_check_days sessions, closing ``remaining_gap_rate`` of the remaining gap
+# atomically on both legs (no midweek mark-chase).
+production_actual_backtest:
+  stock_rebalance_clock: operator_5d   # operator_5d | weekly_fri | every_plan
+  b4_membership_clock: operator_5d
+  b4_execution: cadence
+  operator_check_days: 5
+  turnover_pace:
+    enabled: true
+    mode: hedge_safe_v1
+    confirmation_count: 1
+    # With rebal_only, multi-session entry/reduction ramps are unused; gross
+    # advances only on the stock clock via remaining_gap_rate.
+    entry_ramp_sessions: 1
+    reduction_ramp_sessions: 1
+    remaining_gap_rate: 0.25           # ~4 operator sessions to ~68% of gap; ~8 to ~90%
+    target_blend_alpha: 0.25           # blend destination toward new plan each rebal
+    stock_midweek_mode: rebal_only     # freeze structural gross between operator days
+    midweek_hedge_repair: true         # Phase-3 residual repair midweek (keep hedged)
+    hedge_reserve_frac: 0.15
+    max_daily_turnover_pct: 0.10
+    adv_participation_pct: 0.10
+    establish_budget_frac: 0.50
+    legacy_max_daily_turnover_pct: 0.15
 
 # SPX slide-risk: horizon shock scaling, stress β, historical paths (risk_dashboard).
 spx_shock:

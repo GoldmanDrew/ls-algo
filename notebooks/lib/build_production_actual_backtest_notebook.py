@@ -40,12 +40,23 @@ screened(as-of D) + state[D-1] + held shorts from plan[D-1]
   → size_book_from_screened (full GTP)
   → plan[D] + state[D]
   → scale sleeve legs to YAML budget
-  → simulate_book_from_plan_timeline (next-close, W-FRI Phase-2b, costs)
+  → simulate_book_from_plan_timeline (next-close, operator_5d Phase-2b, costs)
 ```
 
 Capital / sleeve budgets come from live `strategy_config.yml`. B3 flow is excluded.
-Between Fridays the book share-holds (no daily OLS hedge rebuild). Each sleeve with
+B1/B2 retarget on `stock_rebalance_clock=operator_5d` (every 5 business days, same
+as live `rebalance_strategy`). Between operator days the book **share-holds**
+(`stock_midweek_mode=rebal_only` — no midweek ramp or hedge repair). Each sleeve with
 positive plan gross is scaled so sleeve gross equals the YAML sleeve budget.
+
+**Sim controller** (`production_actual_backtest.turnover_pace.mode=hedge_safe_v1`):
+persistent pair targets, ADV caps, and operator-day structural fills. Off-clock
+B1/B2 trades are disabled under `rebal_only`. Hard exits still flatten immediately.
+`legacy` retains EMA/per-leg pacing and `off` is full chase. Live Phase-2b is unchanged.
+
+**Notebook-only exceptions:** `BLACKLIST_EXCEPT = [APLD, SMR, CBRS]` re-admits those
+underlyings for this backtest without editing live YAML. `PRICE_PANEL_MIN_DAYS = 20`
+relaxes the default 40-day panel gate so short-history names (e.g. CBRZ) can mark.
 
 **Start:** `2026-02-27` (first screened archive after the Dec→Feb gap; sparse thereafter).
 B5 only when GTP sizes it; no live locates / execution rejects.
@@ -72,14 +83,34 @@ if not (REPO / "generate_trade_plan.py").exists():
         REPO = REPO.parent
 sys.path.insert(0, str(REPO))
 
-RUN_DATE = "2026-07-10"          # price panel date
+RUN_DATE = "2026-07-13"          # price panel date
 START = "2026-02-27"
 PRE_ARCHIVE_POLICY = "cash"      # "cash" | "skip"
-FORCE_RERUN = False  # True only to rebuild CSVs; False loads cached outputs and plots
+# Temporarily re-admit these underlyings for this notebook backtest only
+# (live strategy_config.yml blacklist is unchanged).
+BLACKLIST_EXCEPT = ["APLD", "SMR", "CBRS"]
+# CBRZ has <40 metrics days as of RUN_DATE; default panel gate drops it.
+PRICE_PANEL_MIN_DAYS = 20
+# Notebook-only B4 borrow band (does NOT write strategy_config.yml).
+# Live remains 70/90; this run uses 60/80 and shifts opt2 borrow_ramp by the
+# same delta (80/120 → 70/110). Requires REUSE_PLANS=False to rebuild plans.
+NOTEBOOK_B4_BORROW = {
+    "entry_borrow_cap": 0.60,
+    "keep_borrow_cap": 0.80,
+    "shift_ramp_with_band": True,
+}
+# True = rebuild/resim. REUSE_PLANS=False when borrow overrides change so GTP
+# re-sizes under 60/80. True = skip GTP and resim from cached plans only.
+FORCE_RERUN = True
+REUSE_PLANS = False  # must be False for NOTEBOOK_B4_BORROW to affect plans
 OUT_BASE = REPO / "notebooks" / "output" / "production_actual_bt"
 
-# Embed plots in the notebook when cells execute.
+# Embed plots inline so figures show after Run All (including after rebuild).
 %matplotlib inline
+import matplotlib
+matplotlib.rcParams["figure.max_open_warning"] = 100
+from IPython.display import display as _ip_display
+# Prefer explicit display(fig) for multi-figure cells; plt.show() also works inline.
 
 SLEEVE_LABELS = {
     "core_leveraged": "B1 core",
@@ -91,6 +122,13 @@ SLEEVE_ORDER = list(SLEEVE_LABELS)
 
 print("REPO", REPO)
 print("RUN_DATE", RUN_DATE, "START", START, "mode=prod")
+print("BLACKLIST_EXCEPT", BLACKLIST_EXCEPT, "PRICE_PANEL_MIN_DAYS", PRICE_PANEL_MIN_DAYS)
+print("FORCE_RERUN", FORCE_RERUN, "REUSE_PLANS", REUSE_PLANS)
+print("NOTEBOOK_B4_BORROW", NOTEBOOK_B4_BORROW)
+print(
+    "B4 realism: membership_clock=operator_5d, resize_bands=on, ratchet_guard=on, "
+    "empty_plan=hold, purgatory_model_zero=hold; charts=ALL B4 pairs"
+)
 """
     ),
     md("## Archive coverage"),
@@ -119,8 +157,9 @@ read as production-accurate until the missing artifact is archived.
     ["Plan timing", "Signal known after close", "T plan executes next available close; P&L starts next session", "Implemented"],
     ["Between rebals", "Hold shares; legs drift", "Signed ETF/underlying notionals drift with each leg", "Implemented"],
     ["Leg schema", "Underlying target + ETF target", "long_usd=underlying; short_usd=ETF; explicit columns preferred", "Implemented"],
-    ["Rebalance", "Phase-2b hysteresis + weekly clock", "W-FRI; 12% enter / 4% exit / $250; existing legs only", "Implemented"],
-    ["Purgatory", "0-target keep-open (no new size, no auto-close)", "keep_open rows held in sim (not liquidated)", "Implemented"],
+    ["Rebalance", "Phase-2b hysteresis + operator clock", "B1/B2 operator_5d + rebal_only midweek; 12%/4%/$250 bands", "Implemented"],
+    ["Purgatory", "Reduce toward model target; never increase pair gross", "Holdings-aware reduce_only constraint; zero target exits", "Implemented"],
+    ["Same-run churn", "Pre-net Phase 2b against projected Phase 3; audited risk overrides only", "One terminal target per pair/day; avoided round trips and override turnover reported", "Implemented"],
     ["Slippage", "Broker/fill dependent", "20 bp on every traded dollar, including opening trades", "Proxy"],
     ["Commission", "Clear Street low-touch", "$0.0035/share by leg", "Implemented"],
     ["Borrow", "Point-in-time by short symbol", "Screened spot borrow_current carried until the next plan", "Implemented"],
@@ -128,6 +167,9 @@ read as production-accurate until the missing artifact is archived.
     ["Margin debit", "OBFR + 45 bp, Actual/360", "4.00% benchmark fallback + 45 bp, Actual/360", "Proxy"],
     ["Prices", "Total-return / split-safe marks", "Adjusted-close panel + Flex/override/heuristic split repair", "Implemented"],
     ["Missing bars", "Carry last mark; cannot trade", "Zero-return stale mark; blocked close/entry is audited", "Implemented"],
+    ["Price integrity", "Yahoo referee + price_patches + flex/overrides", "RDWU-class phantoms patched before mark", "Implemented"],
+    ["B4 cadence", "TR/VCR h + interval in book ledger", "b4_execution=cadence (default); weekly_plan_legs legacy", "Implemented"],
+    ["Delistings", "last_trade flatten via data/delistings.csv", "Force exit on/after last print; panel cutoff", "Implemented"],
     ["Share rounding", "Whole shares / broker lots", "Dollar-notional targets", "Gap"],
     ["Locates", "Can reject or resize shorts", "Screened universe at sizing time; no execution reject", "Gap"],
     ["B4 stack", "opt2 → crash → smooth → ratchet", "Same stack; state isolated + ratchet from prior plan", "Implemented"],
@@ -284,10 +326,20 @@ if FORCE_RERUN or not summary_path.exists():
         outdir=outdir,
         mode="prod",
         pre_archive_policy=PRE_ARCHIVE_POLICY,
+        blacklist_except=BLACKLIST_EXCEPT,
+        price_panel_min_days=PRICE_PANEL_MIN_DAYS,
+        reuse_plans=bool(REUSE_PLANS) and (outdir / "plans").is_dir() and any((outdir / "plans").glob("*.csv")),
+        notebook_b4_borrow=NOTEBOOK_B4_BORROW,
     )
 else:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     print(f"loaded cached prod from {outdir}")
+    be = (report.get("prod_stats") or {}).get("blacklist_except") or []
+    if sorted(x.upper() for x in BLACKLIST_EXCEPT) != sorted(str(x).upper() for x in be):
+        print(
+            "WARN: cached report blacklist_except", be,
+            "!= notebook", BLACKLIST_EXCEPT, "— set FORCE_RERUN=True"
+        )
 
 summary = pd.read_csv(summary_path)
 nav = pd.read_csv(outdir / "daily_nav.csv", index_col=0, parse_dates=True)
@@ -306,17 +358,140 @@ print("pair_stats", len(pair_stats_df), "pair_daily rows", len(pair_daily_df))
 """
     ),
     md(
-        """## Book NAV, bucket returns, and risk stats
+        """## Hedge-safe calibration and pending-target diagnostics
 
-Book NAV path, cumulative return by sleeve, and CAGR / vol / Sharpe / max drawdown
-for the book and each bucket.
+The isolated calibration replays the **same cached plans and price panel** through
+`off`, `legacy`, and `hedge_safe_v1`. The comparison shows the execution/risk
+trade-off rather than treating minimum turnover as the only objective. Hedge-safe
+freezes B1/B2 pair-gross destinations between weekly decisions while refreshing
+daily hedge and liquidity metadata. Weekly destinations convexly blend prior and
+new confirmed pair gross, smoothing pair switches without sleeve renormalization.
+Its sensitivity grid gates missing Delta, orphan legs, deployment fidelity, B4
+cadence, and the $10m turnover ceiling. It then ranks stock-residual breach
+group-days first, maximum residual drift second, turnover/cost next, and stability
+last, without using PnL. Hedge-safe daily budget uses the
+larger of deployed and confirmed desired gross, avoiding self-starvation.
+Phase-3 hedge repair and acceptance use the B1/B2 stock residual only. Raw
+all-sleeve net drift is displayed separately as context; intentional B4/B5
+structural exposure does not trigger repair. Drift diagnostics use each simulated
+position's persisted Delta, including decaying pairs absent from the active plan;
+missing-Delta rows and underlying groups are explicit hard-gate diagnostics.
 
-**Run All** from the top (keep `FORCE_RERUN=False` to load cached CSVs).
-Plots use `%matplotlib inline` and render under each chart cell after execution.
+`pending_target_audit.csv` is the pair-session controller ledger. It records the
+current, desired, and next gross; hedge drift before/after; target age; allocated
+and deferred turnover; block reason; and priority. Weekly target-formation rows
+also show raw plan, prior, and blended structural pair gross.
 """
     ),
     code(
-        """def _series_stats(s: pd.Series) -> dict:
+        """CAL_DIR = OUT_BASE / "hedge_safe_calibration"
+cal_path = CAL_DIR / "comparison.csv"
+if cal_path.exists():
+    cal = pd.read_csv(cal_path)
+    show_cols = [c for c in [
+        "arm", "turnover_usd", "txn_cost_usd", "end_usd", "total_return",
+        "cagr", "vol", "sharpe", "maxdd", "hedge_breach_group_days",
+        "missing_delta_rows", "missing_delta_group_days",
+        "raw_all_sleeve_hedge_breach_group_days",
+        "raw_all_sleeve_missing_delta_rows",
+        "raw_all_sleeve_missing_delta_group_days",
+        "median_deployed_desired_gross_ratio",
+        "p10_deployed_desired_gross_ratio",
+        "ending_deployed_desired_gross_ratio", "n_b4_cadence_rebals",
+        "max_abs_hedge_net_pct", "orphan_pair_days", "max_deferred_age",
+        "deferred_turnover_usd", "blocked_reason_counts_json",
+    ] if c in cal.columns]
+    display(cal[show_cols])
+    if {"arm", "turnover_usd", "hedge_breach_group_days"}.issubset(cal.columns):
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+        axes[0].bar(cal["arm"], cal["turnover_usd"] / 1e6, color=["#999999", "#4c72b0", "#55a868"])
+        axes[0].set_ylabel("Turnover ($mm)")
+        axes[0].tick_params(axis="x", rotation=20)
+        axes[0].set_title("Execution turnover")
+        axes[1].bar(cal["arm"], cal["hedge_breach_group_days"], color=["#999999", "#4c72b0", "#55a868"])
+        axes[1].set_ylabel("Underlying-group breach days")
+        axes[1].tick_params(axis="x", rotation=20)
+        axes[1].set_title("B1/B2 stock-residual hedge breaches")
+        plt.tight_layout()
+        plt.show()
+else:
+    print("no calibration comparison at", cal_path)
+
+sensitivity_path = CAL_DIR / "sensitivity.csv"
+if sensitivity_path.exists():
+    sensitivity = pd.read_csv(sensitivity_path)
+    sensitivity_cols = [c for c in [
+        "target_blend_alpha", "max_daily_turnover_pct", "remaining_gap_rate", "turnover_usd",
+        "txn_cost_usd", "hedge_breach_group_days", "orphan_pair_days",
+        "missing_delta_rows", "missing_delta_group_days",
+        "raw_all_sleeve_hedge_breach_group_days",
+        "median_deployed_desired_gross_ratio",
+        "p10_deployed_desired_gross_ratio",
+        "ending_deployed_desired_gross_ratio", "n_b4_cadence_rebals",
+        "hedge_safety_pass", "deployment_pass", "b4_cadence_pass",
+        "hard_gates_pass", "turnover_target_pass", "p10_deployment_preferred",
+        "stable_region_pass", "selected",
+    ] if c in sensitivity.columns]
+    display(sensitivity[sensitivity_cols].sort_values(
+        ["target_blend_alpha", "max_daily_turnover_pct", "remaining_gap_rate"]
+    ))
+else:
+    print("no hedge-safe sensitivity grid at", sensitivity_path)
+
+pending_candidates = [
+    OUT_BASE / "pending_target_audit.csv",
+    CAL_DIR / "hedge_safe_v1" / "pending_target_audit.csv",
+]
+pending_path = next((p for p in pending_candidates if p.exists()), pending_candidates[0])
+pending = pd.read_csv(pending_path, parse_dates=["date"]) if pending_path.exists() else pd.DataFrame()
+if pending.empty:
+    print("no pending-target ledger found")
+else:
+    print("pending ledger:", pending_path, "rows=", len(pending))
+    if "block_reason" in pending.columns:
+        display(pending["block_reason"].fillna("allocated").value_counts().to_frame("pair_sessions"))
+    age = pd.to_numeric(pending.get("target_age"), errors="coerce")
+    deferred = pd.to_numeric(pending.get("deferred_turnover_usd"), errors="coerce").fillna(0)
+    print(
+        f"max target age={age.max():.0f} | p95 age={age.quantile(.95):.1f} | "
+        f"cumulative daily deferred demand=${deferred.sum():,.0f}"
+    )
+    display(pending.sort_values(["target_age", "deferred_turnover_usd"], ascending=False).head(20))
+
+drift_path = CAL_DIR / "hedge_safe_v1" / "hedge_drift_daily.csv"
+drift = pd.read_csv(drift_path, parse_dates=["date"]) if drift_path.exists() else pd.DataFrame()
+if not drift.empty:
+    breaches = drift[drift["breach"].fillna("").ne("")]
+    print(
+        f"hedge drift groups={len(drift):,} breaches={len(breaches):,} "
+        f"max |net/gross|={drift['hedge_net_pct'].abs().max():.2%}"
+    )
+    display(breaches.reindex(breaches["hedge_net_pct"].abs().sort_values(ascending=False).index).head(20))
+"""
+    ),
+    md(
+        """## Book NAV, bucket returns, and risk stats
+
+Book NAV path and cumulative sleeve PnL (synthetic NAV = capital + cum sleeve PnL).
+
+**Primary return metrics (deployed capital only):**
+- **rog_deployed** = PnL on days with gross > $1 / mean(gross on those days)
+- **rog_deployed_ann** = simple annualization × 252 / n_days
+- **roc_deployed** = same with mean(|net|) on deployed days
+- **deployed_day_frac** = fraction of sessions with capital at work
+
+Calendar ``rog`` / ``roc`` (all days, including flat) are legacy — do not use them
+to judge under-ramped sleeves. Book ``roc`` uses netted net and is not "capital at work"
+when `net_shared_underlyings=true` — prefer book **rog_deployed**.
+
+The CAGR / vol / Sharpe table on synthetic sleeve NAV paths is secondary — do not
+read sleeve `total_ret` as return on deployed capital.
+"""
+    ),
+    code(
+        """from scripts.production_actual_backtest import compute_sleeve_return_metrics
+
+def _series_stats(s: pd.Series) -> dict:
     s = s.dropna()
     if len(s) < 2:
         return {"cagr": np.nan, "vol": np.nan, "sharpe": np.nan, "maxdd": np.nan,
@@ -357,12 +532,54 @@ else:
         ax.plot(br.index, br.values, label="BOOK", color="k", lw=2.0)
     ax.axhline(0, color="k", lw=0.7)
     ax.set_ylabel("Cumulative return")
-    ax.set_title("Per-bucket cumulative returns")
+    ax.set_title("Per-bucket cumulative returns (synthetic NAV = capital + cum PnL)")
     ax.legend(loc="best", ncol=2)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.show()
 
+    # EOD-style ROC / ROG (primary)
+    ret_path = OUT_BASE / "sleeve_return_metrics.csv"
+    if ret_path.exists():
+        ret_tbl = pd.read_csv(ret_path)
+    else:
+        diag_tmp = (
+            pd.read_csv(OUT_BASE / "daily_diagnostics.csv", parse_dates=["date"])
+            if (OUT_BASE / "daily_diagnostics.csv").exists()
+            else pd.DataFrame()
+        )
+        ret_tbl = compute_sleeve_return_metrics(diag_tmp) if not diag_tmp.empty else pd.DataFrame()
+
+    if not ret_tbl.empty:
+        show = ret_tbl.copy()
+        show["sleeve"] = show["sleeve"].map(lambda x: SLEEVE_LABELS.get(x, x))
+        for c in (
+            "pnl_usd",
+            "pnl_deployed_usd",
+            "avg_gross_deployed",
+            "avg_abs_net_deployed",
+            "avg_gross_cap",
+        ):
+            if c in show.columns:
+                show[c] = show[c].map(lambda v: f"{float(v):,.0f}" if pd.notna(v) else "")
+        for c in ("rog_deployed", "rog_deployed_ann", "roc_deployed", "deployed_day_frac", "rog", "roc"):
+            if c in show.columns:
+                show[c] = show[c].map(lambda v: f"{float(v):.2%}" if pd.notna(v) else "n/a")
+        print("Bucket returns on DEPLOYED capital (primary):")
+        display(show.set_index("sleeve")[
+            [c for c in [
+                "pnl_deployed_usd", "avg_gross_deployed", "rog_deployed", "rog_deployed_ann",
+                "roc_deployed", "deployed_day_frac", "n_deployed_days", "n_days",
+            ] if c in show.columns]
+        ])
+        print("Legacy calendar averages (includes flat days — secondary):")
+        display(show.set_index("sleeve")[
+            [c for c in ["pnl_usd", "avg_gross_cap", "rog", "roc"] if c in show.columns]
+        ])
+    else:
+        print("no sleeve_return_metrics — re-run prod cell")
+
+    # Secondary path stats on synthetic sleeve NAV (not ROC/ROG)
     stat_rows = [{"sleeve": "BOOK", **_series_stats(book)}]
     for s in SLEEVE_ORDER:
         if s in nav.columns:
@@ -373,6 +590,7 @@ else:
         if b.get(k) is not None and len(stats_tbl):
             stats_tbl.loc[stats_tbl["sleeve"] == "BOOK", k] = b.get(k)
     cols = [c for c in ["start_usd", "end_usd", "total_ret", "cagr", "vol", "sharpe", "maxdd"] if c in stats_tbl.columns]
+    print("Path stats on synthetic NAV (secondary; total_ret ≠ deployed ROG):")
     display(stats_tbl.set_index("sleeve")[cols].round(4))
 """
     ),
@@ -656,6 +874,133 @@ P&L events. Concentration should be reviewed alongside large daily moves.
     display(events)
 """
     ),
+    md(
+        """## Per-bucket position composition (Diamond Creek style)
+
+For each sleeve, stacked time series of **% of that sleeve's gross** in:
+1. each **pair** (ETF/underlying), and
+2. each **underlying** (sum of pair gross sharing the same underlying).
+
+Same idea as the Diamond Creek / IBKR `ALL_PAIR_GROSS` stackplot. When a sleeve
+has many names, the chart keeps the top 12 by average share and rolls the rest
+into `Other` so the evolution stays readable.
+"""
+    ),
+    code(
+        """import matplotlib.dates as mdates
+
+COMPOSITION_TOP_N = 12  # top series kept; remainder -> Other
+
+
+def _pair_leg_gross(df: pd.DataFrame) -> pd.Series:
+    if {"etf_usd", "underlying_usd"}.issubset(df.columns):
+        return df["etf_usd"].abs() + df["underlying_usd"].abs()
+    if {"long_usd", "short_usd"}.issubset(df.columns):
+        return df["long_usd"].abs() + df["short_usd"].abs()
+    return pd.Series(0.0, index=df.index)
+
+
+def _gross_share_wide(
+    day_df: pd.DataFrame,
+    key_col: str,
+    *,
+    top_n: int = COMPOSITION_TOP_N,
+) -> pd.DataFrame:
+    # Daily % of sleeve gross by key_col; keep top_n by mean share, else Other.
+    if day_df.empty or key_col not in day_df.columns:
+        return pd.DataFrame()
+    g = (
+        day_df.groupby(["date", key_col], as_index=False)["pair_gross"]
+        .sum()
+        .sort_values(["date", key_col])
+    )
+    wide = g.pivot(index="date", columns=key_col, values="pair_gross").fillna(0.0)
+    wide.index = pd.to_datetime(wide.index)
+    total = wide.sum(axis=1).replace(0.0, np.nan)
+    pct = wide.div(total, axis=0).fillna(0.0) * 100.0
+    if pct.empty:
+        return pct
+    order = pct.mean(axis=0).sort_values(ascending=False)
+    keep = order.index[: max(1, int(top_n))].tolist()
+    if len(order) > len(keep):
+        out = pct[keep].copy()
+        out["Other"] = pct.drop(columns=keep).sum(axis=1)
+        return out
+    return pct[order.index.tolist()]
+
+
+def _stack_share(ax, pct: pd.DataFrame, title: str) -> None:
+    if pct.empty:
+        ax.set_title(title + " (empty)")
+        ax.set_ylim(0, 100)
+        return
+    cols = list(pct.columns)
+    # Stable palette; "Other" last and muted.
+    cmap = plt.get_cmap("tab20")
+    colors = []
+    for i, c in enumerate(cols):
+        if str(c) == "Other":
+            colors.append("#bdbdbd")
+        else:
+            colors.append(cmap(i % 20))
+    ax.stackplot(pct.index, pct.T.values, labels=cols, colors=colors, linewidth=0)
+    ax.set_ylim(0, 100)
+    ax.set_ylabel("Gross share (%)")
+    ax.set_title(title)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=4, maxticks=8))
+    ax.grid(axis="y", alpha=0.25)
+    # Legend only when few series (B2/B4/B5); B1 would be unreadable.
+    if len(cols) <= 14:
+        ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), fontsize=7, frameon=False)
+
+
+if pair_daily_df is None or pair_daily_df.empty:
+    print("no pair_daily_pnl.csv — re-run with FORCE_RERUN=True")
+else:
+    pdf = pair_daily_df.copy()
+    pdf["date"] = pd.to_datetime(pdf["date"])
+    pdf["ETF"] = pdf["ETF"].astype(str).str.upper()
+    pdf["Underlying"] = pdf["Underlying"].astype(str).str.upper()
+    pdf["pair"] = pdf["ETF"] + "/" + pdf["Underlying"]
+    pdf["pair_gross"] = _pair_leg_gross(pdf)
+
+    for sleeve in SLEEVE_ORDER:
+        sub = pdf.loc[pdf["sleeve"] == sleeve].copy()
+        if sub.empty or float(sub["pair_gross"].sum()) <= 0:
+            print(f"{SLEEVE_LABELS.get(sleeve, sleeve)}: no deployed gross")
+            continue
+
+        pair_pct = _gross_share_wide(sub, "pair")
+        und_pct = _gross_share_wide(sub, "Underlying")
+        label = SLEEVE_LABELS.get(sleeve, sleeve)
+        n_pairs = int(sub["pair"].nunique())
+        n_und = int(sub["Underlying"].nunique())
+
+        fig, axes = plt.subplots(2, 1, figsize=(14, 8.5), sharex=True)
+        _stack_share(
+            axes[0],
+            pair_pct,
+            f"{label}: each pair as % of sleeve gross  (n={n_pairs})",
+        )
+        _stack_share(
+            axes[1],
+            und_pct,
+            f"{label}: each underlying as % of sleeve gross  (n={n_und})",
+        )
+        axes[1].set_xlabel("Date")
+        fig.autofmt_xdate()
+        plt.tight_layout()
+        plt.show()
+
+        avg_pair = pair_pct.mean().sort_values(ascending=False).head(10).to_frame("avg_gross_share_pct")
+        avg_und = und_pct.mean().sort_values(ascending=False).head(10).to_frame("avg_gross_share_pct")
+        print(f"{label}: top pairs by avg sleeve-gross share")
+        display(avg_pair)
+        print(f"{label}: top underlyings by avg sleeve-gross share")
+        display(avg_und)
+"""
+    ),
     md("## Monthly sleeve P&L heatmap"),
     code(
         """if not daily_diag.empty:
@@ -709,10 +1054,11 @@ else:
     md(
         """## Per-pair PnL by bucket (price / borrow / live divs)
 
-Stacked components for the worst 8 + best 8 pairs per sleeve:
-`price_pnl`, **borrow** (sim fee), short-credit, margin, txn, and **live IBKR
-div/PIL** from `data/ledger/dividend_cash_history.csv` (cash actually booked on
-that ETF — not a full sim overlay; useful for yieldboost shorts).
+For each sleeve: chart first (worst 8 + best 8 by `pnl_usd`), then the detail
+table. Bars are **sim `pnl_usd`** (price − borrow + short credit − margin − txn).
+Markers: **borrow** (sim fee, plotted as −cost) and **live IBKR div/PIL** from
+`data/ledger/dividend_cash_history.csv` (informational — not added into sim PnL;
+useful for yieldboost shorts).
 """
     ),
     code(
@@ -743,140 +1089,57 @@ else:
     ps["pnl_plus_live_div"] = ps["pnl_usd"] + ps["div_pil_live_usd"]
 
     sleeves_present = [s for s in SLEEVE_ORDER if s in set(ps["sleeve"].astype(str))]
-    n = max(1, len(sleeves_present))
-    fig, axes = plt.subplots(n, 1, figsize=(12, 3.6 * n), squeeze=False)
-    for ax, sleeve in zip(axes[:, 0], sleeves_present):
-        sub = ps[ps["sleeve"] == sleeve].sort_values("pnl_usd")
-        if len(sub) > 16:
-            sub = pd.concat([sub.head(8), sub.tail(8)])
+    for sleeve in sleeves_present:
+        full = ps[ps["sleeve"] == sleeve].sort_values("pnl_usd")
+        n_full = len(full)
+        sub = full
+        if n_full > 16:
+            sub = pd.concat([full.head(8), full.tail(8)])
         labels = sub["ETF"].astype(str) + "/" + sub["Underlying"].astype(str)
         y = np.arange(len(sub))
-        # Stack signed components around zero for readability: show net bar + borrow/div markers
+        fig_h = max(3.2, 0.38 * len(sub) + 1.4)
+        fig, ax = plt.subplots(figsize=(12, fig_h))
         colors = ["#c44e52" if v < 0 else "#4c72b0" for v in sub["pnl_usd"]]
         ax.barh(y, sub["pnl_usd"], color=colors, alpha=0.85, label="sim pnl")
-        ax.scatter(sub["borrow_cost_usd"], y, color="#e6a817", s=36, zorder=3, label="borrow $ (sim cost)")
-        ax.scatter(sub["div_pil_live_usd"], y, color="#2ca02c", s=36, zorder=3, label="live div/PIL $")
+        # Borrow is a cost: plot as negative so it sits with losses / left of zero.
+        ax.scatter(
+            -pd.to_numeric(sub["borrow_cost_usd"], errors="coerce").fillna(0.0),
+            y, color="#e6a817", s=42, zorder=3, label="−borrow $ (sim)",
+        )
+        ax.scatter(
+            sub["div_pil_live_usd"], y, color="#2ca02c", s=42, zorder=3,
+            label="live div/PIL $",
+        )
         ax.axvline(0, color="k", lw=0.8)
         ax.set_yticks(y)
         ax.set_yticklabels(labels, fontsize=8)
         ax.invert_yaxis()
-        ax.set_title(f"{SLEEVE_LABELS.get(sleeve, sleeve)} — pair PnL + borrow / live div")
+        title = f"{SLEEVE_LABELS.get(sleeve, sleeve)} — pair PnL + borrow / live div"
+        if n_full > len(sub):
+            title += f" (worst/best 8 of {n_full})"
+        ax.set_title(title)
+        ax.set_xlabel("USD")
         ax.grid(True, axis="x", alpha=0.3)
-        ax.legend(fontsize=7, loc="best")
-        print(f"\\n=== {SLEEVE_LABELS.get(sleeve, sleeve)} ===")
+        ax.legend(fontsize=8, loc="best")
+        fig.tight_layout()
+        _ip_display(fig)
+        plt.close(fig)
+
+        print(f"=== {SLEEVE_LABELS.get(sleeve, sleeve)} ({n_full} pairs) ===")
         show = sub[[
             "ETF", "Underlying", "pnl_usd", "price_pnl_usd", "borrow_cost_usd",
             "short_credit_usd", "margin_cost_usd", "txn_cost_usd", "div_pil_live_usd",
             "pnl_plus_live_div",
         ]].sort_values("pnl_usd")
         display(show.round(2))
-    plt.tight_layout()
-    plt.show()
 """
     ),
     md(
-        """## Debug: COYY (B2) and SNDU vs SNXX (B1)
+        """## Pair exposure / hedge / rebals by sleeve
 
-**COYY** — sim PnL is dominated by a single-day mark from a **split residual** in the
-price panel (2026-06-08: heuristic applied ×5 but raw gap was ~6.06×, leaving a
-~20% fake jump on a large short). Live IBKR also shows large **PIL** on COYY
-(weekly distributions while short).
+B1/B2/B5: worst 5 and best 5 by `pnl_usd`. **B4: every pair**.
 
-**SNDU vs SNXX** (both hedge SNDK) — SNDU’s panel has unadjusted jumps on
-2026-04-21 (+228%) and 2026-04-27 (−72%) that SNXX does not; that alone explains
-most of the PnL gap (not economics of two SNDK hedges).
-"""
-    ),
-    code(
-        """from scripts.production_actual_backtest import load_price_panel
-
-ps = pair_stats_df.copy() if not pair_stats_df.empty else pd.DataFrame()
-pdaily = pair_daily_df.copy() if not pair_daily_df.empty else pd.DataFrame()
-
-def _pair_breakdown(etf: str) -> pd.DataFrame:
-    row = ps[ps["ETF"].astype(str) == etf]
-    if row.empty:
-        print(etf, "not in pair_stats")
-        return pd.DataFrame()
-    r = row.iloc[0]
-    live_div = float(div_by_etf.get(etf, 0.0))
-    out = pd.DataFrame([{
-        "ETF": etf,
-        "Underlying": r.get("Underlying"),
-        "sleeve": r.get("sleeve"),
-        "sim_pnl": float(r["pnl_usd"]),
-        "price_pnl": float(r.get("price_pnl_usd", 0) or 0),
-        "borrow": float(r.get("borrow_cost_usd", 0) or 0),
-        "short_credit": float(r.get("short_credit_usd", 0) or 0),
-        "margin": float(r.get("margin_cost_usd", 0) or 0),
-        "txn": float(r.get("txn_cost_usd", 0) or 0),
-        "live_div_pil": live_div,
-        "sim_plus_live_div": float(r["pnl_usd"]) + live_div,
-        "n_rebals": int(r.get("n_rebals", 0) or 0),
-        "rebalance_dates": r.get("rebalance_dates", ""),
-        "last_long": float(r.get("long_usd", 0) or 0),
-        "last_short": float(r.get("short_usd", 0) or 0),
-    }])
-    return out
-
-print("=== COYY component breakdown ===")
-display(_pair_breakdown("COYY").round(2))
-
-if not pdaily.empty and (pdaily["ETF"] == "COYY").any():
-    coy = pdaily[pdaily["ETF"] == "COYY"].sort_values("date")
-    worst = coy.nsmallest(5, "daily_pnl")[["date", "daily_pnl", "price_pnl", "borrow_cost", "etf_usd", "underlying_usd"]]
-    print("COYY worst sim days:")
-    display(worst.round(2))
-    fig, ax = plt.subplots(figsize=(11, 3.5))
-    ax.plot(coy["date"], coy["cum_pnl"], lw=1.6, label="COYY cum sim pnl")
-    ax.axhline(0, color="k", lw=0.8)
-    # mark 2026-06-08
-    hit = coy[coy["date"] == "2026-06-08"]
-    if len(hit):
-        ax.scatter(hit["date"], hit["cum_pnl"], color="red", s=60, zorder=3, label="2026-06-08 split residual day")
-    ax.set_title("COYY cumulative sim PnL")
-    ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.show()
-
-print("\\n=== SNDU vs SNXX (both SNDK) ===")
-cmp = pd.concat([_pair_breakdown("SNDU"), _pair_breakdown("SNXX")], ignore_index=True)
-display(cmp.round(2))
-
-panel = load_price_panel(RUN_DATE)
-fig, axes = plt.subplots(2, 1, figsize=(11, 6.5), sharex=False)
-for ax, etf in zip(axes, ["SNDU", "SNXX"]):
-    if etf not in panel:
-        ax.set_title(f"{etf} missing from price panel")
-        continue
-    px = panel[etf]["a_px"].loc["2026-04-01":"2026-05-15"]
-    ax.plot(px.index, px.values, lw=1.5)
-    ax.set_title(f"{etf} ETF price (panel) — note SNDU 4/21 and 4/27 jumps")
-    ax.grid(True, alpha=0.3)
-plt.tight_layout()
-plt.show()
-
-if not pdaily.empty:
-    fig, ax = plt.subplots(figsize=(11, 3.8))
-    for etf, color in [("SNDU", "#c44e52"), ("SNXX", "#4c72b0")]:
-        sub = pdaily[pdaily["ETF"] == etf].sort_values("date")
-        if sub.empty:
-            continue
-        ax.plot(sub["date"], sub["cum_pnl"], lw=1.6, color=color, label=etf)
-    ax.axhline(0, color="k", lw=0.8)
-    ax.set_title("SNDU vs SNXX cumulative sim PnL")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.show()
-"""
-    ),
-    md(
-        """## Top / bottom 5 pairs by sleeve (exposure + hedge + rebals)
-
-For each sleeve: worst 5 and best 5 by `pnl_usd`, with charts for PnL, long/short
-exposure, and hedge ratio, plus a table of rebalance dates.
+Charts: PnL, long/short exposure, hedge ratio, plus rebalance-date table.
 (`long_usd` = underlying target, `short_usd` = ETF target;
 `hedge_ratio` = `|underlying| / |ETF|`.)
 """
@@ -903,14 +1166,23 @@ else:
         sub = ps[ps["sleeve"].astype(str) == sleeve].sort_values("pnl_usd")
         if sub.empty:
             continue
-        bottom = sub.head(5).copy()
-        top = sub.tail(5).iloc[::-1].copy()
-        bottom.insert(0, "rank", [f"bottom_{i}" for i in range(1, len(bottom) + 1)])
-        top.insert(0, "rank", [f"top_{i}" for i in range(1, len(top) + 1)])
-        out = pd.concat([bottom, top], ignore_index=True)
-        plot = pd.concat([bottom, top.iloc[::-1]], ignore_index=True)
+        is_b4 = sleeve == "inverse_decay_bucket4"
+        if is_b4:
+            plot = sub.copy()
+            plot.insert(0, "rank", [f"p{i}" for i in range(1, len(plot) + 1)])
+            out = plot.copy()
+            title_sfx = f"all {len(plot)} pairs"
+        else:
+            bottom = sub.head(5).copy()
+            top = sub.tail(5).iloc[::-1].copy()
+            bottom.insert(0, "rank", [f"bottom_{i}" for i in range(1, len(bottom) + 1)])
+            top.insert(0, "rank", [f"top_{i}" for i in range(1, len(top) + 1)])
+            out = pd.concat([bottom, top], ignore_index=True)
+            plot = pd.concat([bottom, top.iloc[::-1]], ignore_index=True)
+            title_sfx = "top/bottom 5"
         labels = plot["ETF"].astype(str) + "/" + plot["Underlying"].astype(str)
-        fig, axes = plt.subplots(1, 3, figsize=(15, 4.2))
+        fig_h = max(4.2, 0.28 * len(plot) + 1.5)
+        fig, axes = plt.subplots(1, 3, figsize=(15, fig_h))
 
         ax = axes[0]
         colors = ["#c44e52" if v < 0 else "#4c72b0" for v in plot["pnl_usd"]]
@@ -939,11 +1211,12 @@ else:
         ax.invert_yaxis()
         ax.grid(True, axis="x", alpha=0.3)
 
-        fig.suptitle(f"{SLEEVE_LABELS.get(sleeve, sleeve)} — top/bottom 5", y=1.02, fontsize=12)
-        plt.tight_layout()
-        plt.show()
+        fig.suptitle(f"{SLEEVE_LABELS.get(sleeve, sleeve)} — {title_sfx}", y=1.02, fontsize=12)
+        fig.tight_layout()
+        _ip_display(fig)
+        plt.close(fig)
 
-        print(f"\\n=== {SLEEVE_LABELS.get(sleeve, sleeve)} — top/bottom 5 ===")
+        print(f"=== {SLEEVE_LABELS.get(sleeve, sleeve)} — {title_sfx} ===")
         disp = out[[c for c in show_cols if c in out.columns]].copy()
         for col in ("pnl_usd", "long_usd", "short_usd", "hedge_ratio", "Delta", "end_weight"):
             if col in disp.columns:
@@ -952,12 +1225,10 @@ else:
 """
     ),
     md(
-        """## Top / bottom 5 — cumulative PnL over time
+        """## Cumulative pair PnL over time
 
-Same pairs as the bar charts above, plotted as cumulative pair PnL from
-`pair_daily_pnl.csv` (share-hold marks + financing + txn). Use this to verify
-the bar totals and to see when each pair contributed. Flat until first rebalance
-means the plan timeline had no deployable book yet.
+B1/B2/B5: same top/bottom 5 as above. **B4: every pair.** From
+`pair_daily_pnl.csv` (share-hold marks + financing + txn).
 """
     ),
     code(
@@ -981,7 +1252,7 @@ else:
             continue
         bottom = sub.head(5)
         top = sub.tail(5)
-        focus = pd.concat([bottom, top], ignore_index=True)
+        focus = sub.copy() if sleeve == "inverse_decay_bucket4" else pd.concat([bottom, top], ignore_index=True)
         etfs = set(focus["ETF"].astype(str))
         day = pdaily[
             (pdaily["sleeve"].astype(str) == sleeve)
@@ -992,10 +1263,16 @@ else:
             continue
 
         rank_map = {}
-        for i, r in enumerate(bottom.itertuples(index=False), 1):
-            rank_map[str(r.ETF)] = f"bottom_{i} {r.ETF}/{r.Underlying}"
-        for i, r in enumerate(top.iloc[::-1].itertuples(index=False), 1):
-            rank_map[str(r.ETF)] = f"top_{i} {r.ETF}/{r.Underlying}"
+        if sleeve == "inverse_decay_bucket4":
+            for r in focus.itertuples(index=False):
+                rank_map[str(r.ETF)] = f"{r.ETF}/{r.Underlying}"
+            title_sfx = f"all {len(focus)} pairs cum PnL"
+        else:
+            for i, r in enumerate(bottom.itertuples(index=False), 1):
+                rank_map[str(r.ETF)] = f"bottom_{i} {r.ETF}/{r.Underlying}"
+            for i, r in enumerate(top.iloc[::-1].itertuples(index=False), 1):
+                rank_map[str(r.ETF)] = f"top_{i} {r.ETF}/{r.Underlying}"
+            title_sfx = "top/bottom 5 cum PnL"
 
         day["label"] = day["ETF"].astype(str).map(rank_map)
         fig, axes = plt.subplots(2, 1, figsize=(12, 7.5), sharex=True)
@@ -1006,7 +1283,7 @@ else:
             ax.plot(g["date"], g["cum_pnl"], label=lab, lw=1.5)
         ax.axhline(0, color="k", lw=0.8)
         ax.set_ylabel("Cumulative PnL ($)")
-        ax.set_title(f"{SLEEVE_LABELS.get(sleeve, sleeve)} — top/bottom 5 cum PnL")
+        ax.set_title(f"{SLEEVE_LABELS.get(sleeve, sleeve)} — {title_sfx}")
         ax.legend(fontsize=7, ncol=2, loc="best")
         ax.grid(True, alpha=0.3)
 
@@ -1020,8 +1297,9 @@ else:
         ax.legend(fontsize=7, ncol=2, loc="best")
         ax.grid(True, alpha=0.3)
 
-        plt.tight_layout()
-        plt.show()
+        fig.tight_layout()
+        _ip_display(fig)
+        plt.close(fig)
 
         end = (
             day.sort_values("date")
@@ -1029,7 +1307,7 @@ else:
             .tail(1)[["label", "date", "cum_pnl", "underlying_usd", "etf_usd", "hedge_ratio"]]
             .sort_values("cum_pnl", ascending=False)
         )
-        print(f"\\n=== {SLEEVE_LABELS.get(sleeve, sleeve)} — end-of-sample pair daily ===")
+        print(f"=== {SLEEVE_LABELS.get(sleeve, sleeve)} — end-of-sample pair daily ===")
         display(end.round(2))
 """
     ),
@@ -1137,6 +1415,390 @@ if rebalance_path.exists():
         ax.grid(True, alpha=0.3)
         plt.tight_layout()
         plt.show()
+"""
+    ),
+    md(
+        """## B4 path diagnostics (sim book) — **every pair**
+
+EOD-style multipanels for **all** B4 pairs from this notebook's artifacts
+(`pair_daily_pnl.csv` + price panel + production cadence knobs):
+
+1. Simulated cumulative PnL
+2. Gross leg exposure (|ETF| / |underlying|)
+3. Hedge h(t): book (share-held) vs model (TR/VCR cadence); gray = no-signal / h_mid
+4. Days → model rebalance + cadence signal
+5. Underlying price (metrics, Yahoo fill after panel end) + rebal markers
+
+Also writes `b4_pair_paths.pdf` (one page per pair). Cadence uses the full
+underlying calendar (proper warmup), then aligns to the book window.
+"""
+    ),
+    code(
+        """from scripts.b4_backtest_pair_charts import plot_b4_path_gallery
+from scripts.sizing_tilt_cadence_bt import load_price_panel
+
+pair_daily_path = OUT_BASE / "pair_daily_pnl.csv"
+pair_stats_path = OUT_BASE / "pair_stats.csv"
+b4_pdf_path = OUT_BASE / "b4_pair_paths.pdf"
+
+if not pair_daily_path.exists() or not pair_stats_path.exists():
+    print("skip B4 path diagnostics — need pair_daily_pnl.csv + pair_stats.csv")
+else:
+    _ps = pd.read_csv(pair_stats_path)
+    _pd = pd.read_csv(pair_daily_path, parse_dates=["date"])
+    _b4 = _ps[_ps["sleeve"].astype(str).eq("inverse_decay_bucket4")] if "sleeve" in _ps.columns else _ps.iloc[0:0]
+    if _b4.empty:
+        print("no inverse_decay_bucket4 rows in pair_stats — nothing to plot")
+    else:
+        print(f"B4 pairs in sim: {len(_b4)} — plotting ALL pairs (inline + PDF)")
+        display(
+            _b4.sort_values("pnl_usd", ascending=False)[
+                [c for c in ("ETF", "Underlying", "pnl_usd", "hedge_ratio", "n_rebals") if c in _b4.columns]
+            ].round(2)
+        )
+        _panel = load_price_panel(RUN_DATE, min_days=PRICE_PANEL_MIN_DAYS)
+        _meta = plot_b4_path_gallery(
+            pair_stats=_ps,
+            pair_daily=_pd,
+            panel=_panel,
+            start=START,
+            mode="all",
+            sleeves=("inverse_decay_bucket4",),
+            fill_yahoo=True,
+            pdf_path=b4_pdf_path,
+            show=True,
+        )
+        print("wrote", b4_pdf_path)
+        if _meta:
+            display(pd.DataFrame(_meta))
+        else:
+            print("gallery empty")
+"""
+    ),
+    md(
+        """## B4 per-pair trade ledger (sim vs live model)
+
+Exact fills from `pair_stats.rebalance_dates` + legs/txn in `pair_daily_pnl`
+(do **not** use `is_rebalance` — that flag is book-level).
+
+Each trade is labeled `enter_operator` / `exit_operator` / `cadence_resize` /
+`off_cadence_resize` (or `resize` if cadence overlay skipped). Writes:
+
+- `b4_pair_trade_ledger.csv`
+- `b4_pair_trade_summary.csv`
+- `b4_sim_vs_live_checklist.csv`
+
+Sim counters from `report.json`: `n_b4_membership_deferred`, `n_b4_ratchet_pins`,
+`n_b4_cadence_rebals` (band skips are silent — no fill).
+"""
+    ),
+    code(
+        """from scripts.b4_pair_trade_audit import run_audit, realism_checklist
+
+# Panel overlay is slow (full price load). Membership/enter-exit audit is the
+# main realism check; set WITH_B4_CADENCE_OVERLAY=True to tag cadence hits.
+WITH_B4_CADENCE_OVERLAY = False
+_paths = run_audit(OUT_BASE, with_panel=WITH_B4_CADENCE_OVERLAY, fill_yahoo=False)
+_sum = pd.read_csv(_paths["summary"])
+_led = pd.read_csv(_paths["ledger"], parse_dates=["date"])
+_rj = (report.get("book") if isinstance(report, dict) else {}) or {}
+print(
+    "sim B4 counters:",
+    {k: _rj.get(k) for k in (
+        "n_b4_membership_deferred",
+        "n_b4_ratchet_pins",
+        "n_b4_cadence_rebals",
+        "b4_membership_clock",
+        "b4_apply_resize_bands",
+        "b4_ratchet_execution_guard",
+    )},
+)
+display(realism_checklist())
+display(
+    _sum[
+        [
+            c
+            for c in (
+                "ETF",
+                "n_trades",
+                "n_enter",
+                "n_exit",
+                "n_cadence_resize",
+                "n_cadence_rebal",
+                "n_off_cadence_resize",
+                "n_resize_unknown_cadence",
+                "membership_trade_share",
+                "median_days_between_trades",
+                "rapid_churn_events",
+                "pnl_usd",
+                "realism_flags",
+            )
+            if c in _sum.columns
+        ]
+    ].round(2)
+)
+print("reason mix:")
+display(_led["reason"].value_counts().to_frame("n"))
+# Example: worst PnL pair path
+if not _sum.empty:
+    _worst = str(_sum.sort_values("pnl_usd").iloc[0]["ETF"])
+    print(f"worst pair ledger: {_worst}")
+    display(
+        _led[_led["ETF"] == _worst][
+            [c for c in ("date", "reason", "prev_gross", "gross", "turnover_usd", "txn_cost", "book_h") if c in _led.columns]
+        ].round(1)
+    )
+"""
+    ),
+    md(
+        """## B4 historical plan / crash / waterfall audit
+
+Rebuilt from **this notebook's** `plans/*.csv` (gross, n pairs, median h over the
+sim window) plus any archived `b4_crash_budget.csv` / `b4_sizing_waterfall.csv`
+under `data/runs/` (often only the latest GTP day).
+"""
+    ),
+    code(
+        """from scripts.b4_historical_audit import (
+    load_archived_crash_waterfall,
+    load_b4_plan_history,
+    plot_b4_plan_history,
+    plot_crash_waterfall_snapshots,
+    summarize_b4_plan_history,
+)
+
+_plans = OUT_BASE / "plans"
+_hist = load_b4_plan_history(_plans)
+_sum = summarize_b4_plan_history(_hist)
+if _sum.empty:
+    print("no B4 rows in cached plans — skip historical audit")
+else:
+    display(_sum.tail(12))
+    _fig = plot_b4_plan_history(_sum)
+    if _fig is not None:
+        plt.show()
+        plt.close(_fig)
+    _hist.to_csv(OUT_BASE / "b4_plan_history.csv", index=False)
+    _sum.to_csv(OUT_BASE / "b4_plan_history_daily.csv", index=False)
+    print("wrote", OUT_BASE / "b4_plan_history_daily.csv")
+
+_crash, _wf = load_archived_crash_waterfall()
+print(f"archived crash rows={len(_crash)} waterfall rows={len(_wf)}")
+for _f in plot_crash_waterfall_snapshots(_crash, _wf):
+    plt.show()
+    plt.close(_f)
+"""
+    ),
+    md(
+        """## B4 Monte Carlo tail / equity fan (dashboard-style)
+
+Uses the same production cadence portfolio construction as
+`scripts/build_bucket4_risk_sim.py` (proposed book on `RUN_DATE`), then plots
+1y max-drawdown histograms and a block-bootstrap equity fan — analogous to the
+risk-dashboard B4 simulator.
+"""
+    ),
+    code(
+        """from scripts.b4_notebook_risk_sim import plot_b4_risk_sim, run_b4_notebook_risk_sim
+
+_b4risk = run_b4_notebook_risk_sim(run_date=RUN_DATE, start="2025-01-01", n_mc=2000)
+if not _b4risk:
+    print("B4 risk sim unavailable for", RUN_DATE, "(need proposed book + panel)")
+else:
+    print(
+        f"pairs={len(_b4risk['pairs'])} book_gross=${_b4risk['book_gross']:,.0f} "
+        f"realized CAGR={_b4risk['perf'].get('cagr')} maxDD={_b4risk['perf'].get('maxdd')}"
+    )
+    _f = plot_b4_risk_sim(_b4risk)
+    if _f is not None:
+        plt.show()
+        plt.close(_f)
+"""
+    ),
+    md(
+        """### Live GTP cadence snapshots (optional)
+
+If today's run folder has GTP cadence PNGs, show them as a **live as-of
+`RUN_DATE`** reference. Separate from the historical sim paths above.
+"""
+    ),
+    code(
+        """from IPython.display import Image, display as _disp
+
+_cad_dir = REPO / "data" / "runs" / RUN_DATE / "b4_hedge_cadence"
+_pngs = [
+    _cad_dir / "b4_hedge_ratio_over_time.png",
+    _cad_dir / "b4_days_to_rebalance.png",
+]
+_shown = False
+for _p in _pngs:
+    if _p.is_file():
+        print(_p.relative_to(REPO))
+        _disp(Image(filename=str(_p)))
+        _shown = True
+if not _shown:
+    print(f"no GTP cadence PNGs under {_cad_dir} — skip (optional)")
+"""
+    ),
+    md(
+        """## Single-pair path drilldown
+
+Set `PAIR_ETF` (and optional `PAIR_UNDERLYING`) to plot one pair’s exposure,
+hedge ratio, delta residual, and cum PnL over time. Black dots mark days with
+material notional change or txn cost (sim `is_rebalance` is often always-on).
+"""
+    ),
+    code(
+        """PAIR_ETF = "SNDU"
+PAIR_UNDERLYING = None  # e.g. "SNDK", or None to take the first match
+
+pdaily_path = OUT_BASE / "pair_daily_pnl.csv"
+if not pdaily_path.exists():
+    print("need pair_daily_pnl.csv — re-run prod cell")
+else:
+    pdaily = pd.read_csv(pdaily_path, parse_dates=["date"])
+    m = pdaily["ETF"].astype(str).str.upper() == str(PAIR_ETF).upper()
+    if PAIR_UNDERLYING:
+        m &= pdaily["Underlying"].astype(str).str.upper() == str(PAIR_UNDERLYING).upper()
+    s = pdaily.loc[m].sort_values("date").copy()
+    if s.empty:
+        print(f"no rows for {PAIR_ETF}/{PAIR_UNDERLYING or '*'}")
+    else:
+        und = str(s["Underlying"].iloc[0])
+        s["gross"] = s["etf_usd"].abs() + s["underlying_usd"].abs()
+        s["net_dollar"] = s["underlying_usd"] + s["etf_usd"]
+        s["delta_net"] = s["etf_usd"] * s["Delta"] + s["underlying_usd"]
+        s["d_gross"] = s["gross"].diff().abs().fillna(s["gross"].abs())
+        trade = (s["d_gross"] > 250) | (s["txn_cost"].abs() > 0.5)
+        fri = s["date"].dt.weekday == 4
+
+        fig, axes = plt.subplots(
+            4, 1, figsize=(12, 11), sharex=True,
+            gridspec_kw={"height_ratios": [1.4, 1.0, 0.9, 1.1]},
+        )
+        ax = axes[0]
+        ax.fill_between(s["date"], 0, s["underlying_usd"], color="#55a868", alpha=0.35, label=f"long und ({und})")
+        ax.plot(s["date"], s["underlying_usd"], color="#2b6e3f", lw=1.4)
+        ax.fill_between(s["date"], 0, s["etf_usd"], color="#c44e52", alpha=0.35, label=f"short ETF ({PAIR_ETF})")
+        ax.plot(s["date"], s["etf_usd"], color="#8b2e32", lw=1.4)
+        ax.plot(s["date"], s["net_dollar"], color="k", lw=1.2, ls="--", label="net $")
+        ax.scatter(s.loc[trade, "date"], s.loc[trade, "underlying_usd"], s=28, c="k", zorder=5, label="trade day")
+        for d in s.loc[fri, "date"]:
+            ax.axvline(d, color="steelblue", alpha=0.15, lw=1)
+        ax.axhline(0, color="k", lw=0.6)
+        ax.set_ylabel("Notional ($)")
+        ax.set_title(f"{PAIR_ETF}/{und} exposure (blue bands = Fridays)")
+        ax.legend(loc="upper left", fontsize=8, ncol=2)
+        ax.grid(True, alpha=0.3)
+
+        ax = axes[1]
+        ax.plot(s["date"], s["hedge_ratio"], color="#8172b2", lw=1.6, label="|und|/|ETF|")
+        ax.plot(s["date"], s["Delta"].abs(), color="gray", lw=1.2, ls="--", label="|Delta|")
+        ax.scatter(s.loc[trade, "date"], s.loc[trade, "hedge_ratio"], s=22, c="k", zorder=5)
+        ax.set_ylabel("Hedge ratio")
+        ax.legend(loc="best", fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+        ax = axes[2]
+        ax.plot(s["date"], s["delta_net"], color="#dd8452", lw=1.5, label="delta-adj net")
+        ax.axhline(0, color="k", lw=0.6)
+        ax.scatter(s.loc[trade, "date"], s.loc[trade, "delta_net"], s=22, c="k", zorder=5)
+        ax.set_ylabel("$ delta")
+        ax.legend(loc="best", fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+        ax = axes[3]
+        ax.plot(s["date"], s["cum_pnl"], color="#4c72b0", lw=2.0, label="cum PnL")
+        ax.bar(s["date"], s["daily_pnl"], color="#4c72b0", alpha=0.25, width=1.0, label="daily PnL")
+        ax.scatter(s.loc[trade, "date"], s.loc[trade, "cum_pnl"], s=28, c="k", zorder=5, label="trade day")
+        ax.axhline(0, color="k", lw=0.6)
+        ax.set_ylabel("PnL ($)")
+        ax.legend(loc="best", fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+        fig.suptitle(f"{PAIR_ETF}/{und} — production actual pair path", fontsize=13, y=0.995)
+        fig.tight_layout()
+        png = OUT_BASE / f"{str(PAIR_ETF).lower()}_{und.lower()}_pair_path.png"
+        fig.savefig(png, dpi=140, bbox_inches="tight")
+        plt.show()
+        print(f"days={len(s)} trade_days={int(trade.sum())} fridays={int(fri.sum())}")
+        print(
+            f"end und=${float(s.underlying_usd.iloc[-1]):,.0f}  "
+            f"etf=${float(s.etf_usd.iloc[-1]):,.0f}  "
+            f"cum_pnl=${float(s.cum_pnl.iloc[-1]):,.0f}"
+        )
+        print("saved", png)
+"""
+    ),
+    md(
+        """## B1 deep-dive vs Buckets1-4Backtest
+
+Why production-actual B1 (`core_leveraged`) may look weak vs the research notebook
+`notebooks/Buckets1-4Backtest.ipynb`:
+
+| Dimension | Prod actual BT | Buckets1-4Backtest |
+|-----------|----------------|--------------------|
+| Universe / sizing | Live GTP + YAML budgets + Phase-2b | Research screener + custom weight power / QCQP |
+| Hedge | Plan legs; operator_5d retarget | Often dynamic / static-h research path |
+| Costs | Borrow + margin + 20bp slip + commission | Often lighter / different borrow |
+| Capital metric | Use **ROC / ROG** above | Often path return on sleeve notional |
+| Overlap with B4 | Financing now nets shared underlyings | Usually sleeve-isolated |
+
+Use the cell below to rank B1 pairs and compare price vs financing drag.
+"""
+    ),
+    code(
+        """b1 = "core_leveraged"
+ret_m = (
+    pd.read_csv(OUT_BASE / "sleeve_return_metrics.csv")
+    if (OUT_BASE / "sleeve_return_metrics.csv").exists()
+    else pd.DataFrame()
+)
+if not ret_m.empty:
+    print("=== sleeve ROC / ROG ===")
+    display(ret_m)
+
+if pair_stats_df.empty:
+    print("no pair_stats — re-run prod cell")
+else:
+    ps_b1 = pair_stats_df.loc[pair_stats_df["sleeve"].astype(str) == b1].copy()
+    if ps_b1.empty:
+        print("no B1 pairs in pair_stats")
+    else:
+        money_cols = [
+            c for c in [
+                "pnl_usd", "price_pnl_usd", "borrow_cost_usd", "short_credit_usd",
+                "margin_cost_usd", "txn_cost_usd", "long_usd", "short_usd",
+            ]
+            if c in ps_b1.columns
+        ]
+        print(f"B1 pairs={len(ps_b1)}  total pnl=${ps_b1['pnl_usd'].sum():,.0f}")
+        if money_cols:
+            agg = ps_b1[money_cols].sum(numeric_only=True)
+            print("B1 component totals:")
+            display(agg.to_frame("usd").T)
+        show_cols = [c for c in ["ETF", "Underlying", *money_cols, "n_rebal"] if c in ps_b1.columns]
+        ranked = ps_b1.sort_values("pnl_usd")
+        print("=== worst 10 B1 pairs ===")
+        display(ranked.head(10)[show_cols])
+        print("=== best 10 B1 pairs ===")
+        display(ranked.tail(10)[show_cols].iloc[::-1])
+
+# Financing internalization: how much und notional was netted away?
+if (OUT_BASE / "daily_diagnostics.csv").exists():
+    dd = pd.read_csv(OUT_BASE / "daily_diagnostics.csv", parse_dates=["date"])
+    if "underlying_internalized_usd" in dd.columns:
+        print(
+            f"avg internalized und ${dd['underlying_internalized_usd'].mean():,.0f} | "
+            f"avg book gross ${dd['gross_notional'].mean():,.0f} | "
+            f"avg book net ${dd['net_notional'].mean():,.0f}"
+        )
+    if f"{b1}__gross_cap" in dd.columns:
+        print(
+            f"B1 avg gross ${dd[f'{b1}__gross_cap'].mean():,.0f} | "
+            f"B1 avg net ${dd[f'{b1}__net_cap'].mean():,.0f} | "
+            f"B1 cum pnl ${dd[b1].sum():,.0f}"
+        )
 """
     ),
     md("## Limitations"),

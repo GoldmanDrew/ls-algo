@@ -1880,12 +1880,28 @@ def recompute_purgatory_by_bucket(
     out["purgatory_net_edge"] = net_purg.fillna(False).astype(bool)
     out["purgatory_vol_ratio"] = vol_ratio_purg.fillna(False).astype(bool)
     out["purgatory_no_locate"] = no_locate_purg.fillna(False).astype(bool)
+    out["hard_exit_borrow"] = (
+        borrow_known
+        & (~prot)
+        & np.isfinite(keep_sel)
+        & (borrow > keep_sel)
+    ).fillna(False).astype(bool)
     out["purgatory"] = (
         out["purgatory_borrow_band"]
         | out["purgatory_net_edge"]
         | out["purgatory_vol_ratio"]
         | out["purgatory_no_locate"]
     ).fillna(False)
+    reason_cols = (
+        ("borrow_band", "purgatory_borrow_band"),
+        ("net_edge", "purgatory_net_edge"),
+        ("vol_ratio", "purgatory_vol_ratio"),
+        ("no_locate", "purgatory_no_locate"),
+    )
+    out["purgatory_reason"] = out.apply(
+        lambda row: "|".join(label for label, col in reason_cols if bool(row.get(col, False))),
+        axis=1,
+    )
     return out
 
 
