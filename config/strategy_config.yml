@@ -55,6 +55,24 @@ strategy:
       core_leveraged:
         max_pair_weight: 0.09
         max_underlying_weight: 0.2
+        # Hierarchical B1 allocator: each stock is one opportunity regardless of how many
+        # leveraged ETF wrappers exist. Allocate the stock-level target to the best net-edge
+        # wrapper first, then spill only when pair/liquidity capacity binds. Scope is deliberately
+        # same sleeve + bucket + underlying + beta direction + product class, so B1 never absorbs
+        # YieldBoost, B4 inverse, or B5 volatility positions.
+        shared_underlying_allocation:
+          enabled: true
+          utility_signal_column: net_edge_p50_annual
+          # net_edge_p50 already deducts expected/posterior borrow. Penalize only a current
+          # borrow deterioration relative to posterior rather than double-charging full borrow.
+          avoid_double_counting: true
+          adverse_current_borrow_penalty: 1.0
+          # Defaults to max_pair_weight when omitted. Kept explicit for auditability.
+          max_wrapper_weight: 0.09
+          # Keep the prior plan's primary wrapper unless a challenger clears this annual
+          # utility advantage. Invalid/no-locate incumbents are bypassed immediately.
+          switching:
+            min_utility_advantage_annual: 0.03
         # Cap-projector: under-scored rows cannot grow beyond 1× their score weight when
         # excess is redistributed from over-cap top names (prevents tail lift).
         pre_cap_score_haircut_multiplier: 1

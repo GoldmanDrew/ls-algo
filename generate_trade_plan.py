@@ -828,6 +828,280 @@ def _decay_score_weights(
     return final_w / s if s > 0 else eq_w
 
 
+def _shared_underlying_group_keys(df: pd.DataFrame) -> pd.Series:
+    """Return stable economic-equivalence keys for wrapper concentration.
+
+    Same-underlying rows are substitutes only when they belong to the same sleeve/bucket,
+    product class, and beta direction.  This deliberately keeps B1, YieldBoost, B4 and B5
+    independent even when their stock underlying is identical.
+    """
+    n = len(df)
+    idx = df.index
+    underlying = (
+        df["Underlying"].astype(str).map(_norm_sym)
+        if "Underlying" in df.columns
+        else pd.Series([""] * n, index=idx)
+    )
+    sleeve = (
+        df["sleeve"].astype(str).str.strip().str.lower()
+        if "sleeve" in df.columns
+        else pd.Series([""] * n, index=idx)
+    )
+    bucket = (
+        df["bucket"].astype(str).str.strip().str.lower()
+        if "bucket" in df.columns
+        else pd.Series([""] * n, index=idx)
+    )
+    product = (
+        df["product_class"].astype(str).str.strip().str.lower()
+        if "product_class" in df.columns
+        else pd.Series([""] * n, index=idx)
+    )
+    if "Delta" in df.columns:
+        beta = pd.to_numeric(df["Delta"], errors="coerce")
+    elif "delta_abs" in df.columns:
+        beta = pd.to_numeric(df["delta_abs"], errors="coerce")
+    else:
+        beta = pd.Series(np.nan, index=idx)
+    direction = pd.Series(
+        np.where(beta < 0, "inverse", np.where(beta > 0, "long", "unknown")),
+        index=idx,
+    )
+    return pd.Series(
+        list(zip(sleeve, bucket, underlying, direction, product)),
+        index=idx,
+        dtype=object,
+    )
+
+
+def _shared_wrapper_utility(
+    df: pd.DataFrame,
+    weighting_cfg: Mapping[str, Any],
+    allocation_cfg: Mapping[str, Any],
+    *,
+    sleeve_name: str,
+) -> pd.Series:
+    """Economic utility used to rank equivalent wrappers.
+
+    ``net_edge_p50_annual`` already includes expected borrow, so the default avoids charging
+    the full current borrow a second time.  It only penalizes an adverse current-vs-posterior
+    borrow shock.  Setting ``avoid_double_counting: false`` restores the legacy full-borrow
+    penalty for controlled comparisons.
+    """
+    def _numeric_column(name: str, default: float = np.nan) -> pd.Series:
+        if name in df.columns:
+            return pd.to_numeric(df[name], errors="coerce")
+        return pd.Series(default, index=df.index, dtype=float)
+
+    _mode, default_signal = _sizing_signal_column(dict(weighting_cfg), sleeve_name=sleeve_name)
+    signal_col = str(allocation_cfg.get("utility_signal_column") or default_signal)
+    signal = _numeric_column(signal_col)
+    if bool(signal.isna().all()) and "blended_gross_decay" in df.columns:
+        signal = _numeric_column("blended_gross_decay")
+
+    current = _numeric_column("borrow_current")
+    posterior = _numeric_column("borrow_posterior_annual")
+    current_filled = current.fillna(np.inf)
+    posterior_filled = posterior.where(posterior.notna(), current)
+    avoid_double = bool(allocation_cfg.get("avoid_double_counting", True))
+    if avoid_double:
+        shock_penalty = float(allocation_cfg.get("adverse_current_borrow_penalty", 1.0) or 0.0)
+        adverse_shock = (current - posterior_filled).clip(lower=0.0).fillna(0.0)
+        utility = signal - shock_penalty * adverse_shock
+    else:
+        borrow_aversion = float(
+            allocation_cfg.get(
+                "borrow_aversion",
+                weighting_cfg.get("borrow_aversion", 0.0),
+            )
+            or 0.0
+        )
+        utility = signal - borrow_aversion * current.fillna(0.0)
+
+    delta_col = "delta_abs" if "delta_abs" in df.columns else "Delta"
+    delta_abs = _numeric_column(delta_col, 1.0).abs().clip(lower=0.1)
+    margin_power = float(weighting_cfg.get("margin_efficiency_power", 0.0) or 0.0)
+    utility = utility * np.power(1.0 / delta_abs, margin_power)
+
+    # The underlying trend is common to siblings, but retaining this term makes the helper
+    # correct for imperfect vendor mappings and keeps the underlying-level score aligned with B1.
+    _, trend_mult = _trend_percentile_signal(df, dict(weighting_cfg))
+    utility = utility * trend_mult
+
+    invalid = pd.Series(False, index=df.index)
+    for flag in (
+        "purgatory",
+        "purgatory_no_locate",
+        "exclude_no_shares",
+        "borrow_missing_from_ftp",
+        "strategy_blacklisted",
+    ):
+        if flag in df.columns:
+            invalid |= df[flag].fillna(False).astype(bool)
+    invalid |= ~np.isfinite(current_filled)
+    utility = pd.to_numeric(utility, errors="coerce")
+    utility = utility.where(~invalid, -np.inf)
+    return utility.astype(float)
+
+
+def _hierarchical_shared_underlying_weights(
+    df: pd.DataFrame,
+    base_weights: np.ndarray,
+    weighting_cfg: Mapping[str, Any],
+    allocation_cfg: Mapping[str, Any] | None,
+    *,
+    sleeve_name: str,
+    max_underlying_weight: float,
+    incumbent_by_underlying: Mapping[str, str] | None = None,
+) -> tuple[np.ndarray, pd.DataFrame]:
+    """Allocate a sleeve across underlyings first, then capacity-waterfill wrappers.
+
+    This removes the duplicate-wrapper bias: five ETFs on one stock count as one underlying
+    opportunity.  Within each equivalence group, the best economic wrapper receives as much as
+    the pair cap permits, and overflow goes to the next-best wrapper.
+    """
+    cfg = dict(allocation_cfg or {})
+    base = np.asarray(base_weights, dtype=float)
+    audit = pd.DataFrame(index=df.index)
+    if not bool(cfg.get("enabled", False)) or len(df) == 0:
+        return base, audit
+
+    pair_cap = float(
+        cfg.get("max_wrapper_weight", weighting_cfg.get("max_name_weight", 1.0))
+        or weighting_cfg.get("max_name_weight", 1.0)
+        or 1.0
+    )
+    pair_cap = float(np.clip(pair_cap, 1e-12, 1.0))
+    und_cap = float(np.clip(max_underlying_weight, 1e-12, 1.0))
+    utility = _shared_wrapper_utility(
+        df,
+        weighting_cfg,
+        cfg,
+        sleeve_name=sleeve_name,
+    )
+    keys = _shared_underlying_group_keys(df)
+
+    grouped_positions: dict[object, list[int]] = {}
+    for pos, key in enumerate(keys.tolist()):
+        grouped_positions.setdefault(key, []).append(pos)
+    groups = list(grouped_positions.items())
+
+    score_power = float(weighting_cfg.get("score_concavity_p", 1.0) or 1.0)
+    group_scores = np.zeros(len(groups), dtype=float)
+    group_caps = np.zeros(len(groups), dtype=float)
+    for j, (_key, pos) in enumerate(groups):
+        vals = utility.iloc[pos].to_numpy(dtype=float)
+        finite = vals[np.isfinite(vals)]
+        best = float(np.max(finite)) if finite.size else 0.0
+        group_scores[j] = max(best, 0.0) ** score_power
+        eligible_count = int(np.sum(np.isfinite(vals)))
+        group_caps[j] = min(und_cap, pair_cap * eligible_count) if eligible_count > 0 else 0.0
+
+    score_sum = float(group_scores.sum())
+    signal_w = (
+        group_scores / score_sum
+        if score_sum > 1e-18
+        else np.ones(len(groups), dtype=float) / max(len(groups), 1)
+    )
+    eq_blend = _clamp01(weighting_cfg.get("eq_blend", 0.0))
+    desired_group = (
+        (1.0 - eq_blend) * signal_w
+        + eq_blend * (np.ones(len(groups), dtype=float) / max(len(groups), 1))
+    )
+    group_w = _project_to_capped_simplex_numpy(desired_group, group_caps)
+
+    out = np.zeros(len(df), dtype=float)
+    borrow = (
+        pd.to_numeric(df["borrow_current"], errors="coerce")
+        if "borrow_current" in df.columns
+        else pd.Series(np.nan, index=df.index)
+    )
+    shares = (
+        pd.to_numeric(df["shares_available"], errors="coerce")
+        if "shares_available" in df.columns
+        else pd.Series(np.nan, index=df.index)
+    )
+    etfs = df.get("ETF", pd.Series([""] * len(df), index=df.index)).astype(str).map(_norm_sym)
+    ranks = np.full(len(df), np.nan)
+    reasons = np.full(len(df), "not_selected", dtype=object)
+    group_size = np.zeros(len(df), dtype=int)
+    group_score_col = np.zeros(len(df), dtype=float)
+    group_weight_col = np.zeros(len(df), dtype=float)
+    incumbent_col = np.full(len(df), "", dtype=object)
+    switch_blocked_col = np.full(len(df), False, dtype=bool)
+    incumbents = {
+        _norm_sym(str(k)): _norm_sym(str(v))
+        for k, v in dict(incumbent_by_underlying or {}).items()
+    }
+    min_switch_advantage = float(
+        ((cfg.get("switching") or {}).get("min_utility_advantage_annual", 0.0))
+        if isinstance(cfg.get("switching") or {}, Mapping)
+        else 0.0
+    )
+
+    for j, (group_key, pos) in enumerate(groups):
+        group_size[pos] = len(pos)
+        group_score_col[pos] = group_scores[j]
+        group_weight_col[pos] = group_w[j]
+        ranked = sorted(
+            pos,
+            key=lambda i: (
+                -float(utility.iloc[i]) if np.isfinite(utility.iloc[i]) else np.inf,
+                float(borrow.iloc[i]) if np.isfinite(borrow.iloc[i]) else np.inf,
+                -float(shares.iloc[i]) if np.isfinite(shares.iloc[i]) else np.inf,
+                str(etfs.iloc[i]),
+            ),
+        )
+        underlying = (
+            _norm_sym(str(group_key[2]))
+            if isinstance(group_key, tuple) and len(group_key) > 2
+            else ""
+        )
+        incumbent = incumbents.get(underlying, "")
+        incumbent_pos = next(
+            (
+                i
+                for i in ranked
+                if str(etfs.iloc[i]) == incumbent and np.isfinite(utility.iloc[i])
+            ),
+            None,
+        )
+        if incumbent_pos is not None and ranked and ranked[0] != incumbent_pos:
+            challenger = ranked[0]
+            advantage = float(utility.iloc[challenger] - utility.iloc[incumbent_pos])
+            if advantage < min_switch_advantage:
+                ranked.remove(incumbent_pos)
+                ranked.insert(0, incumbent_pos)
+                switch_blocked_col[pos] = True
+        incumbent_col[pos] = incumbent
+        eligible_ranked = [i for i in ranked if np.isfinite(utility.iloc[i])]
+        for rank, i in enumerate(eligible_ranked, start=1):
+            ranks[i] = rank
+        remaining = float(group_w[j])
+        for rank, i in enumerate(eligible_ranked, start=1):
+            alloc = min(remaining, pair_cap)
+            out[i] = max(alloc, 0.0)
+            if alloc > 0:
+                reasons[i] = "primary" if rank == 1 else "pair_cap_overflow"
+            remaining -= alloc
+            if remaining <= 1e-12:
+                break
+
+    total = float(out.sum())
+    if total > 1.0 + 1e-9:
+        out /= total
+    audit["wrapper_utility"] = utility
+    audit["shared_underlying_group_size"] = group_size
+    audit["shared_underlying_wrapper_rank"] = ranks
+    audit["shared_underlying_group_score"] = group_score_col
+    audit["shared_underlying_weight_pre_caps"] = group_weight_col
+    audit["shared_underlying_allocation_reason"] = reasons
+    audit["shared_underlying_incumbent"] = incumbent_col
+    audit["shared_underlying_switch_blocked"] = switch_blocked_col
+    return out, audit
+
+
+
 def _first_existing_path(candidates: list[Path]) -> Path | None:
     for p in candidates:
         if p.exists():
@@ -1196,6 +1470,166 @@ def _liquidity_tight_book_weights(
     if return_binding_label:
         return out, binding  # type: ignore[return-value]
     return out
+
+
+def _concentrate_shared_underlying_targets(
+    sized: pd.DataFrame,
+    *,
+    delta_floor: float,
+    caps: Mapping[str, Any],
+    shares_out_map: Mapping[str, float],
+    liquidity_anchor_usd: float,
+    cap_subset: tuple[str, ...],
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Re-waterfill equivalent wrappers after covariance/rescaling and before caps.
+
+    Group gross is preserved. Pair and liquidity capacities determine how far the primary
+    wrapper can be filled before target spills to the runner-up. This runs independently in
+    executable and structural cap passes, so day-locate limits never contaminate the optimal
+    target.
+    """
+    diag: dict[str, Any] = {"applied": False, "groups": []}
+    if sized is None or sized.empty or "sleeve" not in sized.columns:
+        return sized, diag
+    per_sleeve = caps.get("per_sleeve") or caps.get("per_bucket") or {}
+    if not isinstance(per_sleeve, Mapping):
+        return sized, diag
+
+    enabled_sleeves: dict[str, Mapping[str, Any]] = {}
+    for sleeve, sleeve_caps in per_sleeve.items():
+        if not isinstance(sleeve_caps, Mapping):
+            continue
+        alloc_cfg = sleeve_caps.get("shared_underlying_allocation") or {}
+        if isinstance(alloc_cfg, Mapping) and bool(alloc_cfg.get("enabled", False)):
+            enabled_sleeves[str(sleeve)] = alloc_cfg
+    if not enabled_sleeves:
+        return sized, diag
+
+    out = sized.copy()
+    gross = pd.to_numeric(out["gross_target_usd"], errors="coerce").fillna(0.0)
+    total_gross = float(gross.sum())
+    if total_gross <= 1e-18:
+        return out, diag
+    liq_weight, liq_binding = _liquidity_tight_book_weights(
+        out,
+        target_gross_usd=float(liquidity_anchor_usd),
+        delta_floor=float(delta_floor),
+        caps=dict(caps),
+        shares_out_map=dict(shares_out_map),
+        cap_subset=cap_subset,
+        return_binding_label=True,
+    )
+    liq_capacity_usd = liq_weight * float(liquidity_anchor_usd)
+    keys = _shared_underlying_group_keys(out)
+    out["shared_underlying_capacity_usd"] = np.nan
+    out["shared_underlying_capacity_binding"] = ""
+
+    for sleeve, alloc_cfg in enabled_sleeves.items():
+        sleeve_mask = out["sleeve"].astype(str).eq(sleeve)
+        sleeve_pos = np.flatnonzero(sleeve_mask.to_numpy())
+        if len(sleeve_pos) == 0:
+            continue
+        sleeve_total = float(gross.iloc[sleeve_pos].sum())
+        sleeve_caps = per_sleeve.get(sleeve) or {}
+        pair_cap = float(
+            alloc_cfg.get(
+                "max_wrapper_weight",
+                sleeve_caps.get("max_pair_weight", caps.get("max_pair_weight_cap", 1.0)),
+            )
+            or 1.0
+        )
+        pair_capacity_usd = max(pair_cap, 0.0) * sleeve_total
+
+        sleeve_key_values = keys.iloc[sleeve_pos]
+        for key in pd.unique(sleeve_key_values):
+            pos = [
+                int(i)
+                for i in sleeve_pos
+                if keys.iloc[int(i)] == key
+            ]
+            if len(pos) < 2:
+                continue
+            group_target = float(gross.iloc[pos].sum())
+            if group_target <= 1e-18:
+                continue
+            utility = pd.to_numeric(
+                out.get("wrapper_utility", pd.Series(np.nan, index=out.index)),
+                errors="coerce",
+            )
+            borrow = (
+                pd.to_numeric(out["borrow_current"], errors="coerce")
+                if "borrow_current" in out.columns
+                else pd.Series(np.nan, index=out.index)
+            )
+            shares = (
+                pd.to_numeric(out["shares_available"], errors="coerce")
+                if "shares_available" in out.columns
+                else pd.Series(np.nan, index=out.index)
+            )
+            preferred_rank = (
+                pd.to_numeric(out["shared_underlying_wrapper_rank"], errors="coerce")
+                if "shared_underlying_wrapper_rank" in out.columns
+                else pd.Series(np.nan, index=out.index)
+            )
+            etfs = out.get("ETF", pd.Series([""] * len(out), index=out.index)).astype(str).map(_norm_sym)
+            ranked = sorted(
+                pos,
+                key=lambda i: (
+                    float(preferred_rank.iloc[i]) if np.isfinite(preferred_rank.iloc[i]) else np.inf,
+                    -float(utility.iloc[i]) if np.isfinite(utility.iloc[i]) else np.inf,
+                    float(borrow.iloc[i]) if np.isfinite(borrow.iloc[i]) else np.inf,
+                    -float(shares.iloc[i]) if np.isfinite(shares.iloc[i]) else np.inf,
+                    str(etfs.iloc[i]),
+                ),
+            )
+            remaining = group_target
+            allocations: dict[int, float] = {}
+            capacities: dict[int, float] = {}
+            for rank, i in enumerate(ranked, start=1):
+                cap_i = min(pair_capacity_usd, float(liq_capacity_usd[i]))
+                cap_i = max(cap_i, 0.0)
+                capacities[i] = cap_i
+                out.iat[i, out.columns.get_loc("shared_underlying_capacity_usd")] = cap_i
+                binding = (
+                    "pair_cap"
+                    if pair_capacity_usd <= float(liq_capacity_usd[i]) + 1e-9
+                    else str(liq_binding[i])
+                )
+                out.iat[i, out.columns.get_loc("shared_underlying_capacity_binding")] = binding
+                if "shared_underlying_wrapper_rank" in out.columns:
+                    out.iat[i, out.columns.get_loc("shared_underlying_wrapper_rank")] = rank
+            for i in ranked:
+                alloc = min(remaining, capacities[i])
+                allocations[i] = alloc
+                remaining -= alloc
+                if remaining <= 1e-9:
+                    break
+            for i in pos:
+                out.iat[i, out.columns.get_loc("gross_target_usd")] = allocations.get(i, 0.0)
+            diag["groups"].append(
+                {
+                    "sleeve": sleeve,
+                    "underlying": str(key[2]) if isinstance(key, tuple) and len(key) > 2 else str(key),
+                    "target_usd": group_target,
+                    "placed_usd": group_target - max(remaining, 0.0),
+                    "unplaced_usd": max(remaining, 0.0),
+                    "primary_etf": str(etfs.iloc[ranked[0]]) if ranked else "",
+                }
+            )
+
+    # The cap haircut must use the concentrated allocation, otherwise a later projector can
+    # refill zeroed inferior siblings. Re-freeze sleeve-internal weights after waterfilling.
+    updated_gross = pd.to_numeric(out["gross_target_usd"], errors="coerce").fillna(0.0)
+    for sleeve in enabled_sleeves:
+        mask = out["sleeve"].astype(str).eq(sleeve)
+        sleeve_sum = float(updated_gross.loc[mask].sum())
+        if sleeve_sum > 1e-18:
+            out.loc[mask, "_pre_cap_score_weight"] = updated_gross.loc[mask] / sleeve_sum
+    diag["applied"] = bool(diag["groups"])
+    diag["n_groups"] = len(diag["groups"])
+    diag["unplaced_usd"] = float(sum(g["unplaced_usd"] for g in diag["groups"]))
+    return out, diag
+
 
 
 def _compute_pair_weight_caps_array(
@@ -2050,6 +2484,29 @@ def apply_gross_sizing_book_caps(
     )
     liq_ref_raw = str(caps.get("liquidity_book_reference", "target_book") or "target_book").strip()
 
+    sized, shared_alloc_diag = _concentrate_shared_underlying_targets(
+        sized,
+        delta_floor=float(delta_floor),
+        caps=caps,
+        shares_out_map=som,
+        liquidity_anchor_usd=float(liquidity_anchor_usd),
+        cap_subset=cap_subset,
+    )
+    gross = pd.to_numeric(sized["gross_target_usd"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+    gsum = float(gross.sum())
+    if gsum <= 1e-18:
+        out = sized.copy()
+        diag.update(
+            {
+                "applied": True,
+                "gross_sum_before": 0.0,
+                "gross_sum_after": 0.0,
+                "shared_underlying_allocation": shared_alloc_diag,
+                "binding_per_row": np.full(len(sized), "none", dtype=object),
+            }
+        )
+        return out, diag
+
     per_sleeve_cfg = caps.get("per_sleeve") or caps.get("per_bucket")
     use_per_sleeve = (
         isinstance(per_sleeve_cfg, dict)
@@ -2096,6 +2553,7 @@ def apply_gross_sizing_book_caps(
                 "liquidity_book_reference_raw": liq_ref_raw,
                 "cap_mode": str(cap_mode or "structural_plus_day_liquidity"),
                 "cap_subset": list(cap_subset),
+                "shared_underlying_allocation": shared_alloc_diag,
                 "binding_per_row": ps_meta.get("binding_per_row", np.full(len(sized), "none", dtype=object)),
             }
         )
@@ -2147,6 +2605,7 @@ def apply_gross_sizing_book_caps(
             "liquidity_book_reference_raw": liq_ref_raw,
             "cap_mode": str(cap_mode or "structural_plus_day_liquidity"),
             "cap_subset": list(cap_subset),
+            "shared_underlying_allocation": shared_alloc_diag,
             "binding_per_row": liq_binding_flat,
         }
     )
@@ -2221,6 +2680,36 @@ def main() -> None:
 
     screened_csv = Path(paths["screened_csv"])
     proposed_latest_csv = Path(paths["proposed_trades_csv"])
+    prior_primary_by_underlying: dict[str, str] = {}
+    if proposed_latest_csv.is_file():
+        try:
+            _prior_plan = pd.read_csv(proposed_latest_csv)
+            if {"ETF", "Underlying", "gross_target_usd", "sleeve"}.issubset(_prior_plan.columns):
+                _prior_core = _prior_plan.loc[
+                    _prior_plan["sleeve"].astype(str).eq("core_leveraged")
+                    & (pd.to_numeric(_prior_plan["gross_target_usd"], errors="coerce").fillna(0.0) > 0)
+                ].copy()
+                if not _prior_core.empty:
+                    _prior_core["_gross"] = pd.to_numeric(
+                        _prior_core["gross_target_usd"], errors="coerce"
+                    ).fillna(0.0)
+                    if "shared_underlying_wrapper_rank" in _prior_core.columns:
+                        _prior_core["_rank"] = pd.to_numeric(
+                            _prior_core["shared_underlying_wrapper_rank"], errors="coerce"
+                        ).fillna(np.inf)
+                    else:
+                        _prior_core["_rank"] = np.inf
+                    _prior_core = _prior_core.sort_values(
+                        ["Underlying", "_rank", "_gross", "ETF"],
+                        ascending=[True, True, False, True],
+                        kind="mergesort",
+                    )
+                    for _und, _grp in _prior_core.groupby("Underlying", sort=False):
+                        prior_primary_by_underlying[_norm_sym(str(_und))] = _norm_sym(
+                            str(_grp.iloc[0]["ETF"])
+                        )
+        except Exception as _prior_ex:
+            print(f"[WARN] shared-underlying incumbent load skipped ({_prior_ex})")
 
     tag = str(strategy.get("tag", "")).strip() or "strategy"
     blacklist = load_blacklist(cfg)
@@ -2761,6 +3250,26 @@ def main() -> None:
                 w = _decay_score_weights(core_names_fit, core_weighting_cfg, sleeve_name="core_leveraged")
             else:   # "equal" or unrecognised → equal weight
                 w = np.ones(len(core_names_fit)) / len(core_names_fit)
+            _gs_caps = strategy.get("gross_sizing_caps") or {}
+            _core_caps = ((_gs_caps.get("per_sleeve") or {}).get("core_leveraged") or {})
+            _shared_cfg = _core_caps.get("shared_underlying_allocation") or {}
+            w, _shared_audit = _hierarchical_shared_underlying_weights(
+                core_names_fit,
+                w,
+                core_weighting_cfg,
+                _shared_cfg,
+                sleeve_name="core_leveraged",
+                max_underlying_weight=float(
+                    _core_caps.get(
+                        "max_underlying_weight",
+                        _gs_caps.get("max_underlying_weight_cap", 1.0),
+                    )
+                    or 1.0
+                ),
+                incumbent_by_underlying=prior_primary_by_underlying,
+            )
+            for _audit_col in _shared_audit.columns:
+                core_names_fit[_audit_col] = _shared_audit[_audit_col]
             core_names_fit["gross_target_usd"] = core_budget * w
             core_names_fit["sleeve"] = "core_leveraged"
         # Frozen pre-cap sleeve-internal weight (sums to 1) — used by the gross-cap stack as
@@ -3954,9 +4463,31 @@ def main() -> None:
         keep.loc[sized.index, "underlying_target_usd"] = sized["underlying_target_usd"]
         keep.loc[sized.index, "etf_target_usd"] = sized["etf_target_usd"]
         keep.loc[sized.index, "sleeve"] = sized["sleeve"]
-        for col in ("b1_trend_xsec_pctile", "b1_trend_multiplier"):
+        for col in (
+            "b1_trend_xsec_pctile",
+            "b1_trend_multiplier",
+            "wrapper_utility",
+            "shared_underlying_group_size",
+            "shared_underlying_wrapper_rank",
+            "shared_underlying_group_score",
+            "shared_underlying_weight_pre_caps",
+            "shared_underlying_allocation_reason",
+            "shared_underlying_incumbent",
+            "shared_underlying_switch_blocked",
+            "shared_underlying_capacity_usd",
+            "shared_underlying_capacity_binding",
+        ):
             if col in sized.columns:
-                keep.loc[sized.index, col] = pd.to_numeric(sized[col], errors="coerce")
+                if col in {
+                    "shared_underlying_allocation_reason",
+                    "shared_underlying_incumbent",
+                    "shared_underlying_capacity_binding",
+                }:
+                    keep.loc[sized.index, col] = sized[col].astype(str)
+                elif col == "shared_underlying_switch_blocked":
+                    keep.loc[sized.index, col] = sized[col].fillna(False).astype(bool)
+                else:
+                    keep.loc[sized.index, col] = pd.to_numeric(sized[col], errors="coerce")
         # Carry pair-override + ratchet audit/execution columns through to
         # proposed_trades.csv. ``ratchet_released`` tells phase2b_resize the inverse
         # leg may be gradually covered (continuous trim); ``ratchet_trim_lambda`` is
