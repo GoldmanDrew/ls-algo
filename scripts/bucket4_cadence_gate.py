@@ -172,7 +172,7 @@ def filter_resize_plan_for_b4_cadence(
     resize_df: pd.DataFrame,
     due_keys: set[tuple[str, str]],
 ) -> pd.DataFrame:
-    """Drop deferred B4 rows; B1/B2 rows unchanged."""
+    """Mark deferred B4 ETF legs while retaining their underlying contribution."""
     if resize_df is None or resize_df.empty or "sleeve" not in resize_df.columns:
         return resize_df
     df = resize_df.copy()
@@ -181,14 +181,18 @@ def filter_resize_plan_for_b4_cadence(
     if not is_b4.any():
         return df
 
-    def _keep(row: pd.Series) -> bool:
-        if not is_b4.loc[row.name]:
-            return True
-        k = (norm_sym(str(row.get("ETF", ""))), norm_sym(str(row.get("Underlying", ""))))
-        return k in due_keys
-
-    out = df[df.apply(_keep, axis=1)].reset_index(drop=True)
-    return out
+    df["b4_cadence_due"] = True
+    for idx, row in df.loc[is_b4].iterrows():
+        key = (norm_sym(str(row.get("ETF", ""))), norm_sym(str(row.get("Underlying", ""))))
+        reduce_only = (
+            bool(row.get("purgatory", False))
+            or str(row.get("execution_policy", "")).strip().lower() == "reduce_only"
+        )
+        # Purgatory risk reductions bypass cadence. Other deferred B4 rows
+        # remain in the frame for correct shared-underlying netting, but their
+        # ETF leg is not eligible to trade.
+        df.at[idx, "b4_cadence_due"] = bool(key in due_keys or reduce_only)
+    return df.reset_index(drop=True)
 
 
 def mark_pairs_rebalanced(

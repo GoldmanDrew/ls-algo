@@ -1,0 +1,6 @@
+ETF,Underlying,pnl_usd,txn_cost_usd,n_trades,n_enter,n_exit,n_cadence_resize,n_cadence_rebal,n_off_cadence_resize,n_resize_unknown_cadence,membership_trade_share,cadence_hit_rate,n_model_cadence_days_in_window,median_days_between_trades,mean_days_between_trades,rapid_churn_events,realism_flags
+CLSZ,CLSK,4877.656654198606,173.1205791553574,4,1,1,0,0,0,2,0.5,,0,23.0,30.0,0,ok
+SMZ,SMR,3859.447096046979,89.93240445424976,2,1,1,0,0,0,0,1.0,,0,50.0,50.0,0,ok
+APLZ,APLD,2030.2371975787105,44.15089969114587,2,1,1,0,0,0,0,1.0,,0,38.0,38.0,0,ok
+QBTZ,QBTS,-666.6333386891379,50.09947387287185,3,1,0,0,0,0,2,0.3333333333333333,,0,10.5,10.5,0,ok
+MSTZ,MSTR,-2433.549500264829,104.68793329753134,4,1,0,0,0,0,3,0.25,,0,23.0,28.666666666666668,0,ok

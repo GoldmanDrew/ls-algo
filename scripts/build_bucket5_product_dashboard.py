@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
+import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
@@ -34,11 +35,12 @@ from scripts.bucket5_backtest_api import (  # noqa: E402
     list_presets,
     resolve_borrow_rates,
 )
-from scripts.bucket5_data import INCEPTION, load_series, load_vol_panel  # noqa: E402
+from scripts.bucket5_data import load_vol_panel  # noqa: E402
 from scripts.bucket5_insurance_bt import (  # noqa: E402
     EXTENDED_START,
     crash_payoff,
     production_config,
+    reverse_solve_put_contracts,
     run_insurance,
     summarize,
 )
@@ -176,12 +178,12 @@ def build_payload(*, quick: bool = False, run_date: str | None = None) -> dict:
     t0 = time.time()
     runs: list[dict] = []
 
-    # Primary: production extended
+    # Publish one canonical full-history run; research/live comparison curves stay out of B5.
     print("[b5-product] loading extended panel ...")
     panel_x = load_vol_panel(start=EXTENDED_START, use_synthetic=True)
     spx_x = load_spx_spot(panel_x.index.min().strftime("%Y-%m-%d"))
     iv_x = (panel_x["vix"] / 100.0).rename("iv")
-    print("[b5-product] run B_extended (primary) ...")
+    print("[b5-product] run B_full_2008_present (primary) ...")
     res, summary, crash, pack = _run_standard(
         preset_label=list_presets().get("B_production", "B production"),
         era="extended",
@@ -190,8 +192,8 @@ def build_payload(*, quick: bool = False, run_date: str | None = None) -> dict:
         iv=iv_x,
     )
     primary = build_run_payload(
-        run_id="B_extended",
-        label="B production ★ (extended)",
+        run_id="B_full_2008_present",
+        label="B production FULL backtest (2008-present, 2x puts)",
         res=res,
         panel=panel_x,
         summary=summary,
@@ -203,64 +205,45 @@ def build_payload(*, quick: bool = False, run_date: str | None = None) -> dict:
     runs.append(primary)
     regime_panels = primary["regime_panels"]
 
-    # Secondary: live-era production
-    print("[b5-product] loading live panel ...")
-    panel_l = load_vol_panel(start=INCEPTION, use_synthetic=False)
-    spx_l = load_spx_spot(panel_l.index.min().strftime("%Y-%m-%d"))
-    iv_l = (panel_l["vix"] / 100.0).rename("iv")
-    print("[b5-product] run B_live ...")
-    res_l, summary_l, crash_l, pack_l = _run_standard(
-        preset_label=list_presets().get("B_production", "B production"),
-        era="live",
-        panel=panel_l,
-        spx=spx_l,
-        iv=iv_l,
+    strategy_doc = yaml.safe_load(
+        (REPO / "config" / "strategy_config.yml").read_text(encoding="utf-8")
+    ) or {}
+    strategy_cfg = strategy_doc.get("strategy") or {}
+    account_nav = float(strategy_cfg.get("capital_usd", 1_200_000.0))
+    total_target_gross = account_nav * float(strategy_cfg.get("gross_leverage", 4.0))
+    b5_cfg = (
+        (((strategy_doc.get("portfolio") or {}).get("sleeves") or {}).get("inverse_decay_bucket4") or {})
+        .get("rules", {})
+        .get("volatility_etp_bucket5", {})
+    ) or {}
+    cfg = production_config()
+    b5_pair_gross = total_target_gross * float(b5_cfg.get("target_weight", 0.01))
+    effective_b5_nav = b5_pair_gross / max(float(cfg.sleeve_frac), 1e-12)
+    last_date = panel_x.index.max()
+    put_sizing = reverse_solve_put_contracts(
+        equity_usd=effective_b5_nav,
+        spx_spot=float(spx_x.reindex(panel_x.index).ffill().loc[last_date]),
+        atm_iv=float(iv_x.loc[last_date]),
+        rungs=cfg.rungs,
+        hedge_budget=cfg.hedge_budget,
+        ratio=float(panel_x.loc[last_date, "ratio"]),
+        vix=float(panel_x.loc[last_date, "vix"]),
     )
-    runs.append(
-        build_run_payload(
-            run_id="B_live",
-            label="B production ★ (live era)",
-            res=res_l,
-            panel=panel_l,
-            summary=summary_l,
-            crash=crash_l,
-            meta=pack_l["meta"],
-            assumptions=pack_l["assumptions"],
-            include_guide=False,
-        )
+    put_sizing["as_of"] = str(last_date.date())
+    put_sizing["account_nav_usd"] = account_nav
+    put_sizing["b5_pair_gross_usd"] = b5_pair_gross
+    put_sizing["effective_b5_nav_usd"] = effective_b5_nav
+    put_sizing["quote_note"] = (
+        "Modeled sizing; replace modeled prices with executable SPX asks before trading."
     )
-
-    if not quick:
-        print("[b5-product] run research tilt 30% SPY idle + puts 2.00x ...")
-        spy = load_series("SPY", start=panel_x.index.min().strftime("%Y-%m-%d")).rename("spy")
-        res_t, summary_t, crash_t, pack_t = _run_spy_tilt(
-            spy_idle_frac=0.30,
-            put_mult=2.0,
-            panel=panel_x,
-            spx=spx_x,
-            iv=iv_x,
-            spy=spy,
-        )
-        runs.append(
-            build_run_payload(
-                run_id="R_spy30_puts2x",
-                label="Research: 30% SPY idle + puts 2.00×",
-                res=res_t,
-                panel=panel_x,
-                summary=summary_t,
-                crash=crash_t,
-                meta=pack_t["meta"],
-                assumptions=pack_t["assumptions"],
-                include_guide=False,
-            )
-        )
+    primary["put_sizing"] = put_sizing
 
     live = build_live_days(run_date)
     payload = {
         "schema": "bucket5_product_dashboard.v1",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "run_date": run_date,
-        "primary_run_id": "B_extended",
+        "primary_run_id": "B_full_2008_present",
         "runs": runs,
         "live": live,
         "live_enabled": bool(live.get("days")),
@@ -271,8 +254,8 @@ def build_payload(*, quick: bool = False, run_date: str | None = None) -> dict:
         "build_seconds": round(time.time() - t0, 1),
         "notes": {
             "live_vs_research": (
-                "Daily · live tags show the GTP volatility-ETP sleeve (~0.25% gross). "
-                "Overview / Regime / Daily backtest marks are the insurance product research stack."
+                "Daily live tags show the independent GTP volatility-ETP sleeve (1% true pair gross). "
+                "All charts use the single Production B full-history backtest from 2008 to present."
             ),
         },
     }
@@ -281,7 +264,7 @@ def build_payload(*, quick: bool = False, run_date: str | None = None) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--quick", action="store_true", help="Skip research tilt run (faster CI)")
+    ap.add_argument("--quick", action="store_true", help="Compatibility flag; the single full run is always built")
     ap.add_argument("--run-date", default=None)
     ap.add_argument("--copy-etf-dashboard", action="store_true")
     ap.add_argument("--out", default=None)
@@ -290,7 +273,11 @@ def main(argv: list[str] | None = None) -> int:
     payload = build_payload(quick=args.quick, run_date=args.run_date)
     out = Path(args.out) if args.out else OUT
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    # Write atomically. Large dashboard JSON files can be observed by local servers/
+    # sync tools; replacing a completed temp file avoids partial reads and Windows locks.
+    tmp_out = out.with_name(out.name + ".tmp")
+    tmp_out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    tmp_out.replace(out)
     print(f"[b5-product] wrote {out} ({out.stat().st_size / 1e6:.1f} MB, {payload['build_seconds']}s)")
     for r in payload["runs"]:
         m = r["summary"]

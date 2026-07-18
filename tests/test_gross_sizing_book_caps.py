@@ -199,7 +199,7 @@ def test_rescale_sleeves_fraction_of_deployed_legacy():
     np.testing.assert_allclose(float(out["gross_target_usd"].sum()), S, rtol=1e-8)
 
 
-def test_vol_etp_bucket5_uses_inverse_short_leg_fraction():
+def test_vol_etp_bucket5_uses_true_pair_gross_short_leg_fraction():
     from generate_trade_plan import VOL_ETP_BUCKET5_SLEEVE, _short_leg_frac_array
 
     out = _short_leg_frac_array(
@@ -207,7 +207,7 @@ def test_vol_etp_bucket5_uses_inverse_short_leg_fraction():
         0.1,
         np.array(["inverse_decay_bucket4", VOL_ETP_BUCKET5_SLEEVE]),
     )
-    np.testing.assert_allclose(out, np.array([1.0, 1.0]))
+    np.testing.assert_allclose(out, np.array([1.0, 1.0 / 3.0]))
 
 
 def test_pre_cap_score_haircut_blocks_low_score_uplift_to_pair_cap():

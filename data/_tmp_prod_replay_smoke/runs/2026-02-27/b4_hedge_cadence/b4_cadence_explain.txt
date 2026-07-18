@@ -1,0 +1,8 @@
+Bucket 4 rebalance cadence + hedge ratio  (run 2026-02-27)
+================================================================
+MSTR: rebalance every ~10 trading day(s); h=0.4768
+   interval=10d  |  denom=1 + k_tr(-1.00)*(tr_est(0.907)-1)=+0.0930 + m_vcr(2.50)*(VCR-VCR_med)=+0.2633 = 1.3563 -> base_days(14.0)/denom=10.322 -> round->clip[1,21]=10
+   h=0.4768  |  h_mid(0.450) + k_vcr(1.00)*(VCR(0.28421)-VCR_med(0.17889)=+0.10532) = 0.5553 - k_z(0.20)*z_xsec(+0.674) = 0.4204 -> clip[0.30,0.80]=0.4204 -> EMA(a=0.25; prev=0.4955)=0.4768
+CLSK: rebalance every ~12 trading day(s); h=0.5392
+   interval=12d  |  denom=1 + k_tr(-1.00)*(tr_est(0.938)-1)=+0.0620 + m_vcr(2.50)*(VCR-VCR_med)=+0.0584 = 1.1204 -> base_days(14.0)/denom=12.495 -> round->clip[1,21]=12
+   h=0.5392  |  h_mid(0.450) + k_vcr(1.00)*(VCR(0.17367)-VCR_med(0.15031)=+0.02336) = 0.4734 - k_z(0.20)*z_xsec(-0.674) = 0.6083 -> clip[0.30,0.80]=0.6083 -> EMA(a=0.25; prev=0.5162)=0.5392

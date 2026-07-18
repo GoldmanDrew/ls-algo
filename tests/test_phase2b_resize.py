@@ -259,12 +259,14 @@ class TestBuildResizeTrades:
         # No trade emitted
         assert all(t["leg_side"] != "short_etf" for t in trades)
 
-    def test_purgatory_etf_skipped(self):
+    def test_purgatory_etf_may_trim(self):
         plan = _hedgeable([
             {"Underlying": "AAPL", "ETF": "AAPU",
-             "long_usd": 10_000, "short_usd": -5_000},
+             "long_usd": 10_000, "short_usd": -5_000,
+             "model_long_usd": 10_000, "model_short_usd": -5_000,
+             "execution_policy": "reduce_only", "purgatory": True},
         ])
-        strat_pos = {"AAPL": 100, "AAPU": -50}
+        strat_pos = {"AAPL": 130, "AAPU": -70}
         prices    = {"AAPL": 100.0, "AAPU": 100.0}
 
         trades, decisions = build_resize_trades(
@@ -273,10 +275,48 @@ class TestBuildResizeTrades:
         )
         etf_decisions = [d for d in decisions if d.leg_side == "short_etf"]
         assert len(etf_decisions) == 1
-        assert etf_decisions[0].decision == "skip"
-        assert etf_decisions[0].reason == "purgatory"
-        # No short_etf trades emitted
-        assert all(t["leg_side"] != "short_etf" for t in trades)
+        assert etf_decisions[0].decision == "trim"
+        assert etf_decisions[0].execution_policy == "reduce_only"
+        assert any(t["leg_side"] == "short_etf" and t["action"] == "BUY" for t in trades)
+
+    def test_purgatory_target_above_current_cannot_add_gross(self):
+        plan = _hedgeable([
+            {"Underlying": "AAPL", "ETF": "AAPU",
+             "long_usd": 0, "short_usd": 0,
+             "model_long_usd": 20_000, "model_short_usd": -10_000,
+             "execution_policy": "reduce_only", "purgatory": True},
+        ])
+        trades, decisions = build_resize_trades(
+            hedgeable_plan=plan,
+            strat_pos={"AAPL": 50, "AAPU": -25},
+            prices={"AAPL": 100.0, "AAPU": 100.0},
+            purgatory_etfs={"AAPU"}, flow_etfs=set(), cfg=_cfg(),
+        )
+        reduce_decisions = [d for d in decisions if d.execution_policy == "reduce_only"]
+        assert reduce_decisions
+        assert all(d.pair_allowed_gross_usd <= d.pair_current_gross_usd + 1e-6 for d in reduce_decisions)
+        assert not any(t["decision"] == "grow" for t in trades)
+
+    def test_purgatory_allows_hedge_leg_growth_when_pair_gross_falls(self):
+        plan = _hedgeable([
+            {"Underlying": "AAPL", "ETF": "AAPU",
+             "long_usd": 0, "short_usd": 0,
+             "model_long_usd": 4_000, "model_short_usd": -4_000,
+             "execution_policy": "reduce_only", "purgatory": True},
+        ])
+        trades, decisions = build_resize_trades(
+            hedgeable_plan=plan,
+            strat_pos={"AAPL": 10, "AAPU": -100},
+            prices={"AAPL": 100.0, "AAPU": 100.0},
+            purgatory_etfs={"AAPU"}, flow_etfs=set(),
+            cfg=_cfg(enter_band_pct=0.01, exit_band_pct=0.0, min_trim_usd=1, min_grow_usd=1),
+        )
+        assert any(t["leg_side"] == "long_under" and t["action"] == "BUY" for t in trades)
+        assert any(t["leg_side"] == "short_etf" and t["action"] == "BUY" for t in trades)
+        assert all(
+            d.pair_allowed_gross_usd <= d.pair_current_gross_usd + 1e-6
+            for d in decisions if d.execution_policy == "reduce_only"
+        )
 
     def test_flow_etf_skipped(self):
         plan = _hedgeable([
@@ -614,3 +654,49 @@ class TestResizeBandConfig:
     def test_from_dict_none_yields_defaults(self):
         cfg = ResizeBandConfig.from_dict(None)
         assert cfg.enabled is True
+
+
+@pytest.mark.parametrize(
+    ("sleeve", "underlying", "etf", "under_sign"),
+    [
+        ("core_leveraged", "AAPL", "AAPU", 1),
+        ("yieldboost", "MSTR", "MSTY", 1),
+        ("inverse_decay_bucket4", "CLSK", "CLSZ", -1),
+        ("volatility_etp_bucket5", "SVIX", "UVIX", -1),
+    ],
+)
+def test_reduce_only_invariant_applies_to_all_four_sleeves(
+    sleeve, underlying, etf, under_sign
+):
+    plan = _hedgeable([
+        {
+            "Underlying": underlying,
+            "ETF": etf,
+            "sleeve": sleeve,
+            "long_usd": 0.0,
+            "short_usd": 0.0,
+            "model_long_usd": under_sign * 4_000.0,
+            "model_short_usd": -2_000.0,
+            "execution_policy": "reduce_only",
+            "purgatory": True,
+        }
+    ])
+    _, decisions = build_resize_trades(
+        hedgeable_plan=plan,
+        strat_pos={underlying: under_sign * 80, etf: -40},
+        prices={underlying: 100.0, etf: 100.0},
+        purgatory_etfs={etf},
+        flow_etfs=set(),
+        cfg=_cfg(
+            enter_band_pct=0.01,
+            exit_band_pct=0.0,
+            min_trim_usd=1,
+            min_grow_usd=1,
+        ),
+    )
+    policy_decisions = [d for d in decisions if d.execution_policy == "reduce_only"]
+    assert policy_decisions
+    assert all(
+        d.pair_allowed_gross_usd <= d.pair_current_gross_usd + 1e-6
+        for d in policy_decisions
+    )

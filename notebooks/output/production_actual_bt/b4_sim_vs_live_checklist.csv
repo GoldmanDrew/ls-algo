@@ -1,0 +1,8 @@
+dimension,sim,live,match
+Membership (add/drop),B4 add/true-drop only on operator_check_days (default 5) or weekly_fri,Phase-1 establish/cleanup only when rebalance_strategy runs (~5d),yes — b4_membership_clock=operator_5d (every_plan = legacy A/B)
+Purgatory,reduce-only toward model_*; missing/zero model share-holds,executable 0 on plan; Phase-2b trim-only; no Phase-1 close,yes — purgatory_model_zero_policy=hold
+When B4 may resize,TR/VCR cadence day + Phase-2b bands (12%/4%/$250),Phase-2b resize if cadence gate due on operator run,mostly — same bands; sim can fire mid-week on exact cadence day
+Resize sizing,gross×h then _resize_band_target when b4_apply_resize_bands,Phase-2b toward plan USD with enter/exit bands + min trade $,yes when b4_apply_resize_bands=true
+Inverse ratchet,grow-only floor + cover pin/trim-cap on ledger (plan ratchet_* flags),GTP floor + Phase-2b allow_inverse_cover / ratchet_released,"yes — b4_ratchet_execution_guard (floors from sim plan, not Flex)"
+Empty B4 plan,exec gross~0 → share-hold open B4 (no true-drop wipe),no screened/sizing → keep last book; do not Phase-1 wipe into cash,yes — b4_empty_plan_policy=hold (archive-gap anti-glitch)
+Costs,20 bp slip + $0.0035/share on traded notional,broker slip/commission; borrow from IBKR,approximate

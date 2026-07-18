@@ -1,0 +1,89 @@
+{
+  "mode": "prod",
+  "run_date": "2026-07-13",
+  "start": "2026-02-27",
+  "end": "2026-07-13",
+  "capital_usd": 1050000.0,
+  "gross_leverage": 4.0,
+  "budgets_usd": {
+    "core_leveraged": 2142000.0,
+    "yieldboost": 1932000.0,
+    "inverse_decay_bucket4": 115500.0,
+    "volatility_etp_bucket5": 10500.0
+  },
+  "rebalance_knobs": {
+    "target_basis": "hybrid",
+    "enter_band_pct": 0.12,
+    "exit_band_pct": 0.04,
+    "min_trade_usd": 250.0,
+    "stock_rebalance": "W-FRI",
+    "slippage_bps": 20.0,
+    "commission_per_share": 0.0035,
+    "margin_rate_annual": 0.0445,
+    "financing_daycount": 360.0,
+    "short_proceeds_credit_annual": 0.038,
+    "execution_lag_sessions": 1,
+    "target_notional_mode": "equity_scaled",
+    "scale_sleeves_to_budget": true,
+    "retarget_on_plan_change": false,
+    "b4_execution": "cadence",
+    "apply_delist_flatten": true,
+    "use_borrow_history": true
+  },
+  "archive_coverage": [
+    {
+      "artifact": "proposed_trades.csv",
+      "n_dates": 84,
+      "first": "2025-12-28",
+      "last": "2026-07-13",
+      "n_on_or_after_start": 80,
+      "gap_before_first_plan_days": 0
+    },
+    {
+      "artifact": "etf_screened_today.csv",
+      "n_dates": 52,
+      "first": "2025-12-28",
+      "last": "2026-07-13",
+      "n_on_or_after_start": 50,
+      "gap_before_first_plan_days": 0
+    }
+  ],
+  "prod_stats": {
+    "n_timeline": 109,
+    "n_sized_ok": 109,
+    "n_sized_fail": 0,
+    "b4_budget_usd": 115500.0,
+    "blacklist_except": [],
+    "price_panel_min_days": null,
+    "b4_gross_median": null,
+    "b4_gross_max": null
+  },
+  "book": {
+    "cagr": 0.46475469773607525,
+    "vol": 0.1516040773039633,
+    "sharpe": 2.644800898886203,
+    "maxdd": -0.045649535515711714,
+    "start_usd": 1050000.0,
+    "end_usd": 1210351.406850975,
+    "n_plans_used": 82,
+    "first_plan": "2026-02-27",
+    "cash_days": 2
+  },
+  "limitations": [
+    "Daily targets from full generate_trade_plan on archived etf_screened_today.csv (opt2 \u2192 crash \u2192 smooth \u2192 ratchet) with isolated state carried forward.",
+    "Borrow/edge inputs: screened spot borrow_current + production edge/opt2 path (no avg-borrow overlay).",
+    "Ratchet floors from prior-day sized plan (simulated), not live Flex holdings.",
+    "Does not prefer archived proposed_trades.csv, but falls back to them when prod sizing fails or on plan-only archive dates.",
+    "Archive gap ~Dec 2025 / sparse screened: pre-2026-04-25 archives lack net_edge_p50_annual \u2014 prod replay shims from net_decay_annual (backtest-only).",
+    "B5 included only when GTP sizes it; no live locates / execution rejects.",
+    "B1/B2 retarget weekly (W-FRI) with Phase-2b hysteresis; purgatory may reduce toward model targets but cannot increase pair gross.",
+    "B4 retargets on production TR/VCR cadence with dynamic h (b4_execution=cadence); legacy weekly_plan_legs available via config.",
+    "Price panel: flex splits + overrides + price_patches + Yahoo referee; Yahoo tail extend; delist cutoff from data/delistings.csv.",
+    "Sleeve legs scaled to YAML sleeve budgets (scale_sleeves_to_budget) then equity-scaled with NAV.",
+    "IBKR short-sale proceeds credit modelled at 3.8% annual on short notional (Actual/360); borrow fee from screened rates with optional borrow_history overlay.",
+    "Point-in-time legs use next-close execution, share-hold marking, 20 bp slippage, $0.0035/share commissions, and 4.45% margin debit / Actual-360.",
+    "B3 flow excluded.",
+    "Screened archives begin 2026-02-27 for this run window (sparse thereafter).",
+    "Ratchet floors from prior-day sized plan (simulated), not live Flex holdings."
+  ]
+}

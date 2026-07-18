@@ -12,7 +12,7 @@ presets:
       - { otm_pct: 0.30, per_roll_frac: 0.008 }
 
   B_production:
-    label: "B production ★ (dynamic budget 2.4%)"
+    label: "B production ★ (exact 2x put quantity)"
     preset_factory: production_config
 
   C_deep_skew24:

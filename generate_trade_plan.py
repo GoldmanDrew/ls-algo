@@ -1213,13 +1213,14 @@ def _short_leg_frac_array(
 ) -> np.ndarray:
     """
     Fraction of pair gross that is ETF short USD (stock sleeves: hedge_ratio / (1+hr)).
-    Bucket 4: gross is the inverse ETF short leg → fraction 1.0.
+    Bucket 4: gross is the inverse ETF short leg -> fraction 1.0.
+    Bucket 5 uses true pair gross, so its ETF-short fraction remains 1/(1+beta).
     """
     b = np.maximum(np.asarray(delta_abs, dtype=float), float(delta_floor))
     hr = 1.0 / b
     sf = hr / (1.0 + hr)
     s = np.asarray(sleeve).astype(str)
-    is_b4 = (s == "inverse_decay_bucket4") | (s == VOL_ETP_BUCKET5_SLEEVE)
+    is_b4 = s == "inverse_decay_bucket4"
     sf = np.where(is_b4, 1.0, sf)
     return np.clip(sf, 1e-12, 1.0)
 
@@ -3186,10 +3187,9 @@ def main() -> None:
             )
 
         # Budgeting:
-        # - Bucket 4 gets ``target_weight`` of total gross when core inverse rows are active.
-        # - Volatility ETPs are a separate bucket-5 sleeve with a fixed share of total gross.
-        # - Bucket 5 is subtracted from the B4 allocation so the combined inverse-vol budget
-        #   stays at the configured B4 target weight when both slices exist.
+        # - B4 and B2 may use explicit fixed-dollar gross ceilings.
+        # - B5 is independent and measured as true two-leg pair gross.
+        # - B1 receives the residual after B2, B4 and B5 are reserved.
         vol_etp_b4_cfg = (
             b4_rules.get("volatility_etp_bucket5")
             or b4_rules.get("volatility_etp_bucket4")
@@ -3206,19 +3206,22 @@ def main() -> None:
         b4_any = bool(
             b4_enabled
             and b4_w > 0
-            and (not b4_core_names.empty or not b4_vol_names.empty)
+            and not b4_core_names.empty
         )
-        b4_budget_total = min(target_gross_usd * b4_w, target_gross_usd) if b4_any else 0.0
+        b4_fixed_gross = float(b4.get("target_gross_usd", 0.0) or 0.0)
+        b4_budget_total = (
+            min(b4_fixed_gross if b4_fixed_gross > 0 else target_gross_usd * b4_w, target_gross_usd)
+            if b4_any else 0.0
+        )
 
         b4_vol_cash = 0.0
         if (
-            b4_budget_total > 1e-12
-            and vol_etp_b4_enabled
+            vol_etp_b4_enabled
             and vol_etp_book_weight > 0.0
             and not b4_vol_names.empty
         ):
-            b4_vol_cash = min(b4_budget_total, target_gross_usd * vol_etp_book_weight)
-        b4_core_cash = max(0.0, b4_budget_total - b4_vol_cash)
+            b4_vol_cash = min(target_gross_usd, target_gross_usd * vol_etp_book_weight)
+        b4_core_cash = b4_budget_total
 
         b4_reserved = 0.0
         if not b4_core_names.empty:
@@ -3230,8 +3233,13 @@ def main() -> None:
         b4_vol_reserved = b4_vol_cash if not b4_vol_names.empty else 0.0
 
         remainder_budget = max(0.0, target_gross_usd - b4_reserved)
-        core_budget = remainder_budget * core_stock_frac
-        yb_budget = remainder_budget * yb_stock_frac
+        yb_fixed_gross = float(yb_sleeve.get("target_gross_usd", 0.0) or 0.0)
+        if yb_fixed_gross > 0.0:
+            yb_budget = min(yb_fixed_gross, remainder_budget)
+            core_budget = max(0.0, remainder_budget - yb_budget)
+        else:
+            core_budget = remainder_budget * core_stock_frac
+            yb_budget = remainder_budget * yb_stock_frac
         if core_budget > 1e-9 and core_names.empty:
             yb_budget += core_budget
             core_budget = 0.0
@@ -4289,10 +4297,8 @@ def main() -> None:
             # ONE leg-split convention (Phase 3): B4 rows without opt2 legs get
             # the SAME split the opt2 solver uses — inv = gross/(1+h*beta),
             # und = h*beta*inv with the config h_mid as the hedge fallback — so
-            # gross means the same thing on every row. The legacy split
-            # (inv = gross AND und = beta*gross, i.e. total exposure
-            # gross*(1+beta)) is retained only for the volatility-ETP B5 sleeve,
-            # which is sized under its own budget.
+            # gross means the same thing on every row. B5 also uses true pair gross:
+            # ETP = gross/(1+beta), underlying = beta*ETP.
             b4dm_core = b4dm & (frame["sleeve"].astype(str) == "inverse_decay_bucket4")
             b4dm_vol = b4dm & ~b4dm_core
             if bool(b4dm_core.any()):
@@ -4308,10 +4314,14 @@ def main() -> None:
                 frame.loc[b4dm_core, "short_usd"] = -_inv_fb
                 frame.loc[b4dm_core, "long_usd"] = -(_h_fb * _beta_fb * _inv_fb)
                 frame.loc[b4dm_core, "hedge_ratio"] = _h_fb
-            frame.loc[b4dm_vol, "short_usd"] = -frame.loc[b4dm_vol, "gross_target_usd"]
-            frame.loc[b4dm_vol, "long_usd"] = -(
-                frame.loc[b4dm_vol, "beta_used_abs"] * frame.loc[b4dm_vol, "gross_target_usd"]
-            )
+            if bool(b4dm_vol.any()):
+                _beta_b5 = frame.loc[b4dm_vol, "beta_used_abs"].astype(float)
+                _pair_gross_b5 = pd.to_numeric(
+                    frame.loc[b4dm_vol, "gross_target_usd"], errors="coerce"
+                ).fillna(0.0)
+                _etp_b5 = _pair_gross_b5 / (1.0 + _beta_b5)
+                frame.loc[b4dm_vol, "short_usd"] = -_etp_b5
+                frame.loc[b4dm_vol, "long_usd"] = -(_beta_b5 * _etp_b5)
             if bool(o2m.any()):
                 opt2_gross = (
                     pd.to_numeric(frame.loc[o2m, "b4_opt2_inverse_etf_short_usd"], errors="coerce").fillna(0.0)

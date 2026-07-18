@@ -40,6 +40,7 @@ from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import pandas as pd
 
+from purgatory_policy import allocate_shared_underlying, constrain_pair_targets
 from execute_trade_plan import (
     tprint, stop_requested,
     execute_leg, ExecResult,
@@ -100,6 +101,12 @@ class ResizeDecision:
     substitute_of: str = ""         # if this row is the BUY-substitute leg, the original symbol
     swap_with: str = ""             # if this row participates in a swap, the partner symbol
     harvested_loss_usd: float = 0.0
+    execution_policy: str = "normal"
+    purgatory_reason: str = ""
+    pair_current_gross_usd: float = 0.0
+    pair_desired_gross_usd: float = 0.0
+    pair_allowed_gross_usd: float = 0.0
+    blocked_add_usd: float = 0.0
 
 
 # --------------------------------------------------------------------------
@@ -262,6 +269,11 @@ def build_resize_trades(
     band_long_col, band_short_col, exec_long_col, exec_short_col = _resize_target_columns(
         hedgeable_plan, target_basis
     )
+    hedgeable_plan = hedgeable_plan.copy()
+    if "execution_policy" not in hedgeable_plan.columns:
+        hedgeable_plan["execution_policy"] = "normal"
+    if "purgatory_reason" not in hedgeable_plan.columns:
+        hedgeable_plan["purgatory_reason"] = ""
 
     grouped = hedgeable_plan.groupby("Underlying", sort=True)
 
@@ -285,14 +297,71 @@ def build_resize_trades(
         cur_under_sh  = float(strat_pos.get(under, 0.0))
         cur_under_usd = cur_under_sh * px_under
 
-        total_band_long = float(pd.to_numeric(
-            grp.get(band_long_col, grp.get("long_usd", grp.get("underlying_target_usd", 0.0))),
-            errors="coerce",
-        ).fillna(0.0).sum())
-        total_exec_long = float(pd.to_numeric(
-            grp.get(exec_long_col, grp.get("long_usd", grp.get("underlying_target_usd", 0.0))),
-            errors="coerce",
-        ).fillna(0.0).sum())
+        etf_symbols = [norm_sym(str(e)) for e in grp["ETF"]]
+        current_etf_usd = {
+            etf: float(strat_pos.get(etf, 0.0)) * float(prices.get(etf, 0.0) or 0.0)
+            for etf in etf_symbols
+        }
+        desired_under_by_etf: Dict[str, float] = {}
+        for _, row in grp.iterrows():
+            etf = norm_sym(str(row["ETF"]))
+            is_reduce_only = (
+                etf in purgatory_etfs
+                or bool(row.get("purgatory", False))
+                or str(row.get("execution_policy", "")).strip().lower() == "reduce_only"
+            )
+            desired_col = "model_long_usd" if is_reduce_only and "model_long_usd" in grp.columns else band_long_col
+            desired_under_by_etf[etf] = float(
+                row.get(desired_col, row.get(band_long_col, row.get("long_usd", 0.0))) or 0.0
+            )
+        current_under_alloc = allocate_shared_underlying(
+            current_underlying_usd=cur_under_usd,
+            etfs=etf_symbols,
+            current_etf_usd=current_etf_usd,
+            desired_underlying_usd=desired_under_by_etf,
+        )
+
+        pair_constraints: Dict[str, object] = {}
+        constrained_band_long: list[float] = []
+        constrained_exec_long: list[float] = []
+        for _, row in grp.iterrows():
+            etf = norm_sym(str(row["ETF"]))
+            is_reduce_only = (
+                etf in purgatory_etfs
+                or bool(row.get("purgatory", False))
+                or str(row.get("execution_policy", "")).strip().lower() == "reduce_only"
+            )
+            cadence_deferred = not bool(row.get("b4_cadence_due", True))
+            if cadence_deferred and not is_reduce_only:
+                constrained_band_long.append(float(current_under_alloc.get(etf, 0.0)))
+                constrained_exec_long.append(float(current_under_alloc.get(etf, 0.0)))
+                continue
+            if not is_reduce_only:
+                constrained_band_long.append(
+                    float(row.get(band_long_col, row.get("long_usd", 0.0)) or 0.0)
+                )
+                constrained_exec_long.append(
+                    float(row.get(exec_long_col, row.get("long_usd", 0.0)) or 0.0)
+                )
+                continue
+            desired_under = float(
+                row.get("model_long_usd", row.get(band_long_col, 0.0)) or 0.0
+            )
+            desired_etf = float(
+                row.get("model_short_usd", row.get(band_short_col, 0.0)) or 0.0
+            )
+            constraint = constrain_pair_targets(
+                desired_underlying_usd=desired_under,
+                desired_etf_usd=desired_etf,
+                current_underlying_usd=current_under_alloc.get(etf, 0.0),
+                current_etf_usd=current_etf_usd.get(etf, 0.0),
+            )
+            pair_constraints[etf] = constraint
+            constrained_band_long.append(constraint.constrained_underlying_usd)
+            constrained_exec_long.append(constraint.constrained_underlying_usd)
+
+        total_band_long = float(sum(constrained_band_long))
+        total_exec_long = float(sum(constrained_exec_long))
 
         u_dec = _band_decide(
             side="long_under",
@@ -302,6 +371,30 @@ def build_resize_trades(
         )
         u_dec.underlying = under
         u_dec.etf = ",".join(sorted({norm_sym(str(e)) for e in grp["ETF"]}))
+        if pair_constraints:
+            u_dec.execution_policy = "reduce_only"
+            u_dec.purgatory_reason = "|".join(
+                sorted(
+                    {
+                        str(row.get("purgatory_reason", "") or "")
+                        for _, row in grp.iterrows()
+                        if norm_sym(str(row["ETF"])) in pair_constraints
+                        and str(row.get("purgatory_reason", "") or "")
+                    }
+                )
+            )
+            u_dec.pair_current_gross_usd = float(
+                sum(c.current_gross_usd for c in pair_constraints.values())
+            )
+            u_dec.pair_desired_gross_usd = float(
+                sum(c.desired_gross_usd for c in pair_constraints.values())
+            )
+            u_dec.pair_allowed_gross_usd = float(
+                sum(c.allowed_gross_usd for c in pair_constraints.values())
+            )
+            u_dec.blocked_add_usd = float(
+                sum(c.blocked_add_usd for c in pair_constraints.values())
+            )
 
         if u_dec.decision in ("trim", "grow") and u_dec.action and u_dec.trade_usd > 0:
             # Hybrid mode: clip a "grow" step so we don't push past today's executable target.
@@ -373,23 +466,41 @@ def build_resize_trades(
                     "current_usd":      float(cur_under_usd),
                     "long_usd_b1":      float(_long_b1),
                     "long_usd_b2":      float(_long_b2),
+                    "execution_policy":  u_dec.execution_policy,
+                    "pair_current_gross_usd": u_dec.pair_current_gross_usd,
+                    "pair_allowed_gross_usd": u_dec.pair_allowed_gross_usd,
                 })
 
         decisions.append(u_dec)
 
         for _, row in grp.iterrows():
             etf = norm_sym(str(row["ETF"]))
-            band_target_usd = float(row.get(band_short_col, row.get("short_usd", row.get("etf_target_usd", 0.0))) or 0.0)
-            exec_target_usd = float(row.get(exec_short_col, row.get("short_usd", row.get("etf_target_usd", 0.0))) or 0.0)
+            constraint = pair_constraints.get(etf)
+            if constraint is not None:
+                band_target_usd = float(constraint.constrained_etf_usd)
+                exec_target_usd = float(constraint.constrained_etf_usd)
+            else:
+                band_target_usd = float(row.get(band_short_col, row.get("short_usd", row.get("etf_target_usd", 0.0))) or 0.0)
+                exec_target_usd = float(row.get(exec_short_col, row.get("short_usd", row.get("etf_target_usd", 0.0))) or 0.0)
             target_usd = band_target_usd
             cur_etf_sh  = float(strat_pos.get(etf, 0.0))
 
-            if etf in purgatory_etfs or etf in flow_etfs:
+            if etf in flow_etfs:
                 decisions.append(ResizeDecision(
                     underlying=under, etf=etf, leg_side="short_etf",
                     target_usd=target_usd,
                     decision="skip",
-                    reason="purgatory" if etf in purgatory_etfs else "flow_etf",
+                    reason="flow_etf",
+                ))
+                continue
+            if not bool(row.get("b4_cadence_due", True)) and constraint is None:
+                decisions.append(ResizeDecision(
+                    underlying=under,
+                    etf=etf,
+                    leg_side="short_etf",
+                    target_usd=target_usd,
+                    decision="skip",
+                    reason="b4_cadence_deferred",
                 ))
                 continue
 
@@ -412,6 +523,14 @@ def build_resize_trades(
             )
             e_dec.underlying = under
             e_dec.etf = etf
+            if constraint is not None:
+                e_dec.execution_policy = "reduce_only"
+                e_dec.purgatory_reason = str(row.get("purgatory_reason", "") or "")
+                e_dec.pair_current_gross_usd = float(constraint.current_gross_usd)
+                e_dec.pair_desired_gross_usd = float(constraint.desired_gross_usd)
+                e_dec.pair_allowed_gross_usd = float(constraint.allowed_gross_usd)
+                e_dec.blocked_add_usd = float(constraint.blocked_add_usd)
+                e_dec.reason = f"{e_dec.reason}|{constraint.reason}".strip("|")
 
             # Bucket 4 grow-only ratchet (execution-time guard / defense-in-depth):
             # the inverse-ETF short leg is never covered unless the plan marked the
@@ -422,6 +541,7 @@ def build_resize_trades(
             if (
                 _sleeve_name in {"inverse_decay_bucket4", "volatility_etp_bucket5"}
                 and e_dec.action == "BUY"
+                and constraint is None
             ):
                 if not (b4_allow_inverse_cover and _ratchet_released):
                     e_dec.decision = "skip"
@@ -479,6 +599,9 @@ def build_resize_trades(
                         "target_usd":       float(target_usd),
                         "executable_target_usd": float(exec_target_usd),
                         "current_usd":      float(cur_etf_usd),
+                    "execution_policy": e_dec.execution_policy,
+                    "pair_current_gross_usd": e_dec.pair_current_gross_usd,
+                    "pair_allowed_gross_usd": e_dec.pair_allowed_gross_usd,
                     })
 
             decisions.append(e_dec)
@@ -600,7 +723,15 @@ def execute_resize_serial(
         return fills
 
     def _sort_key(t: Dict):
-        primary = 0 if (short_first and t["action"] == "SELL") else 1
+        reduce_only = str(t.get("execution_policy", "")).strip().lower() == "reduce_only"
+        if reduce_only and t.get("decision") == "trim":
+            primary = 0
+        elif short_first and t["action"] == "SELL":
+            primary = 1
+        elif reduce_only:
+            primary = 2
+        else:
+            primary = 3
         return (primary, t["underlying"], t.get("etf") or "", t["symbol"])
 
     trades_sorted = sorted(trades, key=_sort_key)
@@ -620,6 +751,22 @@ def execute_resize_serial(
         decision = t["decision"]
 
         capped_qty = qty
+
+        if str(t.get("execution_policy", "")).strip().lower() == "reduce_only":
+            before_gross = float(t.get("pair_current_gross_usd", 0.0) or 0.0)
+            allowed_gross = float(t.get("pair_allowed_gross_usd", 0.0) or 0.0)
+            if allowed_gross > before_gross + 1.0:
+                tprint(
+                    f"[PHASE2B][{under}/{symbol}] BLOCK: stale/invalid purgatory projection "
+                    f"allowed=${allowed_gross:,.0f} > starting=${before_gross:,.0f}."
+                )
+                fills.append({
+                    **t,
+                    "status": "BLOCKED_PURGATORY_GROSS_INCREASE",
+                    "filled_qty": 0,
+                    "notes": "PRE_SUBMIT_REDUCE_ONLY_GUARD",
+                })
+                continue
 
         if leg_side == "short_etf" and action == "SELL":
             if symbol in blocked_short_etfs:
@@ -720,6 +867,11 @@ def execute_resize_serial(
             "filled_sh_under": filled_signed if leg_side == "long_under" else 0,
             "filled_sh_etf":   filled_signed if leg_side == "short_etf" else 0,
             "notes": f"P2B_{decision.upper()}_{leg_side.upper()} status={res.status}",
+            "intent_id": str(t.get("intent_id", "") or ""),
+            "source_phases": str(t.get("source_phases", t.get("source_phase", "")) or ""),
+            "projected_terminal_shares": t.get("projected_terminal_shares"),
+            "netted_qty": float(t.get("netted_qty", 0.0) or 0.0),
+            "override_reason": str(t.get("risk_override_reason", "") or ""),
         })
 
     return fills
