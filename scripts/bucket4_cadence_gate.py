@@ -184,14 +184,11 @@ def filter_resize_plan_for_b4_cadence(
     df["b4_cadence_due"] = True
     for idx, row in df.loc[is_b4].iterrows():
         key = (norm_sym(str(row.get("ETF", ""))), norm_sym(str(row.get("Underlying", ""))))
-        reduce_only = (
-            bool(row.get("purgatory", False))
-            or str(row.get("execution_policy", "")).strip().lower() == "reduce_only"
-        )
-        # Purgatory risk reductions bypass cadence. Other deferred B4 rows
-        # remain in the frame for correct shared-underlying netting, but their
-        # ETF leg is not eligible to trade.
-        df.at[idx, "b4_cadence_due"] = bool(key in due_keys or reduce_only)
+        # Cadence owns timing for every B4 pair. Purgatory/reduce-only controls
+        # direction only and must not make an inverse ETF resize early.
+        # Deferred rows remain for correct shared-underlying netting; Phase 2b
+        # freezes their B4 contribution while allowing B1/B2 changes to net.
+        df.at[idx, "b4_cadence_due"] = bool(key in due_keys)
     return df.reset_index(drop=True)
 
 

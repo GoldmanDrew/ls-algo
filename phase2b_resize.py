@@ -332,7 +332,10 @@ def build_resize_trades(
                 or str(row.get("execution_policy", "")).strip().lower() == "reduce_only"
             )
             cadence_deferred = not bool(row.get("b4_cadence_due", True))
-            if cadence_deferred and not is_reduce_only:
+            if cadence_deferred:
+                # Cadence takes precedence over purgatory. Freeze this pair's
+                # B4 underlying contribution at its current allocation; other
+                # sleeves sharing the underlying may still change the net.
                 constrained_band_long.append(float(current_under_alloc.get(etf, 0.0)))
                 constrained_exec_long.append(float(current_under_alloc.get(etf, 0.0)))
                 continue
@@ -493,7 +496,7 @@ def build_resize_trades(
                     reason="flow_etf",
                 ))
                 continue
-            if not bool(row.get("b4_cadence_due", True)) and constraint is None:
+            if not bool(row.get("b4_cadence_due", True)):
                 decisions.append(ResizeDecision(
                     underlying=under,
                     etf=etf,
@@ -501,6 +504,10 @@ def build_resize_trades(
                     target_usd=target_usd,
                     decision="skip",
                     reason="b4_cadence_deferred",
+                    execution_policy=str(
+                        row.get("execution_policy", "normal") or "normal"
+                    ),
+                    purgatory_reason=str(row.get("purgatory_reason", "") or ""),
                 ))
                 continue
 

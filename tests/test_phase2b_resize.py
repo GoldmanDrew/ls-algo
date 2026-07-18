@@ -279,6 +279,74 @@ class TestBuildResizeTrades:
         assert etf_decisions[0].execution_policy == "reduce_only"
         assert any(t["leg_side"] == "short_etf" and t["action"] == "BUY" for t in trades)
 
+    def test_deferred_purgatory_b4_freezes_both_pair_legs(self):
+        plan = _hedgeable([
+            {
+                "Underlying": "ASTS",
+                "ETF": "ASTN",
+                "sleeve": "inverse_decay_bucket4",
+                "long_usd": 0,
+                "short_usd": 0,
+                "model_long_usd": 0,
+                "model_short_usd": 0,
+                "execution_policy": "reduce_only",
+                "purgatory": True,
+                "b4_cadence_due": False,
+            },
+        ])
+        trades, decisions = build_resize_trades(
+            hedgeable_plan=plan,
+            strat_pos={"ASTS": -50, "ASTN": -50},
+            prices={"ASTS": 100.0, "ASTN": 100.0},
+            purgatory_etfs={"ASTN"},
+            flow_etfs=set(),
+            cfg=_cfg(enter_band_pct=0.01, exit_band_pct=0.0),
+        )
+        assert trades == []
+        etf_decision = next(d for d in decisions if d.leg_side == "short_etf")
+        assert etf_decision.reason == "b4_cadence_deferred"
+        assert etf_decision.execution_policy == "reduce_only"
+
+    def test_deferred_purgatory_b4_still_allows_b1_underlying_net_change(self):
+        plan = _hedgeable([
+            {
+                "Underlying": "ASTS",
+                "ETF": "ASTU",
+                "sleeve": "core_leveraged",
+                "long_usd": 10_000,
+                "short_usd": -5_000,
+                "purgatory": False,
+                "b4_cadence_due": True,
+            },
+            {
+                "Underlying": "ASTS",
+                "ETF": "ASTN",
+                "sleeve": "inverse_decay_bucket4",
+                "long_usd": 0,
+                "short_usd": 0,
+                "model_long_usd": 0,
+                "model_short_usd": 0,
+                "execution_policy": "reduce_only",
+                "purgatory": True,
+                "b4_cadence_due": False,
+            },
+        ])
+        trades, _ = build_resize_trades(
+            hedgeable_plan=plan,
+            strat_pos={"ASTS": 0, "ASTU": -50, "ASTN": -50},
+            prices={"ASTS": 100.0, "ASTU": 100.0, "ASTN": 100.0},
+            purgatory_etfs={"ASTN"},
+            flow_etfs=set(),
+            cfg=_cfg(enter_band_pct=0.01, exit_band_pct=0.0),
+        )
+        assert any(
+            t["leg_side"] == "long_under"
+            and t["symbol"] == "ASTS"
+            and t["action"] == "BUY"
+            for t in trades
+        )
+        assert not any(t["symbol"] == "ASTN" for t in trades)
+
     def test_purgatory_target_above_current_cannot_add_gross(self):
         plan = _hedgeable([
             {"Underlying": "AAPL", "ETF": "AAPU",
