@@ -23,19 +23,10 @@ from hedged_pnl import (  # noqa: E402
     HEDGED_PNL_HISTORY_CSV,
     RUNS_ROOT,
     compute_hedged_split,
+    list_accounting_run_dates,
 )
 
 DEFAULT_START = "2026-02-27"
-
-
-def list_accounting_run_dates(runs_root: Path) -> list[str]:
-    out: list[str] = []
-    if not runs_root.is_dir():
-        return out
-    for child in sorted(runs_root.iterdir()):
-        if child.is_dir() and (child / "accounting" / "totals.json").is_file():
-            out.append(child.name)
-    return out
 
 
 def main() -> int:

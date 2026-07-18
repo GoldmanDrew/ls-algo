@@ -326,6 +326,49 @@ class TestComputeHedgedSplit:
         assert r1["hedged_pnl_ytd"] == pytest.approx(r2["hedged_pnl_ytd"])
         assert len(pd.read_csv(ledger)) == 1
 
+    def test_skips_intermediate_run_auto_catchup_ties_out(self, tmp_path):
+        """Ledger hole (skipped EOD split) must not break hedged+unhedged == total.
+
+        Reproduces the 2026-07-18 CI failure: accounting exists for an intermediate
+        date that never wrote a ledger row; the next day's absolute total then
+        diverged from accumulated hedged+unhedged by that skipped day's PnL.
+        """
+        runs = tmp_path / "runs"
+        ledger = tmp_path / "ledger" / "hedged_pnl_history.csv"
+        common = dict(b4_symbol_rows=[], detail_rows=[], pair_rows=[])
+        _write_run(
+            runs,
+            "2026-01-02",
+            bucket_pnl={"bucket_1": 100.0, "bucket_3": 50.0},
+            **common,
+        )
+        _write_run(
+            runs,
+            "2026-01-03",
+            bucket_pnl={"bucket_1": 80.0, "bucket_3": 40.0},  # -30 day
+            **common,
+        )
+        _write_run(
+            runs,
+            "2026-01-04",
+            bucket_pnl={"bucket_1": 90.0, "bucket_3": 45.0},  # +15 day
+            **common,
+        )
+        compute_hedged_split(
+            "2026-01-02", runs_root=runs, ledger_path=ledger, prev_run_date=None
+        )
+        # Simulate a skipped EOD: 01-03 accounting exists but was never ledgered.
+        assert "2026-01-03" not in set(pd.read_csv(ledger)["date"].astype(str))
+
+        res = compute_hedged_split("2026-01-04", runs_root=runs, ledger_path=ledger)
+        assert res["hedged_pnl_ytd"] + res["unhedged_pnl_ytd"] == pytest.approx(
+            res["total_pnl_ytd"]
+        )
+        assert res["total_pnl_ytd"] == pytest.approx(135.0)
+        led = pd.read_csv(ledger)
+        assert set(led["date"].astype(str)) == {"2026-01-02", "2026-01-03", "2026-01-04"}
+        assert (runs / "2026-01-03" / "accounting" / SPLIT_JSON_NAME).is_file()
+
 
 class TestEmailHeadline:
     def test_headline_block_includes_hedged_lines(self):

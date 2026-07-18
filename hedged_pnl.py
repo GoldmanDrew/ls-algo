@@ -92,31 +92,68 @@ def _acct_dir(run_date: str, runs_root: Path) -> Path:
     return runs_root / run_date / "accounting"
 
 
+def list_accounting_run_dates(runs_root: Path = RUNS_ROOT) -> list[str]:
+    """Chronological run-folder names that have ``accounting/totals.json``."""
+    out: list[str] = []
+    if not runs_root.is_dir():
+        return out
+    for child in sorted(runs_root.iterdir()):
+        if child.is_dir() and (child / "accounting" / "totals.json").is_file():
+            out.append(child.name)
+    return out
+
+
 def prior_accounting_run_date(run_date: str, runs_root: Path = RUNS_ROOT) -> str | None:
     """Latest run folder before ``run_date`` that has accounting totals."""
-    try:
-        target = pd.to_datetime(run_date).normalize()
-    except (ValueError, TypeError):
-        return None
-    best: pd.Timestamp | None = None
-    best_name: str | None = None
-    if not runs_root.is_dir():
-        return None
-    for child in runs_root.iterdir():
-        if not child.is_dir():
-            continue
-        try:
-            dt = pd.to_datetime(child.name).normalize()
-        except (ValueError, TypeError):
-            continue
-        if dt >= target:
-            continue
-        if not (child / "accounting" / "totals.json").exists():
-            continue
-        if best is None or dt > best:
-            best = dt
-            best_name = child.name
-    return best_name
+    prior = [d for d in list_accounting_run_dates(runs_root) if d < run_date]
+    return prior[-1] if prior else None
+
+
+def _ledger_dates(ledger_path: Path) -> set[str]:
+    df = _read_ledger(ledger_path)
+    if df.empty or "date" not in df.columns:
+        return set()
+    return set(df["date"].astype(str))
+
+
+def _catch_up_missing_ledger_dates(
+    run_date: str,
+    *,
+    runs_root: Path,
+    ledger_path: Path,
+    write: bool,
+) -> list[str]:
+    """Fill trailing ledger gaps for accounting dates before ``run_date``.
+
+    YTD hedged/unhedged is daily-accumulated; if an intermediate accounting run
+    was never written to the ledger, the next day's absolute ``total_pnl`` and
+    the accumulated hedged+unhedged diverge by that skipped day's PnL. Only
+    dates after the latest existing ledger row are filled (use
+    ``scripts/backfill_hedged_pnl.py`` for a full rebuild).
+    """
+    have = _ledger_dates(ledger_path)
+    have_prior = sorted(d for d in have if d < run_date)
+    if not have_prior:
+        return []
+    start_after = have_prior[-1]
+    missing = [
+        d
+        for d in list_accounting_run_dates(runs_root)
+        if start_after < d < run_date and d not in have
+    ]
+    filled: list[str] = []
+    for ds in missing:
+        print(f"[hedged-pnl] catching up missing ledger date {ds} before {run_date}")
+        compute_hedged_split(
+            ds,
+            runs_root=runs_root,
+            ledger_path=ledger_path,
+            prev_run_date="auto",
+            write=write,
+            _catching_up=True,
+        )
+        filled.append(ds)
+    return filled
 
 
 def _bucket_pnl_from_totals(totals: dict) -> dict[str, float]:
@@ -440,6 +477,7 @@ def compute_hedged_split(
     ledger_path: Path = HEDGED_PNL_HISTORY_CSV,
     prev_run_date: str | None | object = "auto",
     write: bool = True,
+    _catching_up: bool = False,
 ) -> dict:
     """Compute the hedged/unhedged PnL split for ``run_date`` and update the ledger.
 
@@ -447,7 +485,18 @@ def compute_hedged_split(
     daily contributions and reconciliation status. When ``write`` is True the
     per-run artifacts and the ledger row for ``run_date`` are persisted
     (idempotent per date).
+
+    Missing intermediate accounting dates are filled automatically so YTD
+    accumulation stays aligned with the prior run used for daily diffs.
     """
+    if not _catching_up:
+        _catch_up_missing_ledger_dates(
+            run_date,
+            runs_root=runs_root,
+            ledger_path=ledger_path,
+            write=write,
+        )
+
     totals = _load_totals(run_date, runs_root)
     cur_buckets = _bucket_pnl_from_totals(totals)
     if prev_run_date == "auto":
@@ -493,14 +542,37 @@ def compute_hedged_split(
         hedged_ytd = float(base["hedged_pnl"]) + hedged_daily
         unhedged_ytd = float(base["unhedged_pnl"]) + unhedged_daily
         seeded = False
+        # If catch-up was skipped (write=False dry-run over a hole, or a date
+        # without accounting), dump the skipped YTD into unhedged so the lens
+        # still ties to absolute bucket total.
+        base_tied = float(base["hedged_pnl"]) + float(base["unhedged_pnl"])
+        prev_total = sum(prev_buckets.values())
+        ytd_catchup = prev_total - base_tied
+        if abs(ytd_catchup) > _RECON_TOL:
+            print(
+                f"[hedged-pnl] WARN YTD catch-up residual {ytd_catchup:,.2f} "
+                f"on {run_date} (ledger base {base['date']} vs prev {prev_run_date}); "
+                "assigning to unhedged"
+            )
+            unhedged_ytd += ytd_catchup
     else:
         hedged_ytd = hedged_daily
         unhedged_ytd = unhedged_daily
         seeded = True
 
+    total_ytd = sum(cur_buckets.values())
+    ytd_gap = total_ytd - (hedged_ytd + unhedged_ytd)
+    if abs(ytd_gap) > _RECON_TOL:
+        print(
+            f"[hedged-pnl] WARN YTD reconciliation residual {ytd_gap:,.2f} "
+            f"on {run_date}; assigning to unhedged"
+        )
+        unhedged_ytd += ytd_gap
+        ytd_gap = 0.0
+
     row = {
         "date": run_date,
-        "total_pnl": sum(cur_buckets.values()),
+        "total_pnl": total_ytd,
         "hedged_pnl": hedged_ytd,
         "unhedged_pnl": unhedged_ytd,
         "hedged_daily": hedged_daily,
@@ -533,7 +605,8 @@ def compute_hedged_split(
         "reconciliation": {
             "residual_daily": residual,
             "ytd_gap_vs_total": float(row["total_pnl"]) - (hedged_ytd + unhedged_ytd),
-            "ok": abs(residual) <= _RECON_TOL,
+            "ok": abs(residual) <= _RECON_TOL
+            and abs(float(row["total_pnl"]) - (hedged_ytd + unhedged_ytd)) <= _RECON_TOL,
         },
     }
 
