@@ -2233,14 +2233,46 @@ def _format_subject_bucket_pnl_line(
     return " | ".join(parts)
 
 
+def _format_subject_hedged_pnl_line(
+    hedged_split: dict,
+    *,
+    total_pnl: float,
+    compact: bool = False,
+) -> str:
+    """Hedged / Unhedged / Total YTD line for the email subject."""
+    hedged = float(hedged_split.get("hedged_pnl_ytd", 0.0) or 0.0)
+    unhedged = float(hedged_split.get("unhedged_pnl_ytd", 0.0) or 0.0)
+    if compact:
+        return (
+            f"Hedged: {_compact_usd(hedged)} | "
+            f"Unhedged: {_compact_usd(unhedged)} | "
+            f"Total: {_compact_usd(total_pnl)}"
+        )
+    return (
+        f"Hedged: {hedged:,.0f} | "
+        f"Unhedged: {unhedged:,.0f} | "
+        f"Total: {total_pnl:,.0f}"
+    )
+
+
 def format_eod_subject(
     run_date: str,
     bucket_pnl: dict[str, float],
     *,
     total_pnl: float,
+    hedged_split: dict | None = None,
 ) -> str:
-    """Email subject with per-bucket YTD PnL from accounting totals.json."""
+    """Email subject: Hedged/Unhedged/Total when available, else per-bucket YTD."""
     prefix = f"EOD PnL — {run_date} — "
+    if hedged_split is not None:
+        line = _format_subject_hedged_pnl_line(
+            hedged_split, total_pnl=total_pnl, compact=False
+        )
+        if len(prefix + line) > SUBJECT_MAX_LEN:
+            line = _format_subject_hedged_pnl_line(
+                hedged_split, total_pnl=total_pnl, compact=True
+            )
+        return prefix + line
     line = _format_subject_bucket_pnl_line(bucket_pnl, total_pnl=total_pnl, compact=False)
     if len(prefix + line) > SUBJECT_MAX_LEN:
         line = _format_subject_bucket_pnl_line(bucket_pnl, total_pnl=total_pnl, compact=True)
@@ -2984,7 +3016,12 @@ def main() -> int:
     except Exception:
         asof = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    subject = format_eod_subject(run_date, headline_bucket_pnl, total_pnl=grand_total)
+    subject = format_eod_subject(
+        run_date,
+        headline_bucket_pnl,
+        total_pnl=grand_total,
+        hedged_split=hedged_split,
+    )
 
     n_days = int(hist.shape[0])
     if not hist.empty and all(c in hist.columns for c in PNL_HISTORY_DISPLAY_PNL_COLS):

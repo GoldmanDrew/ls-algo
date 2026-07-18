@@ -402,6 +402,20 @@ class TestEmailHeadline:
         assert "Hedged PnL:" not in block
         assert "Total: 15.00" in block
 
+    def test_subject_uses_hedged_lens_when_split_present(self):
+        from run_eod_pnl_email import format_eod_subject
+
+        subject = format_eod_subject(
+            "2026-07-18",
+            {"bucket_1": 1.0, "bucket_2": 2.0, "bucket_3": 3.0, "bucket_4": 4.0, "bucket_5": 5.0},
+            total_pnl=90_000.0,
+            hedged_split={"hedged_pnl_ytd": 110_000.0, "unhedged_pnl_ytd": -20_000.0},
+        )
+        assert "Hedged: 110,000" in subject
+        assert "Unhedged: -20,000" in subject
+        assert "Total: 90,000" in subject
+        assert "B1:" not in subject
+
 
 class TestDashboardPanel:
     def test_panel_from_split_artifact(self, tmp_path):

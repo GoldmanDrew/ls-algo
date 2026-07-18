@@ -649,6 +649,35 @@ def test_format_eod_subject_lists_all_buckets():
     assert line.count("|") == 5
 
 
+def test_format_eod_subject_prefers_hedged_unhedged_lens():
+    from run_eod_pnl_email import _format_subject_hedged_pnl_line
+
+    bucket_pnl = {
+        "bucket_1": 125_144.0,
+        "bucket_2": 49_404.0,
+        "bucket_3": 116.0,
+        "bucket_4": -86_093.0,
+        "bucket_5": 303.0,
+    }
+    split = {
+        "hedged_pnl_ytd": 159_699.7,
+        "unhedged_pnl_ytd": -70_825.7,
+    }
+    subject = format_eod_subject(
+        "2026-07-18",
+        bucket_pnl,
+        total_pnl=88_874.0,
+        hedged_split=split,
+    )
+    assert subject.startswith("EOD PnL — 2026-07-18 — ")
+    assert "Hedged: 159,700" in subject
+    assert "Unhedged: -70,826" in subject
+    assert "Total: 88,874" in subject
+    assert "B1:" not in subject
+    line = _format_subject_hedged_pnl_line(split, total_pnl=88_874.0)
+    assert line == "Hedged: 159,700 | Unhedged: -70,826 | Total: 88,874"
+
+
 def test_format_bucket_pnl_section_matches_headline_for_fixture_run():
     run_dir = Path("data/runs/2026-05-30/accounting")
     if not (run_dir / "pnl_bucket_2.csv").is_file():
