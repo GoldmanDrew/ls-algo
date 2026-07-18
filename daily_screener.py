@@ -324,6 +324,8 @@ graniteshares_pairs_leveraged = [
     # 2026-07-13 GraniteShares 2X long SK Hynix daily
     ("SKUU", "SKHY"),
     # 2026-07-14 GraniteShares 2X long daily
+    ("BTDL", "BTDR"),  # GraniteShares 2x Long Bitdeer Technologies Daily ETF
+    ("NTAL", "NTAP"),  # GraniteShares 2x Long NetApp Daily ETF
     ("TDCL", "TDC"),  # GraniteShares 2x Long TDC Daily ETF (Teradata)
 ]
 
