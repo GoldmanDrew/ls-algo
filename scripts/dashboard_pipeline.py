@@ -80,6 +80,10 @@ def main(argv: list[str] | None = None) -> int:
 
     _run([sys.executable, "scripts/dividend_ledger.py"])
 
+    # Hedged/unhedged lens must be current before the snapshot is built. This
+    # also auto-fills any missing intermediate ledger dates so the panel ties.
+    _run([sys.executable, "hedged_pnl.py", run_date])
+
     screener = resolve_screener_csv(run_date, runs_root)
     build_cmd = [
         sys.executable,
