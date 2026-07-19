@@ -262,6 +262,8 @@ def frames_from_metrics(
     apply_splits: bool = True,
     split_map: Mapping[str, list] | None = None,
     underlying_by_etf: Mapping[str, str] | None = None,
+    required_etfs: set[str] | None = None,
+    min_days_by_etf: Mapping[str, int] | None = None,
     repo: Path | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Build ``{ETF: DataFrame(a_px, b_px)}`` from a metrics table."""
@@ -276,16 +278,21 @@ def frames_from_metrics(
     frame = frame.dropna(subset=[date_col]).sort_values([ticker_col, date_col])
     smap = split_map if split_map is not None else (split_events_by_symbol() if apply_splits else {})
     und_map = {_norm_sym(k): _norm_sym(v) for k, v in (underlying_by_etf or {}).items()}
+    required = {_norm_sym(x) for x in (required_etfs or set())}
+    per_etf_min = {_norm_sym(k): max(int(v), 2) for k, v in (min_days_by_etf or {}).items()}
     root = repo or REPO
 
     out: dict[str, pd.DataFrame] = {}
     for etf, g in frame.groupby(ticker_col):
+        if required and etf not in required:
+            continue
+        required_days = per_etf_min.get(etf, min_days)
         # Keep ETF prints even when underlying is briefly NaN (common near the
         # metrics vendor cutoff). Forward-fill underlying for short gaps so the
         # sim calendar matches the book through the run end; long und holes are
         # still NaN and get no return that day.
         g = g.dropna(subset=[etf_col])
-        if len(g) < min_days:
+        if len(g) < required_days:
             continue
         idx = pd.DatetimeIndex(g[date_col])
         a = pd.Series(g[etf_col].to_numpy(dtype=float), index=idx)
@@ -296,7 +303,7 @@ def frames_from_metrics(
         # Drop leading und-NaN (no prior print to ffill from).
         both = pd.DataFrame({"a_px": a, "b_px": b}).dropna(subset=["a_px"])
         both = both.dropna(subset=["b_px"])
-        if len(both) < min_days:
+        if len(both) < required_days:
             continue
         a = both["a_px"]
         b = both["b_px"]
@@ -316,7 +323,7 @@ def frames_from_metrics(
             {"a_px": a.to_numpy(dtype=float), "b_px": b.reindex(a.index).to_numpy(dtype=float)},
             index=a.index,
         ).dropna()
-        if len(df) < min_days:
+        if len(df) < required_days:
             continue
         out[str(etf)] = df
     return out
@@ -547,6 +554,8 @@ def load_run_price_panel(
     extend_yahoo: bool = True,
     extend_to: str | pd.Timestamp | None = None,
     underlying_by_etf: Mapping[str, str] | None = None,
+    required_etfs: set[str] | None = None,
+    min_days_by_etf: Mapping[str, int] | None = None,
     apply_delist_cut: bool = True,
 ) -> dict[str, pd.DataFrame]:
     """Load split-adjusted panels from ``data/runs/<date>/model_inputs/etf_metrics_daily.parquet``.
@@ -561,7 +570,12 @@ def load_run_price_panel(
     if not und_map:
         und_map = underlying_map_from_run(run_date, repo=root)
     panel = frames_from_metrics(
-        md, min_days=min_days, underlying_by_etf=und_map, repo=root
+        md,
+        min_days=min_days,
+        underlying_by_etf=und_map,
+        required_etfs=required_etfs,
+        min_days_by_etf=min_days_by_etf,
+        repo=root,
     )
     if extend_yahoo:
         end = extend_to if extend_to is not None else run_date

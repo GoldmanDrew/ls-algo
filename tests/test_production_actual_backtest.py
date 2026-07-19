@@ -2352,3 +2352,36 @@ def test_turnover_mode_legacy_and_off_explicit_parity():
     )
     pd.testing.assert_series_equal(nav_false, nav_off)
     pd.testing.assert_frame_equal(audit_false, audit_off)
+
+
+def test_b4_membership_manifest_preserves_purgatory_and_new_listings():
+    """Universe export is plan/state-driven, never inferred from old PnL rows."""
+    from scripts.production_actual_backtest import build_b4_membership_manifest
+
+    d0, d1 = pd.Timestamp("2026-07-10"), pd.Timestamp("2026-07-17")
+    timeline = {
+        d0: normalize_plan(pd.DataFrame([{
+            "ETF": "NBIZ", "Underlying": "NBIS", "sleeve": "inverse_decay_bucket4",
+            "Delta": -2.0, "long_usd": -100.0, "short_usd": -100.0,
+            "gross_target_usd": 200.0, "purgatory": False,
+        }]), source_date=str(d0.date())),
+        d1: normalize_plan(pd.DataFrame([
+            {"ETF": "NBIZ", "Underlying": "NBIS", "sleeve": "inverse_decay_bucket4", "Delta": -2.0,
+             "long_usd": 0.0, "short_usd": 0.0, "gross_target_usd": 0.0, "purgatory": True},
+            {"ETF": "CBRZ", "Underlying": "CBRS", "sleeve": "inverse_decay_bucket4", "Delta": -2.0,
+             "long_usd": -50.0, "short_usd": -50.0, "gross_target_usd": 100.0, "purgatory": False},
+            {"ETF": "SPCG", "Underlying": "SPCX", "sleeve": "inverse_decay_bucket4", "Delta": -2.0,
+             "long_usd": 0.0, "short_usd": 0.0, "gross_target_usd": 0.0, "purgatory": True},
+        ]), source_date=str(d1.date())),
+    }
+    pair_daily = pd.DataFrame([{
+        "date": "2026-07-17", "ETF": "NBIZ", "sleeve": "inverse_decay_bucket4",
+        "etf_usd": -100.0, "underlying_usd": -100.0,
+    }])
+    panel = {"NBIZ": pd.DataFrame(), "CBRZ": pd.DataFrame(), "SPCG": pd.DataFrame()}
+    manifest = build_b4_membership_manifest(timeline, pair_daily, panel, run_end="2026-07-17")
+    rows = manifest.set_index("ETF")
+    assert rows.loc["NBIZ", "lifecycle_state"] == "open"
+    assert bool(rows.loc["NBIZ", "latest_purgatory"]) is True
+    assert rows.loc["CBRZ", "lifecycle_state"] == "pending_entry"
+    assert rows.loc["SPCG", "lifecycle_state"] == "purgatory_not_incumbent"

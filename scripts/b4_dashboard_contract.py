@@ -29,6 +29,7 @@ REQUIRED_FILES = (
     "pair_stats.csv",
     "rebalance_audit.csv",
     "pending_target_audit.csv",
+    "b4_membership_manifest.csv",
 )
 OPTIONAL_AUDIT_FILES = (
     "b4_plan_history.csv",
@@ -38,6 +39,7 @@ OPTIONAL_AUDIT_FILES = (
     "prod_sizing_diag.csv",
     "rebalance_audit.csv",
     "pending_target_audit.csv",
+    "b4_membership_manifest.csv",
 )
 
 
@@ -317,6 +319,7 @@ def build_contract(source_dir: Path, repo_root: Path) -> dict[str, Any]:
     sleeve_daily = _read_csv(source_dir / "sleeve_daily_pnl.csv")
     pair_daily_all = _read_csv(source_dir / "pair_daily_pnl.csv")
     pair_stats_all = _read_csv(source_dir / "pair_stats.csv")
+    membership = _read_csv(source_dir / "b4_membership_manifest.csv")
     b4_daily = pair_daily_all.loc[pair_daily_all["sleeve"].astype(str).eq(B4_SLEEVE)].copy()
     b4_stats = pair_stats_all.loc[pair_stats_all["sleeve"].astype(str).eq(B4_SLEEVE)].copy()
     if b4_daily.empty:
@@ -333,6 +336,19 @@ def build_contract(source_dir: Path, repo_root: Path) -> dict[str, Any]:
         etf: _pair_payload(etf, frame, stats_by_etf.get(etf, {}), events)
         for etf, frame in b4_daily.groupby(b4_daily["ETF"].astype(str).str.upper(), sort=True)
     }
+    if membership.empty or "ETF" not in membership or "lifecycle_state" not in membership:
+        raise ValueError("b4_membership_manifest.csv is missing required lifecycle fields")
+    membership = membership.copy()
+    membership["ETF"] = membership["ETF"].astype(str).str.upper()
+    membership["has_ledger"] = membership["ETF"].isin(pairs)
+    for row in membership.to_dict(orient="records"):
+        etf = str(row.get("ETF", "")).upper()
+        state = str(row.get("lifecycle_state", "")).strip().lower()
+        reason = str(row.get("block_reason", "")).strip()
+        if state in {"open", "closed"} and etf not in pairs:
+            raise ValueError(f"B4 membership {etf} is {state} but has no accounting ledger")
+        if etf not in pairs and not reason:
+            raise ValueError(f"B4 membership {etf} has no ledger and no documented block reason")
     budget = _finite((report.get("budgets_usd") or {}).get(B4_SLEEVE), 0.0)
     if budget <= 0:
         raise ValueError("report has no positive Bucket 4 budget")
@@ -372,16 +388,16 @@ def build_contract(source_dir: Path, repo_root: Path) -> dict[str, Any]:
         "resolved_policy": _json_value(report.get("rebalance_knobs") or {}),
         "resolved_policy_hash": sha256_payload(report.get("rebalance_knobs") or {}),
         "limitations": _json_value(report.get("limitations") or []),
-        "counts": {"pairs": len(pairs), "book_days": len(daily), "pair_days": len(b4_daily)},
+        "counts": {"pairs": len(pairs), "membership": int(len(membership)), "book_days": len(daily), "pair_days": len(b4_daily)},
         "reconciliation": {
             "pair_to_sleeve": pair_recon,
             "book_max_abs_residual_usd": float(pd.to_numeric(daily.get("pnl_recon_residual", 0.0), errors="coerce").fillna(0.0).abs().max()),
         },
-        "artifacts": {"book": "book.json", "pairs": "pairs", "audit": "audit"},
+        "artifacts": {"book": "book.json", "pairs": "pairs", "membership": "membership.json", "audit": "audit"},
     }
     if pair_recon["max_abs_after_usd"] > 0.01:
         raise ValueError(f"pair-to-sleeve reconciliation failed: {pair_recon}")
-    return {"manifest": manifest, "book": book, "pairs": pairs}
+    return {"manifest": manifest, "book": book, "pairs": pairs, "membership": _json_value(membership.to_dict(orient="records"))}
 
 
 def export_contract(source_dir: Path, out_dir: Path, repo_root: Path) -> dict[str, Any]:
@@ -392,6 +408,7 @@ def export_contract(source_dir: Path, out_dir: Path, repo_root: Path) -> dict[st
     pairs_dir.mkdir(parents=True, exist_ok=True)
     audit_dir.mkdir(parents=True, exist_ok=True)
     write_json(out_dir / "book.json", contract["book"])
+    write_json(out_dir / "membership.json", contract["membership"])
     for etf, payload in contract["pairs"].items():
         write_json(pairs_dir / f"{etf}.json", payload)
     for name in OPTIONAL_AUDIT_FILES:
@@ -401,6 +418,7 @@ def export_contract(source_dir: Path, out_dir: Path, repo_root: Path) -> dict[st
     manifest = dict(contract["manifest"])
     manifest["output_hashes"] = {
         "book.json": sha256_file(out_dir / "book.json"),
+        "membership.json": sha256_file(out_dir / "membership.json"),
         **{f"pairs/{etf}.json": sha256_file(pairs_dir / f"{etf}.json") for etf in sorted(contract["pairs"])},
     }
     write_json(out_dir / "manifest.json", manifest)

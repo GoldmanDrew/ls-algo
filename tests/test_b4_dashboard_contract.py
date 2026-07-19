@@ -51,6 +51,11 @@ def _fixture(root: Path) -> Path:
     pd.DataFrame({"ETF": ["NBIZ"], "Underlying": ["NBIS"], "sleeve": ["inverse_decay_bucket4"], "n_rebals": [1]}).to_csv(src / "pair_stats.csv", index=False)
     pd.DataFrame({"date": ["2026-06-02"], "turnover_usd": [50_000]}).to_csv(src / "rebalance_audit.csv", index=False)
     pd.DataFrame({"date": ["2026-06-02"], "ETF": ["NBIZ"], "desired_gross_usd": [50_000]}).to_csv(src / "pending_target_audit.csv", index=False)
+    pd.DataFrame([
+        {"ETF": "NBIZ", "Underlying": "NBIS", "lifecycle_state": "open", "block_reason": ""},
+        {"ETF": "CBRZ", "Underlying": "CBRS", "lifecycle_state": "pending_entry", "block_reason": "awaiting_operator_or_execution"},
+        {"ETF": "SPCG", "Underlying": "SPCX", "lifecycle_state": "purgatory_not_incumbent", "block_reason": "purgatory_without_prior_fill"},
+    ]).to_csv(src / "b4_membership_manifest.csv", index=False)
     return src
 
 
@@ -65,6 +70,9 @@ def test_export_is_authoritative_and_reconciles_pairs(tmp_path: Path):
     pair = json.loads((out / "pairs" / "NBIZ.json").read_text())
     assert pair["ledger_mode"] == "actual_dollar"
     assert pair["summary"]["actual_pnl_usd"] == pytest.approx(80.0)
+    assert manifest["counts"]["membership"] == 3
+    members = json.loads((out / "membership.json").read_text())
+    assert {m["ETF"] for m in members} == {"NBIZ", "CBRZ", "SPCG"}
 
 
 def test_hash_tamper_is_rejected(tmp_path: Path):

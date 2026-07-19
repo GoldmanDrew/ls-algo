@@ -101,6 +101,11 @@ from scripts.sizing_tilt_cadence_bt import (  # noqa: E402
     pair_daily_returns,
     perf,
 )
+from scripts.pair_price_panel import (  # noqa: E402
+    apply_delist_cutoff,
+    apply_panel_leg_patches,
+    frames_from_metrics,
+)
 
 TRADING_DAYS = 252
 STOCK_SLEEVES = ("core_leveraged", "yieldboost")
@@ -111,6 +116,10 @@ ALL_SLEEVES = STOCK_SLEEVES + (B4_SLEEVE, B5_SLEEVE)
 RUNS_DIR = REPO / "data" / "runs"
 MIN_B4_SESSIONS = 40  # admit newer listings; signals warm up on available history
 MIN_B4_TRADE_DAYS = 20
+# A production plan already owns eligibility/sizing. A newly listed B4 wrapper
+# needs only enough prices to mark its position; it must not be excluded by the
+# generic 40-session panel minimum.
+MIN_B4_LISTING_PRICE_DAYS = 2
 
 SLEEVE_ALIASES = {
     "whitelist_stock": "yieldboost",
@@ -1122,6 +1131,79 @@ def load_plan_timeline(
         if not plan.empty:
             out[d] = plan
     return out
+
+
+def b4_timeline_universe(
+    timeline: Mapping[pd.Timestamp, pd.DataFrame],
+) -> tuple[dict[str, str], dict[str, pd.Timestamp]]:
+    """Return every B4 wrapper/underlying ever present in the PIT plan timeline.
+
+    This deliberately includes purgatory and zero-executable rows: an
+    incumbent can still need to be marked or trimmed even when it is not a
+    fresh executable entry.
+    """
+    underlyings: dict[str, str] = {}
+    first_seen: dict[str, pd.Timestamp] = {}
+    for plan_date, plan in sorted(timeline.items()):
+        if plan is None or plan.empty:
+            continue
+        rows = plan.loc[plan.get("sleeve", pd.Series("", index=plan.index)).astype(str).eq(B4_SLEEVE)]
+        for _, row in rows.iterrows():
+            etf = _norm(row.get("ETF", ""))
+            und = _norm(row.get("Underlying", ""))
+            if not etf or not und:
+                continue
+            underlyings[etf] = und
+            first_seen.setdefault(etf, pd.Timestamp(plan_date).normalize())
+    return underlyings, first_seen
+
+
+def load_timeline_price_panel(
+    timeline: Mapping[pd.Timestamp, pd.DataFrame],
+    *,
+    run_date: str,
+    min_days: int = 40,
+) -> dict[str, pd.DataFrame]:
+    """Load a listing-aware panel for the full point-in-time B4 universe."""
+    underlyings, first_seen = b4_timeline_universe(timeline)
+    if not underlyings:
+        return load_price_panel(run_date, min_days=min_days)
+
+    source_dates = {pd.Timestamp(run_date).normalize(), *first_seen.values()}
+    frames: list[pd.DataFrame] = []
+    cols = ["date", "ticker", "etf_adj_close", "underlying_adj_close"]
+    for as_of in sorted(source_dates):
+        path = RUNS_DIR / as_of.strftime("%Y-%m-%d") / "model_inputs" / "etf_metrics_daily.parquet"
+        if not path.is_file():
+            continue
+        try:
+            frame = pd.read_parquet(path, columns=cols)
+        except Exception:
+            continue
+        frame["_panel_source_date"] = as_of
+        frames.append(frame)
+    if not frames:
+        return load_price_panel(run_date, min_days=min_days, underlying_by_etf=underlyings)
+
+    metrics = pd.concat(frames, ignore_index=True)
+    metrics["date"] = pd.to_datetime(metrics["date"], errors="coerce").dt.normalize()
+    metrics["ticker"] = metrics["ticker"].map(_norm)
+    metrics = metrics.dropna(subset=["date", "ticker"]).sort_values(
+        ["date", "ticker", "_panel_source_date"]
+    ).drop_duplicates(["date", "ticker"], keep="last")
+    panel = frames_from_metrics(
+        metrics,
+        min_days=min_days,
+        underlying_by_etf=underlyings,
+        min_days_by_etf={etf: MIN_B4_LISTING_PRICE_DAYS for etf in underlyings},
+        repo=REPO,
+    )
+    # Point-in-time run snapshots are the production source of truth here.
+    # Do not Yahoo-extend every historical wrapper to the terminal date: a
+    # delisted wrapper can otherwise trigger repeated external retries and turn
+    # a historical mark into a synthetic post-life series.
+    panel = apply_panel_leg_patches(panel, underlying_by_etf=underlyings, repo=REPO)
+    return apply_delist_cutoff(panel, repo=REPO)
 
 
 def archive_coverage_summary(start: str = "2025-05-01") -> pd.DataFrame:
@@ -4651,6 +4733,72 @@ def _take_pending_target_audit(meta: dict[str, Any]) -> pd.DataFrame:
     return raw if isinstance(raw, pd.DataFrame) else pd.DataFrame()
 
 
+def build_b4_membership_manifest(
+    timeline: Mapping[pd.Timestamp, pd.DataFrame],
+    pair_daily: pd.DataFrame,
+    panel: Mapping[str, pd.DataFrame],
+    *,
+    run_end: str | None,
+) -> pd.DataFrame:
+    """Publish every B4 lifecycle, including members without accounting rows."""
+    members: dict[str, dict[str, Any]] = {}
+    for plan_date, plan in sorted(timeline.items()):
+        if plan is None or plan.empty:
+            continue
+        b4 = plan.loc[plan.get("sleeve", pd.Series("", index=plan.index)).astype(str).eq(B4_SLEEVE)]
+        for _, row in b4.iterrows():
+            etf = _norm(row.get("ETF", ""))
+            if not etf:
+                continue
+            item = members.setdefault(etf, {
+                "ETF": etf,
+                "Underlying": _norm(row.get("Underlying", "")),
+                "first_plan_date": str(pd.Timestamp(plan_date).date()),
+                "last_plan_date": str(pd.Timestamp(plan_date).date()),
+                "plan_observations": 0,
+            })
+            item["last_plan_date"] = str(pd.Timestamp(plan_date).date())
+            item["plan_observations"] += 1
+            item["latest_purgatory"] = _truthy(row.get("purgatory", False))
+            item["latest_reduce_only"] = _truthy(row.get("reduce_only", False))
+            item["latest_keep_open"] = _truthy(row.get("keep_open", False))
+            item["latest_hard_exit"] = _truthy(row.get("hard_exit", False))
+            item["latest_execution_policy"] = str(row.get("execution_policy", "") or "")
+            item["latest_model_gross_usd"] = _float_or(row.get("model_gross_target_usd"))
+            item["latest_executable_gross_usd"] = _float_or(row.get("gross_target_usd"))
+
+    actual = pair_daily.loc[pair_daily.get("sleeve", pd.Series("", index=pair_daily.index)).astype(str).eq(B4_SLEEVE)].copy()
+    if not actual.empty:
+        actual["ETF"] = actual["ETF"].map(_norm)
+        actual["date"] = actual["date"].astype(str)
+    for etf, item in members.items():
+        ledger = actual.loc[actual["ETF"].eq(etf)] if not actual.empty else pd.DataFrame()
+        item["has_ledger"] = not ledger.empty
+        item["first_ledger_date"] = str(ledger["date"].min()) if not ledger.empty else ""
+        item["last_ledger_date"] = str(ledger["date"].max()) if not ledger.empty else ""
+        item["in_price_panel"] = etf in panel
+        if not ledger.empty:
+            last = ledger.sort_values("date").iloc[-1]
+            gross = abs(_float_or(last.get("etf_usd"))) + abs(_float_or(last.get("underlying_usd")))
+            item["latest_ledger_gross_usd"] = gross
+            item["lifecycle_state"] = "open" if gross > 1e-6 else "closed"
+            item["block_reason"] = ""
+        elif not item["in_price_panel"]:
+            item["lifecycle_state"] = "blocked"
+            item["block_reason"] = "missing_price_panel"
+        elif item.get("latest_purgatory"):
+            item["lifecycle_state"] = "purgatory_not_incumbent"
+            item["block_reason"] = "purgatory_without_prior_fill"
+        elif item.get("latest_hard_exit"):
+            item["lifecycle_state"] = "hard_exit_without_ledger"
+            item["block_reason"] = "hard_exit"
+        else:
+            item["lifecycle_state"] = "pending_entry"
+            item["block_reason"] = "awaiting_operator_or_execution"
+        item["run_end"] = str(run_end or "")
+    return pd.DataFrame(list(members.values())).sort_values("ETF").reset_index(drop=True) if members else pd.DataFrame()
+
+
 # ---------------------------------------------------------------------------
 # GTP-approx daily sizing (legacy) + full prod replay (primary)
 # ---------------------------------------------------------------------------
@@ -5590,7 +5738,11 @@ def run_prod_replay_backtest(
     if price_panel_min_days is not None:
         panel_kwargs["min_days"] = int(price_panel_min_days)
         print(f"[prod-bt:prod] price panel min_days={int(price_panel_min_days)}")
-    panel = load_price_panel(run_date, **panel_kwargs)
+    panel = load_timeline_price_panel(
+        timeline,
+        run_date=run_date,
+        min_days=int(panel_kwargs.get("min_days", 40)),
+    )
     nav, audit, meta, pair_stats, sleeve_daily = simulate_book_from_plan_timeline(
         timeline,
         panel,
@@ -5650,6 +5802,12 @@ def run_prod_replay_backtest(
 
     pair_daily = _take_pair_daily(meta)
     pending_target_audit = _take_pending_target_audit(meta)
+    b4_membership = build_b4_membership_manifest(
+        timeline,
+        pair_daily,
+        panel,
+        run_end=str(nav.index[-1].date()) if len(nav) else None,
+    )
     book_meta = {"sleeve": "BOOK", "mode": "prod", **meta}
     summary = pd.DataFrame([book_meta])
     series = pd.DataFrame({"BOOK_NAV": nav})
@@ -5688,6 +5846,9 @@ def run_prod_replay_backtest(
             "b4_gross_max": float(diag.loc[diag["ok"], "gross_b4"].max())
             if not diag.empty and n_ok and "gross_b4" in diag.columns
             else None,
+            "b4_membership_count": int(len(b4_membership)),
+            "b4_membership_with_ledger": int(b4_membership.get("has_ledger", pd.Series(dtype=bool)).sum()),
+            "b4_membership_blocked": int(b4_membership.get("lifecycle_state", pd.Series(dtype=str)).eq("blocked").sum()),
         },
         "book": {k: book_meta.get(k) for k in BOOK_REPORT_KEYS},
         "limitations": [
@@ -5762,6 +5923,7 @@ def run_prod_replay_backtest(
     # Always write (even empty) so a stale file from a killed run cannot linger.
     extra["pair_daily_pnl.csv"] = pair_daily
     extra["pending_target_audit.csv"] = pending_target_audit
+    extra["b4_membership_manifest.csv"] = b4_membership
     _write_outputs(
         outdir=outdir,
         mode="prod",
