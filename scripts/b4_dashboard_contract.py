@@ -102,14 +102,30 @@ def git_provenance(repo: Path) -> dict[str, Any]:
     try:
         commit = _run("rev-parse", "HEAD")
         branch = _run("branch", "--show-current")
-        status = _run("status", "--porcelain", "--untracked-files=all")
-        dirty = bool(status)
+        status_raw = _run("status", "--porcelain", "--untracked-files=all")
+        ignored_prefixes = (
+            "notebooks/output/production_actual_bt/",
+            "risk_dashboard/data/bucket4_production_replay/",
+            "__pycache__/",
+        )
+        status_lines = []
+        for line in status_raw.splitlines():
+            rel = line[3:].replace("\\", "/")
+            if rel.startswith(ignored_prefixes) or "/__pycache__/" in rel or rel.endswith(".pyc"):
+                continue
+            status_lines.append(line)
+        status = "\n".join(status_lines)
+        dirty = bool(status_lines)
         patch = b""
         if dirty:
-            patch += subprocess.check_output(["git", "diff", "--binary", "HEAD"], cwd=repo)
+            tracked = [line[3:] for line in status_lines if not line.startswith("?? ")]
+            if tracked:
+                patch += subprocess.check_output(
+                    ["git", "diff", "--binary", "HEAD", "--", *tracked], cwd=repo
+                )
             untracked = [
                 line[3:]
-                for line in status.splitlines()
+                for line in status_lines
                 if line.startswith("?? ") and (repo / line[3:]).is_file()
             ]
             for rel in sorted(untracked):
@@ -401,4 +417,3 @@ def validate_contract(root: Path) -> dict[str, Any]:
     if abs(_finite(recon.get("max_abs_after_usd"))) > 0.01:
         raise ValueError("contract pair-to-sleeve reconciliation is not exact")
     return manifest
-

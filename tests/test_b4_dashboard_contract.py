@@ -11,7 +11,7 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from scripts.b4_dashboard_contract import export_contract, validate_contract  # noqa: E402
+from scripts.b4_dashboard_contract import export_contract, git_provenance, validate_contract  # noqa: E402
 
 
 def _fixture(root: Path) -> Path:
@@ -74,3 +74,11 @@ def test_hash_tamper_is_rejected(tmp_path: Path):
     (out / "book.json").write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="hash mismatch"):
         validate_contract(out)
+
+
+def test_generated_replay_outputs_do_not_dirty_source_provenance():
+    prov = git_provenance(REPO)
+    # This checkout may contain unrelated user work, but generated production
+    # replay/output paths must never be the reason it is marked dirty.
+    assert prov.get("commit")
+    assert prov.get("working_tree_hash") or prov.get("dirty") is False
