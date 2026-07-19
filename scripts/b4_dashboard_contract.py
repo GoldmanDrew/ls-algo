@@ -204,11 +204,14 @@ def _allocate_pair_reconciliation(pair_daily: pd.DataFrame, sleeve_daily: pd.Dat
     }
 
 
-def _event_map(source_dir: Path) -> dict[tuple[str, str], dict[str, Any]]:
+def _event_map(source_dir: Path, expected_end: str) -> dict[tuple[str, str], dict[str, Any]]:
     path = source_dir / "b4_pair_trade_ledger.csv"
     if not path.exists():
         return {}
     frame = _read_csv(path)
+    if frame.empty or "date" not in frame or str(frame["date"].astype(str).max()) != str(expected_end):
+        # Never attach a stale audit ledger to a freshly generated replay.
+        return {}
     result: dict[tuple[str, str], dict[str, Any]] = {}
     for row in frame.to_dict(orient="records"):
         key = (str(row.get("ETF", "")).upper(), str(row.get("date", "")))
@@ -322,7 +325,7 @@ def build_contract(source_dir: Path, repo_root: Path) -> dict[str, Any]:
     if end != str(report.get("end")):
         raise ValueError(f"source end-date mismatch: report={report.get('end')} ledger={end}")
     b4_daily, pair_recon = _allocate_pair_reconciliation(b4_daily, sleeve_daily)
-    events = _event_map(source_dir)
+    events = _event_map(source_dir, end)
     stats_by_etf = {
         str(row.get("ETF", "")).upper(): row for row in b4_stats.to_dict(orient="records")
     }
