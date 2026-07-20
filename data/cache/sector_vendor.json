@@ -1,215 +1,7 @@
 {
   "symbols": {
-    "LCID": {
-      "fetched_at_epoch": 1779379080.462442,
-      "info": {}
-    },
-    "SOUN": {
-      "fetched_at_epoch": 1779379080.462442,
-      "info": {}
-    },
-    "AAOI": {
-      "fetched_at_epoch": 1784190023.2532825,
-      "info": {
-        "sector": "Technology",
-        "industry": "Communication Equipment",
-        "longName": "Applied Optoelectronics, Inc.",
-        "shortName": "Applied Optoelectronics, Inc.",
-        "longBusinessSummary": "Applied Optoelectronics, Inc. engages in the design, manufacture, and sale of fiber-optic networking products in the United States, Taiwan, and China. The company offers optical modules, optical filters, lasers, laser components, subassemblies, transmitters and transceivers, turn-key equipment, headend, node, and distribution equipment, as well as amplifiers. It sells its products to internet data center operators, cable television, telecom equipment manufacturers, fiber-to-the-home, and internet service providers through its direct and indirect sales channels. Applied Optoelectronics, Inc. was incorporated in 1997 and is headquartered in Sugar Land, Texas."
-      }
-    },
-    "SVIX": {
-      "fetched_at_epoch": 1784190023.2532825,
-      "info": {
-        "longName": "-1x Short VIX Futures ETF",
-        "shortName": "-1x Short VIX Futures ETF",
-        "longBusinessSummary": "The index measures the daily inverse performance of a portfolio of first and second month VIX futures contracts. This theoretical portfolio is rolled each day to maintain a consistent time to maturity of the futures contracts. The index is calculated daily at 4:00 p.m. (Eastern time) and at a value calculated from the average price for the futures contracts between 3:45 p.m. (Eastern time) and 4:00 p.m. (Eastern time)."
-      }
-    },
-    "SBUX": {
-      "fetched_at_epoch": 1784190023.2532825,
-      "info": {
-        "sector": "Consumer Cyclical",
-        "industry": "Restaurants",
-        "longName": "Starbucks Corporation",
-        "shortName": "Starbucks Corporation",
-        "longBusinessSummary": "Starbucks Corporation, together with its subsidiaries, operates as a roaster, marketer, and retailer of coffee internationally. The company operates through three segments: North America, International, and Channel Development. Its stores offer coffee, tea, and other beverages, roasted whole beans and ground coffees, complementary food, packaged coffees, single-serve products, and ready-to-drink beverages; and various food products, such as pastries, breakfast sandwiches, and lunch items. The company also licenses its trademarks through licensed stores, and grocery and foodservice accounts. The company offers its products under the Starbucks Coffee, Teavana, Seattle's Best Coffee, Ethos, and Starbucks Reserve brands. Starbucks Corporation was founded in 1971 and is based in Seattle, Washington."
-      }
-    },
-    "BIDU": {
-      "fetched_at_epoch": 1784190023.2532825,
-      "info": {
-        "sector": "Communication Services",
-        "industry": "Internet Content & Information",
-        "longName": "Baidu, Inc.",
-        "shortName": "Baidu, Inc.",
-        "longBusinessSummary": "Baidu, Inc. provides internet content, value-added telecommunication-based, internet map, and online audio and video services in the People's Republic of China. It operates in two segments, Baidu General Business and iQIYI. The Baidu General Business segment offers products and services for mobile ecosystem, AI cloud, and intelligent driving. This segment operates Baidu App that enables users to access search, feed, content, and other services through mobile devices; and Haokan, which offers a range of various user generated and professionally produced short videos. It also provides a portfolio of knowledge and information products, including Baidu Wiki, which features columns and videos, such as encyclopedia of intangible cultural heritage, digital museum and recorder of history; Baidu Knows, an online community where users can pose questions to other users, such as individuals, professionals, and enterprises; Baidu Experience, an online platform where users share daily knowledge and experience; ERNIE Bot, new AI-native product that serves as a multi-round conversational AI assistant on both PC and mobile; and Baidu Post, a social media that allows users to post text, image, audio and video content, and reply to original curation forming valuable discussion groups, as well as livestreaming services, including live streaming and AI-powered digital human livestreaming. In addition, the company offers DuerOS smart assistant for the Chinese language; Apollo Go autonomous ride-hailing service; online marketing services; Baidu Maps, a voice-enabled mobile app providing users with travel-related services; and AI chips. The iQIYI segment produces and distributes professionally produced content. This segment offers online entertainment video services, including online videos, experience services, online games, comics, and others. The company was incorporated in 2000 and is headquartered in Beijing, the People's Republic of China."
-      }
-    },
-    "XOM": {
-      "fetched_at_epoch": 1780327610.5519783,
-      "info": {}
-    },
-    "ABNB": {
-      "fetched_at_epoch": 1780327610.5519783,
-      "info": {}
-    },
-    "COST": {
-      "fetched_at_epoch": 1780327610.5519783,
-      "info": {}
-    },
-    "ISRG": {
-      "fetched_at_epoch": 1780327610.5519783,
-      "info": {}
-    },
-    "CSCO": {
-      "fetched_at_epoch": 1780327610.5519783,
-      "info": {}
-    },
-    "LMT": {
-      "fetched_at_epoch": 1780326760.8393524,
-      "info": {}
-    },
-    "MDB": {
-      "fetched_at_epoch": 1780327705.6063495,
-      "info": {}
-    },
-    "DASH": {
-      "fetched_at_epoch": 1780325344.862543,
-      "info": {}
-    },
-    "CELH": {
-      "fetched_at_epoch": 1780325344.862543,
-      "info": {}
-    },
-    "XLK": {
-      "fetched_at_epoch": 1780324679.3383565,
-      "info": {}
-    },
-    "F": {
-      "fetched_at_epoch": 1780327095.1970696,
-      "info": {}
-    },
-    "ASHR": {
-      "fetched_at_epoch": 1780327610.5519783,
-      "info": {}
-    },
-    "XLE": {
-      "fetched_at_epoch": 1780326760.8393524,
-      "info": {}
-    },
-    "EWJ": {
-      "fetched_at_epoch": 1784190023.2532825,
-      "info": {
-        "longName": "iShares MSCI Japan ETF",
-        "shortName": "iShares MSCI Japan Index Fund",
-        "longBusinessSummary": "The fund generally will invest at least 80% of its assets in the component securities of its underlying index and in investments that have economic characteristics that are substantially identical to the component securities of its underlying index. The underlying index is designed to measure the performance of the large- and mid-capitalization segments of the Japanese equity market."
-      }
-    },
-    "SLV": {
-      "fetched_at_epoch": 1780324830.5361738,
-      "info": {}
-    },
-    "XLF": {
-      "fetched_at_epoch": 1784190023.2532825,
-      "info": {
-        "longName": "State Street Financial Select Sector SPDR ETF",
-        "shortName": "State Street Financial Select S",
-        "longBusinessSummary": "The fund generally invests substantially all, but at least 95%, of its total assets in the securities comprising the index. The index includes companies that have been identified as Financial companies by the Global Industry Classification Standard, including securities of companies from the following industries: financial services; insurance; banks; capital markets; mortgage real estate investment trusts; and consumer finance. The fund is non-diversified."
-      }
-    },
-    "XBI": {
-      "fetched_at_epoch": 1780327610.5519783,
-      "info": {}
-    },
-    "RTX": {
-      "fetched_at_epoch": 1780327610.5519783,
-      "info": {}
-    },
-    "SNPS": {
-      "fetched_at_epoch": 1780327785.0106134,
-      "info": {}
-    },
-    "AXON": {
-      "fetched_at_epoch": 1780325344.862543,
-      "info": {}
-    },
-    "PBR": {
-      "fetched_at_epoch": 1780326760.8393524,
-      "info": {}
-    },
-    "GSOL": {
-      "fetched_at_epoch": 1780327785.0106134,
-      "info": {}
-    },
-    "ORLY": {
-      "fetched_at_epoch": 1780327541.8136914,
-      "info": {}
-    },
-    "VALE": {
-      "fetched_at_epoch": 1784190023.2532825,
-      "info": {
-        "sector": "Basic Materials",
-        "industry": "Other Industrial Metals & Mining",
-        "longName": "Vale S.A.",
-        "shortName": "VALE S.A.",
-        "longBusinessSummary": "Vale S.A., together with its subsidiaries, produces iron ore and nickel in Brazil, Asia, the Middle East, North Africa, Europe, the Americas, and Oceania. The company operates in two segments, Iron Ore Solutions and Vale Base Metals. It extracts, produces, and distributes iron ore, iron ore pellets, briquettes, nickel, copper, other ferrous products, and by-products, including gold, silver, cobalt, platinum-group metals, and other base metals, as well as low-carbon critical minerals. The company also operates logistics systems and distribution centers, such as mining complexes, railways, and maritime terminals, ports, and ships; generates energy from hydroelectric, solar, and wind sources; and engages in greenfield mineral exploration. In addition, it is involved in research; and trading activities. The company was formerly known as Companhia Vale do Rio Doce and changed its name to Vale S.A. in May 2009. Vale S.A. was founded in 1942 and is headquartered in Rio De Janeiro, Brazil."
-      }
-    },
-    "SNDX": {
-      "fetched_at_epoch": 1780325191.4499614,
-      "info": {}
-    },
-    "DDOG": {
-      "fetched_at_epoch": 1780327785.0106134,
-      "info": {}
-    },
-    "HL": {
-      "fetched_at_epoch": 1780327610.5519783,
-      "info": {}
-    },
-    "ENPH": {
-      "fetched_at_epoch": 1780327705.6063495,
-      "info": {}
-    },
-    "FUTU": {
-      "fetched_at_epoch": 1780327610.5519783,
-      "info": {}
-    },
-    "CHNL": {
-      "fetched_at_epoch": 1784190023.2532825,
-      "info": {
-        "longName": "Chainlink ETF",
-        "shortName": "Chainlink ETF",
-        "longBusinessSummary": "The fund is an exchange-traded fund (\u201cETF\u201d) that seeks to achieve its investment objective primarily though managed exposure to LINK futures contracts that trade only on an exchange registered with the Commodity Futures Trading Commission, and cash, cash-like instruments or high quality securities that serve as collateral to the fund\u2019s investments in LINK Futures Contracts (\u201cCollateral Investments\u201d). It is non-diversified."
-      }
-    },
-    "IBM": {
-      "fetched_at_epoch": 1784190023.2532825,
-      "info": {
-        "sector": "Technology",
-        "industry": "Information Technology Services",
-        "longName": "International Business Machines Corporation",
-        "shortName": "International Business Machines",
-        "longBusinessSummary": "International Business Machines Corporation, together with its subsidiaries, provides integrated solutions and services in the Americas, Europe, the Middle East, Africa, and the Asia Pacific. It operates through Software, Consulting, Infrastructure, and Financing segments. The Software segment offers hybrid cloud and AI platforms that allow clients to realize their digital and AI transformations across the applications, data, and environments in which they operate. The Consulting segment delivers strategy and technology services and intelligent operations, providing business transformation, technology implementation, managed services, application modernization, and AI-powered solutions. The Infrastructure segment provides on-premises and cloud-based server, and storage solutions, as well as life-cycle services for hybrid cloud infrastructure deployment. The Financing segment offers client and commercial financing, and facilitates IBM clients' acquisition of hardware, software, and services. It operates a data streaming platform. The company has strategic partnerships with various companies, including hyperscalers, service providers, global system integrators, and software and hardware vendors that include Adobe, Amazon Web Services, Microsoft, Oracle, Salesforce, Samsung Electronics and SAP, and others. It also has a strategic collaboration with Arm Holdings plc for the development of new dual-architecture hardware that helps enterprises run future AI and data intensive workloads; strategic partnership with three.ws to advance ai-powered 3d agent technology; and collaboration with Lightwell to help strengthen open source software supply chain. The company was formerly known as Computing-Tabulating-Recording Co. and changed its name to International Business Machines Corporation in 1924. International Business Machines Corporation was incorporated in 1911 and is headquartered in Armonk, New York."
-      }
-    },
-    "CBRS": {
-      "fetched_at_epoch": 1782446404.9327412,
-      "info": {}
-    },
-    "SPCX": {
-      "fetched_at_epoch": 1784190023.2532825,
-      "info": {
-        "sector": "Industrials",
-        "industry": "Aerospace & Defense",
-        "longName": "Space Exploration Technologies Corp.",
-        "shortName": "Space Exploration Technologies ",
-        "longBusinessSummary": "Space Exploration Technologies Corp. provides satellite-based broadband services in the United States, Ireland, Canada, and internationally. The company's Connectivity segment operates a high-speed, low-latency broadband network powered by various Starlink satellites in low-earth orbit, delivering connectivity to various consumer, enterprise, and government customers through its Starlink offering. Its Space segment designs, manufactures, and launches reusable rockets to provide access to space. It offers launch services for the deployment of payloads to intended orbits for commercial and government customers utilizing Falcon 9 and Falcon Heavy; and launch and development for the development of spacecraft and the provision of launch and mission services for government agency space programs utilizing Falcon 9, Falcon Heavy, Starship, and Dragon. The company's AI segment operates a vertically integrated AI platform spanning a frontier LLM Grok; AI solutions for consumer and enterprise customers; X, a real-time information, entertainment, and free speech platform; and AI computational infrastructure. The company was founded in 2002 and is based in Starbase, Texas."
-      }
-    },
     "AXTI": {
-      "fetched_at_epoch": 1784190023.2532825,
+      "fetched_at_epoch": 1784538498.4103813,
       "info": {
         "sector": "Technology",
         "industry": "Semiconductor Equipment & Materials",
@@ -218,48 +10,26 @@
         "longBusinessSummary": "AXT, Inc. designs, develops, manufactures, and distributes compound and single element semiconductor substrates. The company provides indium phosphide for use in data center connectivity using light/lasers, high-speed data transfer in data centers, 5G communications, fiber optic lasers and detectors, consumer devices, passive optical networks, silicon photonics, photonic integrated circuits, thermo-photovoltaics, RF amplifier and switching, infrared light-emitting diode (LEDS) motion control, lidar for robotics and autonomous vehicles, and infrared thermal imaging. It also offers semi-insulating gallium arsenide (GaAs) substrates for use in Wi-Fi and IoT devices, transistors, direct broadcast television, power amplifiers, satellite communications, and solar cells; and semi-conducting GaAs substrates that are used in LEDs, screen displays using micro-LEDs, printer head lasers and LEDs, 3-D sensing using VCSELs, data center communication using VCSELs, sensors for industrial robotics/near-infrared sensors, laser machining, cutting and drilling, optical couplers, solar cells, night vision goggles, lidar for robotics and autonomous vehicles, and other lasers. In addition, the company provides germanium substrates for use in multi-junction solar cells for satellites, optical sensors and detectors, terrestrial concentrated photo voltaic cells, infrared detectors, and carrier wafer for LED. Further, it offers 6N+ and 7N+ purified gallium, boron trioxide, gallium-magnesium alloy, pyrolytic boron nitride (pBN) crucibles, and pBN insulating parts. It sells its products through direct salesforce in the United States, China, and Europe, as well as through independent sales representatives and distributors in Japan, Taiwan, Korea, and internationally. The company was formerly known as American Xtal Technology, Inc. and changed its name to AXT, Inc. in July 2000. AXT, Inc. was incorporated in 1986 and is headquartered in Fremont, California."
       }
     },
-    "AMPX": {
-      "fetched_at_epoch": 1784190023.2532825,
-      "info": {
-        "sector": "Industrials",
-        "industry": "Electrical Equipment & Parts",
-        "longName": "Amprius Technologies, Inc.",
-        "shortName": "Amprius Technologies, Inc.",
-        "longBusinessSummary": "Amprius Technologies, Inc. develops, manufactures, and markets lithium-ion batteries for mobility applications. The company provides silicon anode lithium-ion batteries under the SiCore and SiMaxx product platforms. Its batteries are primarily used for existing and emerging aviation applications, including unmanned aerial systems, such as drones and high-altitude pseudo satellites. The company was founded in 2008 and is headquartered in Fremont, California."
-      }
-    },
-    "AMKR": {
-      "fetched_at_epoch": 1784190023.2532825,
+    "AAOI": {
+      "fetched_at_epoch": 1784538498.4103813,
       "info": {
         "sector": "Technology",
-        "industry": "Semiconductor Equipment & Materials",
-        "longName": "Amkor Technology, Inc.",
-        "shortName": "Amkor Technology, Inc.",
-        "longBusinessSummary": "Amkor Technology, Inc. provides outsourced semiconductor packaging and test services in the United States, Japan, Europe, and the Asia Pacific. It offers turnkey packaging and test services, including semiconductor wafer bump, wafer probe, wafer back-grind, package design, packaging, burn-in, system-level and final test, and drop shipment services; flip chip scale package products for smartphones, tablets, and other mobile consumer electronic devices; flip chip stacked chip scale packages that are used to stack memory digital baseband, and as applications processors in mobile devices; flip-chip ball grid array packages for various networking, storage, computing, automotive, and consumer applications; and memory products for system memory or platform data storage. The company provides wafer-level CSP packages for power management, transceivers, sensors, wireless charging, codecs, and specialty silicon; wafer-level fan-out packages used in power management, transceivers, radar, and specialty silicon; silicon wafer integrated fan-out technology that replaces a laminate substrate with a thinner structure; leadframe packages for electronic devices and mixed-signal applications; and substrate-based wirebond packages used to connect a die to a substrate. In addition, it offers micro-electro-mechanical systems packages that are miniaturized mechanical and electromechanical devices; and advanced system-in-package modules used in radio frequency and front end modules, basebands, connectivity, fingerprint sensors, display and touch screen drivers, sensors and MEMS, and NAND memory and solid-state drives. Further, the company provides wafer, package, and system level test services, as well as burn-in test and test development services. It serves integrated device manufacturers, fabless semiconductor companies, original equipment manufacturers, and contract foundries. Amkor Technology, Inc. was founded in 1968 and is headquartered in Tempe, Arizona."
+        "industry": "Communication Equipment",
+        "longName": "Applied Optoelectronics, Inc.",
+        "shortName": "Applied Optoelectronics, Inc.",
+        "longBusinessSummary": "Applied Optoelectronics, Inc. engages in the design, manufacture, and sale of fiber-optic networking products in the United States, Taiwan, and China. The company offers optical modules, optical filters, lasers, laser components, subassemblies, transmitters and transceivers, turn-key equipment, headend, node, and distribution equipment, as well as amplifiers. It sells its products to internet data center operators, cable television, telecom equipment manufacturers, fiber-to-the-home, and internet service providers through its direct and indirect sales channels. Applied Optoelectronics, Inc. was incorporated in 1997 and is headquartered in Sugar Land, Texas."
       }
     },
-    "STX": {
-      "fetched_at_epoch": 1784190023.2532825,
+    "XLF": {
+      "fetched_at_epoch": 1784538498.4103813,
       "info": {
-        "sector": "Technology",
-        "industry": "Computer Hardware",
-        "longName": "Seagate Technology Holdings plc",
-        "shortName": "Seagate Technology Holdings PLC",
-        "longBusinessSummary": "Seagate Technology Holdings plc engages in the provision of data storage technology and infrastructure solutions in Singapore, the United States, the Netherlands, and internationally. The company offers mass capacity storage products, including enterprise nearline hard disk drives (HDDs), enterprise nearline solid state drives (SSDs), enterprise nearline systems, video and image HDDs, and network-attached storage drives. It also offers legacy applications comprising Mission Critical HDDs and SSDs; external storage solutions under the Seagate Ultra Touch, One Touch, Expansion, and Basics product lines, as well as under the LaCie brand name; desktop drives for personal computers and workstation applications; notebook drives traditional notebooks, convertible systems, and external storage applications, DVR HDDs for video streaming applications, and gaming SSDs for gaming rigs. In addition, the company provides Lyve edge-to-cloud mass capacity platform, that includes modular hardware and software to support enterprises' on-premise and cloud storage infrastructure needs. It sells its products primarily to original equipment manufacturers, distributors, and retailers. The company was founded in 1978 and is based in Singapore."
-      }
-    },
-    "XNDU": {
-      "fetched_at_epoch": 1784190023.2532825,
-      "info": {
-        "sector": "Technology",
-        "industry": "Software - Infrastructure",
-        "longName": "Xanadu Quantum Technologies Limited",
-        "shortName": "Xanadu Quantum Technologies Lim",
-        "longBusinessSummary": "Xanadu Quantum Technologies Limited develops and provides photonic quantum computing technology and related software solutions and applications, including cloud-based access to quantum computers and tools for quantum programming and simulation. The company provides access to photonic quantum computers through x-series devices available via the cloud, supporting programmable quantum gates and photon-number resolving detectors. It offers Pennylane, a cross-platform python library that enables a paradigm and quantum differentiable programming that enables integration with machine learning tools; and Catalyst for just-in-time compilation and optimization of quantum algorithms. It also provides users with access to documentation, guides, and community-led resources for quantum machine learning, quantum chemistry simulations, and other quantum computing applications, along with collaboration and support from a team of quantum experts. The company serves professional clients in the quantum computing, software development, and machine learning sectors, as well as advanced users in research and development, including those utilizing high-performance computing and quantum hardware. Xanadu Quantum Technologies Limited was incorporated in 2016 and is based in Toronto, Canada."
+        "longName": "State Street Financial Select Sector SPDR ETF",
+        "shortName": "State Street Financial Select S",
+        "longBusinessSummary": "The fund generally invests substantially all, but at least 95%, of its total assets in the securities comprising the index. The index includes companies that have been identified as Financial companies by the Global Industry Classification Standard, including securities of companies from the following industries: financial services; insurance; banks; capital markets; mortgage real estate investment trusts; and consumer finance. The fund is non-diversified."
       }
     },
     "POET": {
-      "fetched_at_epoch": 1784190023.2532825,
+      "fetched_at_epoch": 1784538498.4103813,
       "info": {
         "sector": "Technology",
         "industry": "Semiconductors",
@@ -268,28 +38,53 @@
         "longBusinessSummary": "POET Technologies Inc., together with its subsidiaries, designs, develops, manufactures, and sells semiconductor products and services for commercial applications in the United States, Canada, the rest of North and South America, Europe, Malaysia, Singapore, China, and the rest of Asia. The company offers photonic integrated packaging solutions based on the POET Optical Interposer, a platform that allows the integration of electronic and photonic devices onto a single chip using advanced wafer-level semiconductor manufacturing techniques. Its products include photonic integrated circuits, optical engines, optical transceiver modules, and light source products. The company serves the data center AI, light source, and telecommunications markets; 5G interconnect markets, such as PON and GPON, as well as edge computing for machine-to-machine communications; and sensing markets, including LIDAR, Optical Coherence Tomography for medical devices, and virtual reality systems. The company has a strategic collaboration with Lumilens Inc. for the development of wafer-level photonic integration for AI optical networks. The company was formerly known as Opel Technologies Inc. and changed its name to POET Technologies Inc. in June 2013. POET Technologies Inc. is headquartered in Toronto, Canada."
       }
     },
-    "TXN": {
-      "fetched_at_epoch": 1784190023.2532825,
+    "SPCX": {
+      "fetched_at_epoch": 1784538498.4103813,
       "info": {
-        "sector": "Technology",
-        "industry": "Semiconductors",
-        "longName": "Texas Instruments Incorporated",
-        "shortName": "Texas Instruments Incorporated",
-        "longBusinessSummary": "Texas Instruments Incorporated designs, manufactures, and sells semiconductors to electronics designers and manufacturers in the United States, China, the rest of Asia, Europe, the Middle East, Africa, Japan, and internationally. It operates through Analog and Embedded Processing segments. The Analog segment offers power products to manage power requirements across various voltage levels, including battery-management solutions, DC/DC switching regulators, AC/DC and isolated controllers and converters, power switches, linear regulators, voltage references, multiphase controllers and power stages, and lighting products. This segment also provides signal chain products that sense, condition, and measure real-world signals and convert them into data to be transferred or converted for further processing and control, such as amplifiers, data converters, interface products, motor drives, clocks, and logic and sensing products. The Embedded Processing segment offers microcontrollers, processors, wireless connectivity, and radar products; and applications processors for specific computing activity. It also provides DLP products primarily for use in projecting high-definition images; calculators; and application-specific integrated circuits. Its products are used in various markets, such as industrial, automotive, personal electronics, communications equipment, enterprise systems, calculators, and others. The company markets and sells its semiconductor products through direct sales and distributors, as well as through its website. Texas Instruments Incorporated was founded in 1930 and is headquartered in Dallas, Texas."
+        "sector": "Industrials",
+        "industry": "Aerospace & Defense",
+        "longName": "Space Exploration Technologies Corp.",
+        "shortName": "Space Exploration Technologies ",
+        "longBusinessSummary": "Space Exploration Technologies Corp. provides satellite-based broadband services in the United States, Ireland, Canada, and internationally. The company's Connectivity segment operates a high-speed, low-latency broadband network powered by various Starlink satellites in low-earth orbit, delivering connectivity to various consumer, enterprise, and government customers through its Starlink offering. Its Space segment designs, manufactures, and launches reusable rockets to provide access to space. It offers launch services for the deployment of payloads to intended orbits for commercial and government customers utilizing Falcon 9 and Falcon Heavy; and launch and development for the development of spacecraft and the provision of launch and mission services for government agency space programs utilizing Falcon 9, Falcon Heavy, Starship, and Dragon. The company's AI segment operates a vertically integrated AI platform spanning a frontier LLM Grok; AI solutions for consumer and enterprise customers; X, a real-time information, entertainment, and free speech platform; and AI computational infrastructure. The company was founded in 2002 and is based in Starbase, Texas."
       }
     },
-    "CPNG": {
-      "fetched_at_epoch": 1784190023.2532825,
+    "EWJ": {
+      "fetched_at_epoch": 1784538498.4103813,
       "info": {
-        "sector": "Consumer Cyclical",
-        "industry": "Internet Retail",
-        "longName": "Coupang, Inc.",
-        "shortName": "Coupang, Inc.",
-        "longBusinessSummary": "Coupang, Inc., together with its subsidiaries, owns and operates retail business through its mobile applications and internet websites in South Korea and internationally. It operates through Product Commerce and Developing Offerings segments. The Product Commerce segment includes Korean retail and marketplace offerings; Rocket Fresh, a fresh grocery offering; and advertising products. The Developing Offerings segment offers Eats, a restaurant ordering and delivery service; Play, an online content streaming service; fintech activities; and Farfetch, a luxury fashion marketplace. It also performs operations and support services in the United States, South Korea, Taiwan, Singapore, China, Japan, Europe, the United Kingdom, and India. Coupang, Inc. was incorporated in 2010 and is headquartered in Seattle, Washington."
+        "shortName": "iShares MSCI Japan Index Fund",
+        "longBusinessSummary": "The fund generally will invest at least 80% of its assets in the component securities of its underlying index and in investments that have economic characteristics that are substantially identical to the component securities of its underlying index. The underlying index is designed to measure the performance of the large- and mid-capitalization segments of the Japanese equity market."
+      }
+    },
+    "SVIX": {
+      "fetched_at_epoch": 1784538498.4103813,
+      "info": {
+        "longName": "-1x Short VIX Futures ETF",
+        "shortName": "-1x Short VIX Futures ETF",
+        "longBusinessSummary": "The index measures the daily inverse performance of a portfolio of first and second month VIX futures contracts. This theoretical portfolio is rolled each day to maintain a consistent time to maturity of the futures contracts. The index is calculated daily at 4:00 p.m. (Eastern time) and at a value calculated from the average price for the futures contracts between 3:45 p.m. (Eastern time) and 4:00 p.m. (Eastern time)."
+      }
+    },
+    "XNDU": {
+      "fetched_at_epoch": 1784538498.4103813,
+      "info": {
+        "sector": "Technology",
+        "industry": "Software - Infrastructure",
+        "longName": "Xanadu Quantum Technologies Limited",
+        "shortName": "Xanadu Quantum Technologies Lim",
+        "longBusinessSummary": "Xanadu Quantum Technologies Limited develops and provides photonic quantum computing technology and related software solutions and applications, including cloud-based access to quantum computers and tools for quantum programming and simulation. The company provides access to photonic quantum computers through x-series devices available via the cloud, supporting programmable quantum gates and photon-number resolving detectors. It offers Pennylane, a cross-platform python library that enables a paradigm and quantum differentiable programming that enables integration with machine learning tools; and Catalyst for just-in-time compilation and optimization of quantum algorithms. It also provides users with access to documentation, guides, and community-led resources for quantum machine learning, quantum chemistry simulations, and other quantum computing applications, along with collaboration and support from a team of quantum experts. The company serves professional clients in the quantum computing, software development, and machine learning sectors, as well as advanced users in research and development, including those utilizing high-performance computing and quantum hardware. Xanadu Quantum Technologies Limited was incorporated in 2016 and is based in Toronto, Canada."
+      }
+    },
+    "AMPX": {
+      "fetched_at_epoch": 1784538498.4103813,
+      "info": {
+        "sector": "Industrials",
+        "industry": "Electrical Equipment & Parts",
+        "longName": "Amprius Technologies, Inc.",
+        "shortName": "Amprius Technologies, Inc.",
+        "longBusinessSummary": "Amprius Technologies, Inc. develops, manufactures, and markets lithium-ion batteries for mobility applications. The company provides silicon anode lithium-ion batteries under the SiCore and SiMaxx product platforms. Its batteries are primarily used for existing and emerging aviation applications, including unmanned aerial systems, such as drones and high-altitude pseudo satellites. The company was founded in 2008 and is headquartered in Fremont, California."
       }
     },
     "AMAT": {
-      "fetched_at_epoch": 1784190023.2532825,
+      "fetched_at_epoch": 1784538498.4103813,
       "info": {
         "sector": "Technology",
         "industry": "Semiconductor Equipment & Materials",
@@ -298,8 +93,111 @@
         "longBusinessSummary": "Applied Materials, Inc. provides materials engineering solutions, equipment, services, and software to the semiconductor and related industries in the United States, China, Korea, Taiwan, Japan, Southeast Asia, Europe, and internationally. The company operates through Semiconductor Systems and Applied Global Services (AGS) segments. The Semiconductor Systems segment includes semiconductor capital equipment to enable materials engineering steps, including etch, rapid thermal processing, deposition, chemical mechanical planarization, metrology and inspection, wafer packaging, and ion implantation. The AGS segment offers integrated solutions to optimize equipment and fab performance and productivity comprising spares, upgrades, services, and 200 millimeter and other equipment and factory automation software for semiconductor and other products. It serves manufacturers of semiconductor wafers and chips, and other electronic devices. Applied Materials, Inc. was incorporated in 1967 and is headquartered in Santa Clara, California."
       }
     },
+    "STX": {
+      "fetched_at_epoch": 1784538498.4103813,
+      "info": {
+        "sector": "Technology",
+        "industry": "Computer Hardware",
+        "shortName": "Seagate Technology Holdings PLC",
+        "longBusinessSummary": "Seagate Technology Holdings plc engages in the provision of data storage technology and infrastructure solutions in Singapore, the United States, the Netherlands, and internationally. The company offers mass capacity storage products, including enterprise nearline hard disk drives (HDDs), enterprise nearline solid state drives (SSDs), enterprise nearline systems, video and image HDDs, and network-attached storage drives. It also offers legacy applications comprising Mission Critical HDDs and SSDs; external storage solutions under the Seagate Ultra Touch, One Touch, Expansion, and Basics product lines, as well as under the LaCie brand name; desktop drives for personal computers and workstation applications; notebook drives traditional notebooks, convertible systems, and external storage applications, DVR HDDs for video streaming applications, and gaming SSDs for gaming rigs. In addition, the company provides Lyve edge-to-cloud mass capacity platform, that includes modular hardware and software to support enterprises' on-premise and cloud storage infrastructure needs. It sells its products primarily to original equipment manufacturers, distributors, and retailers. The company was founded in 1978 and is based in Singapore."
+      }
+    },
+    "AMKR": {
+      "fetched_at_epoch": 1784538498.4103813,
+      "info": {
+        "sector": "Technology",
+        "industry": "Semiconductor Equipment & Materials",
+        "longName": "Amkor Technology, Inc.",
+        "shortName": "Amkor Technology, Inc.",
+        "longBusinessSummary": "Amkor Technology, Inc. provides outsourced semiconductor packaging and test services in the United States, Japan, Europe, and the Asia Pacific. It offers turnkey packaging and test services, including semiconductor wafer bump, wafer probe, wafer back-grind, package design, packaging, burn-in, system-level and final test, and drop shipment services; flip chip scale package products for smartphones, tablets, and other mobile consumer electronic devices; flip chip stacked chip scale packages that are used to stack memory digital baseband, and as applications processors in mobile devices; flip-chip ball grid array packages for various networking, storage, computing, automotive, and consumer applications; and memory products for system memory or platform data storage. The company provides wafer-level CSP packages for power management, transceivers, sensors, wireless charging, codecs, and specialty silicon; wafer-level fan-out packages used in power management, transceivers, radar, and specialty silicon; silicon wafer integrated fan-out technology that replaces a laminate substrate with a thinner structure; leadframe packages for electronic devices and mixed-signal applications; and substrate-based wirebond packages used to connect a die to a substrate. In addition, it offers micro-electro-mechanical systems packages that are miniaturized mechanical and electromechanical devices; and advanced system-in-package modules used in radio frequency and front end modules, basebands, connectivity, fingerprint sensors, display and touch screen drivers, sensors and MEMS, and NAND memory and solid-state drives. Further, the company provides wafer, package, and system level test services, as well as burn-in test and test development services. It serves integrated device manufacturers, fabless semiconductor companies, original equipment manufacturers, and contract foundries. Amkor Technology, Inc. was founded in 1968 and is headquartered in Tempe, Arizona."
+      }
+    },
+    "THYP": {
+      "fetched_at_epoch": 1784538498.4103813,
+      "info": {
+        "longName": "21Shares Hyperliquid ETF",
+        "shortName": "21shares Hyperliquid ETF",
+        "longBusinessSummary": "In seeking to achieve its investment objective, the Trust will hold HYPE. HYPE is a digital asset. Like all digital assets, buying, holding and selling HYPE is very different from buying, holding and selling more conventional investments like stocks and bonds. Stocks represent ownership in a company, entitling shareholders to a portion of the company\u2019s profits. It is non-diversified."
+      }
+    },
+    "IBM": {
+      "fetched_at_epoch": 1784538498.4103813,
+      "info": {
+        "sector": "Technology",
+        "industry": "Information Technology Services",
+        "longName": "International Business Machines Corporation",
+        "shortName": "International Business Machines",
+        "longBusinessSummary": "International Business Machines Corporation, together with its subsidiaries, provides integrated solutions and services in the Americas, Europe, the Middle East, Africa, and the Asia Pacific. It operates through Software, Consulting, Infrastructure, and Financing segments. The Software segment offers hybrid cloud and AI platforms that allow clients to realize their digital and AI transformations across the applications, data, and environments in which they operate. The Consulting segment delivers strategy and technology services and intelligent operations, providing business transformation, technology implementation, managed services, application modernization, and AI-powered solutions. The Infrastructure segment provides on-premises and cloud-based server, and storage solutions, as well as life-cycle services for hybrid cloud infrastructure deployment. The Financing segment offers client and commercial financing, and facilitates IBM clients' acquisition of hardware, software, and services. It operates a data streaming platform. The company has strategic partnerships with various companies, including hyperscalers, service providers, global system integrators, and software and hardware vendors that include Adobe, Amazon Web Services, Microsoft, Oracle, Salesforce, Samsung Electronics and SAP, and others. It also has a strategic collaboration with Arm Holdings plc for the development of new dual-architecture hardware that helps enterprises run future AI and data intensive workloads; strategic partnership with three.ws to advance ai-powered 3d agent technology; and collaboration with Lightwell to help strengthen open source software supply chain. The company was formerly known as Computing-Tabulating-Recording Co. and changed its name to International Business Machines Corporation in 1924. International Business Machines Corporation was incorporated in 1911 and is headquartered in Armonk, New York."
+      }
+    },
+    "CPNG": {
+      "fetched_at_epoch": 1784538498.4103813,
+      "info": {
+        "sector": "Consumer Cyclical",
+        "industry": "Internet Retail",
+        "longName": "Coupang, Inc.",
+        "shortName": "Coupang, Inc.",
+        "longBusinessSummary": "Coupang, Inc., together with its subsidiaries, owns and operates retail business through its mobile applications and internet websites in South Korea and internationally. It operates through Product Commerce and Developing Offerings segments. The Product Commerce segment includes Korean retail and marketplace offerings; Rocket Fresh, a fresh grocery offering; and advertising products. The Developing Offerings segment offers Eats, a restaurant ordering and delivery service; Play, an online content streaming service; fintech activities; and Farfetch, a luxury fashion marketplace. It also performs operations and support services in the United States, South Korea, Taiwan, Singapore, China, Japan, Europe, the United Kingdom, and India. Coupang, Inc. was incorporated in 2010 and is headquartered in Seattle, Washington."
+      }
+    },
+    "VALE": {
+      "fetched_at_epoch": 1784538498.4103813,
+      "info": {
+        "sector": "Basic Materials",
+        "industry": "Other Industrial Metals & Mining",
+        "longName": "Vale S.A.",
+        "shortName": "VALE S.A.",
+        "longBusinessSummary": "Vale S.A., together with its subsidiaries, produces iron ore and nickel in Brazil, Asia, the Middle East, North Africa, Europe, the Americas, and Oceania. The company operates in two segments, Iron Ore Solutions and Vale Base Metals. It extracts, produces, and distributes iron ore, iron ore pellets, briquettes, nickel, copper, other ferrous products, and by-products, including gold, silver, cobalt, platinum-group metals, and other base metals, as well as low-carbon critical minerals. The company also operates logistics systems and distribution centers, such as mining complexes, railways, and maritime terminals, ports, and ships; generates energy from hydroelectric, solar, and wind sources; and engages in greenfield mineral exploration. In addition, it is involved in research; and trading activities. The company was formerly known as Companhia Vale do Rio Doce and changed its name to Vale S.A. in May 2009. Vale S.A. was founded in 1942 and is headquartered in Rio De Janeiro, Brazil."
+      }
+    },
+    "CHNL": {
+      "fetched_at_epoch": 1784538498.4103813,
+      "info": {
+        "longName": "Chainlink ETF",
+        "shortName": "Chainlink ETF",
+        "longBusinessSummary": "The fund is an exchange-traded fund (\u201cETF\u201d) that seeks to achieve its investment objective primarily though managed exposure to LINK futures contracts that trade only on an exchange registered with the Commodity Futures Trading Commission, and cash, cash-like instruments or high quality securities that serve as collateral to the fund\u2019s investments in LINK Futures Contracts (\u201cCollateral Investments\u201d). It is non-diversified."
+      }
+    },
+    "DRNZ": {
+      "fetched_at_epoch": 1784538498.4103813,
+      "info": {
+        "longName": "REX Drone ETF",
+        "shortName": "REX Drone ETF",
+        "longBusinessSummary": "Under normal market conditions, the fund will invest at least 80% of its net assets (plus any borrowings for investment purposes) in the securities that comprise the index. The index tracks the performance of a portfolio of global equity securities of companies that are engaged in drone and/or unmanned aerial vehicles (\u201cUAV\u201d) manufacturing and enabling technologies. It is non-diversified."
+      }
+    },
+    "SBUX": {
+      "fetched_at_epoch": 1784538498.4103813,
+      "info": {
+        "sector": "Consumer Cyclical",
+        "industry": "Restaurants",
+        "longName": "Starbucks Corporation",
+        "shortName": "Starbucks Corporation",
+        "longBusinessSummary": "Starbucks Corporation, together with its subsidiaries, operates as a roaster, marketer, and retailer of coffee internationally. The company operates through three segments: North America, International, and Channel Development. Its stores offer coffee, tea, and other beverages, roasted whole beans and ground coffees, complementary food, packaged coffees, single-serve products, and ready-to-drink beverages; and various food products, such as pastries, breakfast sandwiches, and lunch items. The company also licenses its trademarks through licensed stores, and grocery and foodservice accounts. The company offers its products under the Starbucks Coffee, Teavana, Seattle's Best Coffee, Ethos, and Starbucks Reserve brands. Starbucks Corporation was founded in 1971 and is based in Seattle, Washington."
+      }
+    },
+    "TXN": {
+      "fetched_at_epoch": 1784538498.4103813,
+      "info": {
+        "sector": "Technology",
+        "industry": "Semiconductors",
+        "longName": "Texas Instruments Incorporated",
+        "shortName": "Texas Instruments Incorporated",
+        "longBusinessSummary": "Texas Instruments Incorporated designs, manufactures, and sells semiconductors to electronics designers and manufacturers in the United States, China, the rest of Asia, Europe, the Middle East, Africa, Japan, and internationally. It operates through Analog and Embedded Processing segments. The Analog segment offers power products to manage power requirements across various voltage levels, including battery-management solutions, DC/DC switching regulators, AC/DC and isolated controllers and converters, power switches, linear regulators, voltage references, multiphase controllers and power stages, and lighting products. This segment also provides signal chain products that sense, condition, and measure real-world signals and convert them into data to be transferred or converted for further processing and control, such as amplifiers, data converters, interface products, motor drives, clocks, and logic and sensing products. The Embedded Processing segment offers microcontrollers, processors, wireless connectivity, and radar products; and applications processors for specific computing activity. It also provides DLP products primarily for use in projecting high-definition images; calculators; and application-specific integrated circuits. Its products are used in various markets, such as industrial, automotive, personal electronics, communications equipment, enterprise systems, calculators, and others. The company markets and sells its semiconductor products through direct sales and distributors, as well as through its website. Texas Instruments Incorporated was founded in 1930 and is headquartered in Dallas, Texas."
+      }
+    },
+    "BIDU": {
+      "fetched_at_epoch": 1784538498.4103813,
+      "info": {
+        "sector": "Communication Services",
+        "industry": "Internet Content & Information",
+        "longName": "Baidu, Inc.",
+        "shortName": "Baidu, Inc.",
+        "longBusinessSummary": "Baidu, Inc. provides internet content, value-added telecommunication-based, internet map, and online audio and video services in the People's Republic of China. It operates in two segments, Baidu General Business and iQIYI. The Baidu General Business segment offers products and services for mobile ecosystem, AI cloud, and intelligent driving. This segment operates Baidu App that enables users to access search, feed, content, and other services through mobile devices; and Haokan, which offers a range of various user generated and professionally produced short videos. It also provides a portfolio of knowledge and information products, including Baidu Wiki, which features columns and videos, such as encyclopedia of intangible cultural heritage, digital museum and recorder of history; Baidu Knows, an online community where users can pose questions to other users, such as individuals, professionals, and enterprises; Baidu Experience, an online platform where users share daily knowledge and experience; ERNIE Bot, new AI-native product that serves as a multi-round conversational AI assistant on both PC and mobile; and Baidu Post, a social media that allows users to post text, image, audio and video content, and reply to original curation forming valuable discussion groups, as well as livestreaming services, including live streaming and AI-powered digital human livestreaming. In addition, the company offers DuerOS smart assistant for the Chinese language; Apollo Go autonomous ride-hailing service; online marketing services; Baidu Maps, a voice-enabled mobile app providing users with travel-related services; and AI chips. The iQIYI segment produces and distributes professionally produced content. This segment offers online entertainment video services, including online videos, experience services, online games, comics, and others. The company was incorporated in 2000 and is headquartered in Beijing, the People's Republic of China."
+      }
+    },
     "MPWR": {
-      "fetched_at_epoch": 1784190023.2532825,
+      "fetched_at_epoch": 1784538498.4103813,
       "info": {
         "sector": "Technology",
         "industry": "Semiconductors",
@@ -308,46 +206,24 @@
         "longBusinessSummary": "Monolithic Power Systems, Inc. provides semiconductor-based power electronics solutions in China, Taiwan, South Korea, Southeast Asia, Europe, the United States, Japan, and internationally. The company offers direct current (DC) to DC solutions to convert and control voltages within a range of electronic systems, such as cloud-based and on-premises CPU servers and workstations, AI systems, memory, storage solutions, notebooks, infotainment, power sources, home appliances, network infrastructure, and satellite communications. It also provides alternating current (AC) to DC; driver metal-oxide-semiconductor field-effect transistors; power management integrated circuits (ICs); and current limit switch and lighting control products. The company serves storage and computing, enterprise data, automotive, communications, consumer, and industrial end markets through third-party distributors and value-added resellers. Monolithic Power Systems, Inc. was incorporated in 1997 and is based in West Palm Beach, Florida."
       }
     },
-    "THYP": {
-      "fetched_at_epoch": 1784016485.5815568,
-      "info": {
-        "longName": "21Shares Hyperliquid ETF",
-        "shortName": "21shares Hyperliquid ETF",
-        "longBusinessSummary": "In seeking to achieve its investment objective, the Trust will hold HYPE. HYPE is a digital asset. Like all digital assets, buying, holding and selling HYPE is very different from buying, holding and selling more conventional investments like stocks and bonds. Stocks represent ownership in a company, entitling shareholders to a portion of the company\u2019s profits. It is non-diversified."
-      }
-    },
-    "DRNZ": {
-      "fetched_at_epoch": 1784016485.5815568,
-      "info": {
-        "longName": "REX Drone ETF",
-        "shortName": "REX Drone ETF",
-        "longBusinessSummary": "Under normal market conditions, the fund will invest at least 80% of its net assets (plus any borrowings for investment purposes) in the securities that comprise the index. The index tracks the performance of a portfolio of global equity securities of companies that are engaged in drone and/or unmanned aerial vehicles (\u201cUAV\u201d) manufacturing and enabling technologies. It is non-diversified."
-      }
-    },
     "CAT": {
-      "fetched_at_epoch": 1784016485.5815568,
+      "fetched_at_epoch": 1784538498.4103813,
       "info": {
         "sector": "Industrials",
         "industry": "Farm & Heavy Construction Machinery",
-        "longName": "Caterpillar Inc.",
         "shortName": "Caterpillar, Inc.",
         "longBusinessSummary": "Caterpillar Inc. provides construction and mining equipment, off-highway diesel and natural gas engines, industrial gas turbines, and diesel-electric locomotives in the United States and internationally. The Construction Industries segment offers asphalt pavers, cold planers, compactors, forestry machines, material handlers, motor graders, pipelayers, road reclaimers, telehandlers, track-type tractors, and track and wheel excavators; backhoe, compact track, skid steer, track-type, and wheel loaders; and related parts and work tools. Its Resource Industries segment provides electric rope and hydraulic shovels, draglines, rotary drills, hard rock vehicles, mining trucks, wheel loaders, off-highway and articulated trucks, wide-body trucks, wheel tractor scrapers and dozers, and landfill and soil compactors; machinery components, and wear and maintenance components; and technology products and services for fleet management, equipment management analytics, autonomous machine capabilities, safety services, and mining performance solutions. The Energy & Transportation segment offers reciprocating engine powered generator sets; reciprocating engines, drivetrain, and integrated systems and solutions; centrifugal gas compressors and related services; and diesel-electric locomotive components, and other rail-related products. Its Financial Products segment provides operating and finance leases, revolving charge accounts, installment sale contracts, repair/rebuild financing, working capital loans, and wholesale financing; and insurance and risk management products and services. The All Other segment offers parts distribution; logistics and distribution services; electronics and control systems; dealer portfolio management; brand management and marketing strategy; and digital investment services. It also provides mining software solutions. The company was formerly known as Caterpillar Tractor Co. Caterpillar Inc. was incorporated in 1925 and is headquartered in Irving, Texas."
       }
     },
     "ETN": {
-      "fetched_at_epoch": 1784016485.5815568,
+      "fetched_at_epoch": 1784538498.4103813,
       "info": {
         "sector": "Industrials",
         "industry": "Specialty Industrial Machinery",
-        "longName": "Eaton Corporation plc",
         "shortName": "Eaton Corporation, PLC",
         "longBusinessSummary": "Eaton Corporation plc operates as a power management company in the United States, Canada, Latin America, Europe, and the Asia Pacific. It operates through Electrical Americas, Electrical Global, Aerospace, Vehicle, and eMobility segments. The company offers electrical and industrial components, power distribution and assemblies, residential products, single- and three-phase power quality and connectivity products, wiring devices, circuit protection products, utility power distribution products, and power reliability equipment; and hazardous duty electrical equipment, emergency lighting, fire detection, intrinsically safe explosion-proof instrumentation, and structural support systems. It also provides pumps, motors, hydraulic power units, hoses and fittings, and electro-hydraulic pumps; valves, cylinders, electronic controls, electromechanical actuators, sensors, aircraft flap and slat systems, and nose wheel steering systems; hose and thermoplastic tubing products, fittings, adapters, couplings, and sealing and ducting products; air-to-air refueling systems, fuel pumps, fuel inerting products, sensors, and adapters and regulators; oxygen generation systems, payload carriages, and thermal management products; wiring connectors and cables; and hydraulic and bag filters, strainers and cartridges, and golf grips for manufacturers of commercial and military aircraft, related aftermarket customers, and industrial applications. In addition, the company offers transmissions, clutches, hybrid power systems, superchargers, engine valves and valve actuation systems, locking and limited slip differentials, transmission controls, and fuel vapor components for the vehicle industry; and voltage inverters, converters, fuses, circuit protection units, vehicle controls, power distribution systems, fuel tank isolation valves, and commercial vehicle hybrid systems. The company was formerly known as Abeiron Limited. The company was founded in 1911 and is based in Dublin, Ireland."
       }
     }
   },
-<<<<<<< Updated upstream
-  "updated_at_epoch": 1784379198.06797
-=======
-  "updated_at_epoch": 1784303799.0238152
->>>>>>> Stashed changes
+  "updated_at_epoch": 1784538498.4103813
 }
