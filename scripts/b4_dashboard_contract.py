@@ -30,6 +30,7 @@ REQUIRED_FILES = (
     "rebalance_audit.csv",
     "pending_target_audit.csv",
     "b4_membership_manifest.csv",
+    "b4_pair_execution_events.csv",
 )
 OPTIONAL_AUDIT_FILES = (
     "b4_plan_history.csv",
@@ -40,6 +41,7 @@ OPTIONAL_AUDIT_FILES = (
     "rebalance_audit.csv",
     "pending_target_audit.csv",
     "b4_membership_manifest.csv",
+    "b4_pair_execution_events.csv",
 )
 
 
@@ -207,16 +209,24 @@ def _allocate_pair_reconciliation(pair_daily: pd.DataFrame, sleeve_daily: pd.Dat
 
 
 def _event_map(source_dir: Path, expected_end: str) -> dict[tuple[str, str], dict[str, Any]]:
-    path = source_dir / "b4_pair_trade_ledger.csv"
+    """Read same-run pair executions, never the post-hoc/stale audit ledger."""
+    path = source_dir / "b4_pair_execution_events.csv"
     if not path.exists():
-        return {}
+        raise FileNotFoundError("production replay missing b4_pair_execution_events.csv")
     frame = _read_csv(path)
-    if frame.empty or "date" not in frame or str(frame["date"].astype(str).max()) != str(expected_end):
-        # Never attach a stale audit ledger to a freshly generated replay.
+    if frame.empty:
         return {}
+    required = {"date", "ETF", "reason", "replay_end"}
+    if not required.issubset(frame.columns):
+        raise ValueError("B4 execution event ledger is missing required fields")
+    replay_ends = set(frame["replay_end"].astype(str).str.slice(0, 10))
+    if replay_ends != {str(expected_end)}:
+        raise ValueError(f"B4 execution event ledger is stale: {sorted(replay_ends)} vs {expected_end}")
     result: dict[tuple[str, str], dict[str, Any]] = {}
     for row in frame.to_dict(orient="records"):
         key = (str(row.get("ETF", "")).upper(), str(row.get("date", "")))
+        if key in result:
+            raise ValueError(f"duplicate B4 execution event: {key}")
         result[key] = _json_value(row)
     return result
 
@@ -248,6 +258,13 @@ def _pair_payload(etf: str, frame: pd.DataFrame, stats_row: Mapping[str, Any], e
     basis = max(float(gross.replace(0.0, np.nan).dropna().iloc[0]) if (gross > 0).any() else 0.0, 1.0)
     equity = basis + d["cum_pnl_reconciled"]
     ret = equity.pct_change(fill_method=None).fillna(0.0)
+    drawdown = equity / equity.cummax() - 1.0
+    event_dates = {day for (symbol, day) in events if symbol == etf}
+    marked_dates = set(d.loc[pd.to_numeric(d.get("is_rebalance", 0), errors="coerce").fillna(0).astype(bool), "date"])
+    if marked_dates != event_dates:
+        raise ValueError(
+            f"B4 pair execution marker mismatch for {etf}: daily={sorted(marked_dates)} events={sorted(event_dates)}"
+        )
     summary = {
         "etf": etf,
         "underlying": str(d["Underlying"].iloc[-1]).upper(),
@@ -300,8 +317,12 @@ def _pair_payload(etf: str, frame: pd.DataFrame, stats_row: Mapping[str, Any], e
             "underlying_usd": [float(x) for x in d["underlying_usd"]],
             "gross_exposure_dollars": [float(x) for x in gross],
             "h_used": [float(x) if math.isfinite(float(x)) else None for x in h],
-            "rebalance": [int(bool(x)) for x in pd.to_numeric(d.get("is_rebalance", 0), errors="coerce").fillna(0)],
+            "drawdown": [float(x) for x in drawdown],
+            "rebalance": [int(day in event_dates) for day in d["date"]],
             "rebalance_reason": reasons,
+            "book_activity": [int(bool(x)) for x in pd.to_numeric(
+                d.get("book_activity", pd.Series(0, index=d.index)), errors="coerce"
+            ).fillna(0)],
             "active_plan_date": d.get("active_plan_date", pd.Series("", index=d.index)).astype(str).tolist(),
         },
         "rebalance_log": event_rows,

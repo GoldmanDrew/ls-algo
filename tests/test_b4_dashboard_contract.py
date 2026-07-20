@@ -56,6 +56,12 @@ def _fixture(root: Path) -> Path:
         {"ETF": "CBRZ", "Underlying": "CBRS", "lifecycle_state": "pending_entry", "block_reason": "awaiting_operator_or_execution"},
         {"ETF": "SPCG", "Underlying": "SPCX", "lifecycle_state": "purgatory_not_incumbent", "block_reason": "purgatory_without_prior_fill"},
     ]).to_csv(src / "b4_membership_manifest.csv", index=False)
+    pd.DataFrame([{
+        "date": "2026-06-02", "replay_end": "2026-06-03", "ETF": "NBIZ",
+        "Underlying": "NBIS", "sleeve": "inverse_decay_bucket4",
+        "reason": "cadence_resize", "on_model_cadence": True,
+        "on_operator_day": False, "turnover_usd": 50_000, "txn_cost": 8,
+    }]).to_csv(src / "b4_pair_execution_events.csv", index=False)
     return src
 
 
@@ -70,6 +76,8 @@ def test_export_is_authoritative_and_reconciles_pairs(tmp_path: Path):
     pair = json.loads((out / "pairs" / "NBIZ.json").read_text())
     assert pair["ledger_mode"] == "actual_dollar"
     assert pair["summary"]["actual_pnl_usd"] == pytest.approx(80.0)
+    assert pair["daily"]["drawdown"] == pytest.approx([0.0, -20.0 / 50099.5], abs=1e-8)
+    assert pair["daily"]["rebalance"] == [1, 0]
     assert manifest["counts"]["membership"] == 3
     members = json.loads((out / "membership.json").read_text())
     assert {m["ETF"] for m in members} == {"NBIZ", "CBRZ", "SPCG"}

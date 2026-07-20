@@ -2899,6 +2899,9 @@ def simulate_book_from_plan_timeline(
     latest_present_stock: set[str] = set()
     latest_hard_stock: set[str] = set()
     pending_target_rows: list[dict[str, Any]] = []
+    # Pair-specific execution events are the authoritative dashboard markers.
+    # They must not inherit unrelated book-level trades.
+    pair_execution_rows: list[dict[str, Any]] = []
     n_hedge_repairs = 0
     hedge_repair_turnover = 0.0
     n_growth_blocked_hedge_infeasible = 0
@@ -2941,6 +2944,7 @@ def simulate_book_from_plan_timeline(
             for s in ALL_SLEEVES
         }
         day_pair: dict[str, dict[str, Any]] = {}
+        day_pair_events: dict[str, dict[str, Any]] = {}
 
         def _day_pair(etf: str, row: pd.Series | None = None) -> dict[str, Any]:
             if etf not in day_pair:
@@ -3626,6 +3630,7 @@ def simulate_book_from_plan_timeline(
                 )
                 is_b5 = sleeve == B5_SLEEVE
                 is_ratchet_sleeve = is_b4 or is_b5
+                b4_on_model_cadence = False
 
                 # Delist flatten: force exit on/after last_trade_date.
                 force_exit = False
@@ -3716,6 +3721,7 @@ def simulate_book_from_plan_timeline(
                         )
                         cad = b4_cadence.get(_norm(etf), {})
                         on_cadence = bool(cad.get("rebal")) and d in cad["rebal"]
+                        b4_on_model_cadence = bool(on_cadence)
 
                         if entering or exiting:
                             if (
@@ -4028,6 +4034,16 @@ def simulate_book_from_plan_timeline(
                         "age": int(pair_request_age.get(etf, 0)),
                         "constraint": constraint,
                         "in_reduce_only": etf in reduce_only_etfs,
+                        "on_model_cadence": bool(is_b4 and b4_on_model_cadence),
+                        "on_operator_day": bool(membership_day),
+                        "execution_reason": (
+                            "hard_exit" if force_exit
+                            else "enter_membership" if is_b4 and old is None
+                            else "exit_membership" if is_b4 and is_full_exit
+                            else "cadence_resize" if is_b4 and b4_on_model_cadence
+                            else "purgatory_reduce" if etf in reduce_only_etfs
+                            else "resize"
+                        ),
                     }
                 )
 
@@ -4347,14 +4363,33 @@ def simulate_book_from_plan_timeline(
                 c["txn_cost_usd"] += pair_txn
                 dp = _day_pair(etf, ref)
                 dp["txn_cost"] += pair_txn
+                sl = str(ref.get("sleeve", "")) if ref is not None else ""
                 if pair_turn > 1e-9:
                     c["rebalance_dates"].append(str(pd.Timestamp(d).date()))
+                    if sl == B4_SLEEVE:
+                        event = {
+                            "date": str(pd.Timestamp(d).date()),
+                            "replay_end": str(cal[-1].date()),
+                            "ETF": etf,
+                            "Underlying": str(ref.get("Underlying", "")) if ref is not None else "",
+                            "sleeve": sl,
+                            "reason": str(fill.get("execution_reason", "resize")),
+                            "on_model_cadence": bool(fill.get("on_model_cadence", False)),
+                            "on_operator_day": bool(fill.get("on_operator_day", False)),
+                            "prev_etf_usd": old_a,
+                            "prev_underlying_usd": old_b,
+                            "etf_usd": new_a,
+                            "underlying_usd": new_b,
+                            "turnover_usd": pair_turn,
+                            "txn_cost": pair_txn,
+                        }
+                        pair_execution_rows.append(event)
+                        day_pair_events[etf] = event
                 if new is not None:
                     c["last_target_etf_usd"] = new_a
                     c["last_target_underlying_usd"] = new_b
                     if pd.notna(new.get("Delta")):
                         c["Delta"] = float(pd.to_numeric(new.get("Delta"), errors="coerce") or np.nan)
-                sl = str(ref.get("sleeve", "")) if ref is not None else ""
                 if sl in sleeve_comp:
                     sleeve_comp[sl]["txn"] += pair_txn
                 if new is None or (abs(new_a) + abs(new_b) <= 1e-9):
@@ -4482,7 +4517,9 @@ def simulate_book_from_plan_timeline(
                     "margin_cost": float(dp["margin_cost"]),
                     "txn_cost": float(dp["txn_cost"]),
                     "daily_pnl": daily_net,
-                    "is_rebalance": int(day_did_rebal),
+                    "is_rebalance": int(etf in day_pair_events),
+                    "rebalance_reason": str(day_pair_events.get(etf, {}).get("reason", "")),
+                    "book_activity": int(day_did_rebal),
                     "active_plan_date": (
                         str(active_plan_date.date()) if active_plan_date is not None else None
                     ),
@@ -4647,6 +4684,13 @@ def simulate_book_from_plan_timeline(
         pair_daily["cum_pnl"] = pair_daily.groupby(["sleeve", "ETF"], sort=False)[
             "daily_pnl"
         ].cumsum()
+        gross = pair_daily["etf_usd"].abs() + pair_daily["underlying_usd"].abs()
+        basis = gross.where(gross > 1e-9).groupby(
+            [pair_daily["sleeve"], pair_daily["ETF"]], sort=False
+        ).transform("first").fillna(1.0).clip(lower=1.0)
+        pair_daily["equity_dollars"] = basis + pair_daily["cum_pnl"]
+        peak = pair_daily.groupby(["sleeve", "ETF"], sort=False)["equity_dollars"].cummax()
+        pair_daily["drawdown"] = pair_daily["equity_dollars"] / peak - 1.0
 
     meta = {
         "n_rebal": n_rebal,
@@ -4717,6 +4761,14 @@ def simulate_book_from_plan_timeline(
         **perf(nav),
     }
     meta["pair_daily"] = pair_daily
+    meta["pair_execution_events"] = pd.DataFrame(
+        pair_execution_rows,
+        columns=[
+            "date", "replay_end", "ETF", "Underlying", "sleeve", "reason",
+            "on_model_cadence", "on_operator_day", "prev_etf_usd",
+            "prev_underlying_usd", "etf_usd", "underlying_usd", "turnover_usd", "txn_cost",
+        ],
+    )
     meta["pending_target_audit"] = pd.DataFrame(pending_target_rows)
     return nav, audit, meta, pair_stats, sleeve_daily
 
@@ -4724,6 +4776,12 @@ def simulate_book_from_plan_timeline(
 def _take_pair_daily(meta: dict[str, Any]) -> pd.DataFrame:
     """Remove pair_daily from sim meta so it is not serialized into report.json."""
     raw = meta.pop("pair_daily", None)
+    return raw if isinstance(raw, pd.DataFrame) else pd.DataFrame()
+
+
+def _take_pair_execution_events(meta: dict[str, Any]) -> pd.DataFrame:
+    """Remove exact per-pair execution events before JSON report serialization."""
+    raw = meta.pop("pair_execution_events", None)
     return raw if isinstance(raw, pd.DataFrame) else pd.DataFrame()
 
 
@@ -5801,6 +5859,7 @@ def run_prod_replay_backtest(
     )
 
     pair_daily = _take_pair_daily(meta)
+    pair_execution_events = _take_pair_execution_events(meta)
     pending_target_audit = _take_pending_target_audit(meta)
     b4_membership = build_b4_membership_manifest(
         timeline,
@@ -5922,6 +5981,7 @@ def run_prod_replay_backtest(
         extra["sleeve_return_metrics.csv"] = compute_sleeve_return_metrics(sleeve_daily)
     # Always write (even empty) so a stale file from a killed run cannot linger.
     extra["pair_daily_pnl.csv"] = pair_daily
+    extra["b4_pair_execution_events.csv"] = pair_execution_events
     extra["pending_target_audit.csv"] = pending_target_audit
     extra["b4_membership_manifest.csv"] = b4_membership
     _write_outputs(
