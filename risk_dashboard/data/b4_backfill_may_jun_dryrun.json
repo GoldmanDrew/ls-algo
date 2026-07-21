@@ -1,0 +1,374 @@
+{
+  "ok": true,
+  "dry_run": true,
+  "force": false,
+  "artifacts": [
+    "screened"
+  ],
+  "from": "2026-04-27",
+  "to": "2026-06-25",
+  "summary": {
+    "skipped_exists": 2,
+    "would_write": 49
+  },
+  "rows": [
+    {
+      "date": "2026-04-27",
+      "artifact": "screened",
+      "source_sha": "23964c37484c4b42f003fc1fdafcaca1dc041f3e",
+      "source_commit_date": "2026-04-27T10:08:05-04:00",
+      "action": "skipped_exists"
+    },
+    {
+      "date": "2026-04-28",
+      "artifact": "screened",
+      "source_sha": "7dafd9500cfc7993a729faca973ded2d039bfbb7",
+      "source_commit_date": "2026-04-28T11:54:55Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-04-29",
+      "artifact": "screened",
+      "source_sha": "4abcedd02dea01a77c73200610af344fdc9ef85a",
+      "source_commit_date": "2026-04-29T18:14:31Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-04-30",
+      "artifact": "screened",
+      "source_sha": "6e372ee6c577c7aa89058ad0d87914530de90489",
+      "source_commit_date": "2026-04-30T13:28:07Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-01",
+      "artifact": "screened",
+      "source_sha": "b9388317d90767524a71bd8c77827abf63ee63e6",
+      "source_commit_date": "2026-05-01T19:32:24Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-02",
+      "artifact": "screened",
+      "source_sha": "e53d7856d2624f909eba8d0ef5ca40bd0c5ed3f5",
+      "source_commit_date": "2026-05-02T07:26:36Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-03",
+      "artifact": "screened",
+      "source_sha": "428ebd364d135d2fdd2a4767d9a40e46de7c7524",
+      "source_commit_date": "2026-05-03T21:51:48Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-04",
+      "artifact": "screened",
+      "source_sha": "4a84f338583d2eb5ee766825b122f9c80e64d8e8",
+      "source_commit_date": "2026-05-04T18:53:20Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-05",
+      "artifact": "screened",
+      "source_sha": "d0fe9fb909248d4d176da22777ff2e399dcf3603",
+      "source_commit_date": "2026-05-05T17:04:54Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-06",
+      "artifact": "screened",
+      "source_sha": "39c821b66dfb6f265c0d573cf0934814b1b02374",
+      "source_commit_date": "2026-05-06T15:36:00Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-07",
+      "artifact": "screened",
+      "source_sha": "c3a910e843a30ac140ca336bcc39fe0b7fa1d0c9",
+      "source_commit_date": "2026-05-07T08:27:53Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-08",
+      "artifact": "screened",
+      "source_sha": "0fe71a2a5a68372fee713f3dae2ebbaaab00ec26",
+      "source_commit_date": "2026-05-08T17:24:54Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-09",
+      "artifact": "screened",
+      "source_sha": "ab883bf552c56db928e457b90bb1223b38ecb45a",
+      "source_commit_date": "2026-05-09T07:51:30Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-12",
+      "artifact": "screened",
+      "source_sha": "ccac14cc57334fe60876c9dded26fb3ca4faf1bd",
+      "source_commit_date": "2026-05-12T21:36:40Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-13",
+      "artifact": "screened",
+      "source_sha": "5c9483203e3070ecd24ec4e2f87c6daa0b932cb3",
+      "source_commit_date": "2026-05-13T15:12:12Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-14",
+      "artifact": "screened",
+      "source_sha": "55ed00c1279ce8261e450b1d353942c597133538",
+      "source_commit_date": "2026-05-14T08:34:43Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-15",
+      "artifact": "screened",
+      "source_sha": "ba8d0c32402fad2f4ac338941e27a579af5eb0a4",
+      "source_commit_date": "2026-05-15T21:12:01Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-16",
+      "artifact": "screened",
+      "source_sha": "d7a5083521a83d2b0cb5b75b752093421eb340d2",
+      "source_commit_date": "2026-05-16T08:00:12Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-18",
+      "artifact": "screened",
+      "source_sha": "010de33ed4108872e6406ef74fb36b72f7e2d4f0",
+      "source_commit_date": "2026-05-18T22:07:47-04:00",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-19",
+      "artifact": "screened",
+      "source_sha": "50f2989b9462da1d90b885e2f397359075bc0acd",
+      "source_commit_date": "2026-05-19T17:29:19Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-20",
+      "artifact": "screened",
+      "source_sha": "730feca02eefb39f9fb20c24a4a9123508c563c4",
+      "source_commit_date": "2026-05-20T16:03:46Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-21",
+      "artifact": "screened",
+      "source_sha": "c609dc6de656c4de714371c7613ffb3fd5d40684",
+      "source_commit_date": "2026-05-21T21:22:29Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-22",
+      "artifact": "screened",
+      "source_sha": "bc894a0ccc351b33b0d4e3614795f650ee68349c",
+      "source_commit_date": "2026-05-22T17:42:14Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-23",
+      "artifact": "screened",
+      "source_sha": "bbb8c5c8e80ad0c5526e2f391f5061f84d7a3d25",
+      "source_commit_date": "2026-05-23T08:14:10Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-24",
+      "artifact": "screened",
+      "source_sha": "31dfdb84a10d0f23dba656f3d5b53ea9c0a3c0c6",
+      "source_commit_date": "2026-05-24T17:08:56Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-26",
+      "artifact": "screened",
+      "source_sha": "599056d4bea897b546dd3be95fcd518c5f96aaf4",
+      "source_commit_date": "2026-05-26T09:45:54Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-27",
+      "artifact": "screened",
+      "source_sha": "0ac7f58dca5a9aed4edf6ec73639a542296c0d96",
+      "source_commit_date": "2026-05-27T09:39:48Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-28",
+      "artifact": "screened",
+      "source_sha": "6223892627b1c6fbc785f2811e948351a79da412",
+      "source_commit_date": "2026-05-28T21:48:07Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-29",
+      "artifact": "screened",
+      "source_sha": "abeb6cefd363a48af8eb32f8d52c8d5aa655a2ab",
+      "source_commit_date": "2026-05-29T09:46:06Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-05-30",
+      "artifact": "screened",
+      "source_sha": "291ae146d35f2ebb052fad37b79954adcea99a77",
+      "source_commit_date": "2026-05-30T19:55:58Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-01",
+      "artifact": "screened",
+      "source_sha": "4d84192cb4837f277174ee59d83ff9b6097862c1",
+      "source_commit_date": "2026-06-01T19:30:27Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-02",
+      "artifact": "screened",
+      "source_sha": "71352677021f1d11ef8812df63ddccd3f4a3a663",
+      "source_commit_date": "2026-06-02T19:13:12Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-03",
+      "artifact": "screened",
+      "source_sha": "553db18dd2f039980b5a08d790876a85ec3ced08",
+      "source_commit_date": "2026-06-03T13:23:56Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-04",
+      "artifact": "screened",
+      "source_sha": "618380e35c9407edfd7ccba8ca00a83bafffff9a",
+      "source_commit_date": "2026-06-04T09:51:46Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-05",
+      "artifact": "screened",
+      "source_sha": "4574b7896928312032a2a10c15dd334685e728f5",
+      "source_commit_date": "2026-06-05T15:03:34Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-06",
+      "artifact": "screened",
+      "source_sha": "77630bd80fa09da12c791c2fa6c4659920e4327c",
+      "source_commit_date": "2026-06-06T08:32:07Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-09",
+      "artifact": "screened",
+      "source_sha": "1d30baa4133a8b1149384b2265774ee077d24cb7",
+      "source_commit_date": "2026-06-09T21:42:23Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-10",
+      "artifact": "screened",
+      "source_sha": "76eeb3ce892fb5c1310a7ce18670056e13eec8cb",
+      "source_commit_date": "2026-06-10T09:49:03Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-11",
+      "artifact": "screened",
+      "source_sha": "96ff267771adf28cd5916676a0f4c8de630d1f8d",
+      "source_commit_date": "2026-06-11T15:36:12Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-12",
+      "artifact": "screened",
+      "source_sha": "d3fdcd83cfa996ee2519e31353f16cce9e128f9a",
+      "source_commit_date": "2026-06-12T23:57:10Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-13",
+      "artifact": "screened",
+      "source_sha": "614281e49f3db76465f013d60e3f682fd55bcbe3",
+      "source_commit_date": "2026-06-13T08:55:04Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-15",
+      "artifact": "screened",
+      "source_sha": "61005ad29f7a9ccaae14e7529f6d86a3ecc0d8cd",
+      "source_commit_date": "2026-06-15T00:42:27Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-16",
+      "artifact": "screened",
+      "source_sha": "f4d508b0acb93dac6b4a72a1829a79587db3a503",
+      "source_commit_date": "2026-06-16T20:02:41Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-17",
+      "artifact": "screened",
+      "source_sha": "6ef7a2029a977eb2af627473d47e9e68a3149dc0",
+      "source_commit_date": "2026-06-17T10:49:27Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-18",
+      "artifact": "screened",
+      "source_sha": "ad932a18f605b7235fdd5c3c86549dff754e068b",
+      "source_commit_date": "2026-06-18T10:16:48Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-19",
+      "artifact": "screened",
+      "source_sha": "7ddfe835d902e0e1ac0a5212236b1de9210bcf80",
+      "source_commit_date": "2026-06-19T21:09:06Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-20",
+      "artifact": "screened",
+      "source_sha": "1dce007b6655cec205ca757694b14431d689129e",
+      "source_commit_date": "2026-06-20T08:50:55Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-22",
+      "artifact": "screened",
+      "source_sha": "6fb1aff6a11289a99a0e7dc7e589ea50f0cefed9",
+      "source_commit_date": "2026-06-22T15:57:56Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-23",
+      "artifact": "screened",
+      "source_sha": "f840b0ac2b738c4e7d0aef7401029fc900cf5fbe",
+      "source_commit_date": "2026-06-23T17:43:08Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-24",
+      "artifact": "screened",
+      "source_sha": "595441a2afb0587f922d883478f5f02050087487",
+      "source_commit_date": "2026-06-24T23:59:07Z",
+      "action": "would_write"
+    },
+    {
+      "date": "2026-06-25",
+      "artifact": "screened",
+      "source_sha": "d66ba98f9b0fc6712be1cfc0663607f2720397d3",
+      "source_commit_date": "2026-06-25T16:19:18Z",
+      "action": "skipped_exists"
+    }
+  ],
+  "note": "Commit calendar date stamps the archive day; tip working tree is never copied. Aggregate B4 book production start remains 2026-02-27; pair inception research covers listing\u2192plan gaps."
+}

@@ -789,7 +789,7 @@ def repair_split_craters(
             print(
                 f"[SPLIT][crater] {sym} repaired "
                 f"{idx[i].date()}..{idx[recovered_j - 1].date()} "
-                f"(anchor=${p0:.4f} → recover=${p1:.4f} on {idx[recovered_j].date()})"
+                f"(anchor=${p0:.4f} -> recover=${p1:.4f} on {idx[recovered_j].date()})"
             )
         i = recovered_j
 

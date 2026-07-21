@@ -1,15 +1,15 @@
 {
   "mode": "prod",
-  "run_date": "2026-07-13",
+  "run_date": "2026-07-20",
   "start": "2026-02-27",
-  "end": "2026-07-13",
-  "capital_usd": 1050000.0,
+  "end": "2026-07-17",
+  "capital_usd": 1200000.0,
   "gross_leverage": 4.0,
   "budgets_usd": {
-    "core_leveraged": 2142000.0,
-    "yieldboost": 1932000.0,
-    "inverse_decay_bucket4": 115500.0,
-    "volatility_etp_bucket5": 10500.0
+    "core_leveraged": 2737000.0000000005,
+    "yieldboost": 1900000.0,
+    "inverse_decay_bucket4": 115000.00000000001,
+    "volatility_etp_bucket5": 48000.0
   },
   "rebalance_knobs": {
     "target_basis": "hybrid",
@@ -31,7 +31,7 @@
     "retarget_on_plan_change": false,
     "b4_execution": "cadence",
     "apply_delist_flatten": true,
-    "use_borrow_history": true,
+    "use_borrow_history": false,
     "purgatory_model_zero_policy": "hold",
     "b4_membership_clock": "operator_5d",
     "operator_check_days": 5,
@@ -45,9 +45,10 @@
     "confirmation_count": 1,
     "entry_ramp_sessions": 1,
     "reduction_ramp_sessions": 1,
-    "remaining_gap_rate": 1.0,
-    "target_blend_alpha": 0.15,
+    "remaining_gap_rate": 0.15,
+    "target_blend_alpha": 0.05,
     "stock_midweek_mode": "rebal_only",
+    "midweek_hedge_repair": false,
     "hedge_reserve_frac": 0.15,
     "adv_participation_pct": 0.1,
     "sleeve_gross_ema_alpha": 0.35,
@@ -60,71 +61,64 @@
     "hedge_long_trigger_net_pct": 0.04,
     "hedge_long_target_net_pct": 0.01,
     "hedge_short_trigger_net_pct": 0.01,
-    "hedge_short_target_net_pct": 0.0
+    "hedge_short_target_net_pct": 0.0,
+    "pace_bootstrap_enabled": true,
+    "pace_bootstrap_until_ratio": 0.9,
+    "pace_bootstrap_target_blend_alpha": 1.0,
+    "pace_bootstrap_remaining_gap_rate": 1.0,
+    "pace_bootstrap_establish_budget_frac": 1.0,
+    "pace_bootstrap_max_daily_turnover_pct": null,
+    "pace_bootstrap_stock_rebalance_clock": null
   },
   "archive_coverage": [
     {
       "artifact": "proposed_trades.csv",
-      "n_dates": 89,
+      "n_dates": 91,
       "first": "2025-12-28",
-      "last": "2026-07-18",
-      "n_on_or_after_start": 85,
+      "last": "2026-07-20",
+      "n_on_or_after_start": 87,
       "gap_before_first_plan_days": 0
     },
     {
       "artifact": "etf_screened_today.csv",
-      "n_dates": 57,
+      "n_dates": 113,
       "first": "2025-12-28",
-      "last": "2026-07-18",
-      "n_on_or_after_start": 55,
+      "last": "2026-07-20",
+      "n_on_or_after_start": 106,
       "gap_before_first_plan_days": 0
     }
   ],
   "prod_stats": {
-    "n_timeline": 115,
-    "n_sized_ok": 115,
+    "n_timeline": 118,
+    "n_sized_ok": 118,
     "n_sized_fail": 0,
-    "b4_budget_usd": 115500.0,
-    "blacklist_except": [
-      "APLD",
-      "CBRS",
-      "SMR"
-    ],
-    "notebook_b4_borrow": {
-      "entry_borrow_cap": {
-        "old": 0.7,
-        "new": 0.6
-      },
-      "keep_borrow_cap": {
-        "old": 0.9,
-        "new": 0.8
-      },
-      "borrow_ramp_lo": {
-        "old": 0.8,
-        "new": 0.7000000000000001
-      },
-      "borrow_ramp_hi": {
-        "old": 1.2,
-        "new": 1.1
-      }
-    },
-    "price_panel_min_days": 20,
-    "b4_gross_median": 65999.99999999997,
-    "b4_gross_max": 1871529.9349503247
+    "n_archived_fallback": 0,
+    "n_archived_fallback_sanitized": 0,
+    "n_zeroed_blacklist": 0,
+    "n_zeroed_preferred_sister": 0,
+    "b4_budget_usd": 115000.00000000001,
+    "blacklist_except": [],
+    "notebook_b4_borrow": null,
+    "price_panel_min_days": null,
+    "b4_gross_median": null,
+    "b4_gross_max": null,
+    "b4_membership_count": 62,
+    "b4_membership_with_ledger": 21,
+    "b4_membership_blocked": 1
   },
   "book": {
-    "cagr": 0.20687088100820028,
-    "vol": 0.054434260194527725,
-    "sharpe": 3.5512567699699025,
-    "maxdd": -0.013866949021536512,
-    "start_usd": 1050000.0,
-    "end_usd": 1126148.1144682101,
-    "n_plans_used": 82,
+    "cagr": 0.19298486869961362,
+    "vol": 0.22871687777849134,
+    "sharpe": 0.8889017329053848,
+    "maxdd": -0.06695325685542697,
+    "start_usd": 1200000.0,
+    "end_usd": 1283971.3954822682,
+    "n_plans_used": 87,
     "first_plan": "2026-02-27",
     "cash_days": 2,
     "same_run_churn_enabled": true,
     "avoided_round_trip_usd": 0.0,
-    "risk_override_turnover_usd": 186709.2082774705,
+    "risk_override_turnover_usd": 2108300.033153364,
     "one_terminal_target_per_symbol": true,
     "b4_membership_clock": "operator_5d",
     "stock_rebalance_clock": "operator_5d",
@@ -139,26 +133,34 @@
     "confirmation_count": 1,
     "entry_ramp_sessions": 1,
     "reduction_ramp_sessions": 1,
-    "remaining_gap_rate": 1.0,
+    "remaining_gap_rate": 0.15,
+    "target_blend_alpha": 0.05,
+    "establish_budget_frac": 0.5,
+    "max_daily_turnover_pct": 0.08,
+    "pace_bootstrap_enabled": true,
+    "pace_bootstrap_until_ratio": 0.9,
+    "pace_bootstrap_latched": true,
+    "n_bootstrap_sessions": 2,
     "stock_midweek_mode": "rebal_only",
+    "midweek_hedge_repair": false,
     "hedge_reserve_frac": 0.15,
     "adv_participation_pct": 0.1,
-    "n_deferred_pace": 3230,
-    "n_hedge_repairs": 201,
+    "n_deferred_pace": 694,
+    "n_hedge_repairs": 1446,
     "n_growth_blocked_hedge_infeasible": 0,
-    "n_b4_cadence_rebals": 7,
-    "n_b4_membership_deferred": 361,
-    "n_b4_empty_plan_holds": 30,
+    "n_b4_cadence_rebals": 23,
+    "n_b4_membership_deferred": 191,
+    "n_b4_empty_plan_holds": 64,
     "n_b4_ratchet_pins": 0,
-    "n_b4_cadence_pairs": 58,
-    "n_purgatory_reductions": 30,
+    "n_b4_cadence_pairs": 57,
+    "n_purgatory_reductions": 250,
     "purgatory_model_zero_policy": "hold"
   },
   "limitations": [
     "Daily targets from full generate_trade_plan on archived etf_screened_today.csv (opt2 \u2192 crash \u2192 smooth \u2192 ratchet) with isolated state carried forward.",
     "Borrow/edge inputs: screened spot borrow_current + production edge/opt2 path (no avg-borrow overlay).",
     "Ratchet floors from prior-day sized plan (simulated), not live Flex holdings.",
-    "Does not prefer archived proposed_trades.csv, but falls back to them when prod sizing fails or on plan-only archive dates.",
+    "Archived proposed_trades.csv fallback (GTP fail or plan-only dates) is sanitized to current YAML blacklist + preferred_wrappers before use (see production_actual_backtest.archive_fallback).",
     "Archive gap ~Dec 2025 / sparse screened: pre-2026-04-25 archives lack net_edge_p50_annual \u2014 prod replay shims from net_decay_annual (backtest-only).",
     "B5 included only when GTP sizes it; no live locates / execution rejects.",
     "B1/B2 retarget on stock_rebalance_clock (default operator_5d) with Phase-2b hysteresis; purgatory is reduce-only toward model_* (trim, never increase gross); missing/zero model_* share-holds (purgatory_model_zero_policy=hold) \u2014 executable 0 is not a flatten.",
@@ -171,8 +173,6 @@
     "Point-in-time legs use next-close execution, share-hold marking, 20 bp slippage, $0.0035/share commissions, and 4.45% margin debit / Actual-360.",
     "B3 flow excluded.",
     "Screened archives begin 2026-02-27 for this run window (sparse thereafter).",
-    "Ratchet floors from prior-day sized plan (simulated), not live Flex holdings.",
-    "Notebook blacklist exception (not live YAML): re-admitted APLD, CBRS, SMR.",
-    "Price panel min_days overridden to 20 (default 40) so short-history names like CBRZ can mark."
+    "Ratchet floors from prior-day sized plan (simulated), not live Flex holdings."
   ]
 }

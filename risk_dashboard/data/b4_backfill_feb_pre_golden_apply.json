@@ -1,0 +1,51 @@
+{
+  "ok": true,
+  "dry_run": false,
+  "force": false,
+  "artifacts": [
+    "screened"
+  ],
+  "from": "2026-02-19",
+  "to": "2026-02-26",
+  "summary": {
+    "wrote": 5
+  },
+  "rows": [
+    {
+      "date": "2026-02-19",
+      "artifact": "screened",
+      "source_sha": "6a2daf041f63a86d2c5d664f052c4b94d8a6d875",
+      "source_commit_date": "2026-02-19T16:56:10-05:00",
+      "action": "wrote"
+    },
+    {
+      "date": "2026-02-20",
+      "artifact": "screened",
+      "source_sha": "9947613e0c8fee2db50863c51ac26022ee8955f7",
+      "source_commit_date": "2026-02-20T23:12:23-05:00",
+      "action": "wrote"
+    },
+    {
+      "date": "2026-02-22",
+      "artifact": "screened",
+      "source_sha": "ff96849fa8aed1905fcead7519c0c3492d881662",
+      "source_commit_date": "2026-02-22T15:15:04-05:00",
+      "action": "wrote"
+    },
+    {
+      "date": "2026-02-24",
+      "artifact": "screened",
+      "source_sha": "8e2493880e79412c718641da81ea5bf76215c13b",
+      "source_commit_date": "2026-02-24T22:22:13-05:00",
+      "action": "wrote"
+    },
+    {
+      "date": "2026-02-26",
+      "artifact": "screened",
+      "source_sha": "09099da9191a32bf4344e4d898ee040cc6d9a2ad",
+      "source_commit_date": "2026-02-26T12:26:38-05:00",
+      "action": "wrote"
+    }
+  ],
+  "note": "Commit calendar date stamps the archive day; tip working tree is never copied. Aggregate B4 book production start remains 2026-02-27; pair inception research covers listing\u2192plan gaps."
+}

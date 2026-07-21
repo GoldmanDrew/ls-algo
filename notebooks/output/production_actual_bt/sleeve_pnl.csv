@@ -1,4 +1,5 @@
 sleeve,n_pairs,pnl_usd
-core_leveraged,36,2868.7944404702675
-inverse_decay_bucket4,5,7667.158108870329
-yieldboost,9,65612.16191886985
+volatility_etp_bucket5,1,173.39035364328316
+inverse_decay_bucket4,20,613.8812626285771
+yieldboost,19,16360.765141249942
+core_leveraged,286,66823.35872474557
