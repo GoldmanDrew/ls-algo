@@ -1,0 +1,28 @@
+{
+  "run_date": "2026-07-20",
+  "mode": "shadow",
+  "kill_mode": "normal",
+  "checks": {
+    "lot_identity": {
+      "pass": true,
+      "mismatches": []
+    },
+    "nav_identity": {
+      "nav_today_usd": 302.947269118602,
+      "chained": false,
+      "note": "no prior reconcile snapshot; NAV chain starts today"
+    }
+  },
+  "notes": [],
+  "health": "green",
+  "carry": {
+    "total_pnl_usd": 302.947269118602,
+    "realized_pnl_usd": 0.0,
+    "unrealized_pnl_usd": 369.372203,
+    "borrow_fees_usd": -299.05,
+    "short_credit_interest_usd": 232.62506611860172,
+    "gross_notional_usd": 42152.43750649,
+    "net_notional_usd": 2749.997506489999
+  },
+  "puts": {}
+}

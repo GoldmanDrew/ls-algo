@@ -1,0 +1,33 @@
+{
+  "run_date": "2026-07-20",
+  "mode": "shadow",
+  "kill_mode": "normal",
+  "strategy_version": "B5PROD-1",
+  "config_hash": "32c794b78aac",
+  "b5_allocated_nav": 156875.0,
+  "ramp_factor": 1.0,
+  "effective_b5_nav": 156875.0,
+  "health": "green",
+  "notes": [],
+  "signals": {
+    "asof": "2026-07-17",
+    "age_days": 1,
+    "stale": false,
+    "vix": 18.770000457763672,
+    "vix3m": 20.540000915527344,
+    "ratio": 0.9138266612040106,
+    "spx_spot": 7457.68994140625,
+    "spx_asof": "2026-07-17"
+  },
+  "carry": {
+    "ratio": 0.9138266612040106,
+    "rho": 1.2818888433667548,
+    "gross_multiplier": 0.8167722518116094,
+    "carry_gross_usd": 25626.229400589244,
+    "uvix_short_usd": 11230.270692230424,
+    "svix_short_usd": 14395.95870835882,
+    "cadence_interval_days": 5
+  },
+  "hedge_budget_multiplier": 1.1739486018741414,
+  "option_intents": 3
+}

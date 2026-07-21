@@ -2965,6 +2965,7 @@ def main() -> None:
     parser.add_argument("--skip-phase-2",  action="store_true", help="Skip establish pass.")
     parser.add_argument("--skip-phase-2b", action="store_true", help="Skip resize pass (Phase 2b).")
     parser.add_argument("--skip-phase-3",  action="store_true", help="Skip hedge pass.")
+    parser.add_argument("--skip-b5-options", action="store_true", help="Skip the Bucket 5 Production B option phase.")
     args = parser.parse_args()
 
     cfg       = load_config("config/strategy_config.yml")
@@ -3054,6 +3055,33 @@ def main() -> None:
         f"{len(hedgeable_df)} hedgeable (B1+YB, for Phase 3); "
         f"{len(resize_df)} resize-eligible (all sleeves, for Phase 2b)."
     )
+
+    # ----- Bucket 5 Production B single-ownership guard (fail closed).
+    # In production mode GTP's B5 policy is the sole owner of UVIX/SVIX: the
+    # pair row must carry b5_owner=production or we refuse to run (a plan
+    # generated without the B5 extension would silently revert ownership).
+    b5_prod_cfg: dict = {}
+    try:
+        from scripts.bucket5_policy import load_b5_config as _load_b5_config
+
+        b5_prod_cfg = _load_b5_config()
+    except FileNotFoundError:
+        b5_prod_cfg = {}
+    if b5_prod_cfg.get("mode") == "production" and not plan.empty:
+        _b5_syms = {"UVIX", "SVIX"}
+        _b5_rows = plan[plan["ETF"].astype(str).str.upper().isin(_b5_syms)]
+        _owner_col = plan.get("b5_owner")
+        _owned = (
+            _b5_rows.index.size > 0
+            and _owner_col is not None
+            and _owner_col.loc[_b5_rows.index].astype(str).eq("production").all()
+        )
+        if _b5_rows.index.size > 0 and not _owned:
+            raise RuntimeError(
+                "[B5-GUARD] bucket5_production.mode=production but the UVIX/SVIX plan "
+                "rows are not stamped b5_owner=production. Two owners detected — "
+                "failing closed. Regenerate the plan with the B5 extension enabled."
+            )
 
     # Load screened universe
     screened_csv = Path(paths_cfg.get("screened_csv", "data/etf_screened_today.csv"))
@@ -4210,6 +4238,28 @@ def main() -> None:
             )
         else:
             tprint("[PHASE 3] Skipped.")
+
+        # ------------------------------------------------------------------
+        # Bucket 5 Production B option phase (docs/bucket5_production_b_
+        # integration_plan_2026-07-18.md, 2026-07-20 amendment). Shadow mode
+        # forces dry-run; production mode requires per-intent manual approval
+        # in data/runs/<date>/bucket5_production/approved_intents.csv. Cancel
+        # scope is strictly the B5P| orderRef namespace.
+        # ------------------------------------------------------------------
+        if not args.skip_b5_options:
+            try:
+                from scripts.bucket5_rebalance_ext import run_b5_options_phase
+
+                run_b5_options_phase(
+                    ib=ib,
+                    run_date=run_date,
+                    dry_run=dry_run,
+                    tprint=tprint,
+                )
+            except Exception as _b5_ex:
+                tprint(f"[B5-OPT] WARNING: phase failed closed: {_b5_ex}")
+        else:
+            tprint("[B5-OPT] Skipped (--skip-b5-options).")
 
         # Final portfolio snapshot
         log_exposure_event(
