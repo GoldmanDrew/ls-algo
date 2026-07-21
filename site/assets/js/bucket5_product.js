@@ -684,6 +684,74 @@
       `${escapeHtml(sizing.execution_formula || "")} ${escapeHtml(sizing.quote_note || "")}</p></div>`;
   }
 
+  function livePanel(live) {
+    if (!live || live.schema !== "bucket5_live.v1") return "";
+    const healthColor =
+      live.health === "green" ? "#3fb950" : live.health === "unknown" ? "#8b949e" : "#f85149";
+    const cap = live.capital || {};
+    const carry = live.carry || {};
+    const puts = live.puts || {};
+    const pol = carry.policy_targets || {};
+    const lots = puts.lots || [];
+    const lotRows = lots.length
+      ? lots
+          .map(
+            (l) =>
+              `<tr><td>${escapeHtml(String(l.local_symbol || l.conId || ""))}</td>` +
+              `<td>${escapeHtml(String(l.expiry || ""))}</td>` +
+              `<td class="num">${fmtNum(l.strike, 0)}</td>` +
+              `<td class="num">${fmtNum(l.remaining_contracts, 0)}/${fmtNum(l.entry_contracts, 0)}</td>` +
+              `<td class="num">${fmtUsd(l.cost_basis_usd)}</td>` +
+              `<td class="num">${fmtNum(l.peak_mult, 2)}x</td>` +
+              `<td>${escapeHtml((l.profit_tiers_fired || []).concat(l.vix_tiers_fired || []).join(", ") || "—")}</td></tr>`
+          )
+          .join("")
+      : `<tr><td colspan="7" class="dim">No open put lots (shadow mode emits intents only; the pilot buys the first contract after manual approval).</td></tr>`;
+    const carryRows = (carry.positions || [])
+      .map(
+        (p) =>
+          `<tr><td>${escapeHtml(String(p.symbol || ""))}</td>` +
+          `<td class="num">${fmtUsd(p.net_notional_usd)}</td>` +
+          `<td class="num">${fmtUsd(p.gross_notional_usd)}</td></tr>`
+      )
+      .join("");
+    const recon = live.reconcile || {};
+    return (
+      `<div class="b5p-panel" id="b5p-live">` +
+      `<h2>Live Production B book <span style="color:${healthColor}">● ${escapeHtml(
+        String(live.health || "unknown")
+      )}</span></h2>` +
+      `<p class="dim small">mode <strong>${escapeHtml(String(live.mode || ""))}</strong> · kill_mode ${escapeHtml(
+        String(live.kill_mode || "")
+      )} · run ${escapeHtml(String(live.run_date || ""))} · ${escapeHtml(String(live.strategy_version || ""))}</p>` +
+      kpiCards([
+        ["B5 allocated NAV", fmtUsd(cap.b5_allocated_nav), ""],
+        ["Effective NAV (ramp)", fmtUsd(cap.effective_b5_nav), ""],
+        ["Carry gross (actual)", fmtUsd(carry.gross_notional_usd), ""],
+        ["Carry gross (policy)", pol.carry_gross_usd != null ? fmtUsd(pol.carry_gross_usd) : "—", ""],
+        ["Carry cum P&L", carry.cum_pnl_usd != null ? fmtUsd(carry.cum_pnl_usd) : "—", cls(carry.cum_pnl_usd)],
+        ["Open put contracts", fmtNum(puts.open_contracts, 0), ""],
+      ]) +
+      `<div class="b5p-grid-2">` +
+      `<div><h3 class="dim small">Carry legs (accounting)</h3><table class="b5p-table"><thead><tr><th>Symbol</th><th class="num">Net $</th><th class="num">Gross $</th></tr></thead><tbody>${
+        carryRows || '<tr><td colspan="3" class="dim">No carry exposure rows.</td></tr>'
+      }</tbody></table>` +
+      (pol.rho != null
+        ? `<p class="dim small">Policy: ratio ${fmtNum(pol.ratio, 3)} → rho ${fmtNum(pol.rho, 2)}, gross× ${fmtNum(
+            pol.gross_multiplier,
+            2
+          )}; targets UVIX ${fmtUsd(pol.uvix_short_usd)} / SVIX ${fmtUsd(pol.svix_short_usd)} short.</p>`
+        : "") +
+      `</div>` +
+      `<div><h3 class="dim small">Put ladder lots (ledger, by conId)</h3><table class="b5p-table"><thead><tr><th>Contract</th><th>Expiry</th><th class="num">Strike</th><th class="num">Rem/Entry</th><th class="num">Cost basis</th><th class="num">Peak</th><th>Tiers fired</th></tr></thead><tbody>${lotRows}</tbody></table></div>` +
+      `</div>` +
+      (recon.notes && recon.notes.length
+        ? `<p class="callout dim small">Reconcile: ${escapeHtml(recon.notes.join(" · "))}</p>`
+        : "") +
+      `</div>`
+    );
+  }
+
   function renderOverview(data, run, state) {
     const guide = run.meta?.strategy_guide;
     const dd = run.drawdown_series || [];
@@ -707,6 +775,7 @@
     ])}</div>`;
 
     return (
+      livePanel(state.live) +
       (data.runs?.length > 1
         ? `<div class="b5p-run-row"><label class="dim">Primary run <select id="b5p-ov-run">${runOpts}</select></label></div>`
         : "") +
@@ -1110,6 +1179,7 @@
       dayMode: "eventful",
       dayFilter: "",
       hiddenRuns: new Set(),
+      live: (opts && opts.live) || null,
     };
 
     function run() {

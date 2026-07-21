@@ -4690,6 +4690,26 @@ def main() -> None:
         print(f"[OK] Wrote proposed trades -> {dated_path}  (n={len(proposed)})")
         print(f"[OK] Updated latest proposed trades -> {proposed_latest_csv}  (n={len(proposed)})")
 
+        # ----- Bucket 5 Production B extension (docs/bucket5_production_b_
+        # integration_plan_2026-07-18.md, 2026-07-20 amendment). No-op in
+        # placeholder mode; emits carry/option targets in shadow; re-sizes the
+        # UVIX/SVIX pair row and stamps b5_owner=production in production mode.
+        try:
+            from scripts.bucket5_gtp_ext import run_b5_gtp_extension
+
+            _b5_modified = run_b5_gtp_extension(
+                run_date=str(args.run_date),
+                proposed=proposed,
+                proposed_paths=[dated_path, proposed_latest_csv],
+            )
+            if _b5_modified is not None:
+                proposed = _b5_modified
+        except FileNotFoundError:
+            pass  # config/bucket5_production.yml absent -> placeholder behavior
+        except Exception as _b5_ex:
+            # Fail closed for B5 only; never block the B1/B2/B4 plan.
+            print(f"[B5] WARNING: Production B extension failed ({_b5_ex}); B5 targets not emitted.")
+
         if bool((b4_rules.get("bucket4_weekly_opt2") or {}).get("enabled")):
             from scripts.b4_plan_contract import verify_b4_gtp_artifacts
 

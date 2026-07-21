@@ -63,6 +63,7 @@ def _nav_from_config(config_yml: Path | None = None) -> tuple[float, str]:
 AUX_PANELS = {
     "bucket4_risk_sim": "bucket4_risk_sim.json",
     "bucket5_backtest": "bucket5_backtest.json",  # legacy thin panel (rollback)
+    "bucket5_live": "bucket5_live.json",  # live Production B book (scripts/bucket5_monitor.py)
     # bucket5_product.json is fetched separately by the B5 Product tab (too large for latest.json)
 }
 

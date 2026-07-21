@@ -6,6 +6,96 @@
 
 **Scope:** Integrate the `B_production` dual-short volatility-ETP plus long-put insurance strategy into `ls-algo` without treating the existing Bucket 5 placeholder as if it were already the full product.
 
+## Approved implementation amendment — 2026-07-20
+
+This amendment supersedes the paper-account path and the separate B5 executor design
+elsewhere in this document.
+
+### Real account only (no paper trading)
+
+Do **not** use an IBKR paper account for B5. All shadow, pilot, and production work runs
+against the live account. Paper fills do not validate borrow, locates, or option liquidity
+anyway; the compensating controls are:
+
+1. **Longer shadow on live state** before any order is allowed (≥40 trading days of
+   target generation + hypothetical fills using live quotes; zero submissions).
+2. **`--dry-run` must succeed end-to-end** through `generate_trade_plan` →
+   `rebalance_strategy` for both carry and option intents before the first live order.
+3. **Manual approval required** for every risk-increasing B5 order (new shorts, put buys,
+   re-arms) until automation is explicitly enabled. Sell-only monetization and covers may
+   automate later under the same kill modes.
+4. **One-contract put pilot first**, then staged ladder growth. Cap carry at or below the
+   current live gross during the pilot so the first live action cannot enlarge short-vol
+   risk.
+5. **Fail closed on dual ownership, stale quotes, missing locates, or reconciliation
+   failure** — health drops to `no_new_risk` / `halt_all` rather than falling back to a
+   model price or a second owner.
+
+Remove `mode: paper` from the operational mode set. Allowed modes are:
+
+```yaml
+bucket5_production:
+  mode: placeholder | shadow | production
+  account: live   # fixed; paper path is not implemented
+```
+
+| Mode | Behavior |
+|---|---|
+| `placeholder` | Current GTP + rebalancer own UVIX/SVIX stocks only; no B5 option intents |
+| `shadow` | GTP emits B5 carry + option targets into `proposed_trades` / B5 manifest; rebalancer runs with `--dry-run` only; no live submits |
+| `production` | Same path submits live orders under `orderRef` namespace `B5P|…` (options) and existing `ETF_LS|…` carry tags, subject to manual-approval and kill modes |
+
+### Wire into `generate_trade_plan` and `rebalance_strategy`
+
+Do **not** build a separate `bucket5_execute.py` as the primary order path. B5 Production B
+is an extension of the existing daily plan → rebalance pipeline:
+
+| Layer | Responsibility |
+|---|---|
+| `scripts/bucket5_policy.py` | Pure regime / ladder / monetization / redeployment rules (shared with research) |
+| `scripts/bucket5_ledger.py` | Event-sourced option lots (`conId`), tiers fired, peak marks, rolls |
+| `generate_trade_plan.py` | Owns B5 targets: sizes UVIX/SVIX carry from Production B policy; selects exact XSP/SPX put contracts; writes option rows + carry rows into the plan artifacts |
+| `rebalance_strategy.py` (+ `execute_trade_plan.py`) | Executes plan rows: stocks via existing `make_stock` path; options via a new `make_option` / OPT limit-order path gated by quote quality and `orderRef` |
+| `ibkr_accounting.py` + `bucket5_reconcile` | Contract-safe Flex attribution and daily B5 NAV identity |
+| `config/bucket5_production.yml` | Frozen economics, ramp, kill modes, automation flags |
+
+Plan artifact rules:
+
+- Carry legs remain on the `UVIX` / `SVIX` pair row in `proposed_trades.csv` with
+  `sleeve=volatility_etp_bucket5`.
+- Option intents are first-class plan rows (or a sibling `proposed_trades_b5_options.csv`
+  loaded by the same rebalancer) with fields: `conId`, expiry, strike, right,
+  tradingClass, multiplier, action, qty, limit_px, rung_id, intent_id, `order_ref_prefix=B5P`.
+- The rebalancer must **ignore B5 option rows unless** `bucket5_production.mode` is
+  `shadow` (dry-run) or `production` (live), and must refuse option submits when mode is
+  `placeholder`.
+- When mode is `production`, GTP is the sole owner of UVIX/SVIX **and** B5 options. The
+  generic B1/B2/B4 phases must not resize those symbols. Fail closed if a second owner is
+  detected.
+- Cancel hygiene: stock cancels stay scoped to `ETF_LS|…`; option cancels stay scoped to
+  `B5P|…`. Never cancel 0DTE or other strategy orders.
+
+0DTE isolation is unchanged and mandatory: prefer **XSP** for B5 puts; require `B5P|`
+  orderRef; patch spx-0dte to same-day SPXW only so long-dated puts are never treated as
+  0DTE inventory.
+
+### Revised rollout (real account)
+
+| Stage | What runs | Live orders? |
+|---|---|---|
+| Phase 0–1 | Charter + build policy/ledger + GTP/rebalancer option path | No |
+| Phase 2 Shadow | Live account state + live quotes; GTP writes targets; rebalancer `--dry-run` only | No (≥40 days) |
+| Phase 3 *(replaces paper)* | Live dry-run drills: restart, partial-fill simulation, monetization injection, kill modes on the real code path | No |
+| Phase 4 Live put pilot | Manual release, one XSP (or SPX) contract → staged ladder; carry reduce-only / no-grow | Yes (puts first) |
+| Phase 5 Carry cutover | GTP Production B owns UVIX/SVIX under no-grow ceiling | Yes |
+| Phase 6 Automate | Same automation ladder as before, still on the live account | Yes |
+
+The old Phase 3 “IBKR paper account, 63–90 days” is **deleted**. Its mechanical goals move
+into Phase 2/3 dry-run drills on the live code path. Capital and put-sizing gates from the
+2026-07-18 amendment still apply.
+
+---
+
 ## Approved implementation amendment — 2026-07-18
 
 This section supersedes the older sizing examples below. The approved book is now based on
@@ -242,35 +332,38 @@ These are not forecasts. They are sizing constraints. The allocator should set a
 
 ### 3.1 Keep exactly one owner of UVIX and SVIX
 
-Add an explicit mode:
+Add an explicit mode (see **2026-07-20 amendment** — paper mode removed):
 
 ```yaml
 bucket5_production:
-  mode: placeholder | shadow | paper | production
+  mode: placeholder | shadow | production
+  account: live
 ```
 
-- `placeholder`: current `generate_trade_plan` and rebalancer own UVIX/SVIX.
-- `shadow`: the new engine writes targets and proposed orders but never submits them; the placeholder remains the only live owner.
-- `paper`: the new engine trades only the paper account.
-- `production`: the new engine exclusively owns UVIX, SVIX, and B5 option contracts; the generic rebalancer must exclude those symbols from all B5 phases.
+- `placeholder`: current `generate_trade_plan` and rebalancer own UVIX/SVIX stocks only.
+- `shadow`: GTP writes B5 carry + option targets; rebalancer may only `--dry-run` those intents; no live submits.
+- `production`: GTP + rebalancer exclusively own UVIX, SVIX, and B5 option contracts on the **live** account; B1/B2/B4 phases must exclude those symbols.
 
 The cutover must fail closed if two owners are active. A rerun must not duplicate an order.
 
 ### 3.2 Proposed components
 
-The exact filenames can change, but the responsibilities should remain separate:
+Wire through the existing plan → rebalance path (see **2026-07-20 amendment**). Do not
+stand up a separate primary executor:
 
 | Component | Responsibility |
 |---|---|
 | `config/bucket5_production.yml` | Frozen economic parameters, capital ceiling, ramp, execution limits, automation flags, and kill modes |
 | `scripts/bucket5_policy.py` | Pure, side-effect-free regime, cadence, ladder, monetization, and redeployment rules shared by research and live |
-| `scripts/bucket5_live_plan.py` | Broker-aware target generation and exact contract selection; no order submission |
-| `scripts/bucket5_execute.py` | Idempotent stock and option order execution with manual-approval and dry-run modes |
+| `generate_trade_plan.py` (B5 extension) | Broker-aware B5 target generation and exact contract selection; emits carry + option plan rows |
+| `rebalance_strategy.py` / `execute_trade_plan.py` (OPT path) | Idempotent stock + option limit-order execution with dry-run and manual-approval modes |
 | `scripts/bucket5_ledger.py` | Event-sourced position, cost-basis, peak-mark, tier-fired, roll, cash, and redeployment state |
 | `scripts/bucket5_reconcile.py` | Flex/broker reconciliation and daily NAV identity |
 | `data/runs/<date>/bucket5_production/` | Immutable inputs, decision manifest, targets, intents, fills, rejects, positions, marks, P&L, reconciliation, and approvals |
 
-The normal `proposed_trades.csv` may carry an aggregate display row or a pointer to the B5 manifest, but it must not be the authoritative option inventory.
+`proposed_trades.csv` (plus optional `proposed_trades_b5_options.csv`) is the execution
+input the rebalancer already understands. The B5 ledger remains the authoritative option
+inventory; plan rows are intents, not the lot book.
 
 ### 3.3 Exact contract identity
 
@@ -544,28 +637,30 @@ Exit gates:
 - current borrow is incorporated into after-cost results; and
 - operators complete a no-new-risk and flatten-carry drill.
 
-### Phase 3 — broker paper account, full workflow (at least 63–90 trading days)
+### Phase 3 — live-account dry-run drills (replaces paper; at least 20 trading days overlapping late shadow)
 
-Run the complete workflow in IBKR paper at the proposed allocation.
+**Amendment 2026-07-20:** there is no IBKR paper phase. Validate the full GTP →
+rebalancer → ledger → reconcile loop on the **live account** with `--dry-run` only.
 
-Required observations:
+Required observations (all non-submitting):
 
-- initial three-rung entry;
-- at least one full scheduled roll cycle;
-- at least six carry cadence decisions or the equivalent stress-driven decisions;
-- partial-fill, cancel/replace, rejection, restart, and next-day Flex reconciliation paths;
-- simulated monetization at 3x, 5x, 8x, VIX 45/65, and giveback through controlled test inputs; and
-- a simulated recall and margin breach.
-
-Paper fills are not evidence of real borrow or real executable liquidity. The phase validates mechanics and state.
+- end-to-end dry-run of three-rung put entry intents with live two-sided quotes;
+- dry-run of a scheduled roll (buy replacement before sell, archived conIds);
+- at least six carry cadence decisions or stress-driven decisions in shadow outputs;
+- restart / duplicate-intent / cancel-replace recovery without creating a second economic order;
+- injected monetization at 3x, 5x, 8x, VIX 45/65, and giveback through controlled test inputs;
+- simulated recall and margin breach driving `no_new_risk` / `flatten_carry`; and
+- next-day Flex parse of *existing* UVIX/SVIX (and any prior test option lots if present)
+  through the contract-safe accounting path.
 
 Exit gates:
 
-- zero unresolved position, order, or cash mismatches;
-- one complete option roll reconciles contract by contract;
-- every injected monetization event fires once and only once;
-- the emergency runbook works without editing state by hand; and
-- a go-live report lists every difference between paper and expected live behavior.
+- zero unresolved dry-run intent / ledger mismatches;
+- every injected monetization event fires once and only once in the ledger;
+- emergency runbook works without hand-editing state;
+- rebalancer cancel hygiene proven: only `ETF_LS|` and `B5P|` scopes touched; and
+- a go-live report lists residual differences between dry-run assumptions and live
+  borrow/quote reality (paper is not used as a substitute).
 
 ### Phase 4 — live coverage-first pilot (approximately 6–10 weeks)
 
@@ -730,16 +825,16 @@ Do not tune the strategy in response to one crash, one missed monetization, or o
 
 ## 10. First implementation backlog
 
-1. Approve `b5_allocated_nav`, collateral treatment, account/subaccount, and account risk budget.
+1. Approve `b5_allocated_nav`, collateral treatment, and account risk budget (live account; no paper).
 2. Extract the Production B rules into a pure shared policy module with golden parity tests.
-3. Create the exact-contract target and whole-contract allocation engine for SPX/XSP.
+3. Extend `generate_trade_plan.py` with exact-contract B5 put target generation (XSP/SPX) and Production B carry sizing.
 4. Build the event-sourced B5 ledger and deterministic intent IDs.
-5. Add an option-specific limit-order executor with dry-run, manual approval, and restart recovery.
-6. Add coordinated UVIX/SVIX target execution and exclusive-ownership guards.
+5. Extend `rebalance_strategy.py` / `execute_trade_plan.py` with an OPT limit-order path, `B5P|` orderRef, dry-run, and manual approval.
+6. Add exclusive-ownership guards so B1/B2/B4 cannot resize UVIX/SVIX when mode is `production`.
 7. Extend Flex ingestion and accounting to contract-level option records.
-8. Add daily B5 NAV identity, fill/cash trace, and account-level risk aggregation.
-9. Add kill modes, stale-data/quote/locate/margin gates, and operator drills.
-10. Run 40 shadow days, then 63–90 paper days, before requesting the first live put order.
+8. Add daily B5 NAV identity, fill/cash trace, and account-level risk aggregation (dashboard live panel).
+9. Add kill modes, stale-data/quote/locate/margin gates, and operator drills; patch spx-0dte same-day filter.
+10. Run ≥40 shadow days + ≥20 live dry-run drill days, then the one-contract live put pilot (no paper phase).
 
 ## 11. Go/no-go summary
 
@@ -750,20 +845,21 @@ Do not tune the strategy in response to one crash, one missed monetization, or o
 - target generation is deterministic; and
 - all outputs are read-only.
 
-### Go to paper when
+### Go to live dry-run drills when *(replaces “go to paper”)*
 
-- exact contracts and order intents are stable;
-- accounting works by contract;
-- failures are injectable; and
-- rollback is tested.
+- exact contracts and order intents are stable in GTP output;
+- accounting works by contract on Flex;
+- failures are injectable in the live `--dry-run` path; and
+- rollback to `placeholder` mode is tested.
 
 ### Go to the live coverage pilot when
 
-- a full paper roll has reconciled;
+- shadow + dry-run drills have passed their exit gates;
+- a full dry-run roll has reconciled in the ledger;
 - live quotes never fall back to model prices;
 - option budgets fit whole contracts without overspending;
-- the broker/account is operationally approved; and
-- every order remains manually released.
+- 0DTE isolation (XSP and/or same-day SPXW filter + `B5P|` refs) is verified; and
+- every risk-increasing order remains manually released.
 
 ### Go to Production B carry ownership when
 

@@ -1,0 +1,152 @@
+# =============================================================================
+# Bucket 5 Production B — frozen economics, ramp, execution limits, kill modes
+# =============================================================================
+# Source plan: docs/bucket5_production_b_integration_plan_2026-07-18.md
+# (2026-07-20 amendment: real account only; wired through generate_trade_plan
+#  -> rebalance_strategy; no paper mode; no separate primary executor).
+#
+# Mode semantics (enforced by scripts/bucket5_gtp_ext.py and
+# scripts/bucket5_rebalance_ext.py):
+#   placeholder : current GTP + rebalancer own UVIX/SVIX stocks only.
+#                 No B5 option intents are emitted or executed.
+#   shadow      : GTP emits B5 carry + option targets into the B5 manifest
+#                 (data/runs/<date>/bucket5_production/). The rebalancer
+#                 processes option intents in FORCED dry-run; zero submissions.
+#   production  : same path submits live orders under orderRef namespace
+#                 "B5P|" (options), subject to manual approval and kill modes.
+#                 GTP Production B policy becomes the sole owner of UVIX/SVIX.
+
+bucket5_production:
+  mode: shadow            # placeholder | shadow | production
+  account: live           # fixed; paper path is not implemented
+  strategy_version: B5PROD-1   # embedded in every intent id / ledger event
+
+  # ---------------------------------------------------------------------------
+  # Capital model (plan section 2). Every target derives from
+  # effective_b5_nav = b5_allocated_nav * ramp_factor — never account NAV.
+  # ---------------------------------------------------------------------------
+  capital:
+    b5_allocated_nav: 156875.0   # initial approved ceiling (plan section 2.3)
+    ramp_factor: 1.0             # 0.0–1.0 within the approved allocation
+    max_carry_gross_usd: 31375.0 # hard pair-gross ceiling (abs UVIX + abs SVIX)
+
+  # ---------------------------------------------------------------------------
+  # Frozen Production B economics (must match scripts/bucket5_insurance_bt.py
+  # production_config(); parity is enforced by tests/test_bucket5_policy.py).
+  # ---------------------------------------------------------------------------
+  policy:
+    sleeve_frac: 0.20            # carry gross = 20% of effective B5 NAV (calm)
+    regime:
+      r_lo: 0.88                 # deep contango threshold (VIX/VIX3M)
+      r_hi: 1.00                 # backwardation threshold
+      rho_contango: 1.0
+      rho_backwardation: 2.0
+      gross_contango: 1.0
+      gross_backwardation: 0.35
+    cadence:
+      base_days: 14.0
+      k_stress: 6.0
+      min_interval: 2
+      max_interval: 21
+    ladder:                      # Production B 2x integer-quantity ladder
+      buy_dte: 126
+      roll_dte: 63
+      rungs:
+        - {otm_pct: 0.10, per_roll_frac: 0.008, quantity_multiplier: 2}
+        - {otm_pct: 0.20, per_roll_frac: 0.008, quantity_multiplier: 2}
+        - {otm_pct: 0.30, per_roll_frac: 0.008, quantity_multiplier: 2}
+    hedge_budget:
+      enabled: true
+      contango_mult: 1.20
+      stress_mult: 0.85
+      vix_lo: 14.0
+      vix_hi: 28.0
+      vix_calm_boost: 1.10
+    monetize:
+      profit_tiers: [[3.0, 0.34], [5.0, 0.5], [8.0, 1.0]]
+      vix_tiers: [[45.0, 0.5], [65.0, 1.0]]
+      giveback_frac: 0.35
+      giveback_min_mult: 2.0
+      bank_frac: 0.6
+      rearm: true
+      runner_frac: 0.15
+      runner_mult: 12.0
+    redeploy:
+      sleeve_w_contango: 0.20
+      sleeve_w_backwardation: 0.65
+
+  # ---------------------------------------------------------------------------
+  # Option instrument policy (plan section 3.4). XSP preferred at pilot scale.
+  # ---------------------------------------------------------------------------
+  options:
+    instrument: XSP              # XSP | SPX (change only via explicit roll plan)
+    exchange: SMART
+    currency: USD
+    contract_multiplier: 100.0
+    right: P
+    # Live gate: blocked above the one-contract pilot until a granularity
+    # decision is approved (plan: "blocked above the one-contract pilot").
+    pilot_max_contracts_per_intent: 1
+    pilot_max_total_open_contracts: 6
+
+  # ---------------------------------------------------------------------------
+  # Execution / quote-quality gates (plan section 3.5). Fail closed: any gate
+  # failure skips the order and alerts; never a model-price fallback.
+  # ---------------------------------------------------------------------------
+  execution:
+    require_two_sided_quote: true
+    max_spread_frac_of_mid: 0.25   # reject if (ask-bid)/mid above this
+    max_quote_age_sec: 30
+    limit_price_rule: "min(ask, mid + 0.25*spread)"
+    limit_cross_frac: 0.25         # fraction of spread paid above mid
+    order_ref_prefix: "B5P"
+    cancel_scope: "B5P|"           # never cancel outside this namespace
+    timeout_sec: 120
+    max_cancel_replace: 2
+    # Manual approval: risk-increasing intents execute only when their
+    # intent_id appears in data/runs/<date>/bucket5_production/approved_intents.csv
+    require_manual_approval: true
+    automation:                    # plan phase 6 ladder — all off initially
+      auto_monetize_sell_only: false
+      auto_carry_reduce: false
+      auto_carry_increase: false
+      auto_roll: false
+      auto_rearm: false
+
+  # ---------------------------------------------------------------------------
+  # Borrow / locate gates for carry increases (plan section 4.1).
+  # ---------------------------------------------------------------------------
+  borrow_gates:
+    frozen_borrow_uvix_annual: 0.0284
+    frozen_borrow_svix_annual: 0.0347
+    max_borrow_multiple_of_frozen: 2.0   # above this, block increases
+    block_increase_on_missing_locate: true
+
+  # ---------------------------------------------------------------------------
+  # Signals: fail closed when stale (plan section 6.2 triggers).
+  # ---------------------------------------------------------------------------
+  signals:
+    vix_csv: data/cache/bucket5/^VIX.csv
+    vix3m_csv: data/cache/bucket5/^VIX3M.csv
+    spx_csv: data/cache/bucket5/^GSPC.csv
+    max_signal_age_days: 5
+
+  # ---------------------------------------------------------------------------
+  # Kill modes (plan section 6.2). Operator-settable; checked by both the GTP
+  # extension and the rebalancer option phase before any risk-increasing action.
+  # ---------------------------------------------------------------------------
+  kill_mode: normal   # normal | no_new_risk | reduce_only | flatten_carry | exit_options | halt_all
+
+  # ---------------------------------------------------------------------------
+  # Reconciliation (plan section 5.1).
+  # ---------------------------------------------------------------------------
+  reconcile:
+    max_residual_usd: 15.69      # max($10, 1bp of b5_allocated_nav)
+
+  # ---------------------------------------------------------------------------
+  # Paths
+  # ---------------------------------------------------------------------------
+  paths:
+    ledger_events: data/bucket5_ledger/events.jsonl
+    run_subdir: bucket5_production      # under data/runs/<date>/
+    live_panel_json: risk_dashboard/data/bucket5_live.json

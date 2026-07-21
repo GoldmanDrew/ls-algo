@@ -3462,6 +3462,10 @@ def parse_trade_events(trades_xml: Path) -> pd.DataFrame:
         if child.tag != "Trade":
             continue
         a = child.attrib
+        # Option trades (B5 puts, 0DTE SPXW, ...) belong to the contract-safe
+        # option path, never the symbol-keyed stock event stream.
+        if str(a.get("assetCategory", "")).upper() in ("OPT", "FOP"):
+            continue
         sym = canonical_symbol(a.get("symbol", "") or "")
         if not sym:
             continue
@@ -3880,6 +3884,11 @@ def parse_open_positions(pos_xml: Path) -> pd.DataFrame:
     rows = []
     for node in op:
         a = node.attrib
+        # Option/derivative rows are handled by the contract-safe B5 path
+        # (scripts/bucket5_flex_options.py); never let them flow through
+        # symbol-keyed stock logic (B5 plan section 5.2).
+        if str(a.get("assetCategory", "")).upper() in ("OPT", "FOP"):
+            continue
         rows.append(
             {
                 "symbol": canonical_symbol(a.get("symbol", "")),
@@ -7071,6 +7080,22 @@ def main(run_date: str | None = None, *, use_yfinance: bool | None = None) -> in
     pnl_bucket_4_by_pair.to_csv(outdir / "pnl_bucket_4_by_pair.csv", index=False)
     pnl_bucket_5_by_symbol.to_csv(outdir / "pnl_bucket_5_by_symbol.csv", index=False)
     pnl_bucket_5_by_pair.to_csv(outdir / "pnl_bucket_5_by_pair.csv", index=False)
+
+    # ── Bucket 5 Production B put book (contract-safe, keyed by conId) ──
+    # Parallel option-aware path: SPX/XSP option rows are attributed via the
+    # B5P| orderRef namespace + B5 ledger conIds and NEVER flow through the
+    # symbol-keyed stock logic above (plan section 5.2). Failure here must not
+    # block the stock accounting build.
+    try:
+        from scripts.bucket5_flex_options import build_b5_option_books
+
+        build_b5_option_books(
+            flex_trades_path=flex_trades_path,
+            flex_positions_path=flex_positions_path,
+            outdir=outdir,
+        )
+    except Exception as _b5_opt_ex:
+        print(f"[B5-ACCT] WARNING: B5 option book build failed: {_b5_opt_ex}")
     if not pnl_by_pair.empty:
         pnl_by_pair.to_csv(outdir / "pnl_by_pair.csv", index=False)
     pnl_by_bucket.to_csv(outdir / "pnl_by_bucket.csv", index=False)

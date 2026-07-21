@@ -2898,7 +2898,10 @@
               '<div class="callout dim">Bucket 5 product UI missing. Ensure <code>bucket5_product.js</code> is loaded.</div>';
             return;
           }
-          const mountOpts = { sub: (dashParseHash().b5) || undefined };
+          const mountOpts = {
+            sub: (dashParseHash().b5) || undefined,
+            live: snap.bucket5_live || null,
+          };
           if (snap.bucket5_product) {
             window.Bucket5Product.mount(el, snap.bucket5_product, mountOpts);
             return;

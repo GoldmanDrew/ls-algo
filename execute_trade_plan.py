@@ -335,6 +335,39 @@ def make_stock(symbol: str) -> Stock:
     return c
 
 
+def make_option(
+    symbol: str,
+    expiry: str,
+    strike: float,
+    right: str = "P",
+    exchange: str = "SMART",
+    currency: str = "USD",
+    trading_class: str = "",
+    multiplier: str = "100",
+):
+    """Index/equity option contract (Bucket 5 Production B OPT path).
+
+    ``expiry`` is IB format YYYYMMDD. The caller MUST qualify the contract and
+    verify the resolved ``conId`` before submitting any order (plan section
+    3.3: exact contract identity; no ambiguous option orders).
+    """
+    from ib_insync import Option
+
+    c = Option(
+        symbol=str(symbol).upper(),
+        lastTradeDateOrContractMonth=str(expiry).replace("-", ""),
+        strike=float(strike),
+        right=str(right).upper(),
+        exchange=exchange,
+        currency=currency,
+    )
+    if trading_class:
+        c.tradingClass = trading_class
+    if multiplier:
+        c.multiplier = str(multiplier)
+    return c
+
+
 # =============================================================================
 # Paths / date helpers
 # =============================================================================
