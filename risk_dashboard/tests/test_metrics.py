@@ -981,7 +981,40 @@ def test_compute_factor_panel_uses_computed_betas_when_provided(tmp_path: Path):
     assert counts.get("computed") == 1
 
 
+def _write_factor_detail_fixture(
+    accounting: Path,
+    *,
+    detail_rows: str,
+    unbucketed_rows: str = "",
+    b3_rows: str = "",
+    b5_rows: str = "",
+) -> None:
+    accounting.mkdir(parents=True, exist_ok=True)
+    (accounting / "bucket_exposure_detail.csv").write_text(
+        "underlying,symbol,leg_class,net_notional_usd,gross_notional_usd,"
+        "_ratio_b1,_ratio_b2,_ratio_b4\n"
+        f"{detail_rows}",
+        encoding="utf-8",
+    )
+    (accounting / "net_exposure_unbucketed.csv").write_text(
+        "underlying,net_notional_usd,gross_notional_usd,orphan_frac\n"
+        f"{unbucketed_rows}",
+        encoding="utf-8",
+    )
+    (accounting / "net_exposure_bucket_3.csv").write_text(
+        "symbol,overlay_type,net_notional_usd,gross_notional_usd,n_legs\n"
+        f"{b3_rows}",
+        encoding="utf-8",
+    )
+    (accounting / "net_exposure_bucket_5.csv").write_text(
+        "symbol,underlying,overlay_type,net_notional_usd,gross_notional_usd,n_legs\n"
+        f"{b5_rows}",
+        encoding="utf-8",
+    )
+
+
 def test_compute_factor_by_bucket_aggregates_beta_weighted_net(tmp_path: Path):
+    """Legacy fallback (no detail): B1/B2 sleeve CSVs still aggregate β-wtd net."""
     accounting = tmp_path / "accounting"
     accounting.mkdir()
     (accounting / "net_exposure_bucket_1.csv").write_text(
@@ -994,7 +1027,7 @@ def test_compute_factor_by_bucket_aggregates_beta_weighted_net(tmp_path: Path):
         "AAPL,AAPL,-5000,5000,1\n",
         encoding="utf-8",
     )
-    for b in ("bucket_3", "bucket_4"):
+    for b in ("bucket_3", "bucket_4", "bucket_5"):
         (accounting / f"net_exposure_{b}.csv").write_text(
             "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n",
             encoding="utf-8",
@@ -1008,25 +1041,22 @@ def test_compute_factor_by_bucket_aggregates_beta_weighted_net(tmp_path: Path):
         },
     )
     by_key = {r["bucket"]: r for r in rows}
+    assert by_key["bucket_1"]["attribution_mode"] == "legacy_csv"
+    assert by_key["bucket_1"]["additive"] is True
     assert by_key["bucket_1"]["beta_weighted_net_usd"] == pytest.approx(20_000.0)
     assert by_key["bucket_1"]["net_beta_to_spy"] == pytest.approx(0.20)
     assert by_key["bucket_2"]["beta_weighted_net_usd"] == pytest.approx(-5_000.0)
     assert by_key["bucket_2"]["net_beta_to_spy"] == pytest.approx(-0.05)
+    assert by_key["bucket_3"]["additive"] is False
+    assert by_key["bucket_5"]["additive"] is False
 
 
 def test_compute_factor_by_bucket_multi_factor(tmp_path: Path):
     accounting = tmp_path / "accounting"
-    accounting.mkdir()
-    (accounting / "net_exposure_bucket_1.csv").write_text(
-        "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n"
-        "NVDA,NVDA,10000,10000,1\n",
-        encoding="utf-8",
+    _write_factor_detail_fixture(
+        accounting,
+        detail_rows="NVDA,NVDL,core_levered_etf,10000,10000,1.0,0.0,0.0\n",
     )
-    for b in ("bucket_2", "bucket_3", "bucket_4"):
-        (accounting / f"net_exposure_{b}.csv").write_text(
-            "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n",
-            encoding="utf-8",
-        )
     rows = compute_factor_by_bucket(
         accounting,
         nav_usd=100_000.0,
@@ -1041,11 +1071,108 @@ def test_compute_factor_by_bucket_multi_factor(tmp_path: Path):
         },
     )
     b1 = next(r for r in rows if r["bucket"] == "bucket_1")
+    assert b1["attribution_mode"] == "detail_ratio"
     assert b1["beta_weighted_net_usd"] == pytest.approx(20_000.0)
     assert b1["net_beta_to_spy"] == pytest.approx(0.20)
     assert b1["net_beta_to_qqq"] == pytest.approx(0.15)
     assert b1["net_beta_to_iwm"] == pytest.approx(0.12)
     assert b1["net_beta_to_btc"] == pytest.approx(0.05)
+
+
+def test_factor_by_bucket_detail_ratio_reconciles_to_book(tmp_path: Path):
+    accounting = tmp_path / "accounting"
+    # Book: NVDA 10k + AAPL -5k = 5k net. Split across B1/B2 via ratios.
+    # B3 overlay must not enter the additive sum.
+    _write_factor_detail_fixture(
+        accounting,
+        detail_rows=(
+            "NVDA,NVDL,core_levered_etf,10000,10000,1.0,0.0,0.0\n"
+            "AAPL,AAPY,yieldboost_etf,-5000,5000,0.0,1.0,0.0\n"
+        ),
+        b3_rows="SQQQ,flow_program,8000,8000,1\n",
+    )
+    (accounting / "net_exposure_by_underlying.csv").write_text(
+        "underlying,symbols,net_notional_usd,gross_notional_usd,n_legs\n"
+        "NVDA,NVDL,10000,10000,1\n"
+        "AAPL,AAPY,-5000,5000,1\n",
+        encoding="utf-8",
+    )
+    beta_results = {
+        "NVDA": {"provenance": "computed", "beta_to_spy": 2.0},
+        "AAPL": {"provenance": "computed", "beta_to_spy": 1.0},
+        "SQQQ": {"provenance": "computed", "beta_to_spy": 1.0},
+    }
+    rows = compute_factor_by_bucket(
+        accounting, nav_usd=100_000.0, beta_results=beta_results
+    )
+    by_key = {r["bucket"]: r for r in rows}
+    assert by_key["bucket_1"]["beta_weighted_net_usd"] == pytest.approx(20_000.0)
+    assert by_key["bucket_2"]["beta_weighted_net_usd"] == pytest.approx(-5_000.0)
+    assert by_key["bucket_3"]["additive"] is False
+    assert by_key["bucket_3"]["beta_weighted_net_usd"] == pytest.approx(8_000.0)
+    additive_beta = sum(r["beta_weighted_net_usd"] for r in rows if r["additive"])
+    assert additive_beta == pytest.approx(15_000.0)  # excludes B3
+
+    panel = compute_factor_panel(
+        accounting / "net_exposure_by_underlying.csv",
+        nav_usd=100_000.0,
+        beta_results=beta_results,
+    )
+    book_beta = float(panel["totals"]["beta_weighted_net_usd"])
+    assert additive_beta == pytest.approx(book_beta)
+    assert abs(additive_beta - book_beta) < max(1.0, abs(book_beta) * 0.02)
+
+
+def test_factor_by_bucket_excludes_b5_overlay_from_additive_sum(tmp_path: Path):
+    accounting = tmp_path / "accounting"
+    # UVIX/SVIX already in detail (B4/B1); B5 CSV restates the pair — overlay only.
+    _write_factor_detail_fixture(
+        accounting,
+        detail_rows=(
+            "SVIX,UVIX,inverse_b4_etf,31000,31000,0.0,0.0,1.0\n"
+            "SVIX,SVIX,spot,-30300,30300,1.0,0.0,0.0\n"
+        ),
+        b5_rows="SVIX,SVIX,volatility_etp_bucket5,700,700,1\n",
+    )
+    rows = compute_factor_by_bucket(
+        accounting,
+        nav_usd=100_000.0,
+        beta_results={
+            "SVIX": {"provenance": "computed", "beta_to_spy": 1.0},
+        },
+    )
+    by_key = {r["bucket"]: r for r in rows}
+    assert by_key["bucket_5"]["additive"] is False
+    assert by_key["bucket_5"]["beta_weighted_net_usd"] == pytest.approx(700.0)
+    additive_net = sum(r["net_notional_usd"] for r in rows if r["additive"])
+    # B1 (-30300) + B4 (31000) = 700; B5 overlay must not add another 700.
+    assert additive_net == pytest.approx(700.0)
+    assert by_key["bucket_5"]["pct_of_total_beta_net"] is None
+
+
+def test_factor_by_bucket_includes_unbucketed(tmp_path: Path):
+    accounting = tmp_path / "accounting"
+    _write_factor_detail_fixture(
+        accounting,
+        detail_rows="NVDA,NVDL,core_levered_etf,10000,10000,1.0,0.0,0.0\n",
+        unbucketed_rows="ORPH,-2000,2000,1.0\n",
+    )
+    rows = compute_factor_by_bucket(
+        accounting,
+        nav_usd=100_000.0,
+        beta_results={
+            "NVDA": {"provenance": "computed", "beta_to_spy": 1.0},
+            "ORPH": {"provenance": "computed", "beta_to_spy": 1.0},
+        },
+    )
+    by_key = {r["bucket"]: r for r in rows}
+    assert "unbucketed" in by_key
+    assert by_key["unbucketed"]["additive"] is True
+    assert by_key["unbucketed"]["role"] == "unbucketed"
+    assert by_key["unbucketed"]["net_notional_usd"] == pytest.approx(-2_000.0)
+    assert by_key["unbucketed"]["beta_weighted_net_usd"] == pytest.approx(-2_000.0)
+    additive_net = sum(r["net_notional_usd"] for r in rows if r["additive"])
+    assert additive_net == pytest.approx(8_000.0)
 
 
 def test_factor_panel_totals_include_qqq_iwm_btc(tmp_path: Path):

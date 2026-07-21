@@ -146,7 +146,17 @@ BUCKET_LABELS: dict[str, str] = {
     "bucket_3": "Bucket 3 (flow hedge overlay)",
     "bucket_4": "Bucket 4 (inverse / decay)",
     "bucket_5": "Bucket 5 (volatility ETP)",
+    "unbucketed": "Unbucketed",
 }
+
+# Factor overlays (informative; excluded from additive sleeve sum).
+FACTOR_OVERLAY_BUCKETS: tuple[str, ...] = ("bucket_3", "bucket_5")
+# Ratio columns on bucket_exposure_detail.csv → additive B1/B2/B4.
+_DETAIL_RATIO_COLS: tuple[tuple[str, str], ...] = (
+    ("bucket_1", "_ratio_b1"),
+    ("bucket_2", "_ratio_b2"),
+    ("bucket_4", "_ratio_b4"),
+)
 
 DISPLAY_SLEEVE_GROUPS: dict[str, dict[str, Any]] = {
     "b1245": {
@@ -1979,6 +1989,247 @@ def _write_sector_audit_csv(rows: list[dict[str, Any]], path: Path) -> None:
             w.writerow([r.get(c, "") for c in cols])
 
 
+def _empty_factor_bucket_row(
+    bucket: str,
+    nav_usd: float,
+    *,
+    additive: bool,
+    role: str,
+    attribution_mode: str,
+) -> dict[str, Any]:
+    return {
+        "bucket": bucket,
+        "bucket_label": BUCKET_LABELS.get(bucket, bucket),
+        "n_names": 0,
+        "net_notional_usd": 0.0,
+        "gross_notional_usd": 0.0,
+        "beta_weighted_net_usd": 0.0,
+        "beta_weighted_gross_usd": 0.0,
+        "beta_weighted_net_qqq_usd": 0.0,
+        "beta_weighted_net_iwm_usd": 0.0,
+        "beta_weighted_net_btc_usd": 0.0,
+        "net_beta_to_spy": 0.0 if nav_usd > 0 else None,
+        "net_beta_to_qqq": 0.0 if nav_usd > 0 else None,
+        "net_beta_to_iwm": 0.0 if nav_usd > 0 else None,
+        "net_beta_to_btc": 0.0 if nav_usd > 0 else None,
+        "gross_beta_to_spy": 0.0 if nav_usd > 0 else None,
+        "implied_avg_beta": None,
+        "top_beta_names": [],
+        "additive": additive,
+        "role": role,
+        "attribution_mode": attribution_mode,
+    }
+
+
+def _factor_bucket_row_from_name_nets(
+    bucket: str,
+    name_nets: dict[str, dict[str, Any]],
+    nav_usd: float,
+    *,
+    beta_results: dict[str, Any] | None,
+    additive: bool,
+    role: str,
+    attribution_mode: str,
+) -> dict[str, Any]:
+    """Build one factor-by-bucket row from per-underlying net/gross maps."""
+    if not name_nets:
+        return _empty_factor_bucket_row(
+            bucket,
+            nav_usd,
+            additive=additive,
+            role=role,
+            attribution_mode=attribution_mode,
+        )
+
+    name_rows: list[dict[str, Any]] = []
+    total_net = 0.0
+    total_gross = 0.0
+    total_beta_net = 0.0
+    total_beta_gross = 0.0
+    total_beta_net_qqq = 0.0
+    total_beta_net_iwm = 0.0
+    total_beta_net_btc = 0.0
+    for underlying, vals in name_nets.items():
+        net = float(vals.get("net_notional_usd", 0.0) or 0.0)
+        gross = float(vals.get("gross_notional_usd", 0.0) or 0.0)
+        symbols = _first_nonblank(vals.get("symbols"), underlying)
+        betas = _resolve_underlying_betas(underlying, beta_results=beta_results)
+        beta_to_spy = betas["beta_to_spy"]
+        beta_to_qqq = betas["beta_to_qqq"]
+        beta_to_iwm = betas["beta_to_iwm"]
+        beta_to_btc = betas["beta_to_btc"]
+        beta_source = betas["beta_source"]
+        beta_net = net * beta_to_spy
+        beta_gross = gross * abs(beta_to_spy)
+        beta_net_qqq = (net * beta_to_qqq) if beta_to_qqq is not None else 0.0
+        beta_net_iwm = (net * beta_to_iwm) if beta_to_iwm is not None else 0.0
+        beta_net_btc = (net * beta_to_btc) if beta_to_btc is not None else 0.0
+        total_net += net
+        total_gross += gross
+        total_beta_net += beta_net
+        total_beta_gross += beta_gross
+        total_beta_net_qqq += beta_net_qqq
+        total_beta_net_iwm += beta_net_iwm
+        total_beta_net_btc += beta_net_btc
+        if abs(beta_net) > 1e-6:
+            name_rows.append(
+                {
+                    "underlying": underlying,
+                    "symbols": symbols,
+                    "net_notional_usd": net,
+                    "beta_to_spy": beta_to_spy,
+                    "beta_to_qqq": beta_to_qqq,
+                    "beta_to_iwm": beta_to_iwm,
+                    "beta_to_btc": beta_to_btc,
+                    "beta_source": beta_source,
+                    "beta_weighted_net_usd": beta_net,
+                }
+            )
+
+    top_names = sorted(
+        name_rows,
+        key=lambda r: abs(r["beta_weighted_net_usd"]),
+        reverse=True,
+    )[:5]
+    implied_avg = (total_beta_net / total_net) if abs(total_net) > 1e-6 else None
+    return {
+        "bucket": bucket,
+        "bucket_label": BUCKET_LABELS.get(bucket, bucket),
+        "n_names": len(name_nets),
+        "net_notional_usd": total_net,
+        "gross_notional_usd": total_gross,
+        "beta_weighted_net_usd": total_beta_net,
+        "beta_weighted_gross_usd": total_beta_gross,
+        "beta_weighted_net_qqq_usd": total_beta_net_qqq,
+        "beta_weighted_net_iwm_usd": total_beta_net_iwm,
+        "beta_weighted_net_btc_usd": total_beta_net_btc,
+        "net_beta_to_spy": (total_beta_net / nav_usd) if nav_usd > 0 else None,
+        "net_beta_to_qqq": (total_beta_net_qqq / nav_usd) if nav_usd > 0 else None,
+        "net_beta_to_iwm": (total_beta_net_iwm / nav_usd) if nav_usd > 0 else None,
+        "net_beta_to_btc": (total_beta_net_btc / nav_usd) if nav_usd > 0 else None,
+        "gross_beta_to_spy": (total_beta_gross / nav_usd) if nav_usd > 0 else None,
+        "implied_avg_beta": implied_avg,
+        "top_beta_names": top_names,
+        "additive": additive,
+        "role": role,
+        "attribution_mode": attribution_mode,
+    }
+
+
+def _name_nets_from_exposure_df(df: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    """Collapse an exposure CSV into per-underlying net/gross maps."""
+    name_nets: dict[str, dict[str, Any]] = {}
+    if df is None or df.empty:
+        return name_nets
+    for _, raw in df.iterrows():
+        underlying = _first_nonblank(raw.get("underlying"), raw.get("symbol"))
+        if not underlying:
+            continue
+        key = underlying
+        net = float(raw.get("net_notional_usd", 0.0) or 0.0)
+        gross = float(raw.get("gross_notional_usd", 0.0) or 0.0)
+        symbols = _first_nonblank(raw.get("symbols"), raw.get("symbol"), underlying)
+        slot = name_nets.get(key)
+        if slot is None:
+            name_nets[key] = {
+                "net_notional_usd": net,
+                "gross_notional_usd": gross,
+                "symbols": symbols,
+            }
+        else:
+            slot["net_notional_usd"] = float(slot["net_notional_usd"]) + net
+            slot["gross_notional_usd"] = float(slot["gross_notional_usd"]) + gross
+            prev = str(slot.get("symbols") or "")
+            if symbols and symbols not in prev.split(", "):
+                slot["symbols"] = ", ".join(
+                    sorted({*prev.split(", "), symbols} - {""})
+                )
+    return name_nets
+
+
+def _name_nets_from_detail_ratio(
+    detail: pd.DataFrame,
+    ratio_col: str,
+    *,
+    blocked_exposure_keys: set[str] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Ratio-scale ``bucket_exposure_detail`` legs into per-underlying nets."""
+    name_nets: dict[str, dict[str, Any]] = {}
+    if detail is None or detail.empty or ratio_col not in detail.columns:
+        return name_nets
+    blocked_upper = (
+        {k.strip().upper() for k in blocked_exposure_keys}
+        if blocked_exposure_keys
+        else None
+    )
+    for _, raw in detail.iterrows():
+        ratio = float(raw.get(ratio_col, 0.0) or 0.0)
+        if abs(ratio) <= 1e-12:
+            continue
+        underlying = _first_nonblank(raw.get("underlying"), raw.get("symbol"))
+        if not underlying:
+            continue
+        if blocked_upper and underlying.strip().upper() in blocked_upper:
+            continue
+        net = float(raw.get("net_notional_usd", 0.0) or 0.0) * ratio
+        gross = float(raw.get("gross_notional_usd", 0.0) or 0.0) * ratio
+        symbols = _first_nonblank(raw.get("symbol"), underlying)
+        slot = name_nets.get(underlying)
+        if slot is None:
+            name_nets[underlying] = {
+                "net_notional_usd": net,
+                "gross_notional_usd": gross,
+                "symbols": symbols,
+            }
+        else:
+            slot["net_notional_usd"] = float(slot["net_notional_usd"]) + net
+            slot["gross_notional_usd"] = float(slot["gross_notional_usd"]) + gross
+            prev = str(slot.get("symbols") or "")
+            if symbols and symbols not in prev.split(", "):
+                slot["symbols"] = ", ".join(
+                    sorted({*prev.split(", "), symbols} - {""})
+                )
+    return name_nets
+
+
+def _load_totals_json(accounting_dir: Path) -> dict[str, Any]:
+    path = accounting_dir / "totals.json"
+    if not path.is_file():
+        return {}
+    try:
+        with path.open(encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _factor_row_from_exposure_csv(
+    accounting_dir: Path,
+    bucket: str,
+    nav_usd: float,
+    *,
+    beta_results: dict[str, Any] | None,
+    blocked_exposure_keys: set[str] | None,
+    additive: bool,
+    role: str,
+    attribution_mode: str,
+) -> dict[str, Any]:
+    path = accounting_dir / f"net_exposure_{bucket}.csv"
+    df = _read_csv_or_empty(path)
+    if blocked_exposure_keys and not df.empty and _filter_exposure_df is not None:
+        df = _filter_exposure_df(df, blocked_exposure_keys)
+    return _factor_bucket_row_from_name_nets(
+        bucket,
+        _name_nets_from_exposure_df(df),
+        nav_usd,
+        beta_results=beta_results,
+        additive=additive,
+        role=role,
+        attribution_mode=attribution_mode,
+    )
+
+
 def compute_factor_by_bucket(
     accounting_dir: Path,
     nav_usd: float,
@@ -1988,120 +2239,148 @@ def compute_factor_by_bucket(
 ) -> list[dict[str, Any]]:
     """Per-bucket beta-weighted net exposure and net beta to SPY/QQQ/IWM/BTC.
 
-    Reads ``net_exposure_bucket_{1..4}.csv`` so sleeve attribution matches
-    the bucket tabs. Bucket rows may double-count vs book-level
-    ``net_exposure_by_underlying.csv``; the UI shows both totals.
+    Additive sleeves (B1/B2/B4 + unbucketed) come from ratio-scaled
+    ``bucket_exposure_detail.csv`` so they partition the book. B3 and B5 are
+    overlay views (informative, excluded from the additive sum).
     """
     if accounting_dir is None or not accounting_dir.is_dir():
         return []
 
+    detail = _read_csv_or_empty(accounting_dir / "bucket_exposure_detail.csv")
+    has_detail = not detail.empty and all(
+        col in detail.columns for _, col in _DETAIL_RATIO_COLS
+    )
+    attribution_mode = "detail_ratio" if has_detail else "legacy_csv"
+
     bucket_rows: list[dict[str, Any]] = []
-    for bucket in BUCKET_KEYS:
-        path = accounting_dir / f"net_exposure_{bucket}.csv"
-        df = _read_csv_or_empty(path)
-        if blocked_exposure_keys and not df.empty and _filter_exposure_df is not None:
-            df = _filter_exposure_df(df, blocked_exposure_keys)
-        if df.empty:
-            bucket_rows.append(
-                {
-                    "bucket": bucket,
-                    "bucket_label": BUCKET_LABELS.get(bucket, bucket),
-                    "n_names": 0,
-                    "net_notional_usd": 0.0,
-                    "gross_notional_usd": 0.0,
-                    "beta_weighted_net_usd": 0.0,
-                    "beta_weighted_gross_usd": 0.0,
-                    "beta_weighted_net_qqq_usd": 0.0,
-                    "beta_weighted_net_iwm_usd": 0.0,
-                    "beta_weighted_net_btc_usd": 0.0,
-                    "net_beta_to_spy": 0.0 if nav_usd > 0 else None,
-                    "net_beta_to_qqq": 0.0 if nav_usd > 0 else None,
-                    "net_beta_to_iwm": 0.0 if nav_usd > 0 else None,
-                    "net_beta_to_btc": 0.0 if nav_usd > 0 else None,
-                    "gross_beta_to_spy": 0.0 if nav_usd > 0 else None,
-                    "implied_avg_beta": None,
-                    "top_beta_names": [],
-                }
+
+    if has_detail:
+        for bucket, ratio_col in _DETAIL_RATIO_COLS:
+            name_nets = _name_nets_from_detail_ratio(
+                detail,
+                ratio_col,
+                blocked_exposure_keys=blocked_exposure_keys,
             )
-            continue
-
-        name_rows: list[dict[str, Any]] = []
-        total_net = 0.0
-        total_gross = 0.0
-        total_beta_net = 0.0
-        total_beta_gross = 0.0
-        total_beta_net_qqq = 0.0
-        total_beta_net_iwm = 0.0
-        total_beta_net_btc = 0.0
-        for _, raw in df.iterrows():
-            underlying = _first_nonblank(raw.get("underlying"), raw.get("symbol"))
-            net = float(raw.get("net_notional_usd", 0.0) or 0.0)
-            gross = float(raw.get("gross_notional_usd", 0.0) or 0.0)
-            betas = _resolve_underlying_betas(underlying, beta_results=beta_results)
-            beta_to_spy = betas["beta_to_spy"]
-            beta_to_qqq = betas["beta_to_qqq"]
-            beta_to_iwm = betas["beta_to_iwm"]
-            beta_to_btc = betas["beta_to_btc"]
-            beta_source = betas["beta_source"]
-            beta_net = net * beta_to_spy
-            beta_gross = gross * abs(beta_to_spy)
-            beta_net_qqq = (net * beta_to_qqq) if beta_to_qqq is not None else 0.0
-            beta_net_iwm = (net * beta_to_iwm) if beta_to_iwm is not None else 0.0
-            beta_net_btc = (net * beta_to_btc) if beta_to_btc is not None else 0.0
-            total_net += net
-            total_gross += gross
-            total_beta_net += beta_net
-            total_beta_gross += beta_gross
-            total_beta_net_qqq += beta_net_qqq
-            total_beta_net_iwm += beta_net_iwm
-            total_beta_net_btc += beta_net_btc
-            if abs(beta_net) > 1e-6:
-                name_rows.append(
-                    {
-                        "underlying": underlying,
-                        "symbols": _first_nonblank(raw.get("symbols"), underlying),
-                        "net_notional_usd": net,
-                        "beta_to_spy": beta_to_spy,
-                        "beta_to_qqq": beta_to_qqq,
-                        "beta_to_iwm": beta_to_iwm,
-                        "beta_to_btc": beta_to_btc,
-                        "beta_source": beta_source,
-                        "beta_weighted_net_usd": beta_net,
-                    }
+            bucket_rows.append(
+                _factor_bucket_row_from_name_nets(
+                    bucket,
+                    name_nets,
+                    nav_usd,
+                    beta_results=beta_results,
+                    additive=True,
+                    role="sleeve",
+                    attribution_mode=attribution_mode,
                 )
-
-        top_names = sorted(
-            name_rows,
-            key=lambda r: abs(r["beta_weighted_net_usd"]),
-            reverse=True,
-        )[:5]
-        implied_avg = (total_beta_net / total_net) if abs(total_net) > 1e-6 else None
+            )
+        unbuck_df = _read_csv_or_empty(accounting_dir / "net_exposure_unbucketed.csv")
+        if blocked_exposure_keys and not unbuck_df.empty and _filter_exposure_df is not None:
+            unbuck_df = _filter_exposure_df(unbuck_df, blocked_exposure_keys)
         bucket_rows.append(
-            {
-                "bucket": bucket,
-                "bucket_label": BUCKET_LABELS.get(bucket, bucket),
-                "n_names": len(df),
-                "net_notional_usd": total_net,
-                "gross_notional_usd": total_gross,
-                "beta_weighted_net_usd": total_beta_net,
-                "beta_weighted_gross_usd": total_beta_gross,
-                "beta_weighted_net_qqq_usd": total_beta_net_qqq,
-                "beta_weighted_net_iwm_usd": total_beta_net_iwm,
-                "beta_weighted_net_btc_usd": total_beta_net_btc,
-                "net_beta_to_spy": (total_beta_net / nav_usd) if nav_usd > 0 else None,
-                "net_beta_to_qqq": (total_beta_net_qqq / nav_usd) if nav_usd > 0 else None,
-                "net_beta_to_iwm": (total_beta_net_iwm / nav_usd) if nav_usd > 0 else None,
-                "net_beta_to_btc": (total_beta_net_btc / nav_usd) if nav_usd > 0 else None,
-                "gross_beta_to_spy": (total_beta_gross / nav_usd) if nav_usd > 0 else None,
-                "implied_avg_beta": implied_avg,
-                "top_beta_names": top_names,
-            }
+            _factor_bucket_row_from_name_nets(
+                "unbucketed",
+                _name_nets_from_exposure_df(unbuck_df),
+                nav_usd,
+                beta_results=beta_results,
+                additive=True,
+                role="unbucketed",
+                attribution_mode=attribution_mode,
+            )
+        )
+    else:
+        # Legacy: B1/B2 sleeve CSVs; B4 ratio-split total from totals.json when present.
+        for bucket in ("bucket_1", "bucket_2"):
+            bucket_rows.append(
+                _factor_row_from_exposure_csv(
+                    accounting_dir,
+                    bucket,
+                    nav_usd,
+                    beta_results=beta_results,
+                    blocked_exposure_keys=blocked_exposure_keys,
+                    additive=True,
+                    role="sleeve",
+                    attribution_mode=attribution_mode,
+                )
+            )
+        totals = _load_totals_json(accounting_dir)
+        b4_net = float(totals.get("net_exposure_bucket_4", 0.0) or 0.0)
+        b4_gross = float(totals.get("gross_exposure_bucket_4", 0.0) or 0.0)
+        if abs(b4_net) > 1e-9 or abs(b4_gross) > 1e-9:
+            # Single aggregate row — no per-name split without detail.
+            bucket_rows.append(
+                _factor_bucket_row_from_name_nets(
+                    "bucket_4",
+                    {
+                        "_B4_RATIO_TOTAL": {
+                            "net_notional_usd": b4_net,
+                            "gross_notional_usd": b4_gross,
+                            "symbols": "ratio_split_total",
+                        }
+                    },
+                    nav_usd,
+                    beta_results={
+                        **(beta_results or {}),
+                        "_B4_RATIO_TOTAL": {
+                            "provenance": "default_fallback",
+                            "beta_to_spy": 1.0,
+                        },
+                    },
+                    additive=True,
+                    role="sleeve",
+                    attribution_mode=attribution_mode,
+                )
+            )
+        else:
+            bucket_rows.append(
+                _factor_row_from_exposure_csv(
+                    accounting_dir,
+                    "bucket_4",
+                    nav_usd,
+                    beta_results=beta_results,
+                    blocked_exposure_keys=blocked_exposure_keys,
+                    additive=True,
+                    role="sleeve",
+                    attribution_mode=attribution_mode,
+                )
+            )
+        unbuck_df = _read_csv_or_empty(accounting_dir / "net_exposure_unbucketed.csv")
+        if blocked_exposure_keys and not unbuck_df.empty and _filter_exposure_df is not None:
+            unbuck_df = _filter_exposure_df(unbuck_df, blocked_exposure_keys)
+        bucket_rows.append(
+            _factor_bucket_row_from_name_nets(
+                "unbucketed",
+                _name_nets_from_exposure_df(unbuck_df),
+                nav_usd,
+                beta_results=beta_results,
+                additive=True,
+                role="unbucketed",
+                attribution_mode=attribution_mode,
+            )
         )
 
-    total_beta_net = sum(r["beta_weighted_net_usd"] for r in bucket_rows)
+    for bucket in FACTOR_OVERLAY_BUCKETS:
+        bucket_rows.append(
+            _factor_row_from_exposure_csv(
+                accounting_dir,
+                bucket,
+                nav_usd,
+                beta_results=beta_results,
+                blocked_exposure_keys=blocked_exposure_keys,
+                additive=False,
+                role="overlay",
+                attribution_mode=attribution_mode,
+            )
+        )
+
+    additive_beta_net = sum(
+        float(r["beta_weighted_net_usd"]) for r in bucket_rows if r.get("additive")
+    )
     for row in bucket_rows:
-        if total_beta_net and abs(total_beta_net) > 1e-6:
-            row["pct_of_total_beta_net"] = row["beta_weighted_net_usd"] / total_beta_net
+        if not row.get("additive"):
+            row["pct_of_total_beta_net"] = None
+        elif additive_beta_net and abs(additive_beta_net) > 1e-6:
+            row["pct_of_total_beta_net"] = (
+                float(row["beta_weighted_net_usd"]) / additive_beta_net
+            )
         else:
             row["pct_of_total_beta_net"] = None
 
@@ -6351,28 +6630,61 @@ def build_snapshot(
         portfolio_beta_net = float(
             (factor_panel.get("totals") or {}).get("beta_weighted_net_usd") or 0.0
         )
-        bucket_beta_sum = sum(r["beta_weighted_net_usd"] for r in by_bucket)
+        # Additive sleeves only (B1/B2/B4 + unbucketed). Overlays (B3/B5) excluded.
+        additive_rows = [r for r in by_bucket if r.get("additive")]
+        overlay_rows = [r for r in by_bucket if not r.get("additive")]
+        bucket_beta_sum = sum(float(r["beta_weighted_net_usd"]) for r in additive_rows)
+        overlay_beta_sum = sum(float(r["beta_weighted_net_usd"]) for r in overlay_rows)
+        additive_net = sum(float(r["net_notional_usd"]) for r in additive_rows)
+        additive_beta_qqq = sum(
+            float(r.get("beta_weighted_net_qqq_usd") or 0.0) for r in additive_rows
+        )
+        additive_beta_iwm = sum(
+            float(r.get("beta_weighted_net_iwm_usd") or 0.0) for r in additive_rows
+        )
+        additive_beta_btc = sum(
+            float(r.get("beta_weighted_net_btc_usd") or 0.0) for r in additive_rows
+        )
         for row in by_bucket:
             if portfolio_beta_net and abs(portfolio_beta_net) > 1e-6:
                 row["pct_of_portfolio_beta_net"] = (
-                    row["beta_weighted_net_usd"] / portfolio_beta_net
+                    float(row["beta_weighted_net_usd"]) / portfolio_beta_net
+                    if row.get("additive")
+                    else None
                 )
             else:
                 row["pct_of_portfolio_beta_net"] = None
-        for row in by_bucket:
-            if bucket_beta_sum and abs(bucket_beta_sum) > 1e-6:
+            if row.get("additive") and bucket_beta_sum and abs(bucket_beta_sum) > 1e-6:
                 row["pct_of_bucket_sum_beta_net"] = (
-                    row["beta_weighted_net_usd"] / bucket_beta_sum
+                    float(row["beta_weighted_net_usd"]) / bucket_beta_sum
                 )
             else:
                 row["pct_of_bucket_sum_beta_net"] = None
         totals_block = factor_panel.setdefault("totals", {})
         totals_block["by_bucket_beta_weighted_net_usd"] = bucket_beta_sum
+        totals_block["by_bucket_beta_weighted_net_qqq_usd"] = additive_beta_qqq
+        totals_block["by_bucket_beta_weighted_net_iwm_usd"] = additive_beta_iwm
+        totals_block["by_bucket_beta_weighted_net_btc_usd"] = additive_beta_btc
+        totals_block["by_bucket_net_notional_usd"] = additive_net
         totals_block["by_bucket_net_beta_to_spy"] = (
             (bucket_beta_sum / nav_usd) if nav_usd > 0 else None
         )
+        totals_block["by_bucket_net_beta_to_qqq"] = (
+            (additive_beta_qqq / nav_usd) if nav_usd > 0 else None
+        )
+        totals_block["by_bucket_net_beta_to_iwm"] = (
+            (additive_beta_iwm / nav_usd) if nav_usd > 0 else None
+        )
+        totals_block["by_bucket_net_beta_to_btc"] = (
+            (additive_beta_btc / nav_usd) if nav_usd > 0 else None
+        )
+        totals_block["by_bucket_overlay_beta_weighted_net_usd"] = overlay_beta_sum
+        totals_block["by_bucket_attribution_mode"] = (
+            (by_bucket[0].get("attribution_mode") if by_bucket else None)
+        )
         totals_block["by_bucket_reconciles"] = (
-            abs(bucket_beta_sum - portfolio_beta_net) < max(1.0, abs(portfolio_beta_net) * 0.02)
+            abs(bucket_beta_sum - portfolio_beta_net)
+            < max(1.0, abs(portfolio_beta_net) * 0.02)
         )
     concentration_panel = compute_concentration_panel(
         factor_panel=factor_panel,

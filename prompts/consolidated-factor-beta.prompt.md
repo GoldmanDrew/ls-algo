@@ -38,7 +38,7 @@ net_beta_to_F            = beta_weighted_net_F_usd / NAV     # “headline beta�
 
 **Book-level** headline betas: aggregate over `net_exposure_by_underlying.csv` (underlying rollup).
 
-**Bucket-level** headline betas: aggregate over `net_exposure_bucket_{1..4}.csv` (sleeve attribution). These may not sum to book totals when bucket CSVs double-count legs vs underlying rollup — show reconciliation flag (already exists as `by_bucket_reconciles` for SPY).
+**Bucket-level** headline betas (additive): ratio-scale `bucket_exposure_detail.csv` into B1/B2/B4 + `net_exposure_unbucketed.csv`. B3/B5 are overlays (excluded from the additive sum). `by_bucket_reconciles` compares additive sleeve β-wtd net to book.
 
 Mapping in JSON / loader:
 
@@ -184,15 +184,15 @@ Add/update in `risk_dashboard/tests/test_metrics.py`:
 - Sector-level headline betas (economic `by_sector` — different from accounting buckets)
 - Beta to factors beyond SPY/QQQ/IWM/BTC
 - Changing OLS window, shrinkage, or curated beta map
-- Fixing bucket-vs-book double-count (document only)
+- Changing accounting CSV semantics for B3/B4/B5 (dashboard attributes from detail)
 
 ---
 
 ## Acceptance criteria
 
 1. **One panel** shows net β to SPY, QQQ, IWM, and BTC for the **whole book**.
-2. **Same four headline betas** shown per **accounting bucket** (1–4) in one table.
-3. Book total row uses underlying rollup; bucket rows use bucket CSVs; reconciliation warning preserved.
+2. **Same four headline betas** shown per **accounting bucket** in one table (additive sleeves + overlays).
+3. Book total row uses underlying rollup; additive sleeves use detail ratio-split; overlays excluded from sum; reconciliation warning when additive ≠ book.
 4. No regression: per-name OLS betas unchanged; sector classification unchanged.
 5. Tests pass; snapshot rebuilt; site preview shows consolidated layout.
 

@@ -1690,36 +1690,62 @@
       if (!byBucket.length) {
         els.factorByBucket.innerHTML = `<p class="dim">No bucket beta breakdown available.</p>`;
       } else {
+        const hasAdditiveFlags = byBucket.some((r) => "additive" in r);
+        const additiveRows = hasAdditiveFlags
+          ? byBucket.filter((r) => r.additive !== false)
+          : byBucket;
+        const overlayRows = hasAdditiveFlags
+          ? byBucket.filter((r) => r.additive === false)
+          : [];
         const bucketSum = t.by_bucket_beta_weighted_net_usd;
         const reconciles = t.by_bucket_reconciles;
         const reconNote =
           reconciles === false
-            ? `<p class="callout warn small">Bucket β-wtd net sum (${fmtUsdSigned(
+            ? `<p class="callout warn small">Additive sleeve β-wtd net (${fmtUsdSigned(
                 bucketSum
               )}) differs from book total (${fmtUsdSigned(
                 t.beta_weighted_net_usd
-              )}) — bucket CSVs can double-count legs vs underlying rollup. Applies to all factor columns.</p>`
+              )}). Check bucket_exposure_detail / unbucketed vs underlying rollup. Applies to all factor columns.</p>`
             : "";
         function bucketBetaCell(v) {
           if (v == null || Number.isNaN(Number(v))) return "-";
           return `<span class="${signedClass(v)}">${Number(v).toFixed(2)}x</span>`;
         }
-        els.factorByBucket.innerHTML = `${reconNote}<table class="tight"><thead><tr>
-          <th>Bucket</th><th>Net $</th>
-          <th>Net β SPY</th><th>Net β QQQ</th><th>Net β IWM</th><th>Net β BTC</th>
-        </tr></thead><tbody>${byBucket
-          .map(
-            (r) => `<tr>
-              <td><strong>${safeText(r.bucket_label || r.bucket)}</strong></td>
+        function bucketRowHtml(r) {
+          const isOverlay = r.additive === false || r.role === "overlay";
+          const label = safeText(r.bucket_label || r.bucket);
+          const labelHtml = isOverlay
+            ? `<span class="dim">${label} (overlay)</span>`
+            : `<strong>${label}</strong>`;
+          const trClass = isOverlay ? ' class="dim"' : "";
+          return `<tr${trClass}>
+              <td>${labelHtml}</td>
               <td class="num ${signedClass(r.net_notional_usd)}">${fmtUsdSigned(
-              r.net_notional_usd
-            )}</td>
+            r.net_notional_usd
+          )}</td>
               <td class="num">${bucketBetaCell(r.net_beta_to_spy)}</td>
               <td class="num">${bucketBetaCell(r.net_beta_to_qqq)}</td>
               <td class="num">${bucketBetaCell(r.net_beta_to_iwm)}</td>
               <td class="num">${bucketBetaCell(r.net_beta_to_btc)}</td>
-            </tr>`
-          )
+            </tr>`;
+        }
+        const additiveNet =
+          t.by_bucket_net_notional_usd != null
+            ? t.by_bucket_net_notional_usd
+            : additiveRows.reduce((s, r) => s + (Number(r.net_notional_usd) || 0), 0);
+        const additiveSubtotal = `<tr class="dim">
+            <td><strong>Additive sleeves</strong></td>
+            <td class="num ${signedClass(additiveNet)}">${fmtUsdSigned(additiveNet)}</td>
+            <td class="num">${bucketBetaCell(t.by_bucket_net_beta_to_spy)}</td>
+            <td class="num">${bucketBetaCell(t.by_bucket_net_beta_to_qqq)}</td>
+            <td class="num">${bucketBetaCell(t.by_bucket_net_beta_to_iwm)}</td>
+            <td class="num">${bucketBetaCell(t.by_bucket_net_beta_to_btc)}</td>
+          </tr>`;
+        els.factorByBucket.innerHTML = `${reconNote}<table class="tight"><thead><tr>
+          <th>Bucket</th><th>Net $</th>
+          <th>Net β SPY</th><th>Net β QQQ</th><th>Net β IWM</th><th>Net β BTC</th>
+        </tr></thead><tbody>${additiveRows.map(bucketRowHtml).join("")}${additiveSubtotal}${overlayRows
+          .map(bucketRowHtml)
           .join("")}<tr class="dim">
             <td><strong>Book total</strong></td>
             <td class="num ${signedClass(t.net_notional_usd)}">${fmtUsdSigned(
