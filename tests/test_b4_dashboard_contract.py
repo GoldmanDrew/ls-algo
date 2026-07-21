@@ -78,6 +78,15 @@ def test_export_is_authoritative_and_reconciles_pairs(tmp_path: Path):
     assert pair["summary"]["actual_pnl_usd"] == pytest.approx(80.0)
     assert pair["daily"]["drawdown"] == pytest.approx([0.0, -20.0 / 50099.5], abs=1e-8)
     assert pair["daily"]["rebalance"] == [1, 0]
+    assert pair["history_basis"] == "plan"
+    assert pair["summary"]["plan_entry_date"] == "2026-06-02"
+    assert pair["rebalance_log_basis"] == "production_execution_ledger"
+    assert pair["rebalance_log_fee_units"] == "fraction_of_sleeve_capital"
+    assert len(pair["rebalance_log"]) >= 1
+    assert pair["rebalance_log"][0]["date"] == "2026-06-02"
+    assert pair["rebalance_log"][0]["executed"] is True
+    assert pair["rebalance_log"][0]["h"] is not None
+    assert pair["rebalance_log"][0]["rebalance_fee"] is not None
     assert manifest["counts"]["membership"] == 3
     members = json.loads((out / "membership.json").read_text())
     assert {m["ETF"] for m in members} == {"NBIZ", "CBRZ", "SPCG"}
@@ -98,3 +107,24 @@ def test_generated_replay_outputs_do_not_dirty_source_provenance():
     # replay/output paths must never be the reason it is marked dirty.
     assert prov.get("commit")
     assert prov.get("working_tree_hash") or prov.get("dirty") is False
+
+
+def test_optional_inception_research_is_nested_non_authoritative(tmp_path: Path):
+    src = _fixture(tmp_path)
+    research_dir = src / "inception_research"
+    research_dir.mkdir()
+    (research_dir / "NBIZ.json").write_text(json.dumps({
+        "daily": {
+            "dates": ["2025-01-02", "2025-01-03"],
+            "equity": [1.0, 1.01],
+            "ret": [0.0, 0.01],
+        },
+        "summary": {"entry_date": "2025-01-02"},
+    }), encoding="utf-8")
+    out = tmp_path / "out"
+    export_contract(src, out, REPO)
+    pair = json.loads((out / "pairs" / "NBIZ.json").read_text())
+    assert pair["inception_research"]["authoritative"] is False
+    assert pair["inception_research"]["history_basis"] == "inception_research"
+    assert "Not production-policy replay" in pair["inception_research"]["disclaimer"]
+    assert pair["summary"]["etf_inception_date"] == "2025-01-02"

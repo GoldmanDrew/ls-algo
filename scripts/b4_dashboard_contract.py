@@ -231,6 +231,48 @@ def _event_map(source_dir: Path, expected_end: str) -> dict[tuple[str, str], dic
     return result
 
 
+def _reason_looks_skipped(reason: str) -> bool:
+    s = str(reason or "").lower()
+    return any(tok in s for tok in ("skip", "drift", "below", "band"))
+
+
+def _normalized_rebalance_log(
+    etf: str,
+    dates: list[str],
+    executed_flags: list[bool],
+    h_vals: list[float | None],
+    fee_frac: list[float],
+    events: Mapping[tuple[str, str], Mapping[str, Any]],
+    *,
+    max_rows: int = 160,
+) -> list[dict[str, Any]]:
+    """UI-shaped rebalance log from daily is_rebalance + optional trade-ledger events."""
+    out: list[dict[str, Any]] = []
+    for i, day in enumerate(dates):
+        event = events.get((etf, day)) or {}
+        executed = bool(executed_flags[i]) if i < len(executed_flags) else False
+        reason = str(event.get("reason") or event.get("execution_reason") or "")
+        if not executed and not event:
+            continue
+        h_raw = h_vals[i] if i < len(h_vals) else None
+        fee = fee_frac[i] if i < len(fee_frac) else None
+        drift = event.get("drift_share")
+        if drift is None:
+            drift = event.get("drift_share_of_gross")
+        out.append({
+            "date": day,
+            "h": float(h_raw) if h_raw is not None and math.isfinite(float(h_raw)) else None,
+            "executed": executed,
+            "rebalance_fee": float(fee) if fee is not None and math.isfinite(float(fee)) else None,
+            "skipped_below_drift": (not executed and bool(event)) or _reason_looks_skipped(reason),
+            "reason": reason,
+            "drift_share": _json_value(drift) if drift is not None else None,
+        })
+    if len(out) > max_rows:
+        out = out[-max_rows:]
+    return out
+
+
 def _pair_payload(etf: str, frame: pd.DataFrame, stats_row: Mapping[str, Any], events: Mapping[tuple[str, str], Mapping[str, Any]]) -> dict[str, Any]:
     d = frame.sort_values("date").copy()
     d["date"] = d["date"].astype(str)
@@ -248,13 +290,11 @@ def _pair_payload(etf: str, frame: pd.DataFrame, stats_row: Mapping[str, Any], e
         d["underlying_usd"].abs() / (d["etf_usd"].abs() * d["Delta"].abs()),
         np.nan,
     )
+    is_reb = pd.to_numeric(d.get("is_rebalance", 0), errors="coerce").fillna(0).astype(bool)
     reasons: list[str] = []
-    event_rows: list[dict[str, Any]] = []
     for day in d["date"]:
         event = events.get((etf, day))
         reasons.append(str(event.get("reason", "")) if event else "")
-        if event:
-            event_rows.append(dict(event))
     basis = max(float(gross.replace(0.0, np.nan).dropna().iloc[0]) if (gross > 0).any() else 0.0, 1.0)
     equity = basis + d["cum_pnl_reconciled"]
     ret = equity.pct_change(fill_method=None).fillna(0.0)
@@ -265,15 +305,27 @@ def _pair_payload(etf: str, frame: pd.DataFrame, stats_row: Mapping[str, Any], e
         raise ValueError(
             f"B4 pair execution marker mismatch for {etf}: daily={sorted(marked_dates)} events={sorted(event_dates)}"
         )
+    h_list = [float(x) if math.isfinite(float(x)) else None for x in h]
+    fee_frac = [float(x / basis) for x in d["txn_cost"]]
+    dates = d["date"].tolist()
+    executed_flags = [bool(day in event_dates) for day in dates]
+    rebalance_log = _normalized_rebalance_log(
+        etf, dates, executed_flags, h_list, fee_frac, events,
+    )
+    plan_entry = str(d["date"].iloc[0])
+    plan_exit = str(d["date"].iloc[-1])
     summary = {
         "etf": etf,
         "underlying": str(d["Underlying"].iloc[-1]).upper(),
         "production_status": "production_policy_replay",
         "model_status": "authoritative_export",
-        "entry_date": str(d["date"].iloc[0]),
-        "latest_date": str(d["date"].iloc[-1]),
+        "entry_date": plan_entry,
+        "plan_entry_date": plan_entry,
+        "plan_exit_date": plan_exit,
+        "latest_date": plan_exit,
+        "history_basis": "plan",
         "n_days": int(len(d)),
-        "n_rebalances": int(pd.to_numeric(d.get("is_rebalance", 0), errors="coerce").fillna(0).astype(bool).sum()),
+        "n_rebalances": int(is_reb.sum()),
         "total_borrow": float(d["borrow_cost"].sum()),
         "total_fees": float(d["txn_cost"].sum()),
         "final_equity": float(equity.iloc[-1] / basis),
@@ -294,9 +346,12 @@ def _pair_payload(etf: str, frame: pd.DataFrame, stats_row: Mapping[str, Any], e
         "production_status": "production_policy_replay",
         "ledger_mode": "actual_dollar",
         "notional_basis_usd": basis,
+        "history_basis": "plan",
+        "rebalance_log_basis": "production_execution_ledger",
+        "rebalance_log_fee_units": "fraction_of_sleeve_capital",
         "summary": summary,
         "daily": {
-            "dates": d["date"].tolist(),
+            "dates": dates,
             "equity": [float(x / basis) for x in equity],
             "equity_dollars": [float(x) for x in equity],
             "ret": [float(x) for x in ret],
@@ -309,24 +364,52 @@ def _pair_payload(etf: str, frame: pd.DataFrame, stats_row: Mapping[str, Any], e
             "borrow_cost_cum_dollars": [float(x) for x in d["borrow_cost"].cumsum()],
             "short_credit_dollars": [float(x) for x in d["short_credit"]],
             "margin_cost_dollars": [float(x) for x in d["margin_cost"]],
-            "rebalance_fee": [float(x / basis) for x in d["txn_cost"]],
+            "rebalance_fee": fee_frac,
             "txn_cost_dollars": [float(x) for x in d["txn_cost"]],
             "txn_cost_cum_dollars": [float(x) for x in d["txn_cost"].cumsum()],
             "ledger_allocation_pnl_dollars": [float(x) for x in d["ledger_allocation_pnl"]],
             "etf_usd": [float(x) for x in d["etf_usd"]],
             "underlying_usd": [float(x) for x in d["underlying_usd"]],
             "gross_exposure_dollars": [float(x) for x in gross],
-            "h_used": [float(x) if math.isfinite(float(x)) else None for x in h],
+            "h_used": h_list,
             "drawdown": [float(x) for x in drawdown],
-            "rebalance": [int(day in event_dates) for day in d["date"]],
+            "rebalance": [int(x) for x in executed_flags],
             "rebalance_reason": reasons,
             "book_activity": [int(bool(x)) for x in pd.to_numeric(
                 d.get("book_activity", pd.Series(0, index=d.index)), errors="coerce"
             ).fillna(0)],
             "active_plan_date": d.get("active_plan_date", pd.Series("", index=d.index)).astype(str).tolist(),
         },
-        "rebalance_log": event_rows,
+        "rebalance_log": rebalance_log,
     }
+
+
+def _load_optional_inception_research(source_dir: Path, etf: str) -> dict[str, Any] | None:
+    """Attach labeled research full-history when present beside the production replay.
+
+    Expected path: ``{source_dir}/inception_research/{ETF}.json`` with at least
+    ``daily.dates`` / ``daily.ret`` / ``daily.equity``. Never marked authoritative.
+    """
+    path = source_dir / "inception_research" / f"{etf}.json"
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    daily = payload.get("daily") or {}
+    if not isinstance(daily, dict) or not daily.get("dates"):
+        return None
+    out = dict(payload)
+    out["authoritative"] = False
+    out["history_basis"] = "inception_research"
+    out.setdefault(
+        "disclaimer",
+        "Research path from ETF/underlying overlap. Not production-policy replay. Not used for book PnL.",
+    )
+    return _json_value(out)
 
 
 def build_contract(source_dir: Path, repo_root: Path) -> dict[str, Any]:
@@ -357,6 +440,15 @@ def build_contract(source_dir: Path, repo_root: Path) -> dict[str, Any]:
         etf: _pair_payload(etf, frame, stats_by_etf.get(etf, {}), events)
         for etf, frame in b4_daily.groupby(b4_daily["ETF"].astype(str).str.upper(), sort=True)
     }
+    for etf, payload in pairs.items():
+        research = _load_optional_inception_research(source_dir, etf)
+        if research is not None:
+            payload["inception_research"] = research
+            payload["summary"]["etf_inception_date"] = (
+                research.get("summary", {}).get("entry_date")
+                or research.get("etf_inception_date")
+                or (research.get("daily") or {}).get("dates", [None])[0]
+            )
     if membership.empty or "ETF" not in membership or "lifecycle_state" not in membership:
         raise ValueError("b4_membership_manifest.csv is missing required lifecycle fields")
     membership = membership.copy()
@@ -409,7 +501,12 @@ def build_contract(source_dir: Path, repo_root: Path) -> dict[str, Any]:
         "resolved_policy": _json_value(report.get("rebalance_knobs") or {}),
         "resolved_policy_hash": sha256_payload(report.get("rebalance_knobs") or {}),
         "limitations": _json_value(report.get("limitations") or []),
-        "counts": {"pairs": len(pairs), "membership": int(len(membership)), "book_days": len(daily), "pair_days": len(b4_daily)},
+        "counts": {
+            "pairs": len(pairs),
+            "membership": int(len(membership)),
+            "book_days": len(daily),
+            "pair_days": len(b4_daily),
+        },
         "reconciliation": {
             "pair_to_sleeve": pair_recon,
             "book_max_abs_residual_usd": float(pd.to_numeric(daily.get("pnl_recon_residual", 0.0), errors="coerce").fillna(0.0).abs().max()),
