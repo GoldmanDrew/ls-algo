@@ -223,7 +223,35 @@
         "shortName": "Eaton Corporation, PLC",
         "longBusinessSummary": "Eaton Corporation plc operates as a power management company in the United States, Canada, Latin America, Europe, and the Asia Pacific. It operates through Electrical Americas, Electrical Global, Aerospace, Vehicle, and eMobility segments. The company offers electrical and industrial components, power distribution and assemblies, residential products, single- and three-phase power quality and connectivity products, wiring devices, circuit protection products, utility power distribution products, and power reliability equipment; and hazardous duty electrical equipment, emergency lighting, fire detection, intrinsically safe explosion-proof instrumentation, and structural support systems. It also provides pumps, motors, hydraulic power units, hoses and fittings, and electro-hydraulic pumps; valves, cylinders, electronic controls, electromechanical actuators, sensors, aircraft flap and slat systems, and nose wheel steering systems; hose and thermoplastic tubing products, fittings, adapters, couplings, and sealing and ducting products; air-to-air refueling systems, fuel pumps, fuel inerting products, sensors, and adapters and regulators; oxygen generation systems, payload carriages, and thermal management products; wiring connectors and cables; and hydraulic and bag filters, strainers and cartridges, and golf grips for manufacturers of commercial and military aircraft, related aftermarket customers, and industrial applications. In addition, the company offers transmissions, clutches, hybrid power systems, superchargers, engine valves and valve actuation systems, locking and limited slip differentials, transmission controls, and fuel vapor components for the vehicle industry; and voltage inverters, converters, fuses, circuit protection units, vehicle controls, power distribution systems, fuel tank isolation valves, and commercial vehicle hybrid systems. The company was formerly known as Abeiron Limited. The company was founded in 1911 and is based in Dublin, Ireland."
       }
+    },
+    "VAVX": {
+      "fetched_at_epoch": 1784622865.0439305,
+      "info": {
+        "longName": "VanEck Avalanche ETF",
+        "shortName": "VanEck Avalanche ETF",
+        "longBusinessSummary": "In seeking to achieve its investment objective, the Trust will hold AVAX and will value its shares daily based on the reported MarketVectorTM Avalanche Benchmark Rate."
+      }
+    },
+    "HON": {
+      "fetched_at_epoch": 1784622865.0439305,
+      "info": {
+        "sector": "Industrials",
+        "industry": "Conglomerates",
+        "longName": "Honeywell International Inc.",
+        "shortName": "Honeywell International Inc.",
+        "longBusinessSummary": "Honeywell International Inc. engages in the industrial automation, building automation, and energy and sustainability solutions businesses in the United States, Europe, and internationally. The Industrial Automation segment provides automation control and instrumentation products and services; smart energy products; sensing technologies, including custom-engineered sensors and related services; gas detection technologies and personal protective equipment; and system design automation equipment, as well as software and analytics for manufacturing, distribution, and fulfillment operations. The Building Automation segment provides software applications for building control and optimization; sensors, switches, control systems, and instruments for energy management; access control; video surveillance; fire products; and installation, maintenance, and system upgrade services. The Energy and Sustainability Solutions segment, through its UOP business, delivers licensed process technology, equipment, engineering, catalysts, adsorbents, and services for refining, petrochemicals, low-carbon energy, gas and LNG, and industrial solutions, as well as connectivity, data integration, and software solutions. The company was formerly known as AlliedSignal, Inc. Honeywell International Inc. was founded in 1885 and is headquartered in Charlotte, North Carolina."
+      }
+    },
+    "FUTU": {
+      "fetched_at_epoch": 1784622865.0439305,
+      "info": {
+        "sector": "Financial Services",
+        "industry": "Capital Markets",
+        "longName": "Futu Holdings Limited",
+        "shortName": "Futu Holdings Limited",
+        "longBusinessSummary": "Futu Holdings Limited engages in the provision of digitalized securities brokerage and wealth management product distribution service in Hong Kong and internationally. It offers online financial services, including securities and derivative trades brokerage, margin financing and fund distribution services through its Futubull and Moomoo digital platforms. The company also provides financial information and online community services; online wealth management services under the Money Plus brand name through its Futubull and moomoo platforms, which provides its client access to mutual funds, private funds, bonds, structured products, and other wealth management products; market data and information services; and NiuNiu Community, an open forum for users and clients to share insights, ask questions, and exchange ideas. Futu Holdings Limited was founded in 2007 and is headquartered in Admiralty, Hong Kong."
+      }
     }
   },
-  "updated_at_epoch": 1784538498.4103813
+  "updated_at_epoch": 1784622865.0439305
 }
