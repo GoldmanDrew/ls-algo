@@ -1,7 +1,7 @@
 {
   "schema": "bucket5_backtest_panel.v1",
-  "generated_at_utc": "2026-07-22T08:36:31.266856+00:00",
-  "run_date": "2026-07-22",
+  "generated_at_utc": "2026-07-23T08:43:39.899687+00:00",
+  "run_date": "2026-07-23",
   "variants": {
     "B_live": {
       "preset": "B_production",
@@ -13523,12 +13523,12 @@
       "monetize_summary": {
         "event_count": 85,
         "kinds": [
+          "vix_45",
+          "profit_8x",
+          "profit_3x",
           "rearm",
           "profit_5x",
           "scheduled_roll",
-          "vix_45",
-          "profit_3x",
-          "profit_8x",
           "giveback"
         ],
         "total_usd": 2414827.0
@@ -26763,13 +26763,13 @@
       "monetize_summary": {
         "event_count": 539,
         "kinds": [
-          "vix_65",
+          "vix_45",
+          "profit_8x",
+          "profit_3x",
           "rearm",
           "profit_5x",
+          "vix_65",
           "scheduled_roll",
-          "vix_45",
-          "profit_3x",
-          "profit_8x",
           "giveback"
         ],
         "total_usd": 31975097.0
@@ -35048,13 +35048,13 @@
       "monetize_summary": {
         "event_count": 997,
         "kinds": [
-          "vix_65",
+          "vix_45",
+          "profit_8x",
+          "profit_3x",
           "rearm",
           "profit_5x",
+          "vix_65",
           "scheduled_roll",
-          "vix_45",
-          "profit_3x",
-          "profit_8x",
           "giveback"
         ],
         "total_usd": 26246548.0
@@ -43057,15 +43057,15 @@
   },
   "lab_command": "streamlit run scripts/bucket5_lab.py",
   "live_book": {
-    "run_date": "2026-07-22",
+    "run_date": "2026-07-23",
     "rows": [
       {
         "etf": "UVIX",
         "underlying": "SVIX",
         "proposed_gross_usd": 48000.0,
         "optimal_gross_usd": 48000.0,
-        "borrow_annual": 0.0273369999999999,
-        "shares_available": 750000.0,
+        "borrow_annual": 0.023257,
+        "shares_available": 800000.0,
         "locate_ok": true
       }
     ]
@@ -43078,7 +43078,7 @@
   "repo": "ls-algo",
   "sensitivity_grid": {
     "schema": "bucket5_sensitivity.v1",
-    "generated_at_utc": "2026-07-22T08:36:31.750451+00:00",
+    "generated_at_utc": "2026-07-23T08:43:40.444537+00:00",
     "preset_base": "F_dynamic_deep30",
     "era": "extended",
     "axes": {
