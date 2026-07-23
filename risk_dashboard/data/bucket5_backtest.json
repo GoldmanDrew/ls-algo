@@ -1,6 +1,6 @@
 {
   "schema": "bucket5_backtest_panel.v1",
-  "generated_at_utc": "2026-07-23T08:43:39.899687+00:00",
+  "generated_at_utc": "2026-07-23T17:39:43.435421+00:00",
   "run_date": "2026-07-23",
   "variants": {
     "B_live": {
@@ -13523,13 +13523,13 @@
       "monetize_summary": {
         "event_count": 85,
         "kinds": [
+          "giveback",
+          "rearm",
+          "scheduled_roll",
           "vix_45",
           "profit_8x",
           "profit_3x",
-          "rearm",
-          "profit_5x",
-          "scheduled_roll",
-          "giveback"
+          "profit_5x"
         ],
         "total_usd": 2414827.0
       },
@@ -26763,14 +26763,14 @@
       "monetize_summary": {
         "event_count": 539,
         "kinds": [
+          "giveback",
+          "rearm",
           "vix_45",
+          "scheduled_roll",
           "profit_8x",
           "profit_3x",
-          "rearm",
           "profit_5x",
-          "vix_65",
-          "scheduled_roll",
-          "giveback"
+          "vix_65"
         ],
         "total_usd": 31975097.0
       },
@@ -35048,14 +35048,14 @@
       "monetize_summary": {
         "event_count": 997,
         "kinds": [
+          "giveback",
+          "rearm",
           "vix_45",
+          "scheduled_roll",
           "profit_8x",
           "profit_3x",
-          "rearm",
           "profit_5x",
-          "vix_65",
-          "scheduled_roll",
-          "giveback"
+          "vix_65"
         ],
         "total_usd": 26246548.0
       },
@@ -43078,7 +43078,7 @@
   "repo": "ls-algo",
   "sensitivity_grid": {
     "schema": "bucket5_sensitivity.v1",
-    "generated_at_utc": "2026-07-23T08:43:40.444537+00:00",
+    "generated_at_utc": "2026-07-23T17:39:43.905869+00:00",
     "preset_base": "F_dynamic_deep30",
     "era": "extended",
     "axes": {
