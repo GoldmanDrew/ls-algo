@@ -9,6 +9,8 @@ import pytest
 
 from risk_dashboard.metrics import (
     _build_historical_spx_scenarios,
+    _compute_t0_beta_to_spy,
+    _compute_t0_per_leg_pnl,
     _effective_spx_shock,
     _slide_horizon_scenario_totals,
     compute_slide_risk_panel,
@@ -161,6 +163,8 @@ def test_compute_slide_risk_panel_has_spx_phases_metadata():
     spx = next(i for i in panel["indices"] if i["index"] == "SPX")
     assert spx.get("horizon_shock_mode") == "rms"
     assert spx.get("net_beta_to_spy") == pytest.approx(0.17)
+    # Long 100k @ β=1.7 / NAV 1M → T+0 β = 0.17 (k=1 fallback leg)
+    assert spx.get("t0_beta_to_spy") == pytest.approx(0.17, abs=1e-6)
     assert spx.get("historical_spx_scenarios")
     assert len(spx["historical_spx_scenarios"]) == len(historical_spx_scenario_specs())
     row = spx["shock_rows"][0]
@@ -170,6 +174,219 @@ def test_compute_slide_risk_panel_has_spx_phases_metadata():
     m1 = next(h for h in row["horizons"] if h["horizon_key"] == "1M")
     assert t0["decay_pnl_usd"] == 0.0
     assert m1.get("spx_shock_effective_pct") is not None
+
+
+def _yb_short_enriched(notional: float = -500_000.0, beta: float = 1.0) -> list[dict]:
+    return [
+        {
+            "underlying": "NVDA",
+            "symbols": "NVDY",
+            "net_notional_usd": float(notional),
+            "gross_notional_usd": abs(float(notional)),
+            "beta_to_spy": float(beta),
+            "sigma": 0.6,
+            "legs": [
+                {
+                    "symbol": "NVDY",
+                    "underlying": "NVDA",
+                    "net_notional_usd": float(notional),
+                    "product_class": "income_yieldboost",
+                    "leverage_k": 1.0,
+                    "vol_underlying_annual": 0.6,
+                    "income_distributions_annual": 0.35,
+                    "borrow_fee_annual": 0.40,
+                    "expense_ratio_annual": 0.0099,
+                    "is_letf": False,
+                }
+            ],
+            "is_letf": False,
+        }
+    ]
+
+
+def test_t0_short_yb_gains_on_spx_downtick():
+    """Case A: short YB + SPX -1% → T+0 PnL > 0 (signed notional)."""
+    cfg = dict(DEFAULT_SPX_SHOCK_CONFIG)
+    cfg["stress_beta"] = {**cfg["stress_beta"], "enabled": False}
+    enriched = _yb_short_enriched()
+    pnl, _ = _compute_t0_per_leg_pnl(
+        enriched,
+        shock_pct=-0.01,
+        etf_meta={},
+        spx_shock_cfg=cfg,
+        variance_decomp=None,
+    )
+    # signed: (-500k) * (1.0 * -0.01) = +5_000
+    assert pnl == pytest.approx(5_000.0, abs=1.0)
+    assert pnl > 0
+
+
+def test_t0_short_yb_loses_on_spx_uptick_antisymmetric():
+    """Case B: short YB ±1% T+0 are antisymmetric."""
+    cfg = dict(DEFAULT_SPX_SHOCK_CONFIG)
+    cfg["stress_beta"] = {**cfg["stress_beta"], "enabled": False}
+    enriched = _yb_short_enriched()
+    down, _ = _compute_t0_per_leg_pnl(
+        enriched,
+        shock_pct=-0.01,
+        etf_meta={},
+        spx_shock_cfg=cfg,
+        variance_decomp=None,
+    )
+    up, _ = _compute_t0_per_leg_pnl(
+        enriched,
+        shock_pct=0.01,
+        etf_meta={},
+        spx_shock_cfg=cfg,
+        variance_decomp=None,
+    )
+    assert up < 0
+    assert up == pytest.approx(-down, abs=1.0)
+
+
+def test_t0_mixed_short_letf_and_yb_matches_signed_formula():
+    """Case C: mixed short LETF (k=2) + short YB — T+0 matches Σ n·k·β·Δ."""
+    cfg = dict(DEFAULT_SPX_SHOCK_CONFIG)
+    cfg["stress_beta"] = {**cfg["stress_beta"], "enabled": False}
+    enriched = [
+        {
+            "underlying": "NVDA",
+            "symbols": "NVDL,NVDY",
+            "net_notional_usd": -1_500_000.0,
+            "gross_notional_usd": 1_500_000.0,
+            "beta_to_spy": 1.5,
+            "sigma": 0.5,
+            "legs": [
+                {
+                    "symbol": "NVDL",
+                    "underlying": "NVDA",
+                    "net_notional_usd": -1_000_000.0,
+                    "product_class": "letf_long",
+                    "leverage_k": 2.0,
+                    "vol_underlying_annual": 0.5,
+                    "borrow_fee_annual": 0.20,
+                    "is_letf": True,
+                },
+                {
+                    "symbol": "NVDY",
+                    "underlying": "NVDA",
+                    "net_notional_usd": -500_000.0,
+                    "product_class": "income_yieldboost",
+                    "leverage_k": 1.0,
+                    "vol_underlying_annual": 0.5,
+                    "income_distributions_annual": 0.30,
+                    "borrow_fee_annual": 0.40,
+                    "is_letf": False,
+                },
+            ],
+            "is_letf": True,
+        }
+    ]
+    shock = -0.01
+    pnl, _ = _compute_t0_per_leg_pnl(
+        enriched,
+        shock_pct=shock,
+        etf_meta={},
+        spx_shock_cfg=cfg,
+        variance_decomp=None,
+    )
+    # LETF: (-1e6)*(2)*(1.5)*(-0.01) = +30_000
+    # YB:   (-5e5)*(1)*(1.5)*(-0.01) = +7_500
+    expected = 37_500.0
+    assert pnl == pytest.approx(expected, abs=1.0)
+    assert pnl > 0
+    nav = 1_000_000.0
+    t0_beta = _compute_t0_beta_to_spy(
+        enriched,
+        etf_meta={},
+        nav_usd=nav,
+        spx_shock_cfg=cfg,
+        variance_decomp=None,
+    )
+    # dollar β / NAV: [(-1e6)*2*1.5 + (-5e5)*1*1.5] / 1e6 = -3.75
+    assert t0_beta == pytest.approx(-3.75, abs=1e-6)
+    assert pnl / nav == pytest.approx(t0_beta * shock, abs=1e-9)
+
+
+def test_t0_letf_only_regression_unchanged_vs_signed_notional():
+    """Case D: LETF-only shorts never used abs-scale; PnL unchanged by YB fix."""
+    cfg = dict(DEFAULT_SPX_SHOCK_CONFIG)
+    cfg["stress_beta"] = {**cfg["stress_beta"], "enabled": False}
+    enriched = [
+        {
+            "underlying": "NVDA",
+            "symbols": "NVDL",
+            "net_notional_usd": -5_000_000.0,
+            "beta_to_spy": 2.0,
+            "sigma": 0.5,
+            "legs": [
+                {
+                    "symbol": "NVDL",
+                    "underlying": "NVDA",
+                    "net_notional_usd": -5_000_000.0,
+                    "product_class": "letf_long",
+                    "leverage_k": 2.0,
+                    "vol_underlying_annual": 0.5,
+                    "borrow_fee_annual": 0.05,
+                    "is_letf": True,
+                }
+            ],
+            "is_letf": True,
+        }
+    ]
+    pnl, _ = _compute_t0_per_leg_pnl(
+        enriched,
+        shock_pct=-0.03,
+        etf_meta={},
+        spx_shock_cfg=cfg,
+        variance_decomp=None,
+    )
+    # (-5e6) * 2 * 2.0 * (-0.03) = +600_000
+    assert pnl == pytest.approx(600_000.0, abs=1.0)
+
+
+def test_slide_panel_neg_header_beta_t0_gains_on_spx_down():
+    """Acceptance: short YB book → T+0 gain on SPX -1%, loss on +1%."""
+    panel = compute_slide_risk_panel(
+        factor_panel={
+            "available": True,
+            "rows": [
+                {
+                    "underlying": "NVDA",
+                    "symbols": "NVDY",
+                    "net_notional_usd": -500_000.0,
+                    "gross_notional_usd": 500_000.0,
+                    "beta_to_spy": 1.0,
+                    "regime_vol_pct": 60.0,
+                }
+            ],
+            "totals": {"net_beta_to_spy": -0.50},
+        },
+        nav_usd=1_000_000.0,
+        screener_csv=None,
+        flex_positions_xml=None,
+        vol_vix_pack={
+            "vix_current": 0.20,
+            "vix_current_pts": 20.0,
+            "betas": {},
+            "n_computed": 0,
+            "n_total": 1,
+        },
+    )
+    spx = next(i for i in panel["indices"] if i["index"] == "SPX")
+    assert spx["net_beta_to_spy"] == pytest.approx(-0.50)
+    assert spx["t0_beta_to_spy"] is not None
+    assert spx["t0_beta_to_spy"] < 0
+    m1 = next(r for r in spx["shock_rows"] if abs(r["shock_pct"] + 0.01) < 1e-9)
+    p1 = next(r for r in spx["shock_rows"] if abs(r["shock_pct"] - 0.01) < 1e-9)
+    t0_down = next(h for h in m1["horizons"] if h["horizon_key"] == "T+0")
+    t0_up = next(h for h in p1["horizons"] if h["horizon_key"] == "T+0")
+    assert t0_down["total_pnl_pct_nav"] > 0
+    assert t0_up["total_pnl_pct_nav"] < 0
+    # T+0 β equals calm ±1% slope
+    assert t0_up["total_pnl_pct_nav"] == pytest.approx(
+        spx["t0_beta_to_spy"] * 0.01, abs=1e-6
+    )
 
 
 def test_build_historical_spx_scenarios_distinct_totals():

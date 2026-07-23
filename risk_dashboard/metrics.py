@@ -3581,9 +3581,19 @@ def _compute_t0_per_leg_pnl(
     etf_meta: dict[str, Any],
     spx_shock_cfg: dict[str, Any],
     variance_decomp: dict[str, Any] | None,
+    stress_cfg_override: dict[str, Any] | None = None,
 ) -> tuple[float, list[dict[str, Any]]]:
-    """Per-leg instantaneous beta P&L (no decay/borrow)."""
-    stress_cfg = spx_shock_cfg.get("stress_beta") or {}
+    """Per-leg instantaneous beta P&L (no decay/borrow).
+
+    Always uses **signed** notional × linear price return. Horizon YB scenarios
+    may use ``abs(notional)`` only because that model returns short-favorable
+    P&L; T+0 returns are long-asset direction and must not abs-scale.
+    """
+    stress_cfg = (
+        stress_cfg_override
+        if stress_cfg_override is not None
+        else (spx_shock_cfg.get("stress_beta") or {})
+    )
     per_name: list[dict[str, Any]] = []
     total = 0.0
     for e in enriched:
@@ -3610,16 +3620,7 @@ def _compute_t0_per_leg_pnl(
                 spx_cumulative_pct=cum,
             )
             price_ret = leg_instant_price_return(leg, u_ret)
-            product = str(leg.get("product_class") or "").lower()
-            if notional < 0 and product in (
-                "income_yieldboost",
-                "income_put_spread",
-                "scraped_income",
-            ):
-                scale = abs(notional)
-            else:
-                scale = notional
-            row_pnl += scale * price_ret
+            row_pnl += notional * price_ret
         total += row_pnl
         per_name.append(
             {
@@ -3634,6 +3635,33 @@ def _compute_t0_per_leg_pnl(
             }
         )
     return total, per_name
+
+
+def _compute_t0_beta_to_spy(
+    enriched: list[dict[str, Any]],
+    *,
+    etf_meta: dict[str, Any],
+    nav_usd: float,
+    spx_shock_cfg: dict[str, Any],
+    variance_decomp: dict[str, Any] | None,
+) -> float | None:
+    """NAV-normalized T+0 β: Σ signed_notional × (k_eff · β) / NAV.
+
+    Matches the calm (±1%) T+0 slide slope (stress-β disabled). Distinct from
+    factor-panel ``net_beta_to_spy``, which omits LETF leverage ``k``.
+    """
+    if nav_usd <= 0:
+        return None
+    # Unit SPX move with stress off → dollar beta = T+0 PnL at +100% SPX.
+    total_pnl, _ = _compute_t0_per_leg_pnl(
+        enriched,
+        shock_pct=1.0,
+        etf_meta=etf_meta,
+        spx_shock_cfg=spx_shock_cfg,
+        variance_decomp=variance_decomp,
+        stress_cfg_override={"enabled": False},
+    )
+    return total_pnl / nav_usd
 
 
 def _build_historical_spx_scenarios(
@@ -4357,6 +4385,13 @@ def compute_slide_risk_panel(
         zero_borrow=False,
         borrow_stress_cfg=borrow_stress_cfg,
     )
+    t0_beta_to_spy = _compute_t0_beta_to_spy(
+        enriched,
+        etf_meta=etf_meta,
+        nav_usd=nav_usd,
+        spx_shock_cfg=spx_shock_cfg,
+        variance_decomp=variance_decomp,
+    )
     indices_out.append(
         {
             "index": "SPX",
@@ -4370,13 +4405,16 @@ def compute_slide_risk_panel(
             "n_names_covered": sum(1 for e in enriched if e.get("beta_to_spy") is not None),
             "n_names_total": len(enriched),
             "net_beta_to_spy": factor_totals.get("net_beta_to_spy"),
+            "t0_beta_to_spy": t0_beta_to_spy,
             "gross_beta_to_spy": factor_totals.get("gross_beta_to_spy"),
             "horizon_shock_mode": horizon_shock_mode,
             "spx_shock_config": spx_shock_cfg,
             "historical_spx_scenarios": historical_spx,
             "historical_spx_catalog": list(HISTORICAL_SPX_SCENARIOS),
             "description": (
-                "T+0: per-leg instantaneous β×ΔSPX (linear, no decay/borrow). "
+                "T+0: per-leg signed notional × linear price return (β×ΔSPX, LETF×k; "
+                "no decay/borrow). Horizon YB uses put-spread income model "
+                "(short-favorable; abs notional). "
                 f"1M–12M: horizon-scaled equity shock ({horizon_shock_mode}) + LETF decay/borrow. "
                 "12M-terminal row uses full labeled ΔSPX. "
                 "Historical rows: daily SPX paths, path-realized vol, VIX-linked borrow stress."

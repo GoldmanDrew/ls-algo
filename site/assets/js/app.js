@@ -1932,7 +1932,7 @@
           ? ""
           : ` &middot; ${fmtPct(panel.beta_coverage_gross_pct, 0)} beta coverage (gross)`;
       const spxMode = panel.horizon_shock_mode || "rms";
-      els.slideRiskMeta.innerHTML = `<span class="dim small">T+0 = instantaneous &beta;&times;&Delta;SPX (linear). ${scenarioHorizons.join(
+      els.slideRiskMeta.innerHTML = `<span class="dim small">T+0 = instantaneous &beta;&times;&Delta;SPX (linear, signed notional for all products). Horizon YB uses put-spread income model (short-favorable). ${scenarioHorizons.join(
         " / "
       )} = horizon-scaled equity shock (<code>${safeText(spxMode)}</code>) + LETF decay/borrow. VIX panel: same decay/borrow stack at SPX 0% with VIX-stressed vol &amp; borrow.${betaCov} &middot; ${letf}/${total} LETF &middot; ${panel.n_names_with_vol || 0} with vol</span>`;
     }
@@ -2156,10 +2156,14 @@
               ${formatPnlConcentration(bindingConc, { topN: 5 })}
             </div>`
           : "";
-        const betaHead =
-          idx.net_beta_to_spy != null
-            ? ` &middot; portfolio &beta; ${Number(idx.net_beta_to_spy).toFixed(2)}`
-            : "";
+        const betaParts = [];
+        if (idx.net_beta_to_spy != null) {
+          betaParts.push(`portfolio &beta; ${Number(idx.net_beta_to_spy).toFixed(2)}`);
+        }
+        if (idx.t0_beta_to_spy != null) {
+          betaParts.push(`T+0 &beta; ${Number(idx.t0_beta_to_spy).toFixed(2)}`);
+        }
+        const betaHead = betaParts.length ? ` &middot; ${betaParts.join(" · ")}` : "";
         const histSpx = idx.historical_spx_scenarios || [];
         const histSpxTbl = histSpx.length
           ? `<div class="slide-strip" style="margin-top:12px;">
