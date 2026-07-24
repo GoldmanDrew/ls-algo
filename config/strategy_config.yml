@@ -21,6 +21,7 @@ strategy:
     - APLD
     - SMR
     - CBRS
+    - SMU   # prefer SMUP exclusively for SMR; never fall back to SMU
   # Gross caps after sleeve budgets. With ``per_sleeve``, pair / underlying limits apply **within
   # each sleeve's gross**; root caps are fallbacks for
   # unknown sleeves. Liquidity clips implied book weights using ``liquidity_book_reference``
@@ -69,8 +70,13 @@ strategy:
           adverse_current_borrow_penalty: 1.0
           # Defaults to max_pair_weight when omitted. Kept explicit for auditability.
           max_wrapper_weight: 0.09
+          # Force these wrappers exclusively when valid (beats utility rank + incumbent
+          # hysteresis; no overflow to sister wrappers). SMUP ≫ SMU on SMR.
+          preferred_wrappers:
+            SMR: SMUP
           # Keep the prior plan's primary wrapper unless a challenger clears this annual
           # utility advantage. Invalid/no-locate incumbents are bypassed immediately.
+          # Preferred wrappers above skip this gate.
           switching:
             min_utility_advantage_annual: 0.03
         # Cap-projector: under-scored rows cannot grow beyond 1× their score weight when
@@ -236,6 +242,18 @@ portfolio:
       too_short:
         trigger_net_pct: 0.01     # trigger when net short > 1% of gross
         target_net_pct: 0.00      # hedge back to flat
+      # Hard per-pair |und|/|etf| vs |Delta| safety (sim + live).
+      # With override_midweek_freeze=false, repairs only on operator rebalance runs.
+      ratio_safety:
+        enabled: true
+        # 25% catches CRCG-class ~33% under-hedges; 50% let them persist.
+        # min_etf_usd 100 (was 500) still repairs MSTU-class shorts after ETF leg shrinks.
+        # Repairs stay operator-day-only (trade_only_on_operator_days / override false).
+        hard_band_pct: 0.25
+        min_etf_usd: 100
+        min_repair_usd: 250
+        override_midweek_freeze: false
+        sleeves: [core_leveraged, yieldboost]
     establish_threshold_usd: 1000.0  # rebalance_strategy: skip Phase 2 if position already > $100
 
     # Phase 2b — Resize Existing Pairs (rebalance_strategy.py).
@@ -431,12 +449,16 @@ portfolio:
           # Conditional-crash sizing: trim each name to rho*budget/L, then
           # (with scale_to_budget) refill the sleeve pro-rata so target_weight
           # actually deploys. rho sets relative crash risk; effective per-name
-          # crash loss ≈ rho * scale_mult. Telemetry: b4_crash_budget.csv +
-          # b4_sizing_waterfall.csv. See docs/b4_sizing_method.pdf.
+          # crash loss ≈ rho * scale_mult. L is still computed every GTP day;
+          # applied weights only move on cadence-DUE days (or emergency cuts).
+          # Telemetry: b4_crash_budget.csv + b4_sizing_waterfall.csv.
+          # See docs/b4_sizing_method.pdf.
+          # Note: Diamond-Creek-Quant research/book path uses scale_to_budget=false
+          # (cash residual); Magis/ls-algo production keeps refill=true.
           crash_budget:
             enabled: true
             rho: 0.0075            # relative crash-loss scale (fraction of sleeve budget)
-            scale_to_budget: true  # after trim, scale pro-rata to refill the 3% target
+            scale_to_budget: true  # after trim, scale pro-rata to refill the sleeve target
             theta: 0.5             # fraction of run-up assumed retraceable
             phi: 0.5               # convexity bump for multi-day crash compounding
             l_floor: 0.02          # min L in the cap denominator (bounds any single cap)
@@ -447,6 +469,12 @@ portfolio:
             # step when one tail print rolls through the lookback window.
             l_ema_alpha: 0.4
             l_state_json: data/b4_crash_l_state.json
+            # Compute L every GTP day, but only change plan targets when the
+            # pair is cadence-DUE (aligns plan↔fills). Emergency path still
+            # applies a large risk-up cut mid-interval.
+            apply_on_cadence_due_only: true
+            emergency_cut_rel: 0.25   # if new capped w < prev*(1-x), apply even if deferred
+            applied_weights_json: data/b4_crash_applied_weights.json
           # Hedge ratio (h) + rebalance cadence (days) engine. Every output is
           # reverse-engineerable from the printed inputs (TR, VCR, VCR_med).
           # Backtest rationale for every knob below: docs/b4_engine_notes.md.
@@ -676,14 +704,32 @@ portfolio:
           PLYY: 0.0034
 
 # Production-actual backtest / notebook prod mode only (does not change live Phase-2b).
-# Policy: keep each pair delta-hedged, step structural gross toward plan only every
-# operator_check_days sessions, closing ``remaining_gap_rate`` of the remaining gap
-# atomically on both legs (no midweek mark-chase).
+# Calm policy (Buckets1-4-like): trade ONLY every operator_check_days sessions —
+# no midweek hedge / ratio / B4 cadence / purgatory. Slow plan blend + wide
+# ratio band; borrow costs use dashboard historical average (not spot).
 production_actual_backtest:
   stock_rebalance_clock: operator_5d   # operator_5d | weekly_fri | every_plan
   b4_membership_clock: operator_5d
+  # sticky_until_hard: once a B4 pair is open, ignore ordinary plan absence;
+  # exit only on delist / plan hard_exit / sanitize hard_exit. Legacy
+  # plan_absence_drop flattens missing names on the membership clock.
+  b4_membership_policy: sticky_until_hard
+  # When a held B4 name soft-fails entry gates (borrow in (entry, keep], archive
+  # gap for notebook blacklist_except), emit a reduce_only keep row instead of
+  # omitting the name from the plan timeline.
+  b4_soft_fail_policy: reduce_only_keep_row
   b4_execution: cadence
   operator_check_days: 5
+  trade_only_on_operator_days: true    # B1+B4+hedge+purgatory: no trades off clock
+  borrow_cost_mode: average            # average | history | spot
+  use_borrow_history: false            # ignored when borrow_cost_mode=average
+  # When screened CSV is missing (or GTP fails), archived proposed_trades may be
+  # used — but only after sanitize_to_policy (blacklist + preferred wrappers).
+  archive_fallback:
+    enabled: true
+    sanitize_to_policy: true
+    plan_only_dates: sanitize          # sanitize | skip | require_screened
+    on_empty_after_sanitize: skip      # skip day if no positive gross remains
   turnover_pace:
     enabled: true
     mode: hedge_safe_v1
@@ -692,15 +738,32 @@ production_actual_backtest:
     # advances only on the stock clock via remaining_gap_rate.
     entry_ramp_sessions: 1
     reduction_ramp_sessions: 1
-    remaining_gap_rate: 0.25           # ~4 operator sessions to ~68% of gap; ~8 to ~90%
-    target_blend_alpha: 0.25           # blend destination toward new plan each rebal
+    remaining_gap_rate: 0.40           # structural step on operator days
+    target_blend_alpha: 0.25           # destination blend toward new plan
     stock_midweek_mode: rebal_only     # freeze structural gross between operator days
-    midweek_hedge_repair: false        # share-hold midweek; hedge only on operator days
+    midweek_hedge_repair: false        # no Phase-3 midweek
     hedge_reserve_frac: 0.15
-    max_daily_turnover_pct: 0.10
+    max_daily_turnover_pct: 0.08
     adv_participation_pct: 0.10
     establish_budget_frac: 0.50
     legacy_max_daily_turnover_pct: 0.15
+    # Cold-start: chase full plan until book deployed/desired hits the threshold
+    # *and* (when sleeve_aware) each require_sleeve is filled; re-arms if a
+    # required sleeve later falls under its ratio (e.g. B2 appears mid-run).
+    bootstrap:
+      enabled: true
+      until_deployed_desired_ratio: 0.90
+      sleeve_aware: true
+      require_sleeves: [yieldboost]
+      sleeve_until_ratio: 0.90
+      target_blend_alpha: 1.0
+      remaining_gap_rate: 1.0
+      establish_budget_frac: 1.0
+      max_daily_turnover_pct: null      # uncapped while bootstrapping
+      # null = inherit steady-state clock (operator_5d). Empty-book day-1 still
+      # establishes via plan_changed+cur.empty. Set every_plan only if ADV
+      # repeatedly blocks the opening fill and you accept extra establish churn.
+      stock_rebalance_clock: null
 
 # SPX slide-risk: horizon shock scaling, stress β, historical paths (risk_dashboard).
 spx_shock:

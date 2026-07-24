@@ -200,7 +200,9 @@ Bucket 4 shorts inverse ETFs and hedges with underlying shorts to harvest struct
                   → relative pair weights (sum ≈ 1)
 2. Crash-cap      gross_i ≤ rho × sleeve_budget / L_i (L uses an asymmetric
                   EMA: risk-up immediate, risk-down smoothed), then
-                  (if scale_to_budget) scale pro-rata so sleeve gross = target
+                  (if scale_to_budget) scale pro-rata so sleeve gross = target.
+                  Applied weights only change on cadence-DUE days (or
+                  emergency risk-up cuts). DCQ uses scale_to_budget=false.
 3. Smooth         trim-only weight EMA on the FINAL capped weights:
                   raises fade in; dilution from new entrants fades out;
                   new entries ramp slowly; dropped names soft-exit;
@@ -209,12 +211,14 @@ Bucket 4 shorts inverse ETFs and hedges with underlying shorts to harvest struct
                   (+ grow-only inverse ratchet / continuous trim)
 ```
 
-**`target_weight: 0.03` is the deploy target.** Crash sizing first trims each name to `rho × budget / L`, then (with `scale_to_budget: true`) scales that book pro-rata so the sleeve fills the target. `rho` sets *relative* crash risk; the effective per-name crash loss is approximately `rho × scale_mult` (logged each run). Smoothing runs **after** the cap/scale step so the refill's cross-coupling (one name's cap change re-pricing every other name) is damped too; under-deployment while entries ramp in stays in cash and self-corrects.
+**`target_weight: 0.03` is the deploy target (ls-algo).** Crash sizing first trims each name to `rho × budget / L`, then (with `scale_to_budget: true`) scales that book pro-rata so the sleeve fills the target. Diamond-Creek-Quant keeps `scale_to_budget: false` (cash residual). Smoothing runs **after** the cap/scale step.
 
 | Knob | Role |
 |------|------|
-| `crash_budget.rho` | Relative crash-loss scale (riskier names → less weight) |
-| `crash_budget.scale_to_budget` | `true` = refill sleeve after trim; `false` = leave freed cash undeployed |
+| `crash_budget.rho` | Relative (ls-algo) / absolute (DCQ cash mode) crash-loss scale |
+| `crash_budget.scale_to_budget` | `true` = Magis refill after trim; `false` = DCQ leave cash undeployed |
+| `crash_budget.apply_on_cadence_due_only` | Compute L daily; change applied weights only on DUE (or emergency cut) |
+| `crash_budget.emergency_cut_rel` | Mid-interval risk-up: apply if new capped w < prev×(1−x) |
 | `crash_budget.l_ema_alpha` | Risk-down smoothing on per-name L (risk-up binds immediately) |
 | `borrow_ramp_lo` / `borrow_ramp_hi` | Continuous high-borrow fade (no binary exclusion cliff) |
 | `weight_smoothing.alpha` | How fast size *increases* converge |
