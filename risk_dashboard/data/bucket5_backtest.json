@@ -1,7 +1,7 @@
 {
   "schema": "bucket5_backtest_panel.v1",
-  "generated_at_utc": "2026-07-23T17:39:43.435421+00:00",
-  "run_date": "2026-07-23",
+  "generated_at_utc": "2026-07-24T08:38:51.208908+00:00",
+  "run_date": "2026-07-24",
   "variants": {
     "B_live": {
       "preset": "B_production",
@@ -13523,13 +13523,13 @@
       "monetize_summary": {
         "event_count": 85,
         "kinds": [
-          "giveback",
-          "rearm",
-          "scheduled_roll",
-          "vix_45",
           "profit_8x",
+          "giveback",
           "profit_3x",
-          "profit_5x"
+          "scheduled_roll",
+          "profit_5x",
+          "rearm",
+          "vix_45"
         ],
         "total_usd": 2414827.0
       },
@@ -26763,14 +26763,14 @@
       "monetize_summary": {
         "event_count": 539,
         "kinds": [
-          "giveback",
-          "rearm",
-          "vix_45",
-          "scheduled_roll",
           "profit_8x",
+          "giveback",
           "profit_3x",
+          "vix_65",
+          "scheduled_roll",
           "profit_5x",
-          "vix_65"
+          "rearm",
+          "vix_45"
         ],
         "total_usd": 31975097.0
       },
@@ -35048,14 +35048,14 @@
       "monetize_summary": {
         "event_count": 997,
         "kinds": [
-          "giveback",
-          "rearm",
-          "vix_45",
-          "scheduled_roll",
           "profit_8x",
+          "giveback",
           "profit_3x",
+          "vix_65",
+          "scheduled_roll",
           "profit_5x",
-          "vix_65"
+          "rearm",
+          "vix_45"
         ],
         "total_usd": 26246548.0
       },
@@ -43057,15 +43057,15 @@
   },
   "lab_command": "streamlit run scripts/bucket5_lab.py",
   "live_book": {
-    "run_date": "2026-07-23",
+    "run_date": "2026-07-24",
     "rows": [
       {
         "etf": "UVIX",
         "underlying": "SVIX",
         "proposed_gross_usd": 48000.0,
         "optimal_gross_usd": 48000.0,
-        "borrow_annual": 0.023257,
-        "shares_available": 800000.0,
+        "borrow_annual": 0.018619,
+        "shares_available": 600000.0,
         "locate_ok": true
       }
     ]
@@ -43078,7 +43078,7 @@
   "repo": "ls-algo",
   "sensitivity_grid": {
     "schema": "bucket5_sensitivity.v1",
-    "generated_at_utc": "2026-07-23T17:39:43.905869+00:00",
+    "generated_at_utc": "2026-07-24T08:38:51.707806+00:00",
     "preset_base": "F_dynamic_deep30",
     "era": "extended",
     "axes": {

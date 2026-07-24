@@ -1,0 +1,2 @@
+n_b5_option_trades,n_b5_option_positions,open_contracts,put_mark_value_usd,put_cost_basis_usd,unrealized_pnl_usd,realized_pnl_usd,premium_paid_usd,sale_proceeds_usd,commissions_usd,non_b5_option_trades_excluded,non_b5_option_positions_excluded
+0,0,0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0,0
